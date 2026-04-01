@@ -62,6 +62,8 @@ static void panic_halt(void)
 
 void kmain(struct boot_info *boot_info)
 {
+    struct boot_memmap_entry *memmap;
+
     serial_write_string("Arx kernel: kmain online\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
@@ -70,9 +72,29 @@ void kmain(struct boot_info *boot_info)
         panic_halt();
     }
 
+    if (boot_info->memmap_entries == 0 || boot_info->memmap_entry_count == 0)
+    {
+        serial_write_string("Arx kernel: no Limine memory map entries\n");
+        panic_halt();
+    }
+
     serial_write_string("Arx kernel: memmap entries=");
     serial_write_dec_u64(boot_info->memmap_entry_count);
     serial_write_string("\n");
+
+    memmap = (struct boot_memmap_entry *)(uintptr_t)boot_info->memmap_entries;
+    for (uint64_t i = 0; i < boot_info->memmap_entry_count; i++)
+    {
+        serial_write_string("Arx kernel: memmap[");
+        serial_write_dec_u64(i);
+        serial_write_string("] base=");
+        serial_write_hex_u64(memmap[i].base);
+        serial_write_string(" len=");
+        serial_write_hex_u64(memmap[i].length);
+        serial_write_string(" type=");
+        serial_write_dec_u64(memmap[i].type);
+        serial_write_string("\n");
+    }
 
     if (boot_info->framebuffer_addr == 0)
     {

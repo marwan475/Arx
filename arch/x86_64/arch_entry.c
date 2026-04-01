@@ -26,6 +26,10 @@ static volatile LIMINE_REQUESTS_START_MARKER;
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
 
+#define BOOT_MEMMAP_MAX_ENTRIES 256
+
+static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
+
 void arch_serial_putchar(char c)
 {
     __asm__ volatile("outb %0, %1" : : "a"(c), "Nd"((unsigned short)0x3F8));
@@ -49,6 +53,7 @@ static void gather_boot_info(struct boot_info *boot_info)
 {
     boot_info->limine_present = 0;
     boot_info->memmap_entry_count = 0;
+    boot_info->memmap_entries = 0;
     boot_info->framebuffer_addr = 0;
     boot_info->framebuffer_width = 0;
     boot_info->framebuffer_height = 0;
@@ -64,7 +69,22 @@ static void gather_boot_info(struct boot_info *boot_info)
 
     if (memmap_request.response != 0)
     {
-        boot_info->memmap_entry_count = memmap_request.response->entry_count;
+        uint64_t count = memmap_request.response->entry_count;
+        if (count > BOOT_MEMMAP_MAX_ENTRIES)
+        {
+            count = BOOT_MEMMAP_MAX_ENTRIES;
+        }
+
+        for (uint64_t i = 0; i < count; i++)
+        {
+            struct limine_memmap_entry *entry = memmap_request.response->entries[i];
+            boot_memmap[i].base = entry->base;
+            boot_memmap[i].length = entry->length;
+            boot_memmap[i].type = entry->type;
+        }
+
+        boot_info->memmap_entry_count = count;
+        boot_info->memmap_entries = (uintptr_t)boot_memmap;
     }
 
     if (framebuffer_request.response != 0 && framebuffer_request.response->framebuffer_count > 0)

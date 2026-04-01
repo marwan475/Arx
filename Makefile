@@ -158,8 +158,8 @@ QEMU_X86_64 ?= qemu-system-x86_64
 QEMU_AARCH64 ?= qemu-system-aarch64
 QEMU_COMMON ?= -m 1024 -serial stdio
 
-qemu-x86_64: x86_64
+qemu-x86_64: 
 	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)" -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
 
-qemu-aarch64: aarch64
+qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0

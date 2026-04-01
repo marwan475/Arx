@@ -65,7 +65,6 @@ static void arch_serial_init(void)
 
 void arch_serial_putchar(char c)
 {
-    arch_serial_init();
 
     for (unsigned int i = 0; i < 1000000; i++)
     {
@@ -146,6 +145,7 @@ void _start(void)
 {
     struct boot_info boot_info;
 
+    arch_serial_init();
     serial_write_string("Arx kernel: aarch64 entry\n");
     gather_boot_info(&boot_info);
     kmain(&boot_info);

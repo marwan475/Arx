@@ -164,3 +164,53 @@ qemu-x86_64:
 
 qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0
+
+ALL_SOURCE_FILES := $(shell find . \
+	\( -path './busybox' -o -path './root' -o -path './build' -o -path './bin' \) -prune -o \
+	-type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print 2>/dev/null)
+
+format:
+	@echo "Formatting all C/C++ files in repository..."
+
+	@for file in $(ALL_SOURCE_FILES); do \
+		echo "→ Formatting $$file"; \
+		clang-format -i --style="{ \
+			BasedOnStyle: llvm, \
+			IndentWidth: 4, \
+			TabWidth: 4, \
+			UseTab: Never, \
+			ColumnLimit: 200, \
+			BreakBeforeBraces: Allman, \
+			AllowShortIfStatementsOnASingleLine: false, \
+			AllowShortLoopsOnASingleLine: false, \
+			AllowShortFunctionsOnASingleLine: None, \
+			AllowShortBlocksOnASingleLine: Never, \
+			PointerAlignment: Left, \
+			ReferenceAlignment: Left, \
+			AlignOperands: true, \
+			AlignConsecutiveAssignments: true, \
+			AlignConsecutiveDeclarations: true, \
+			AlignTrailingComments: true, \
+			AlignAfterOpenBracket: Align, \
+			BreakBeforeBinaryOperators: All, \
+			SpaceBeforeParens: ControlStatements, \
+			SpacesInParentheses: false, \
+			SpacesInSquareBrackets: false, \
+			SpacesInAngles: false, \
+			SpaceAfterCStyleCast: true, \
+			SpaceBeforeAssignmentOperators: true, \
+			KeepEmptyLinesAtTheStartOfBlocks: false, \
+			SortIncludes: true, \
+			IncludeBlocks: Regroup, \
+			NamespaceIndentation: None, \
+			AccessModifierOffset: -4, \
+			IndentCaseLabels: true, \
+			BreakConstructorInitializersBeforeComma: false, \
+			BreakInheritanceList: BeforeColon, \
+			ConstructorInitializerIndentWidth: 4, \
+			ContinuationIndentWidth: 8, \
+			ReflowComments: true, \
+			SpacesBeforeTrailingComments: 1, \
+			Cpp11BracedListStyle: true \
+		}" $$file; \
+	done

@@ -26,6 +26,7 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
+INCLUDE_DIRS ?= -I.
 
 ISO_X86_64 ?= $(BIN_DIR)/arx-x86_64.img
 ISO_AARCH64 ?= $(BIN_DIR)/arx-aarch64.img
@@ -60,11 +61,11 @@ prepare-iso-tools:
 
 $(KERNEL_X86_64_COMMON_OBJ): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
+	$(X86_64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_X86_64_ARCH_OBJ): $(KERNEL_X86_64_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
+	$(X86_64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_X86_64): $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ) $(KERNEL_X86_64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
@@ -73,12 +74,12 @@ $(KERNEL_X86_64): $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ) $(KERNEL
 $(KERNEL_AARCH64_COMMON_OBJ): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
+	$(AARCH64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_AARCH64_ARCH_OBJ): $(KERNEL_AARCH64_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
+	$(AARCH64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_AARCH64): $(KERNEL_AARCH64_COMMON_OBJ) $(KERNEL_AARCH64_ARCH_OBJ) $(KERNEL_AARCH64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)

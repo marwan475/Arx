@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-#include "boot/boot.h"
+#include <boot/boot.h>
 
 void arch_serial_putchar(char c);
 

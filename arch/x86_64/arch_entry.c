@@ -1,7 +1,7 @@
 #include <stdint.h>
 
-#include "../../boot/boot.h"
-#include "../../boot/limine.h"
+#include <boot/boot.h>
+#include <boot/limine.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);

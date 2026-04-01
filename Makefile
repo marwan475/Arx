@@ -38,6 +38,13 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64
 
+KERNEL_X86_64_COMMON_DEP ?= $(KERNEL_X86_64_COMMON_OBJ:.o=.d)
+KERNEL_AARCH64_COMMON_DEP ?= $(KERNEL_AARCH64_COMMON_OBJ:.o=.d)
+KERNEL_X86_64_ARCH_DEP ?= $(KERNEL_X86_64_ARCH_OBJ:.o=.d)
+KERNEL_AARCH64_ARCH_DEP ?= $(KERNEL_AARCH64_ARCH_OBJ:.o=.d)
+
+-include $(KERNEL_X86_64_COMMON_DEP) $(KERNEL_AARCH64_COMMON_DEP) $(KERNEL_X86_64_ARCH_DEP) $(KERNEL_AARCH64_ARCH_DEP)
+
 all: x86_64 aarch64
 
 prepare-iso-tools:
@@ -53,11 +60,11 @@ prepare-iso-tools:
 
 $(KERNEL_X86_64_COMMON_OBJ): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -c -o $@ $<
+	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_X86_64_ARCH_OBJ): $(KERNEL_X86_64_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -c -o $@ $<
+	$(X86_64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_X86_64): $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ) $(KERNEL_X86_64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
@@ -66,12 +73,12 @@ $(KERNEL_X86_64): $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ) $(KERNEL
 $(KERNEL_AARCH64_COMMON_OBJ): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -c -o $@ $<
+	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_AARCH64_ARCH_OBJ): $(KERNEL_AARCH64_SRC)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -c -o $@ $<
+	$(AARCH64_CC) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
 
 $(KERNEL_AARCH64): $(KERNEL_AARCH64_COMMON_OBJ) $(KERNEL_AARCH64_ARCH_OBJ) $(KERNEL_AARCH64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
@@ -101,10 +108,14 @@ $(ISO_X86_64): prepare-iso-tools $(KERNEL_X86_64) $(BOOT_CFG) $(BOOTX64_EFI)
 	export MTOOLS_SKIP_CHECK=1; \
 	mmd -i $$ESP_TMP ::/EFI; \
 	mmd -i $$ESP_TMP ::/EFI/BOOT; \
+	mmd -i $$ESP_TMP ::/EFI/limine; \
 	mmd -i $$ESP_TMP ::/boot; \
+	mmd -i $$ESP_TMP ::/boot/limine; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/boot/kernel.elf ::/boot/kernel.elf; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/limine.conf; \
+	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/boot/limine/limine.conf; \
+	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/EFI/limine/limine.conf; \
 	dd if=$$ESP_TMP of=$@ bs=$(SECTOR_SIZE) seek=$$START conv=notrunc status=none; \
 	rm -f $$ESP_TMP
 
@@ -126,10 +137,14 @@ $(ISO_AARCH64): prepare-iso-tools $(KERNEL_AARCH64) $(BOOT_CFG) $(BOOTAA64_EFI)
 	export MTOOLS_SKIP_CHECK=1; \
 	mmd -i $$ESP_TMP ::/EFI; \
 	mmd -i $$ESP_TMP ::/EFI/BOOT; \
+	mmd -i $$ESP_TMP ::/EFI/limine; \
 	mmd -i $$ESP_TMP ::/boot; \
+	mmd -i $$ESP_TMP ::/boot/limine; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/EFI/BOOT/BOOTAA64.EFI ::/EFI/BOOT/BOOTAA64.EFI; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/boot/kernel.elf ::/boot/kernel.elf; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/limine.conf; \
+	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/boot/limine/limine.conf; \
+	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/EFI/limine/limine.conf; \
 	dd if=$$ESP_TMP of=$@ bs=$(SECTOR_SIZE) seek=$$START conv=notrunc status=none; \
 	rm -f $$ESP_TMP
 
@@ -143,8 +158,8 @@ QEMU_X86_64 ?= qemu-system-x86_64
 QEMU_AARCH64 ?= qemu-system-aarch64
 QEMU_COMMON ?= -m 1024 -serial stdio
 
-qemu-x86_64: 
+qemu-x86_64: x86_64
 	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)" -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
 
-qemu-aarch64: 
-	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-device,drive=osdisk
+qemu-aarch64: aarch64
+	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0

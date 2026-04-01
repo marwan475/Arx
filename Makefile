@@ -14,10 +14,6 @@ IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 KERNEL_SRC ?= kernel.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
-KERNEL_X86_64_COMMON_OBJ ?= $(BUILD_DIR)/kernel-common-x86_64.o
-KERNEL_AARCH64_COMMON_OBJ ?= $(BUILD_DIR)/kernel-common-aarch64.o
-KERNEL_X86_64_ARCH_OBJ ?= $(BUILD_DIR)/kernel-arch-x86_64.o
-KERNEL_AARCH64_ARCH_OBJ ?= $(BUILD_DIR)/kernel-arch-aarch64.o
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
 
@@ -39,12 +35,14 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64
 
-KERNEL_X86_64_COMMON_DEP ?= $(KERNEL_X86_64_COMMON_OBJ:.o=.d)
-KERNEL_AARCH64_COMMON_DEP ?= $(KERNEL_AARCH64_COMMON_OBJ:.o=.d)
-KERNEL_X86_64_ARCH_DEP ?= $(KERNEL_X86_64_ARCH_OBJ:.o=.d)
-KERNEL_AARCH64_ARCH_DEP ?= $(KERNEL_AARCH64_ARCH_OBJ:.o=.d)
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/printf.c klib/klib.c
+KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC)
+KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC)
 
--include $(KERNEL_X86_64_COMMON_DEP) $(KERNEL_AARCH64_COMMON_DEP) $(KERNEL_X86_64_ARCH_DEP) $(KERNEL_AARCH64_ARCH_DEP)
+KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
+KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(KERNEL_AARCH64_SRCS))
+
+-include $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
 
 all: x86_64 aarch64
 
@@ -59,31 +57,24 @@ prepare-iso-tools:
 	@test -f "$(KERNEL_X86_64_LD)" || { echo "Error: missing $(KERNEL_X86_64_LD)" >&2; exit 1; }
 	@test -f "$(KERNEL_AARCH64_LD)" || { echo "Error: missing $(KERNEL_AARCH64_LD)" >&2; exit 1; }
 
-$(KERNEL_X86_64_COMMON_OBJ): $(KERNEL_SRC)
-	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+
+$(BUILD_DIR)/x86_64/%.o: %.c
+	@mkdir -p $(dir $@) $(BIN_DIR)
 	$(X86_64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
 
-$(KERNEL_X86_64_ARCH_OBJ): $(KERNEL_X86_64_SRC)
-	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mcmodel=kernel -nostdlib -MMD -MP -c -o $@ $<
-
-$(KERNEL_X86_64): $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ) $(KERNEL_X86_64_LD)
-	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) -nostdlib -no-pie -Wl,-T,$(KERNEL_X86_64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-x86_64.map -o $@ $(KERNEL_X86_64_COMMON_OBJ) $(KERNEL_X86_64_ARCH_OBJ)
-
-$(KERNEL_AARCH64_COMMON_OBJ): $(KERNEL_SRC)
-	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+$(BUILD_DIR)/aarch64/%.o: %.c
+	@mkdir -p $(dir $@) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
 	$(AARCH64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
 
-$(KERNEL_AARCH64_ARCH_OBJ): $(KERNEL_AARCH64_SRC)
+$(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD)
+	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+	$(X86_64_CC) -nostdlib -no-pie -Wl,-T,$(KERNEL_X86_64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-x86_64.map -o $@ $(KERNEL_X86_64_OBJS)
+
+$(KERNEL_AARCH64): $(KERNEL_AARCH64_OBJS) $(KERNEL_AARCH64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -c -o $@ $<
-
-$(KERNEL_AARCH64): $(KERNEL_AARCH64_COMMON_OBJ) $(KERNEL_AARCH64_ARCH_OBJ) $(KERNEL_AARCH64_LD)
-	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(AARCH64_CC) -nostdlib -no-pie -Wl,-T,$(KERNEL_AARCH64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-aarch64.map -o $@ $(KERNEL_AARCH64_COMMON_OBJ) $(KERNEL_AARCH64_ARCH_OBJ)
+	$(AARCH64_CC) -nostdlib -no-pie -Wl,-T,$(KERNEL_AARCH64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-aarch64.map -o $@ $(KERNEL_AARCH64_OBJS)
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)

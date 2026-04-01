@@ -20,8 +20,6 @@ __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
-#define BOOT_MEMMAP_MAX_ENTRIES 256
-
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
 void arch_serial_putchar(char c)

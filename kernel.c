@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-#include "arx_boot.h"
+#include "boot/boot.h"
 
 void arch_serial_putchar(char c);
 
@@ -60,6 +60,31 @@ static void panic_halt(void)
     }
 }
 
+static const char *boot_memmap_type_to_string(uint64_t type)
+{
+    switch (type)
+    {
+    case BOOT_MEMMAP_USABLE:
+        return "usable";
+    case BOOT_MEMMAP_RESERVED:
+        return "reserved";
+    case BOOT_MEMMAP_ACPI_RECLAIMABLE:
+        return "acpi_reclaimable";
+    case BOOT_MEMMAP_ACPI_NVS:
+        return "acpi_nvs";
+    case BOOT_MEMMAP_BAD_MEMORY:
+        return "bad_memory";
+    case BOOT_MEMMAP_BOOTLOADER_RECLAIMABLE:
+        return "bootloader_reclaimable";
+    case BOOT_MEMMAP_KERNEL_AND_MODULES:
+        return "kernel_and_modules";
+    case BOOT_MEMMAP_FRAMEBUFFER:
+        return "framebuffer";
+    default:
+        return "unknown";
+    }
+}
+
 void kmain(struct boot_info *boot_info)
 {
     struct boot_memmap_entry *memmap;
@@ -92,7 +117,7 @@ void kmain(struct boot_info *boot_info)
         serial_write_string(" len=");
         serial_write_hex_u64(memmap[i].length);
         serial_write_string(" type=");
-        serial_write_dec_u64(memmap[i].type);
+        serial_write_string(boot_memmap_type_to_string(memmap[i].type));
         serial_write_string("\n");
     }
 

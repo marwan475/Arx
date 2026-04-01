@@ -3,6 +3,17 @@
 
 #include <stdint.h>
 
+enum boot_memmap_type {
+    BOOT_MEMMAP_USABLE = 0,
+    BOOT_MEMMAP_RESERVED = 1,
+    BOOT_MEMMAP_ACPI_RECLAIMABLE = 2,
+    BOOT_MEMMAP_ACPI_NVS = 3,
+    BOOT_MEMMAP_BAD_MEMORY = 4,
+    BOOT_MEMMAP_BOOTLOADER_RECLAIMABLE = 5,
+    BOOT_MEMMAP_KERNEL_AND_MODULES = 6,
+    BOOT_MEMMAP_FRAMEBUFFER = 7,
+};
+
 struct boot_info {
     uint64_t limine_present;
     uint64_t memmap_entry_count;

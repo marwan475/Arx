@@ -26,8 +26,6 @@ __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
-#define BOOT_MEMMAP_MAX_ENTRIES 256
-
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
 static uintptr_t pl011_base = 0x09000000u;
@@ -65,7 +63,6 @@ static void arch_serial_init(void)
 
 void arch_serial_putchar(char c)
 {
-
     for (unsigned int i = 0; i < 1000000; i++)
     {
         if (((*pl011_reg(0x18)) & (1u << 5)) == 0)

@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define BOOT_MEMMAP_MAX_ENTRIES 256
+
 enum boot_memmap_type
 {
     BOOT_MEMMAP_USABLE                 = 0,

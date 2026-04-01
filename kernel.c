@@ -2,7 +2,7 @@
 #include <klib/klib.h>
 #include <stdint.h>
 
-static void panic_halt(void)
+static void panic(void)
 {
     for (;;)
     {
@@ -43,13 +43,19 @@ void kmain(struct boot_info* boot_info)
     if (boot_info == 0 || boot_info->limine_present == 0)
     {
         kprintf("Arx kernel: no boot protocol info\n");
-        panic_halt();
+        panic();
     }
 
     if (boot_info->memmap_entries == 0 || boot_info->memmap_entry_count == 0)
     {
         kprintf("Arx kernel: no Limine memory map entries\n");
-        panic_halt();
+        panic();
+    }
+
+    if (boot_info->memmap_entry_count > BOOT_MEMMAP_MAX_ENTRIES)
+    {
+        kprintf("Arx kernel: too many memory map entries (max %u)\n", BOOT_MEMMAP_MAX_ENTRIES);
+        panic();
     }
 
     kprintf("Arx kernel: memmap entries=%llu\n", (unsigned long long) boot_info->memmap_entry_count);
@@ -57,25 +63,18 @@ void kmain(struct boot_info* boot_info)
     memmap = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
     for (uint64_t i = 0; i < boot_info->memmap_entry_count; i++)
     {
-        kprintf("Arx kernel: memmap[%llu] base=0x%llx len=0x%llx type=%s\n",
-                (unsigned long long) i,
-                (unsigned long long) memmap[i].base,
-                (unsigned long long) memmap[i].length,
+        kprintf("Arx kernel: memmap[%llu] base=0x%llx len=0x%llx type=%s\n", (unsigned long long) i, (unsigned long long) memmap[i].base, (unsigned long long) memmap[i].length,
                 boot_memmap_type_to_string(memmap[i].type));
     }
 
     if (boot_info->framebuffer_addr == 0)
     {
         kprintf("Arx kernel: no Limine framebuffer response\n");
-        panic_halt();
+        panic();
     }
 
-    kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n",
-            (unsigned long long) boot_info->framebuffer_addr,
-            (unsigned long long) boot_info->framebuffer_width,
-            (unsigned long long) boot_info->framebuffer_height,
-            (unsigned long long) boot_info->framebuffer_pitch,
-            (unsigned long long) boot_info->framebuffer_bpp);
+    kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width,
+            (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) boot_info->framebuffer_bpp);
 
     for (;;)
     {

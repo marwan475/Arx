@@ -116,4 +116,42 @@ struct limine_hhdm_request
     LIMINE_PTR(struct limine_hhdm_response*) response;
 };
 
+#define LIMINE_SMP_REQUEST {LIMINE_COMMON_MAGIC, 0x95a67b819a1b857e, 0xa0b61b723b6a73e0}
+
+struct limine_smp_info;
+
+typedef void (*limine_goto_address)(struct limine_smp_info*);
+
+struct limine_smp_info
+{
+    uint32_t processor_id;
+    uint32_t lapic_id;
+    uint64_t reserved;
+    limine_goto_address goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_smp_response
+{
+    uint64_t revision;
+    uint32_t flags;
+#if defined(__x86_64__)
+    uint32_t bsp_lapic_id;
+#elif defined(__aarch64__)
+    uint64_t bsp_mpidr;
+#else
+    uint64_t bsp_id;
+#endif
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info**) cpus;
+};
+
+struct limine_smp_request
+{
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_smp_response*) response;
+    uint64_t flags;
+};
+
 #endif

@@ -155,8 +155,9 @@ IMG_AARCH64 ?= $(ISO_AARCH64)
 
 QEMU_X86_64 ?= qemu-system-x86_64
 QEMU_AARCH64 ?= qemu-system-aarch64
-QEMU_COMMON ?= -m 1024 -serial stdio
-QEMU_DEBUG_COMMON ?= -m 1024
+QEMU_SMP ?= 4
+QEMU_COMMON ?= -m 1024 -smp $(QEMU_SMP) -serial stdio
+QEMU_DEBUG_COMMON ?= -m 1024 -smp $(QEMU_SMP)
 GDB_X86_64 ?= gdb
 GDB_AARCH64 ?= $(shell command -v gdb-multiarch >/dev/null 2>&1 && echo gdb-multiarch || echo gdb)
 QEMU_GDB_PORT_X86_64 ?= 1234

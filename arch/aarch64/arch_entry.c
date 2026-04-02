@@ -2,7 +2,7 @@
 #include <boot/limine.h>
 #include <stdint.h>
 
-__attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(2);
+__attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_memmap_request memmap_request = {
         .id       = LIMINE_MEMMAP_REQUEST,
@@ -20,6 +20,13 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .id       = LIMINE_HHDM_REQUEST,
         .revision = 0,
         .response = 0,
+};
+
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
+    .id       = LIMINE_SMP_REQUEST,
+    .revision = 0,
+    .response = 0,
+    .flags    = 0,
 };
 
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
@@ -98,6 +105,10 @@ static void gather_boot_info(struct boot_info* boot_info)
     boot_info->framebuffer_height = 0;
     boot_info->framebuffer_pitch  = 0;
     boot_info->framebuffer_bpp    = 0;
+    boot_info->smp.flags          = 0;
+    boot_info->smp.bsp_id         = 0;
+    boot_info->smp.cpu_count      = 0;
+    boot_info->smp.cpus           = 0;
 
     if (!LIMINE_BASE_REVISION_SUPPORTED)
     {
@@ -136,16 +147,37 @@ static void gather_boot_info(struct boot_info* boot_info)
         boot_info->framebuffer_pitch  = fb->pitch;
         boot_info->framebuffer_bpp    = fb->bpp;
     }
+
+    if (smp_request.response != 0)
+    {
+        uint64_t count = smp_request.response->cpu_count;
+        if (count > BOOT_SMP_MAX_CPUS)
+        {
+            count = BOOT_SMP_MAX_CPUS;
+        }
+
+        boot_info->smp.flags        = smp_request.response->flags;
+        boot_info->smp.bsp_id       = smp_request.response->bsp_mpidr;
+        boot_info->smp.cpu_count    = count;
+        boot_info->smp.cpus         = (uintptr_t) smp_request.response->cpus;
+    }
 }
 
 void _start(void)
 {
     struct boot_info boot_info;
+    uint64_t cpu_count = 1;
 
     arch_serial_init();
     serial_write_string("Arx kernel: aarch64 entry\n");
     gather_boot_info(&boot_info);
-    kmain(&boot_info);
+
+    if (boot_info.smp.cpu_count > 0)
+    {
+        cpu_count = boot_info.smp.cpu_count;
+    }
+
+    kmain(&boot_info, cpu_count);
 
     for (;;)
     {

@@ -101,14 +101,13 @@ static void cpu_boot_entry(struct boot_smp_cpu_info* cpu)
     const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
 
     arch_serial_init();
-    kprintf("Arx kernel: cpu boot entry: ");
     if (arg != 0)
     {
-        kprintf("%s", arg);
+        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
     }
     else
     {
-        kprintf("hello from cpu entry\n");
+        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
     }
 
     for (;;)

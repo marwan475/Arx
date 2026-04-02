@@ -36,65 +36,6 @@ __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_RE
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
-static void cpu_boot_entry(struct boot_smp_cpu_info* cpu)
-{
-    const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
-
-    if (arg != 0)
-    {
-        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
-    }
-    else
-    {
-        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
-    }
-
-    for (;;)
-    {
-        __asm__ volatile("wfi");
-    }
-}
-
-static void start_cpu(struct boot_smp_cpu_info* cpu)
-{
-    volatile struct boot_smp_cpu_info* vcpu = (volatile struct boot_smp_cpu_info*) cpu;
-    static const char cpu_boot_message[] = "hello from cpu entry\n";
-
-    vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    vcpu->goto_address = (uintptr_t) cpu_boot_entry;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    __asm__ volatile("dsb ishst" : : : "memory");
-    __asm__ volatile("sev" : : : "memory");
-}
-
-void arch_cpu_init(struct boot_info* boot_info)
-{
-    struct boot_smp_cpu_info** smp_cpus;
-
-    if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
-    {
-        kprintf("Arx kernel: smp cpu array unavailable\n");
-        return;
-    }
-
-    smp_cpus = (struct boot_smp_cpu_info**) (uintptr_t) boot_info->smp.cpus;
-    for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
-    {
-        uint64_t cpu_hw_id = smp_cpus[i]->mpidr;
-
-        kprintf("Arx kernel: cpu[%llu] processor_id=%u mpidr=0x%llx goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id,
-                (unsigned long long) smp_cpus[i]->mpidr, (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
-
-        if (cpu_hw_id != boot_info->smp.bsp_id)
-        {
-            start_cpu(smp_cpus[i]);
-            kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
-                    (unsigned long long) smp_cpus[i]->extra_argument);
-        }
-    }
-}
-
 static uintptr_t pl011_base = 0x09000000u;
 
 static inline volatile unsigned int* pl011_reg(unsigned int offset)
@@ -152,6 +93,67 @@ static void serial_write_string(const char* s)
 
         arch_serial_putchar(*s);
         s++;
+    }
+}
+
+static void cpu_boot_entry(struct boot_smp_cpu_info* cpu)
+{
+    const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
+
+    arch_serial_init();
+    kprintf("Arx kernel: cpu boot entry: ");
+    if (arg != 0)
+    {
+        kprintf("%s", arg);
+    }
+    else
+    {
+        kprintf("hello from cpu entry\n");
+    }
+
+    for (;;)
+    {
+        __asm__ volatile("wfi");
+    }
+}
+
+static void start_cpu(struct boot_smp_cpu_info* cpu)
+{
+    volatile struct boot_smp_cpu_info* vcpu = (volatile struct boot_smp_cpu_info*) cpu;
+    static const char cpu_boot_message[] = "hello from cpu entry\n";
+
+    vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    vcpu->goto_address = (uintptr_t) cpu_boot_entry;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __asm__ volatile("dsb ishst" : : : "memory");
+    __asm__ volatile("sev; sev; sev" : : : "memory");
+}
+
+void arch_cpu_init(struct boot_info* boot_info)
+{
+    struct boot_smp_cpu_info** smp_cpus;
+
+    if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
+    {
+        kprintf("Arx kernel: smp cpu array unavailable\n");
+        return;
+    }
+
+    smp_cpus = (struct boot_smp_cpu_info**) (uintptr_t) boot_info->smp.cpus;
+    for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
+    {
+        uint64_t cpu_hw_id = smp_cpus[i]->mpidr;
+
+        kprintf("Arx kernel: cpu[%llu] processor_id=%u mpidr=0x%llx goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id,
+                (unsigned long long) smp_cpus[i]->mpidr, (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
+
+        if (cpu_hw_id != boot_info->smp.bsp_id)
+        {
+            start_cpu(smp_cpus[i]);
+            kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
+                    (unsigned long long) smp_cpus[i]->extra_argument);
+        }
     }
 }
 

@@ -30,17 +30,37 @@ __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_RE
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
+void arch_serial_putchar(char c)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(c), "Nd"((unsigned short) 0x3F8));
+}
+
+static void serial_write_string(const char* s)
+{
+    while (*s != '\0')
+    {
+        if (*s == '\n')
+        {
+            arch_serial_putchar('\r');
+        }
+
+        arch_serial_putchar(*s);
+        s++;
+    }
+}
+
 static void cpu_boot_entry(struct boot_smp_cpu_info* cpu)
 {
     const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
 
+    kprintf("Arx kernel: cpu boot entry: ");
     if (arg != 0)
     {
-        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
+        kprintf("%s", arg);
     }
     else
     {
-        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
+        kprintf("hello from cpu entry\n");
     }
 
     for (;;)
@@ -84,25 +104,6 @@ void arch_cpu_init(struct boot_info* boot_info)
             kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
                     (unsigned long long) smp_cpus[i]->extra_argument);
         }
-    }
-}
-
-void arch_serial_putchar(char c)
-{
-    __asm__ volatile("outb %0, %1" : : "a"(c), "Nd"((unsigned short) 0x3F8));
-}
-
-static void serial_write_string(const char* s)
-{
-    while (*s != '\0')
-    {
-        if (*s == '\n')
-        {
-            arch_serial_putchar('\r');
-        }
-
-        arch_serial_putchar(*s);
-        s++;
     }
 }
 

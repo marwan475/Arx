@@ -79,7 +79,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     kprintf("Arx kernel: smp cores=%llu\n", (unsigned long long) cpu_count);
     kprintf("Arx kernel: smp response flags=0x%llx bsp_id=0x%llx cpu_count=%llu\n", (unsigned long long) boot_info->smp.flags, (unsigned long long) boot_info->smp.bsp_id,
             (unsigned long long) boot_info->smp.cpu_count);
-    arch_cpu_init(boot_info);
+    arch_smp_init(boot_info);
 
     for (;;)
     {

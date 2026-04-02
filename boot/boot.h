@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define BOOT_MEMMAP_MAX_ENTRIES 256
+#define BOOT_SMP_MAX_CPUS       8
 
 enum boot_memmap_type
 {
@@ -17,6 +18,38 @@ enum boot_memmap_type
     BOOT_MEMMAP_FRAMEBUFFER            = 7,
 };
 
+struct boot_memmap_entry
+{
+    uint64_t base;
+    uint64_t length;
+    uint64_t type;
+};
+
+struct boot_smp_cpu_info
+{
+#if defined(__x86_64__) || defined(__i386__)
+    uint32_t processor_id;
+    uint32_t lapic_id;
+#elif defined(__aarch64__)
+    uint32_t processor_id;
+    uint32_t reserved1;
+    uint64_t mpidr;
+#else
+#error Unsupported architecture for boot_smp_cpu_info
+#endif
+    uint64_t reserved;
+    uintptr_t goto_address;
+    uint64_t extra_argument;
+};
+
+struct boot_smp_info
+{
+    uint64_t flags;
+    uint64_t bsp_id;
+    uint64_t cpu_count;
+    uintptr_t cpus;
+};
+
 struct boot_info
 {
     uint64_t  limine_present;
@@ -27,15 +60,10 @@ struct boot_info
     uint64_t  framebuffer_height;
     uint64_t  framebuffer_pitch;
     uint64_t  framebuffer_bpp;
+    struct boot_smp_info smp;
 };
 
-struct boot_memmap_entry
-{
-    uint64_t base;
-    uint64_t length;
-    uint64_t type;
-};
-
-void kmain(struct boot_info* boot_info);
+void kmain(struct boot_info* boot_info, uint64_t cpu_count);
+void arch_smp_init(struct boot_info* boot_info);
 
 #endif

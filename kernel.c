@@ -34,7 +34,7 @@ static const char* boot_memmap_type_to_string(uint64_t type)
     }
 }
 
-void kmain(struct boot_info* boot_info)
+void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
     struct boot_memmap_entry* memmap;
 
@@ -75,6 +75,11 @@ void kmain(struct boot_info* boot_info)
 
     kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width,
             (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) boot_info->framebuffer_bpp);
+
+    kprintf("Arx kernel: smp cores=%llu\n", (unsigned long long) cpu_count);
+    kprintf("Arx kernel: smp response flags=0x%llx bsp_id=0x%llx cpu_count=%llu\n", (unsigned long long) boot_info->smp.flags, (unsigned long long) boot_info->smp.bsp_id,
+            (unsigned long long) boot_info->smp.cpu_count);
+    arch_smp_init(boot_info);
 
     for (;;)
     {

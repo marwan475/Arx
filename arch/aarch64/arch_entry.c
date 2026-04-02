@@ -1,5 +1,6 @@
 #include <boot/boot.h>
 #include <boot/limine.h>
+#include <klib/klib.h>
 #include <stdint.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(2);
@@ -22,6 +23,13 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .response = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
+    .id       = LIMINE_SMP_REQUEST,
+    .revision = 0,
+    .response = 0,
+    .flags    = 0,
+};
+
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
@@ -33,6 +41,16 @@ static uintptr_t pl011_base = 0x09000000u;
 static inline volatile unsigned int* pl011_reg(unsigned int offset)
 {
     return (volatile unsigned int*) (pl011_base + offset);
+}
+
+static inline void arch_enable_fp_simd(void)
+{
+    uint64_t cpacr;
+
+    __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+    cpacr |= (3ull << 20);
+    __asm__ volatile("msr cpacr_el1, %0" : : "r"(cpacr));
+    __asm__ volatile("isb");
 }
 
 static void arch_serial_init(void)
@@ -88,6 +106,66 @@ static void serial_write_string(const char* s)
     }
 }
 
+static void smp_entry(struct limine_smp_info* cpu)
+{
+    const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
+
+    arch_enable_fp_simd();
+    if (arg != 0)
+    {
+        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
+    }
+    else
+    {
+        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
+    }
+
+    for (;;)
+    {
+        __asm__ volatile("wfi");
+    }
+}
+
+static void start_core(struct limine_smp_info* cpu)
+{
+    volatile struct limine_smp_info* vcpu = (volatile struct limine_smp_info*) cpu;
+    static const char cpu_boot_message[] = "hello from cpu entry\n";
+
+    vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    vcpu->goto_address = smp_entry;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __asm__ volatile("dsb ishst" : : : "memory");
+    __asm__ volatile("sev; sev; sev" : : : "memory");
+}
+
+void arch_smp_init(struct boot_info* boot_info)
+{
+    struct limine_smp_info** smp_cpus;
+
+    if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
+    {
+        kprintf("Arx kernel: smp cpu array unavailable\n");
+        return;
+    }
+
+    smp_cpus = (struct limine_smp_info**) (uintptr_t) boot_info->smp.cpus;
+    for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
+    {
+        uint64_t cpu_hw_id = smp_cpus[i]->mpidr;
+
+        kprintf("Arx kernel: cpu[%llu] processor_id=%u mpidr=0x%llx goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id,
+                (unsigned long long) smp_cpus[i]->mpidr, (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
+
+        if (cpu_hw_id != boot_info->smp.bsp_id)
+        {
+                    start_core(smp_cpus[i]);
+            kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
+                    (unsigned long long) smp_cpus[i]->extra_argument);
+        }
+    }
+}
+
 static void gather_boot_info(struct boot_info* boot_info)
 {
     boot_info->limine_present     = 0;
@@ -98,6 +176,10 @@ static void gather_boot_info(struct boot_info* boot_info)
     boot_info->framebuffer_height = 0;
     boot_info->framebuffer_pitch  = 0;
     boot_info->framebuffer_bpp    = 0;
+    boot_info->smp.flags          = 0;
+    boot_info->smp.bsp_id         = 0;
+    boot_info->smp.cpu_count      = 0;
+    boot_info->smp.cpus           = 0;
 
     if (!LIMINE_BASE_REVISION_SUPPORTED)
     {
@@ -136,16 +218,38 @@ static void gather_boot_info(struct boot_info* boot_info)
         boot_info->framebuffer_pitch  = fb->pitch;
         boot_info->framebuffer_bpp    = fb->bpp;
     }
+
+    if (smp_request.response != 0)
+    {
+        uint64_t count = smp_request.response->cpu_count;
+        if (count > BOOT_SMP_MAX_CPUS)
+        {
+            count = BOOT_SMP_MAX_CPUS;
+        }
+
+        boot_info->smp.flags        = smp_request.response->flags;
+        boot_info->smp.bsp_id       = smp_request.response->bsp_mpidr;
+        boot_info->smp.cpu_count    = count;
+        boot_info->smp.cpus         = (uintptr_t) smp_request.response->cpus;
+    }
 }
 
 void _start(void)
 {
     struct boot_info boot_info;
+    uint64_t cpu_count = 1;
 
+    arch_enable_fp_simd();
     arch_serial_init();
     serial_write_string("Arx kernel: aarch64 entry\n");
     gather_boot_info(&boot_info);
-    kmain(&boot_info);
+
+    if (boot_info.smp.cpu_count > 0)
+    {
+        cpu_count = boot_info.smp.cpu_count;
+    }
+
+    kmain(&boot_info, cpu_count);
 
     for (;;)
     {

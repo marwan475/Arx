@@ -1,5 +1,6 @@
 #include <boot/boot.h>
 #include <boot/limine.h>
+#include <klib/klib.h>
 #include <stdint.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
@@ -14,6 +15,13 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .id       = LIMINE_FRAMEBUFFER_REQUEST,
         .revision = 0,
         .response = 0,
+};
+
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
+    .id       = LIMINE_SMP_REQUEST,
+    .revision = 0,
+    .response = 0,
+    .flags    = 0,
 };
 
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
@@ -41,6 +49,63 @@ static void serial_write_string(const char* s)
     }
 }
 
+static void smp_entry(struct limine_smp_info* cpu)
+{
+    const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
+
+    if (arg != 0)
+    {
+        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
+    }
+    else
+    {
+        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
+    }
+
+    for (;;)
+    {
+        __asm__ volatile("hlt");
+    }
+}
+
+static void start_core(struct limine_smp_info* cpu)
+{
+    volatile struct limine_smp_info* vcpu = (volatile struct limine_smp_info*) cpu;
+    static const char cpu_boot_message[] = "hello from cpu entry\n";
+
+    vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    vcpu->goto_address = smp_entry;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+void arch_smp_init(struct boot_info* boot_info)
+{
+    struct limine_smp_info** smp_cpus;
+
+    if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
+    {
+        kprintf("Arx kernel: smp cpu array unavailable\n");
+        return;
+    }
+
+    smp_cpus = (struct limine_smp_info**) (uintptr_t) boot_info->smp.cpus;
+    for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
+    {
+        uint64_t cpu_hw_id = (uint64_t) smp_cpus[i]->lapic_id;
+
+        kprintf("Arx kernel: cpu[%llu] processor_id=%u lapic_id=%u goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id, smp_cpus[i]->lapic_id,
+                (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
+
+        if (cpu_hw_id != boot_info->smp.bsp_id)
+        {
+            start_core(smp_cpus[i]);
+            kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
+                    (unsigned long long) smp_cpus[i]->extra_argument);
+        }
+    }
+}
+
 static void gather_boot_info(struct boot_info* boot_info)
 {
     boot_info->limine_present     = 0;
@@ -51,6 +116,10 @@ static void gather_boot_info(struct boot_info* boot_info)
     boot_info->framebuffer_height = 0;
     boot_info->framebuffer_pitch  = 0;
     boot_info->framebuffer_bpp    = 0;
+    boot_info->smp.flags          = 0;
+    boot_info->smp.bsp_id         = 0;
+    boot_info->smp.cpu_count      = 0;
+    boot_info->smp.cpus           = 0;
 
     if (!LIMINE_BASE_REVISION_SUPPORTED)
     {
@@ -89,15 +158,36 @@ static void gather_boot_info(struct boot_info* boot_info)
         boot_info->framebuffer_pitch  = fb->pitch;
         boot_info->framebuffer_bpp    = fb->bpp;
     }
+
+    if (smp_request.response != 0)
+    {
+        uint64_t count = smp_request.response->cpu_count;
+        if (count > BOOT_SMP_MAX_CPUS)
+        {
+            count = BOOT_SMP_MAX_CPUS;
+        }
+
+        boot_info->smp.flags        = smp_request.response->flags;
+        boot_info->smp.bsp_id       = smp_request.response->bsp_lapic_id;
+        boot_info->smp.cpu_count    = count;
+        boot_info->smp.cpus         = (uintptr_t) smp_request.response->cpus;
+    }
 }
 
 void _start(void)
 {
     struct boot_info boot_info;
+    uint64_t cpu_count = 1;
 
     serial_write_string("Arx kernel: x86_64 entry\n");
     gather_boot_info(&boot_info);
-    kmain(&boot_info);
+
+    if (boot_info.smp.cpu_count > 0)
+    {
+        cpu_count = boot_info.smp.cpu_count;
+    }
+
+    kmain(&boot_info, cpu_count);
 
     for (;;)
     {

@@ -116,4 +116,59 @@ struct limine_hhdm_request
     LIMINE_PTR(struct limine_hhdm_response*) response;
 };
 
+#define LIMINE_SMP_REQUEST {LIMINE_COMMON_MAGIC, 0x95a67b819a1b857e, 0xa0b61b723b6a73e0}
+
+struct limine_smp_info;
+
+typedef void (*limine_goto_address)(struct limine_smp_info*);
+
+#if defined(__x86_64__) || defined(__i386__)
+struct limine_smp_info
+{
+    uint32_t processor_id;
+    uint32_t lapic_id;
+    uint64_t reserved;
+    limine_goto_address goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_smp_response
+{
+    uint64_t revision;
+    uint32_t flags;
+    uint32_t bsp_lapic_id;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info**) cpus;
+};
+#elif defined(__aarch64__)
+struct limine_smp_info
+{
+    uint32_t processor_id;
+    uint32_t reserved1;
+    uint64_t mpidr;
+    uint64_t reserved;
+    limine_goto_address goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_smp_response
+{
+    uint64_t revision;
+    uint64_t flags;
+    uint64_t bsp_mpidr;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info**) cpus;
+};
+#else
+#error Unsupported architecture for Limine SMP structures
+#endif
+
+struct limine_smp_request
+{
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_smp_response*) response;
+    uint64_t flags;
+};
+
 #endif

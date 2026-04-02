@@ -125,11 +125,11 @@ typedef void (*limine_goto_address)(struct limine_smp_info*);
 #if defined(__x86_64__) || defined(__i386__)
 struct limine_smp_info
 {
-    uint32_t processor_id;
-    uint32_t lapic_id;
-    uint64_t reserved;
+    uint32_t            processor_id;
+    uint32_t            lapic_id;
+    uint64_t            reserved;
     limine_goto_address goto_address;
-    uint64_t extra_argument;
+    uint64_t            extra_argument;
 };
 
 struct limine_smp_response
@@ -143,12 +143,12 @@ struct limine_smp_response
 #elif defined(__aarch64__)
 struct limine_smp_info
 {
-    uint32_t processor_id;
-    uint32_t reserved1;
-    uint64_t mpidr;
-    uint64_t reserved;
+    uint32_t            processor_id;
+    uint32_t            reserved1;
+    uint64_t            mpidr;
+    uint64_t            reserved;
     limine_goto_address goto_address;
-    uint64_t extra_argument;
+    uint64_t            extra_argument;
 };
 
 struct limine_smp_response

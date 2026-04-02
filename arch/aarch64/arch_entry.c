@@ -24,10 +24,10 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
-    .id       = LIMINE_SMP_REQUEST,
-    .revision = 0,
-    .response = 0,
-    .flags    = 0,
+        .id       = LIMINE_SMP_REQUEST,
+        .revision = 0,
+        .response = 0,
+        .flags    = 0,
 };
 
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
@@ -128,8 +128,8 @@ static void smp_entry(struct limine_smp_info* cpu)
 
 static void start_core(struct limine_smp_info* cpu)
 {
-    volatile struct limine_smp_info* vcpu = (volatile struct limine_smp_info*) cpu;
-    static const char cpu_boot_message[] = "hello from cpu entry\n";
+    volatile struct limine_smp_info* vcpu               = (volatile struct limine_smp_info*) cpu;
+    static const char                cpu_boot_message[] = "hello from cpu entry\n";
 
     vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
     __atomic_thread_fence(__ATOMIC_RELEASE);
@@ -154,12 +154,12 @@ void arch_smp_init(struct boot_info* boot_info)
     {
         uint64_t cpu_hw_id = smp_cpus[i]->mpidr;
 
-        kprintf("Arx kernel: cpu[%llu] processor_id=%u mpidr=0x%llx goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id,
-                (unsigned long long) smp_cpus[i]->mpidr, (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
+        kprintf("Arx kernel: cpu[%llu] processor_id=%u mpidr=0x%llx goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id, (unsigned long long) smp_cpus[i]->mpidr,
+                (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
 
         if (cpu_hw_id != boot_info->smp.bsp_id)
         {
-                    start_core(smp_cpus[i]);
+            start_core(smp_cpus[i]);
             kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
                     (unsigned long long) smp_cpus[i]->extra_argument);
         }
@@ -227,17 +227,17 @@ static void gather_boot_info(struct boot_info* boot_info)
             count = BOOT_SMP_MAX_CPUS;
         }
 
-        boot_info->smp.flags        = smp_request.response->flags;
-        boot_info->smp.bsp_id       = smp_request.response->bsp_mpidr;
-        boot_info->smp.cpu_count    = count;
-        boot_info->smp.cpus         = (uintptr_t) smp_request.response->cpus;
+        boot_info->smp.flags     = smp_request.response->flags;
+        boot_info->smp.bsp_id    = smp_request.response->bsp_mpidr;
+        boot_info->smp.cpu_count = count;
+        boot_info->smp.cpus      = (uintptr_t) smp_request.response->cpus;
     }
 }
 
 void _start(void)
 {
     struct boot_info boot_info;
-    uint64_t cpu_count = 1;
+    uint64_t         cpu_count = 1;
 
     arch_enable_fp_simd();
     arch_serial_init();

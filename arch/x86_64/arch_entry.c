@@ -18,10 +18,10 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
-    .id       = LIMINE_SMP_REQUEST,
-    .revision = 0,
-    .response = 0,
-    .flags    = 0,
+        .id       = LIMINE_SMP_REQUEST,
+        .revision = 0,
+        .response = 0,
+        .flags    = 0,
 };
 
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
@@ -70,8 +70,8 @@ static void smp_entry(struct limine_smp_info* cpu)
 
 static void start_core(struct limine_smp_info* cpu)
 {
-    volatile struct limine_smp_info* vcpu = (volatile struct limine_smp_info*) cpu;
-    static const char cpu_boot_message[] = "hello from cpu entry\n";
+    volatile struct limine_smp_info* vcpu               = (volatile struct limine_smp_info*) cpu;
+    static const char                cpu_boot_message[] = "hello from cpu entry\n";
 
     vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
     __atomic_thread_fence(__ATOMIC_RELEASE);
@@ -167,17 +167,17 @@ static void gather_boot_info(struct boot_info* boot_info)
             count = BOOT_SMP_MAX_CPUS;
         }
 
-        boot_info->smp.flags        = smp_request.response->flags;
-        boot_info->smp.bsp_id       = smp_request.response->bsp_lapic_id;
-        boot_info->smp.cpu_count    = count;
-        boot_info->smp.cpus         = (uintptr_t) smp_request.response->cpus;
+        boot_info->smp.flags     = smp_request.response->flags;
+        boot_info->smp.bsp_id    = smp_request.response->bsp_lapic_id;
+        boot_info->smp.cpu_count = count;
+        boot_info->smp.cpus      = (uintptr_t) smp_request.response->cpus;
     }
 }
 
 void _start(void)
 {
     struct boot_info boot_info;
-    uint64_t cpu_count = 1;
+    uint64_t         cpu_count = 1;
 
     serial_write_string("Arx kernel: x86_64 entry\n");
     gather_boot_info(&boot_info);

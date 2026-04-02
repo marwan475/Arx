@@ -94,14 +94,9 @@ void arch_smp_init(struct boot_info* boot_info)
     {
         uint64_t cpu_hw_id = (uint64_t) smp_cpus[i]->lapic_id;
 
-        kprintf("Arx kernel: cpu[%llu] processor_id=%u lapic_id=%u goto=0x%llx arg=0x%llx\n", (unsigned long long) i, smp_cpus[i]->processor_id, smp_cpus[i]->lapic_id,
-                (unsigned long long) smp_cpus[i]->goto_address, (unsigned long long) smp_cpus[i]->extra_argument);
-
         if (cpu_hw_id != boot_info->smp.bsp_id)
         {
             start_core(smp_cpus[i]);
-            kprintf("Arx kernel: cpu[%llu] start requested goto=0x%llx arg=0x%llx\n", (unsigned long long) i, (unsigned long long) smp_cpus[i]->goto_address,
-                    (unsigned long long) smp_cpus[i]->extra_argument);
         }
     }
 }

@@ -27,8 +27,16 @@ struct boot_memmap_entry
 
 struct boot_smp_cpu_info
 {
+#if defined(__x86_64__) || defined(__i386__)
     uint32_t processor_id;
     uint32_t lapic_id;
+#elif defined(__aarch64__)
+    uint32_t processor_id;
+    uint32_t reserved1;
+    uint64_t mpidr;
+#else
+#error Unsupported architecture for boot_smp_cpu_info
+#endif
     uint64_t reserved;
     uintptr_t goto_address;
     uint64_t extra_argument;
@@ -36,7 +44,7 @@ struct boot_smp_cpu_info
 
 struct boot_smp_info
 {
-    uint32_t flags;
+    uint64_t flags;
     uint64_t bsp_id;
     uint64_t cpu_count;
     uintptr_t cpus;
@@ -56,5 +64,6 @@ struct boot_info
 };
 
 void kmain(struct boot_info* boot_info, uint64_t cpu_count);
+void arch_cpu_init(struct boot_info* boot_info);
 
 #endif

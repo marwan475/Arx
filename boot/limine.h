@@ -122,6 +122,7 @@ struct limine_smp_info;
 
 typedef void (*limine_goto_address)(struct limine_smp_info*);
 
+#if defined(__x86_64__) || defined(__i386__)
 struct limine_smp_info
 {
     uint32_t processor_id;
@@ -135,16 +136,32 @@ struct limine_smp_response
 {
     uint64_t revision;
     uint32_t flags;
-#if defined(__x86_64__)
     uint32_t bsp_lapic_id;
-#elif defined(__aarch64__)
-    uint64_t bsp_mpidr;
-#else
-    uint64_t bsp_id;
-#endif
     uint64_t cpu_count;
     LIMINE_PTR(struct limine_smp_info**) cpus;
 };
+#elif defined(__aarch64__)
+struct limine_smp_info
+{
+    uint32_t processor_id;
+    uint32_t reserved1;
+    uint64_t mpidr;
+    uint64_t reserved;
+    limine_goto_address goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_smp_response
+{
+    uint64_t revision;
+    uint64_t flags;
+    uint64_t bsp_mpidr;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_smp_info**) cpus;
+};
+#else
+#error Unsupported architecture for Limine SMP structures
+#endif
 
 struct limine_smp_request
 {

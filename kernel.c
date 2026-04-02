@@ -34,36 +34,9 @@ static const char* boot_memmap_type_to_string(uint64_t type)
     }
 }
 
-static void cpu_boot_entry(struct boot_smp_cpu_info* cpu)
-{
-    const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
-
-    if (arg != 0)
-    {
-        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
-    }
-    else
-    {
-        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
-    }
-
-    for (;;)
-    {
-    }
-}
-
-static void start_cpu(struct boot_smp_cpu_info* cpu)
-{
-    static const char cpu_boot_message[] = "hello from cpu entry\n";
-
-    cpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
-    cpu->goto_address   = (uintptr_t) cpu_boot_entry;
-}
-
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
     struct boot_memmap_entry* memmap;
-    struct boot_smp_cpu_info** smp_cpus;
 
     kprintf("Arx kernel: kmain online\n");
 
@@ -104,24 +77,9 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
             (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) boot_info->framebuffer_bpp);
 
     kprintf("Arx kernel: smp cores=%llu\n", (unsigned long long) cpu_count);
-    kprintf("Arx kernel: smp response flags=0x%x bsp_id=0x%llx cpu_count=%llu\n", boot_info->smp.flags, (unsigned long long) boot_info->smp.bsp_id, (unsigned long long) boot_info->smp.cpu_count);
-
-    if (boot_info->smp.cpu_count > 0 && boot_info->smp.cpus != 0)
-    {
-        smp_cpus = (struct boot_smp_cpu_info**) (uintptr_t) boot_info->smp.cpus;
-        for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
-        {
-            if (i != 0)
-            {
-                start_cpu(smp_cpus[i]);
-            }
-
-        }
-    }
-    else
-    {
-        kprintf("Arx kernel: smp cpu array unavailable\n");
-    }
+    kprintf("Arx kernel: smp response flags=0x%llx bsp_id=0x%llx cpu_count=%llu\n", (unsigned long long) boot_info->smp.flags, (unsigned long long) boot_info->smp.bsp_id,
+            (unsigned long long) boot_info->smp.cpu_count);
+    arch_cpu_init(boot_info);
 
     for (;;)
     {

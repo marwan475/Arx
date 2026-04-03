@@ -43,6 +43,16 @@ static inline volatile unsigned int* pl011_reg(unsigned int offset)
     return (volatile unsigned int*) (pl011_base + offset);
 }
 
+void arch_halt(void)
+{
+    __asm__ volatile("wfi");   
+}
+
+void arch_pause(void)
+{
+    __asm__ volatile("yield");
+}
+
 static inline void arch_enable_fp_simd(void)
 {
     uint64_t cpacr;

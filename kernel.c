@@ -6,6 +6,7 @@ static void panic(void)
 {
     for (;;)
     {
+        arch_halt();
     }
 }
 

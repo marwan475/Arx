@@ -28,7 +28,7 @@ DEBUG ?= 1
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -ggdb3
 CFLAGS_X86_64 := -mcmodel=kernel
-CFLAGS_AARCH64 :=
+CFLAGS_AARCH64 := -mno-outline-atomics
 LDFLAGS_COMMON := -nostdlib -no-pie
 
 ISO_X86_64 ?= $(BIN_DIR)/arx-x86_64.img

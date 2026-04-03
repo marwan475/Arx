@@ -30,6 +30,16 @@ __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_RE
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
+void arch_halt(void)
+{
+    __asm__ volatile("hlt");
+}
+
+void arch_pause(void)
+{
+    __asm__ volatile("pause");
+}
+
 void arch_serial_putchar(char c)
 {
     __asm__ volatile("outb %0, %1" : : "a"(c), "Nd"((unsigned short) 0x3F8));

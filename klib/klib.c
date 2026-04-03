@@ -22,14 +22,19 @@ int kprintf(const char* format, ...)
 //https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html
 void spinlock_aquire(spinlock_t* lock)
 {
-    if (__atomic_compare_exchange_n(lock, &(uint8_t){0}, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+    // loop so that once lock is free we aquire it
+    for (;;)
     {
-        return;
-    }
+        uint8_t expected = 0;
+        if (__atomic_compare_exchange_n(lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+        {
+            return;
+        }
 
-    while (__atomic_load_n(lock, __ATOMIC_RELAXED))
-    {
-        arch_pause();
+        while (__atomic_load_n(lock, __ATOMIC_RELAXED))
+        {
+            arch_pause();
+        }
     }
 }
 

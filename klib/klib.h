@@ -6,7 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PAGE_SIZE 4096
 #define _force_inline inline __attribute__((always_inline))
 
 typedef _Atomic uint8_t spinlock_t;

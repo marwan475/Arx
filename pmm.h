@@ -12,6 +12,12 @@ typedef struct pmm_region
     uint64_t end;
 } pmm_region_t;
 
+typedef struct pmm_pfn_range
+{
+    uint64_t start_pfn;
+    uint64_t end_pfn;
+} pmm_pfn_range_t;
+
 void pmm_init(struct boot_info* boot_info);
 
 #endif

@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define PAGE_SIZE 4096
+#define PAGE_SHIFT 12
+
 #define BOOT_MEMMAP_MAX_ENTRIES 256
 #define BOOT_SMP_MAX_CPUS 8
 

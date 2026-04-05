@@ -42,7 +42,7 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) pmm.c klib/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC)
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC)
 

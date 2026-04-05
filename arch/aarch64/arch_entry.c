@@ -45,7 +45,7 @@ static inline volatile unsigned int* pl011_reg(unsigned int offset)
 
 void arch_halt(void)
 {
-    __asm__ volatile("wfi");   
+    __asm__ volatile("wfi");
 }
 
 void arch_pause(void)

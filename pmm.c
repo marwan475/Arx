@@ -1,7 +1,5 @@
 #include <pmm.h>
 
-pmm_region_t pmm_usable_regions[PMM_MAX_REGIONS];
-size_t       pmm_usable_region_count = 0;
 size_t       pmm_total_memory        = 0;
 
 pmm_pfn_range_t pmm_usable_pfn_ranges[PMM_MAX_REGIONS];
@@ -48,13 +46,9 @@ void pmm_init(struct boot_info* boot_info)
                 continue;
             }
 
-            if (pmm_usable_region_count < PMM_MAX_REGIONS)
+            if (pmm_usable_pfn_range_count < PMM_MAX_REGIONS)
             {
-                // Store usable memory regions with raw physical addresses
-                pmm_usable_regions[pmm_usable_region_count].base = aligned_base;
-                pmm_usable_regions[pmm_usable_region_count].end  = aligned_end;
                 pmm_total_memory += aligned_end - aligned_base;
-                pmm_usable_region_count++;
 
                 // Store usable page frame numbers for buddy allocator
                 const uint64_t start_pfn = pa_to_pfn(aligned_base);
@@ -84,4 +78,6 @@ void pmm_init(struct boot_info* boot_info)
     kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) pmm_total_memory, (unsigned long long) bytes_to_kb(pmm_total_memory),
             (unsigned long long) bytes_to_mb(pmm_total_memory));
     kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) pmm_total_usable_pfns, (unsigned long long) min_pfn, (unsigned long long) max_pfn);
+
+    size_t buddy_metadata_size = align_up((pmm_total_usable_pfns * sizeof(page_t)), PAGE_SIZE);
 }

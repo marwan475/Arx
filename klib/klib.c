@@ -41,14 +41,26 @@ void* memcpy(void* dest, const void* src, size_t count)
 }
 
 // Physical address to higher half direct map
-uintptr_t pa_to_hhdm(uintptr_t pa, struct boot_info* boot_info)
+uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset)
 {
-    if (boot_info->hhdm_present)
+    if (hhdm_present)
     {
-        return pa + boot_info->hhdm_offset;
+        return pa + hhdm_offset;
     }
     else
     {
         return pa;
+    }
+}
+
+uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset)
+{
+    if (hhdm_present)
+    {
+        return hhdm_addr - hhdm_offset;
+    }
+    else
+    {
+        return hhdm_addr;
     }
 }

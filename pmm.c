@@ -12,6 +12,9 @@ size_t max_pfn = 0;
 page_t* buddy_metadata = NULL;
 free_list_t buddy_free_lists[MAX_ORDER + 1]; 
 
+bool hhdm_present = false;  
+uint64_t hhdm_offset = 0;
+
 static size_t bytes_to_kb(size_t bytes)
 {
     return bytes / 1024;
@@ -197,8 +200,11 @@ void pmm_init(struct boot_info* boot_info)
         kprintf("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
         panic();
     }
+    
+    hhdm_present = boot_info->hhdm_present;
+    hhdm_offset = boot_info->hhdm_offset;
 
-    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), boot_info);
+    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), hhdm_present, hhdm_offset);
     memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
     buddy_metadata = (page_t*) buddy_metadata_pa;
 
@@ -371,7 +377,7 @@ void* pmm_alloc(size_t size)
     }
 
     spinlock_release(&pmm_lock);
-    return (void*) pa_to_hhdm(pfn_to_pa(pfn), NULL);
+    return (void*) pa_to_hhdm(pfn_to_pa(pfn), hhdm_present, hhdm_offset);
 }
 
 void pmm_free(void* addr)
@@ -383,7 +389,7 @@ void pmm_free(void* addr)
         return;
     }
 
-    uintptr_t pa  = (uintptr_t) addr;
+    uintptr_t pa  = hhdm_to_pa((uintptr_t) addr, hhdm_present, hhdm_offset);
     uint64_t  pfn = pa_to_pfn(pa);
 
     buddy_free(pfn);

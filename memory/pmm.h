@@ -37,8 +37,8 @@ typedef struct free_list
     page_t* head;
 } free_list_t;
 
-void pmm_init(struct boot_info* boot_info);
+void  pmm_init(struct boot_info* boot_info);
 void* pmm_alloc(size_t size);
-void pmm_free(void* addr);
+void  pmm_free(void* addr);
 
 #endif

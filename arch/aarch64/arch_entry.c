@@ -24,12 +24,12 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_paging_mode_request paging_mode_request = {
-    .id       = LIMINE_PAGING_MODE_REQUEST,
-    .revision = 0,
-    .response = 0,
-    .mode     = LIMINE_PAGING_MODE_DEFAULT,
-    .max_mode = LIMINE_PAGING_MODE_DEFAULT,
-    .min_mode = LIMINE_PAGING_MODE_MIN,
+        .id       = LIMINE_PAGING_MODE_REQUEST,
+        .revision = 0,
+        .response = 0,
+        .mode     = LIMINE_PAGING_MODE_DEFAULT,
+        .max_mode = LIMINE_PAGING_MODE_DEFAULT,
+        .min_mode = LIMINE_PAGING_MODE_MIN,
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {

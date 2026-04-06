@@ -4,7 +4,8 @@
 #include <boot/boot.h>
 #include <klib/klib.h>
 
-#define PMM_MAX_REGIONS 64
+#define PMM_MAX_REGIONS 128
+#define MAX_ORDER 10
 
 typedef struct pmm_region
 {
@@ -16,18 +17,19 @@ typedef struct pmm_region
 enum page_flags
 {
     PMM_PAGE_RESERVED = 0,
-    PMM_PAGE_FREE = 1,
-    PMM_PAGE_USED = 2,
+    PMM_PAGE_FREE     = 1,
+    PMM_PAGE_USED     = 2,
 };
 
 typedef struct page page_t;
 
-typedef struct page {
+typedef struct page
+{
     uint64_t pfn;
     uint64_t flags;
     uint64_t order;
-    page_t* next;
-    page_t* prev;
+    page_t*  next;
+    page_t*  prev;
 } page_t;
 
 typedef struct free_list

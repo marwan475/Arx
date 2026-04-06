@@ -53,16 +53,6 @@ static _force_inline uint64_t order_size(size_t order)
     return 1UL << order;
 }
 
-static _force_inline bool fits_in_order(size_t page_count, size_t order)
-{
-    return page_count <= (order_size(order));
-}
-
-static _force_inline bool equal_to_order(size_t page_count, size_t order)
-{
-    return page_count == (order_size(order));
-}
-
 static _force_inline bool is_aligned_to_order(uint64_t pfn, size_t order)
 {
     return (pfn & (order_size(order) - 1)) == 0;
@@ -211,11 +201,12 @@ void pmm_init(struct boot_info* boot_info)
     uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), boot_info);
     memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
     buddy_metadata = (page_t*) buddy_metadata_pa;
-    
+
     buddy_allocator_init();
     kprintf("Arx kernel: buddy allocator initialized\n");
 }
 
+// removes head of free list
 page_t* remove_block_from_free_list(size_t order)
 {
     free_list_t* free_list = &buddy_free_lists[order];
@@ -286,7 +277,64 @@ uint64_t buddy_alloc(size_t order)
     return block->pfn;
 }
 
+// merges block with buddy, only does one merge
+page_t* merge_block(page_t* block)
+{
+    if (block->order >= MAX_ORDER)
+    {
+        return NULL;
+    }
+
+    uint64_t buddy_pfn = find_buddy_pfn(block->pfn, block->order);
+    page_t*  buddy     = &buddy_metadata[buddy_pfn];
+
+    if (buddy->flags != PMM_PAGE_FREE || buddy->order != block->order)
+    {
+        return NULL;
+    }
+
+    // remove buddy from free list
+    if (buddy->prev != NULL)
+    {
+        buddy->prev->next = buddy->next;
+    }
+    else
+    {
+        buddy_free_lists[buddy->order].head = buddy->next;
+    }
+    if (buddy->next != NULL)
+    {
+        buddy->next->prev = buddy->prev;
+    }
+
+    // merge block and buddy
+    if (buddy_pfn < block->pfn)
+    {
+        buddy->order++;
+        return buddy;
+    }
+    else
+    {
+        block->order++;
+        return block;
+    }
+}
+
 void buddy_free(uint64_t pfn)
 {
+    page_t* block = &buddy_metadata[pfn];
+    size_t order = block->order;
+
+    while (order < MAX_ORDER)
+    {
+        block = merge_block(block);
+        if (block == NULL)
+        {
+            break;
+        }
+        order = block->order;
+    }
+
+    add_block_to_free_list(block->order, block->pfn);
 
 }

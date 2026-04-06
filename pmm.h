@@ -8,15 +8,17 @@
 
 typedef struct pmm_region
 {
-    uint64_t base;
-    uint64_t end;
-} pmm_region_t;
-
-typedef struct pmm_pfn_range
-{
     uint64_t start_pfn;
     uint64_t end_pfn;
-} pmm_pfn_range_t;
+    size_t   page_count;
+} pmm_region_t;
+
+enum page_flags
+{
+    PMM_PAGE_RESERVED = 0,
+    PMM_PAGE_FREE = 1,
+    PMM_PAGE_USED = 2,
+};
 
 typedef struct page page_t;
 
@@ -27,6 +29,11 @@ typedef struct page {
     page_t* next;
     page_t* prev;
 } page_t;
+
+typedef struct free_list
+{
+    page_t* head;
+} free_list_t;
 
 void pmm_init(struct boot_info* boot_info);
 

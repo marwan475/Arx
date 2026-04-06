@@ -1,7 +1,7 @@
 #ifndef KLIB_H
 #define KLIB_H
 
-#include <boot/boot.h>
+#include <arch/arch.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>

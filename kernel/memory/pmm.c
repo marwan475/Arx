@@ -346,6 +346,7 @@ void buddy_free(uint64_t pfn)
 
 spinlock_t pmm_lock = 0;
 
+// returns hhdm address of allocated block
 void* pmm_alloc(size_t size)
 {
     spinlock_acquire(&pmm_lock);

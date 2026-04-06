@@ -40,7 +40,7 @@ ISO_AARCH64_ROOT := $(ISO_DIR)/aarch64
 BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
-.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64 x86_64-debug aarch64-debug
+.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64 debug x86_64-debug aarch64-debug
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) pmm.c klib/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC)
@@ -168,6 +168,8 @@ qemu-x86_64:
 
 qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0
+
+debug: x86_64-debug
 
 x86_64-debug:
 	@$(MAKE) --no-print-directory -B DEBUG=1 $(ISO_X86_64)

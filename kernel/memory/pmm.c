@@ -1,4 +1,4 @@
-#include <pmm.h>
+#include <memory/pmm.h>
 
 size_t pmm_total_memory = 0;
 
@@ -9,8 +9,11 @@ size_t       pmm_total_usable_pfns   = 0;
 size_t min_pfn = 0;
 size_t max_pfn = 0;
 
-page_t* buddy_metadata = NULL;
-free_list_t buddy_free_lists[MAX_ORDER + 1]; 
+page_t*     buddy_metadata = NULL;
+free_list_t buddy_free_lists[MAX_ORDER + 1];
+
+bool     hhdm_present = false;
+uint64_t hhdm_offset  = 0;
 
 static size_t bytes_to_kb(size_t bytes)
 {
@@ -67,10 +70,10 @@ static _force_inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
 void add_block_to_free_list(size_t order, uint64_t pfn)
 {
     page_t* block = &buddy_metadata[pfn];
-    block->flags = PMM_PAGE_FREE;
-    block->order = order;
-    block->next  = NULL;
-    block->prev  = NULL;
+    block->flags  = PMM_PAGE_FREE;
+    block->order  = order;
+    block->next   = NULL;
+    block->prev   = NULL;
 
     free_list_t* free_list = &buddy_free_lists[order];
     if (free_list->head == NULL)
@@ -79,17 +82,17 @@ void add_block_to_free_list(size_t order, uint64_t pfn)
     }
     else
     {
-        block->next = free_list->head;
+        block->next           = free_list->head;
         free_list->head->prev = block;
-        free_list->head = block;
+        free_list->head       = block;
     }
 }
 
 void buddy_seed_region(size_t region_index)
 {
-    uint64_t start_pfn = pmm_usable_regions[region_index].start_pfn;
-    uint64_t end_pfn   = pmm_usable_regions[region_index].end_pfn;
-    size_t remaining_pages = pmm_usable_regions[region_index].page_count;
+    uint64_t start_pfn       = pmm_usable_regions[region_index].start_pfn;
+    uint64_t end_pfn         = pmm_usable_regions[region_index].end_pfn;
+    size_t   remaining_pages = pmm_usable_regions[region_index].page_count;
 
     // For an order to be valid its block size must be less than or equal to remaining pages
     // and the start pfn must be aligned to the block size
@@ -99,7 +102,8 @@ void buddy_seed_region(size_t region_index)
 
         // on while loop exit the order is valid
         // goal is to find largest valid order
-        while (order > 0){
+        while (order > 0)
+        {
             if (order_size(order) <= remaining_pages && is_aligned_to_order(start_pfn, order))
             {
                 break;
@@ -111,8 +115,6 @@ void buddy_seed_region(size_t region_index)
         start_pfn += order_size(order);
         remaining_pages -= order_size(order);
     }
-
-
 }
 
 // since we memset buddy_metadata to 0 all pages are set to reserved with order 0
@@ -127,11 +129,11 @@ void buddy_allocator_init()
         for (uint64_t pfn = start_pfn; pfn < end_pfn; pfn++)
         {
             page_t* page = &buddy_metadata[pfn];
-            page->pfn   = pfn;
-            page->flags = PMM_PAGE_FREE;
-            page->order = 0;
-            page->next  = NULL;
-            page->prev  = NULL;
+            page->pfn    = pfn;
+            page->flags  = PMM_PAGE_FREE;
+            page->order  = 0;
+            page->next   = NULL;
+            page->prev   = NULL;
         }
 
         buddy_seed_region(i);
@@ -198,7 +200,10 @@ void pmm_init(struct boot_info* boot_info)
         panic();
     }
 
-    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), boot_info);
+    hhdm_present = boot_info->hhdm_present;
+    hhdm_offset  = boot_info->hhdm_offset;
+
+    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), hhdm_present, hhdm_offset);
     memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
     buddy_metadata = (page_t*) buddy_metadata_pa;
 
@@ -215,14 +220,14 @@ page_t* remove_block_from_free_list(size_t order)
         return NULL;
     }
 
-    page_t* block = free_list->head;
+    page_t* block   = free_list->head;
     free_list->head = block->next;
     if (free_list->head != NULL)
     {
         free_list->head->prev = NULL;
     }
-    block->next = NULL;
-    block->prev = NULL;
+    block->next  = NULL;
+    block->prev  = NULL;
     block->flags = PMM_PAGE_USED;
 
     return block;
@@ -266,13 +271,13 @@ uint64_t buddy_alloc(size_t order)
         return 0;
     }
 
-    if ( order == original_order)
+    if (order == original_order)
     {
         return block->pfn;
     }
 
     // if higher order then requested split block
-    block = split_block(block, order, original_order);
+    block        = split_block(block, order, original_order);
     block->flags = PMM_PAGE_USED;
     return block->pfn;
 }
@@ -337,11 +342,11 @@ void buddy_free(uint64_t pfn)
     }
 
     add_block_to_free_list(block->order, block->pfn);
-
 }
 
 spinlock_t pmm_lock = 0;
 
+// returns hhdm address of allocated block
 void* pmm_alloc(size_t size)
 {
     spinlock_acquire(&pmm_lock);
@@ -371,7 +376,7 @@ void* pmm_alloc(size_t size)
     }
 
     spinlock_release(&pmm_lock);
-    return (void*) pa_to_hhdm(pfn_to_pa(pfn), NULL);
+    return (void*) pa_to_hhdm(pfn_to_pa(pfn), hhdm_present, hhdm_offset);
 }
 
 void pmm_free(void* addr)
@@ -383,7 +388,7 @@ void pmm_free(void* addr)
         return;
     }
 
-    uintptr_t pa  = (uintptr_t) addr;
+    uintptr_t pa  = hhdm_to_pa((uintptr_t) addr, hhdm_present, hhdm_offset);
     uint64_t  pfn = pa_to_pfn(pa);
 
     buddy_free(pfn);

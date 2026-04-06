@@ -1,6 +1,6 @@
 #include <boot/boot.h>
 #include <klib/klib.h>
-#include <pmm.h>
+#include <memory/pmm.h>
 #include <stdint.h>
 
 // From bootloader we need

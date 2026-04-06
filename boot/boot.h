@@ -70,7 +70,5 @@ struct boot_info
 
 void kmain(struct boot_info* boot_info, uint64_t cpu_count);
 void arch_smp_init(struct boot_info* boot_info);
-void arch_halt(void);
-void arch_pause(void);
 
 #endif

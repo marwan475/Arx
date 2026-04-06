@@ -12,9 +12,11 @@ ESP_SIZE_MB ?= 64
 ESP_SECTORS = $(shell echo $$(( $(ESP_SIZE_MB) * 2048 )))
 IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 
-KERNEL_SRC ?= kernel.c
+KERNEL_SRC ?= kernel/kernel.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
+KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch.c
+KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch.c
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
 
@@ -23,7 +25,7 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
-INCLUDE_DIRS ?= -I.
+INCLUDE_DIRS ?= -I. -Ikernel
 DEBUG ?= 1
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -ggdb3
@@ -42,9 +44,9 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64 debug x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) pmm.c klib/printf.c klib/klib.c
-KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC)
-KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC)
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/memory/pmm.c klib/printf.c klib/klib.c
+KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
+KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
 
 KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
 KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(KERNEL_AARCH64_SRCS))

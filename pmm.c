@@ -91,7 +91,7 @@ void buddy_seed_region(size_t region_index)
     uint64_t end_pfn   = pmm_usable_regions[region_index].end_pfn;
     size_t remaining_pages = pmm_usable_regions[region_index].page_count;
 
-    // For an order to be valid its block size must be less then or equal to remaining pages
+    // For an order to be valid its block size must be less than or equal to remaining pages
     // and the start pfn must be aligned to the block size
     while (remaining_pages > 0)
     {
@@ -116,7 +116,7 @@ void buddy_seed_region(size_t region_index)
 }
 
 // since we memset buddy_metadata to 0 all pages are set to reserved with order 0
-// we only need to set usable pages to free with thier pfns then seed the buddy free lists
+// we only need to set usable pages to free with their pfns then seed the buddy free lists
 void buddy_allocator_init()
 {
     for (size_t i = 0; i < pmm_usable_region_count; i++)
@@ -338,4 +338,54 @@ void buddy_free(uint64_t pfn)
 
     add_block_to_free_list(block->order, block->pfn);
 
+}
+
+spinlock_t pmm_lock = 0;
+
+void* pmm_alloc(size_t size)
+{
+    spinlock_acquire(&pmm_lock);
+    if (size == 0)
+    {
+        spinlock_release(&pmm_lock);
+        return NULL;
+    }
+
+    size_t order = 0;
+    while (order <= MAX_ORDER && order_size(order) * PAGE_SIZE < size)
+    {
+        order++;
+    }
+
+    if (order > MAX_ORDER)
+    {
+        spinlock_release(&pmm_lock);
+        return NULL;
+    }
+
+    uint64_t pfn = buddy_alloc(order);
+    if (pfn == 0)
+    {
+        spinlock_release(&pmm_lock);
+        return NULL;
+    }
+
+    spinlock_release(&pmm_lock);
+    return (void*) pa_to_hhdm(pfn_to_pa(pfn), NULL);
+}
+
+void pmm_free(void* addr)
+{
+    spinlock_acquire(&pmm_lock);
+    if (addr == NULL)
+    {
+        spinlock_release(&pmm_lock);
+        return;
+    }
+
+    uintptr_t pa  = (uintptr_t) addr;
+    uint64_t  pfn = pa_to_pfn(pa);
+
+    buddy_free(pfn);
+    spinlock_release(&pmm_lock);
 }

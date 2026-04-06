@@ -9,7 +9,7 @@ spinlock_t kprintf_lock = 0;
 // https://en.cppreference.com/w/c/variadic/va_list.html
 int kprintf(const char* format, ...)
 {
-    spinlock_aquire(&kprintf_lock);
+    spinlock_acquire(&kprintf_lock);
     va_list args;
     va_start(args, format);
     const int written = vprintf_(format, args);

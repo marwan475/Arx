@@ -24,7 +24,7 @@ static _force_inline void panic(void)
 int kprintf(const char* format, ...);
 
 // spinlock
-static _force_inline void spinlock_aquire(spinlock_t* lock)
+static _force_inline void spinlock_acquire(spinlock_t* lock)
 {
     for (;;)
     {

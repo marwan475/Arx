@@ -323,15 +323,16 @@ page_t* merge_block(page_t* block)
 void buddy_free(uint64_t pfn)
 {
     page_t* block = &buddy_metadata[pfn];
-    size_t order = block->order;
+    size_t  order = block->order;
 
     while (order < MAX_ORDER)
     {
-        block = merge_block(block);
-        if (block == NULL)
+        page_t* merged = merge_block(block);
+        if (merged == NULL)
         {
             break;
         }
+        block = merged;
         order = block->order;
     }
 

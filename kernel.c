@@ -3,31 +3,12 @@
 #include <pmm.h>
 #include <stdint.h>
 
-static const char* boot_memmap_type_to_string(uint64_t type)
-{
-    switch (type)
-    {
-        case BOOT_MEMMAP_USABLE:
-            return "usable";
-        case BOOT_MEMMAP_RESERVED:
-            return "reserved";
-        case BOOT_MEMMAP_ACPI_RECLAIMABLE:
-            return "acpi_reclaimable";
-        case BOOT_MEMMAP_ACPI_NVS:
-            return "acpi_nvs";
-        case BOOT_MEMMAP_BAD_MEMORY:
-            return "bad_memory";
-        case BOOT_MEMMAP_BOOTLOADER_RECLAIMABLE:
-            return "bootloader_reclaimable";
-        case BOOT_MEMMAP_KERNEL_AND_MODULES:
-            return "kernel_and_modules";
-        case BOOT_MEMMAP_FRAMEBUFFER:
-            return "framebuffer";
-        default:
-            return "unknown";
-    }
-}
-
+// From bootloader we need
+// - memory map
+// - framebuffer info
+// - smp info
+// - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
+// - paging with no user access and RWX on direct map
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
     kprintf("Arx kernel: kmain entered\n");

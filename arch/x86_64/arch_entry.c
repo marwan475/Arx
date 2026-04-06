@@ -11,6 +11,12 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .response = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_hhdm_request hhdm_request = {
+    .id       = LIMINE_HHDM_REQUEST,
+    .revision = 0,
+    .response = 0,
+};
+
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_framebuffer_request framebuffer_request = {
         .id       = LIMINE_FRAMEBUFFER_REQUEST,
         .revision = 0,
@@ -24,11 +30,43 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .flags    = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_paging_mode_request paging_mode_request = {
+    .id       = LIMINE_PAGING_MODE_REQUEST,
+    .revision = 0,
+    .response = 0,
+    .mode     = LIMINE_PAGING_MODE_DEFAULT,
+    .max_mode = LIMINE_PAGING_MODE_DEFAULT,
+    .min_mode = LIMINE_PAGING_MODE_MIN,
+};
+
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
+
+static uint64_t read_cr0(void)
+{
+    uint64_t cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    return cr0;
+}
+
+static void write_cr0(uint64_t cr0)
+{
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
+}
+
+static void ensure_paging_enabled(void)
+{
+    uint64_t cr0 = read_cr0();
+
+    if ((cr0 & (1ull << 31)) == 0)
+    {
+        cr0 |= (1ull << 31);
+        write_cr0(cr0);
+    }
+}
 
 void arch_halt(void)
 {
@@ -114,6 +152,8 @@ void arch_smp_init(struct boot_info* boot_info)
 static void gather_boot_info(struct boot_info* boot_info)
 {
     boot_info->limine_present     = 0;
+    boot_info->hhdm_present       = 0;
+    boot_info->hhdm_offset        = 0;
     boot_info->memmap_entry_count = 0;
     boot_info->memmap_entries     = 0;
     boot_info->framebuffer_addr   = 0;
@@ -132,6 +172,12 @@ static void gather_boot_info(struct boot_info* boot_info)
     }
 
     boot_info->limine_present = 1;
+
+    if (hhdm_request.response != 0)
+    {
+        boot_info->hhdm_present = 1;
+        boot_info->hhdm_offset  = hhdm_request.response->offset;
+    }
 
     if (memmap_request.response != 0)
     {
@@ -184,6 +230,7 @@ void _start(void)
     struct boot_info boot_info;
     uint64_t         cpu_count = 1;
 
+    ensure_paging_enabled();
     serial_write_string("Arx kernel: x86_64 entry\n");
     gather_boot_info(&boot_info);
 

@@ -106,6 +106,8 @@ void pmm_init(struct boot_info* boot_info)
         panic();              
     }
 
-    uintptr_t buddy_metadata_pa = pfn_to_pa(buddy_metadata_pfn);
-    //memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
+    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), boot_info);
+    memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
+
+    kprintf("Arx kernel: buddy allocator metadata initialized at PA: %p, size: %llu bytes\n", (void*) buddy_metadata_pa, (unsigned long long) buddy_metadata_size);
 }

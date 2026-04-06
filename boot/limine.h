@@ -116,6 +116,38 @@ struct limine_hhdm_request
     LIMINE_PTR(struct limine_hhdm_response*) response;
 };
 
+#define LIMINE_PAGING_MODE_REQUEST {LIMINE_COMMON_MAGIC, 0x95c1a0edab0944cb, 0xa4e5cb3842f7488a}
+
+#if defined(__x86_64__) || defined(__i386__)
+#define LIMINE_PAGING_MODE_X86_64_4LVL 0
+#define LIMINE_PAGING_MODE_X86_64_5LVL 1
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_X86_64_4LVL
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_X86_64_4LVL
+#elif defined(__aarch64__)
+#define LIMINE_PAGING_MODE_AARCH64_4LVL 0
+#define LIMINE_PAGING_MODE_AARCH64_5LVL 1
+#define LIMINE_PAGING_MODE_MIN LIMINE_PAGING_MODE_AARCH64_4LVL
+#define LIMINE_PAGING_MODE_DEFAULT LIMINE_PAGING_MODE_AARCH64_4LVL
+#else
+#error Unsupported architecture for Limine paging mode definitions
+#endif
+
+struct limine_paging_mode_response
+{
+    uint64_t revision;
+    uint64_t mode;
+};
+
+struct limine_paging_mode_request
+{
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_paging_mode_response*) response;
+    uint64_t mode;
+    uint64_t max_mode;
+    uint64_t min_mode;
+};
+
 #define LIMINE_SMP_REQUEST {LIMINE_COMMON_MAGIC, 0x95a67b819a1b857e, 0xa0b61b723b6a73e0}
 
 struct limine_smp_info;

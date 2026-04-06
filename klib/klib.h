@@ -59,5 +59,6 @@ static _force_inline uint64_t align_down(uint64_t x, uint64_t a)
 // memory
 void* memset(void* dest, int value, size_t count);
 void* memcpy(void* dest, const void* src, size_t count);
+uintptr_t pa_to_hhdm(uintptr_t pa, struct boot_info* boot_info);
 
 #endif

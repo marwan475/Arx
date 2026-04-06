@@ -23,6 +23,15 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .response = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_paging_mode_request paging_mode_request = {
+        .id       = LIMINE_PAGING_MODE_REQUEST,
+        .revision = 0,
+        .response = 0,
+        .mode     = LIMINE_PAGING_MODE_DEFAULT,
+        .max_mode = LIMINE_PAGING_MODE_DEFAULT,
+        .min_mode = LIMINE_PAGING_MODE_MIN,
+};
+
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_smp_request smp_request = {
         .id       = LIMINE_SMP_REQUEST,
         .revision = 0,
@@ -38,6 +47,30 @@ static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
 
 static uintptr_t pl011_base = 0x09000000u;
 
+static uint64_t read_sctlr_el1(void)
+{
+    uint64_t sctlr;
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    return sctlr;
+}
+
+static void write_sctlr_el1(uint64_t sctlr)
+{
+    __asm__ volatile("msr sctlr_el1, %0" : : "r"(sctlr) : "memory");
+    __asm__ volatile("isb");
+}
+
+static void ensure_paging_enabled(void)
+{
+    uint64_t sctlr = read_sctlr_el1();
+
+    if ((sctlr & (1ull << 0)) == 0)
+    {
+        sctlr |= (1ull << 0);
+        write_sctlr_el1(sctlr);
+    }
+}
+
 static inline volatile unsigned int* pl011_reg(unsigned int offset)
 {
     return (volatile unsigned int*) (pl011_base + offset);
@@ -45,7 +78,7 @@ static inline volatile unsigned int* pl011_reg(unsigned int offset)
 
 void arch_halt(void)
 {
-    __asm__ volatile("wfi");   
+    __asm__ volatile("wfi");
 }
 
 void arch_pause(void)
@@ -174,6 +207,8 @@ void arch_smp_init(struct boot_info* boot_info)
 static void gather_boot_info(struct boot_info* boot_info)
 {
     boot_info->limine_present     = 0;
+    boot_info->hhdm_present       = 0;
+    boot_info->hhdm_offset        = 0;
     boot_info->memmap_entry_count = 0;
     boot_info->memmap_entries     = 0;
     boot_info->framebuffer_addr   = 0;
@@ -192,6 +227,12 @@ static void gather_boot_info(struct boot_info* boot_info)
     }
 
     boot_info->limine_present = 1;
+
+    if (hhdm_request.response != 0)
+    {
+        boot_info->hhdm_present = 1;
+        boot_info->hhdm_offset  = hhdm_request.response->offset;
+    }
 
     if (memmap_request.response != 0)
     {
@@ -244,6 +285,7 @@ void _start(void)
     struct boot_info boot_info;
     uint64_t         cpu_count = 1;
 
+    ensure_paging_enabled();
     arch_enable_fp_simd();
     arch_serial_init();
     serial_write_string("Arx kernel: aarch64 entry\n");

@@ -1,45 +1,17 @@
 #include <boot/boot.h>
 #include <klib/klib.h>
+#include <pmm.h>
 #include <stdint.h>
 
-static void panic(void)
-{
-    for (;;)
-    {
-        arch_halt();
-    }
-}
-
-static const char* boot_memmap_type_to_string(uint64_t type)
-{
-    switch (type)
-    {
-        case BOOT_MEMMAP_USABLE:
-            return "usable";
-        case BOOT_MEMMAP_RESERVED:
-            return "reserved";
-        case BOOT_MEMMAP_ACPI_RECLAIMABLE:
-            return "acpi_reclaimable";
-        case BOOT_MEMMAP_ACPI_NVS:
-            return "acpi_nvs";
-        case BOOT_MEMMAP_BAD_MEMORY:
-            return "bad_memory";
-        case BOOT_MEMMAP_BOOTLOADER_RECLAIMABLE:
-            return "bootloader_reclaimable";
-        case BOOT_MEMMAP_KERNEL_AND_MODULES:
-            return "kernel_and_modules";
-        case BOOT_MEMMAP_FRAMEBUFFER:
-            return "framebuffer";
-        default:
-            return "unknown";
-    }
-}
-
+// From bootloader we need
+// - memory map
+// - framebuffer info
+// - smp info
+// - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
+// - paging with no user access and RWX on direct map
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
-    struct boot_memmap_entry* memmap;
-
-    kprintf("Arx kernel: kmain online\n");
+    kprintf("Arx kernel: kmain entered\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
     {
@@ -49,7 +21,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     if (boot_info->memmap_entries == 0 || boot_info->memmap_entry_count == 0)
     {
-        kprintf("Arx kernel: no Limine memory map entries\n");
+        kprintf("Arx kernel: no memory map entries\n");
         panic();
     }
 
@@ -59,28 +31,18 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    kprintf("Arx kernel: memmap entries=%llu\n", (unsigned long long) boot_info->memmap_entry_count);
-
-    memmap = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
-    for (uint64_t i = 0; i < boot_info->memmap_entry_count; i++)
-    {
-        kprintf("Arx kernel: memmap[%llu] base=0x%llx len=0x%llx type=%s\n", (unsigned long long) i, (unsigned long long) memmap[i].base, (unsigned long long) memmap[i].length,
-                boot_memmap_type_to_string(memmap[i].type));
-    }
-
     if (boot_info->framebuffer_addr == 0)
     {
-        kprintf("Arx kernel: no Limine framebuffer response\n");
+        kprintf("Arx kernel: no framebuffer\n");
         panic();
     }
 
     kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width,
             (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) boot_info->framebuffer_bpp);
 
-    kprintf("Arx kernel: smp cores=%llu\n", (unsigned long long) cpu_count);
-    kprintf("Arx kernel: smp response flags=0x%llx bsp_id=0x%llx cpu_count=%llu\n", (unsigned long long) boot_info->smp.flags, (unsigned long long) boot_info->smp.bsp_id,
-            (unsigned long long) boot_info->smp.cpu_count);
     arch_smp_init(boot_info);
+
+    pmm_init(boot_info);
 
     for (;;)
     {

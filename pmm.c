@@ -210,8 +210,83 @@ void pmm_init(struct boot_info* boot_info)
 
     uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), boot_info);
     memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
-
     buddy_metadata = (page_t*) buddy_metadata_pa;
+    
     buddy_allocator_init();
     kprintf("Arx kernel: buddy allocator initialized\n");
+}
+
+page_t* remove_block_from_free_list(size_t order)
+{
+    free_list_t* free_list = &buddy_free_lists[order];
+    if (free_list->head == NULL)
+    {
+        return NULL;
+    }
+
+    page_t* block = free_list->head;
+    free_list->head = block->next;
+    if (free_list->head != NULL)
+    {
+        free_list->head->prev = NULL;
+    }
+    block->next = NULL;
+    block->prev = NULL;
+    block->flags = PMM_PAGE_USED;
+
+    return block;
+}
+
+page_t* split_block(page_t* block, size_t from_order, size_t to_order)
+{
+    if (from_order <= to_order)
+    {
+        return block;
+    }
+
+    while (from_order > to_order)
+    {
+        from_order--;
+        uint64_t buddy_pfn = find_buddy_pfn(block->pfn, from_order); // new buddy pfn should be in block so no need to check if its valid
+        add_block_to_free_list(from_order, buddy_pfn);
+        block->order = from_order;
+    }
+
+    return block;
+}
+
+uint64_t buddy_alloc(size_t order)
+{
+    size_t original_order = order;
+    // find first order with free blocks that can satisfy request
+    while (order <= MAX_ORDER && buddy_free_lists[order].head == NULL)
+    {
+        order++;
+    }
+
+    if (order > MAX_ORDER)
+    {
+        return 0;
+    }
+
+    page_t* block = remove_block_from_free_list(order);
+    if (block == NULL)
+    {
+        return 0;
+    }
+
+    if ( order == original_order)
+    {
+        return block->pfn;
+    }
+
+    // if higher order then requested split block
+    block = split_block(block, order, original_order);
+    block->flags = PMM_PAGE_USED;
+    return block->pfn;
+}
+
+void buddy_free(uint64_t pfn)
+{
+
 }

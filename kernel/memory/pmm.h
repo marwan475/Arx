@@ -37,8 +37,27 @@ typedef struct free_list
     page_t* head;
 } free_list_t;
 
+typedef struct zone
+{
+    spinlock_t    lock;
+    pmm_region_t regions[PMM_MAX_REGIONS];
+    size_t       region_count;
+    size_t       total_pages;
+    size_t       free_pages;
+    size_t       used_pages;
+    size_t       max_pfn;
+    size_t       min_pfn;
+    page_t*      buddy_metadata;
+    free_list_t  buddy_free_lists[MAX_ORDER + 1];
+    bool         hhdm_present;
+    uint64_t     hhdm_offset;
+    size_t       total_memory;
+} zone_t;
+
+extern zone_t pmm_zone;
+
 void  pmm_init(struct boot_info* boot_info);
-void* pmm_alloc(size_t size);
-void  pmm_free(void* addr);
+void* pmm_alloc(zone_t* zone, size_t size);
+void  pmm_free(zone_t* zone, void* addr);
 
 #endif

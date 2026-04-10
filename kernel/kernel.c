@@ -3,6 +3,8 @@
 #include <memory/pmm.h>
 #include <stdint.h>
 
+void run_selftests(void);
+
 // From bootloader we need
 // - memory map
 // - framebuffer info
@@ -43,6 +45,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     arch_smp_init(boot_info);
 
     pmm_init(boot_info);
+
+    run_selftests();
 
     for (;;)
     {

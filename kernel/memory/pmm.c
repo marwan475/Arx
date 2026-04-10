@@ -199,6 +199,9 @@ void pmm_init(struct boot_info* boot_info)
     memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
     zone->buddy_metadata = (page_t*) buddy_metadata_pa;
 
+    zone->free_pages = zone->total_pages;
+    zone->used_pages = 0;
+
     buddy_allocator_init(zone);
     kprintf("Arx kernel: buddy allocator initialized\n");
 }
@@ -336,15 +339,16 @@ void buddy_free(zone_t* zone, uint64_t pfn)
     add_block_to_free_list(zone, block->order, block->pfn);
 }
 
-spinlock_t pmm_lock = 0;
-
 // returns hhdm address of allocated block
 void* pmm_alloc(zone_t* zone, size_t size)
 {
-    spinlock_acquire(&pmm_lock);
-    if (zone == NULL || size == 0)
+    if (zone == NULL)
     {
-        spinlock_release(&pmm_lock);
+        return NULL;
+    }
+
+    if (size == 0)
+    {
         return NULL;
     }
 
@@ -356,33 +360,47 @@ void* pmm_alloc(zone_t* zone, size_t size)
 
     if (order > MAX_ORDER)
     {
-        spinlock_release(&pmm_lock);
         return NULL;
     }
+
+    spinlock_acquire(&zone->lock);
 
     uint64_t pfn = buddy_alloc(zone, order);
+
+    zone->free_pages -= order_size(order);
+    zone->used_pages += order_size(order);
+
     if (pfn == 0)
     {
-        spinlock_release(&pmm_lock);
+        spinlock_release(&zone->lock);
         return NULL;
     }
 
-    spinlock_release(&pmm_lock);
+    spinlock_release(&zone->lock);
     return (void*) pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
 }
 
 void pmm_free(zone_t* zone, void* addr)
 {
-    spinlock_acquire(&pmm_lock);
-    if (zone == NULL || addr == NULL)
+    if (zone == NULL)
     {
-        spinlock_release(&pmm_lock);
+        return;
+    }
+
+    if (addr == NULL)
+    {
         return;
     }
 
     uintptr_t pa  = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
     uint64_t  pfn = pa_to_pfn(pa);
 
+    spinlock_acquire(&zone->lock);
+    
     buddy_free(zone, pfn);
-    spinlock_release(&pmm_lock);
+
+    zone->free_pages += order_size(zone->buddy_metadata[pfn].order);
+    zone->used_pages -= order_size(zone->buddy_metadata[pfn].order);
+
+    spinlock_release(&zone->lock);
 }

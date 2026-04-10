@@ -367,14 +367,14 @@ void* pmm_alloc(zone_t* zone, size_t size)
 
     uint64_t pfn = buddy_alloc(zone, order);
 
-    zone->free_pages -= order_size(order);
-    zone->used_pages += order_size(order);
-
     if (pfn == 0)
     {
         spinlock_release(&zone->lock);
         return NULL;
     }
+
+    zone->free_pages -= order_size(order);
+    zone->used_pages += order_size(order);
 
     spinlock_release(&zone->lock);
     return (void*) pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
@@ -396,11 +396,13 @@ void pmm_free(zone_t* zone, void* addr)
     uint64_t  pfn = pa_to_pfn(pa);
 
     spinlock_acquire(&zone->lock);
-    
+
+    size_t allocated_order = zone->buddy_metadata[pfn].order;
+
     buddy_free(zone, pfn);
 
-    zone->free_pages += order_size(zone->buddy_metadata[pfn].order);
-    zone->used_pages -= order_size(zone->buddy_metadata[pfn].order);
+    zone->free_pages += order_size(allocated_order);
+    zone->used_pages -= order_size(allocated_order);
 
     spinlock_release(&zone->lock);
 }

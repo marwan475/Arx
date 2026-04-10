@@ -38,6 +38,11 @@ static bool pmm_test_is_page_aligned(const void* ptr)
     return (((uintptr_t) ptr) & (PAGE_SIZE - 1)) == 0;
 }
 
+static bool pmm_test_check_zone_accounting(const zone_t* zone)
+{
+    return (zone->free_pages + zone->used_pages) == zone->total_pages;
+}
+
 void pmm_test(void)
 {
     static pmm_test_alloc_t allocs[PMM_TEST_MAX_PTRS];
@@ -58,6 +63,9 @@ void pmm_test(void)
 
     size_t failures = 0;
     size_t passes   = 0;
+    size_t baseline_free_pages = 0;
+    size_t baseline_used_pages = 0;
+    size_t scenario_expected_pages = 0;
 
     kprintf("Arx kernel: pmm_test start\n");
 
@@ -77,6 +85,20 @@ void pmm_test(void)
         passes++;
         kprintf("Arx kernel: pmm_test pass: zone initialized (pages=%llu, regions=%llu)\n", (unsigned long long) pmm_zone.total_pages, (unsigned long long) pmm_zone.region_count);
     }
+
+    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    {
+        pmm_test_log_fail("zone accounting invariant failed at start (free+used!=total)", &failures);
+    }
+    else
+    {
+        passes++;
+        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages,
+                (unsigned long long) pmm_zone.total_pages);
+    }
+
+    baseline_free_pages = pmm_zone.free_pages;
+    baseline_used_pages = pmm_zone.used_pages;
 
     if (pmm_alloc(&pmm_zone, 0) != NULL)
     {
@@ -127,10 +149,30 @@ void pmm_test(void)
         allocs[i].actual    = actual;
         allocs[i].pa_start  = pa;
         allocs[i].pa_end    = pa + actual;
+        scenario_expected_pages += pow2pages;
 
         // Touch edges to catch obvious bad mappings and accidental aliasing.
         ((volatile uint8_t*) ptr)[0]          = (uint8_t) (0xA0 + i);
         ((volatile uint8_t*) ptr)[actual - 1] = (uint8_t) (0x5A + i);
+    }
+
+    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    {
+        pmm_test_log_fail("zone accounting invariant failed after scenario allocations", &failures);
+    }
+    else if (pmm_zone.used_pages < baseline_used_pages + scenario_expected_pages)
+    {
+        pmm_test_log_fail("zone used_pages smaller than expected after scenario allocations", &failures);
+    }
+    else if (pmm_zone.free_pages > baseline_free_pages)
+    {
+        pmm_test_log_fail("zone free_pages unexpectedly increased after scenario allocations", &failures);
+    }
+    else
+    {
+        passes++;
+        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) pmm_zone.free_pages,
+                (unsigned long long) pmm_zone.used_pages, (unsigned long long) scenario_expected_pages);
     }
 
     for (size_t i = 0; i < PMM_TEST_SCENARIOS; i++)
@@ -165,6 +207,21 @@ void pmm_test(void)
             allocs[i].ptr = NULL;
         }
     }
+
+    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    {
+        pmm_test_log_fail("zone accounting invariant failed after scenario frees", &failures);
+    }
+    else if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+    {
+        pmm_test_log_fail("zone free/used pages did not return to baseline after scenario frees", &failures);
+    }
+    else
+    {
+        passes++;
+        kprintf("Arx kernel: pmm_test pass: accounting restored after scenarios\n");
+    }
+
     passes++;
     kprintf("Arx kernel: pmm_test pass: scenario blocks freed\n");
 
@@ -192,6 +249,18 @@ void pmm_test(void)
         {
             pmm_free(&pmm_zone, exhaust_ptrs[i]);
             exhaust_ptrs[i] = NULL;
+        }
+
+        if (!pmm_test_check_zone_accounting(&pmm_zone))
+        {
+            pmm_test_log_fail("zone accounting invariant failed during stress round", &failures);
+            break;
+        }
+
+        if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+        {
+            pmm_test_log_fail("zone free/used pages drifted during stress round", &failures);
+            break;
         }
     }
     passes++;
@@ -224,6 +293,21 @@ void pmm_test(void)
         pmm_free(&pmm_zone, exhaust_ptrs[i]);
         exhaust_ptrs[i] = NULL;
     }
+
+    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    {
+        pmm_test_log_fail("zone accounting invariant failed after exhaustion cleanup", &failures);
+    }
+    else if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+    {
+        pmm_test_log_fail("zone free/used pages not restored after exhaustion cleanup", &failures);
+    }
+    else
+    {
+        passes++;
+        kprintf("Arx kernel: pmm_test pass: accounting restored after exhaustion cleanup\n");
+    }
+
     passes++;
     kprintf("Arx kernel: pmm_test pass: exhaustion probe cleanup complete\n");
 

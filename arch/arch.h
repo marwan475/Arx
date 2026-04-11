@@ -8,6 +8,11 @@
 typedef uint64_t phys_addr_t;
 #endif
 
+#ifndef VIRT_ADDR_T_DEFINED
+#define VIRT_ADDR_T_DEFINED
+typedef uint64_t virt_addr_t;
+#endif
+
 #if defined(__x86_64__)
 #define ARCH_PAGE_FLAGS_INIT(flags) ((flags) = 0ULL)
 
@@ -49,19 +54,19 @@ void arch_halt(void);
 void arch_pause(void);
 
 // Page table should be raw physical address
-void arch_map_page(uint64_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
-void arch_unmap_page(uint64_t va, phys_addr_t page_table);
+void arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
+void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);
 
 // returns/takes physical address of page table
 phys_addr_t arch_get_pt(void);
 void arch_set_pt(phys_addr_t pt);
 
 // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears
-void arch_map_range(uint64_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
-void arch_unmap_range(uint64_t va_start, uint64_t size, phys_addr_t page_table);
+void arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
+void arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table);
 
 // Update page flags
-void arch_protect(uint64_t va, uint64_t flags, phys_addr_t page_table);
-void arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
+void arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table);
+void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
 
 #endif

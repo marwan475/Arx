@@ -1,4 +1,5 @@
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 
 // keep it to one zone containing all memory for now
 zone_t pmm_zone = {0};
@@ -194,9 +195,9 @@ void pmm_init(struct boot_info* boot_info)
     zone->hhdm_present = boot_info->hhdm_present;
     zone->hhdm_offset  = boot_info->hhdm_offset;
 
-    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), zone->hhdm_present, zone->hhdm_offset);
-    memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
-    zone->buddy_metadata = (page_t*) buddy_metadata_pa;
+    virt_addr_t buddy_metadata_va = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), zone->hhdm_present, zone->hhdm_offset);
+    memset((void*) buddy_metadata_va, 0, buddy_metadata_size);
+    zone->buddy_metadata = (page_t*) buddy_metadata_va;
 
     zone->free_pages = zone->total_pages;
     zone->used_pages = 0;
@@ -375,7 +376,8 @@ void* pmm_alloc(zone_t* zone, size_t size)
     zone->used_pages += order_size(order);
 
     spinlock_release(&zone->lock);
-    return (void*) pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
+    virt_addr_t hhdm_va = pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
+    return (void*) hhdm_va;
 }
 
 void pmm_free(zone_t* zone, void* addr)
@@ -390,7 +392,8 @@ void pmm_free(zone_t* zone, void* addr)
         return;
     }
 
-    phys_addr_t pa  = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
+    virt_addr_t hhdm_va = (virt_addr_t) (uintptr_t) addr;
+    phys_addr_t pa      = hhdm_to_pa(hhdm_va, zone->hhdm_present, zone->hhdm_offset);
     uint64_t   pfn = pa_to_pfn(pa);
 
     spinlock_acquire(&zone->lock);

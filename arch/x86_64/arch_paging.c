@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 
 #define X86_64_PT_LEVEL_BITS 9ULL
 #define X86_64_PT_ENTRIES (1ULL << X86_64_PT_LEVEL_BITS)
@@ -41,7 +42,7 @@
     ((1ULL << X86_64_PTE_BIT_WRITABLE) | (1ULL << X86_64_PTE_BIT_USER) | (1ULL << X86_64_PTE_BIT_PAGE_WRITE_THROUGH) | (1ULL << X86_64_PTE_BIT_PAGE_CACHE_DISABLE) | (1ULL << X86_64_PTE_BIT_ACCESSED) \
      | (1ULL << X86_64_PTE_BIT_DIRTY) | (1ULL << X86_64_PTE_BIT_PAGE_SIZE_OR_PAT) | (1ULL << X86_64_PTE_BIT_GLOBAL) | X86_64_PTE_NO_EXECUTE)
 
-static inline void x86_64_invlpg(uint64_t va)
+static inline void x86_64_invlpg(virt_addr_t va)
 {
     __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
 }
@@ -106,15 +107,15 @@ static bool x86_64_is_pa_encodable(phys_addr_t pa)
     return (pa & ~X86_64_PTE_ADDR_MASK) == 0;
 }
 
-static bool x86_64_is_canonical_va(uint64_t va)
+static bool x86_64_is_canonical_va(virt_addr_t va)
 {
     const uint64_t high_bits = va & X86_64_CANONICAL_HIGH_MASK;
     return high_bits == 0 || high_bits == X86_64_CANONICAL_HIGH_MASK;
 }
 
-static bool x86_64_is_canonical_range(uint64_t va_start, uint64_t size)
+static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
 {
-    const uint64_t last_va = va_start + size - PAGE_SIZE;
+    const virt_addr_t last_va = va_start + size - PAGE_SIZE;
     if (!x86_64_is_canonical_va(va_start) || !x86_64_is_canonical_va(last_va))
     {
         return false;
@@ -123,7 +124,7 @@ static bool x86_64_is_canonical_range(uint64_t va_start, uint64_t size)
     return (va_start & X86_64_CANONICAL_HIGH_MASK) == (last_va & X86_64_CANONICAL_HIGH_MASK);
 }
 
-static uint64_t x86_64_chunk_size(uint64_t va, uint64_t remaining, uint64_t level_shift)
+static uint64_t x86_64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t level_shift)
 {
     const uint64_t span   = 1ULL << level_shift;
     const uint64_t offset = va & (span - 1ULL);
@@ -133,7 +134,7 @@ static uint64_t x86_64_chunk_size(uint64_t va, uint64_t remaining, uint64_t leve
 
 static uint64_t* x86_64_table_from_pa(phys_addr_t pa)
 {
-    uintptr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
     return (uint64_t*) table_va;
 }
 
@@ -189,7 +190,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     return true;
 }
 
-void __attribute__((weak)) arch_map_page(uint64_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
 {
     if (!x86_64_is_canonical_va(va))
     {
@@ -259,7 +260,7 @@ void __attribute__((weak)) arch_map_page(uint64_t va, phys_addr_t pa, uint64_t f
     x86_64_invlpg(va);
 }
 
-void __attribute__((weak)) arch_unmap_page(uint64_t va, phys_addr_t page_table)
+void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
 {
     if (!x86_64_is_canonical_va(va))
     {
@@ -325,7 +326,7 @@ void __attribute__((weak)) arch_unmap_page(uint64_t va, phys_addr_t page_table)
     x86_64_invlpg(va);
 }
 
-void __attribute__((weak)) arch_map_range(uint64_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -369,9 +370,9 @@ void __attribute__((weak)) arch_map_range(uint64_t va_start, phys_addr_t pa_star
 
     bool      any_changed         = false;
     bool      requires_page_flush = false;
-    uint64_t* pml4                = x86_64_table_from_pa((uint64_t) page_table);
-    uint64_t  va                  = va_start;
-    phys_addr_t pa                = pa_start;
+    uint64_t*    pml4             = x86_64_table_from_pa((uint64_t) page_table);
+    virt_addr_t  va               = va_start;
+    phys_addr_t  pa               = pa_start;
 
     while (va < range_end)
     {
@@ -444,7 +445,7 @@ out:
     {
         if (requires_page_flush)
         {
-            for (uint64_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
+            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
             {
                 x86_64_invlpg(flush_va);
             }
@@ -456,7 +457,7 @@ out:
     }
 }
 
-void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, phys_addr_t page_table)
+void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -498,7 +499,7 @@ void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, ph
     bool           any_changed         = false;
     bool           requires_page_flush = false;
     uint64_t*      pml4                = x86_64_table_from_pa((uint64_t) page_table);
-    uint64_t       va                  = va_start;
+    virt_addr_t    va                  = va_start;
 
     while (va < range_end)
     {
@@ -566,7 +567,7 @@ void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, ph
     {
         if (requires_page_flush)
         {
-            for (uint64_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
+            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
             {
                 x86_64_invlpg(flush_va);
             }
@@ -578,7 +579,7 @@ void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, ph
     }
 }
 
-void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table)
 {
     if (!x86_64_is_canonical_va(va))
     {
@@ -653,7 +654,7 @@ void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, phys_addr_t
     }
 }
 
-void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -696,8 +697,8 @@ void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, 
 
     bool      any_changed         = false;
     bool      requires_page_flush = false;
-    uint64_t* pml4                = x86_64_table_from_pa((uint64_t) page_table);
-    uint64_t  va                  = va_start;
+    uint64_t*   pml4               = x86_64_table_from_pa((uint64_t) page_table);
+    virt_addr_t va                 = va_start;
 
     while (va < range_end)
     {
@@ -771,7 +772,7 @@ void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, 
     {
         if (requires_page_flush)
         {
-            for (uint64_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
+            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
             {
                 x86_64_invlpg(flush_va);
             }

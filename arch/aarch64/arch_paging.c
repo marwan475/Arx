@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 
 #define AARCH64_PT_LEVEL_BITS 9ULL
 #define AARCH64_PT_ENTRIES (1ULL << AARCH64_PT_LEVEL_BITS)
@@ -59,7 +60,7 @@ static inline void aarch64_isb(void)
     __asm__ volatile("isb" : : : "memory");
 }
 
-static inline void aarch64_tlbi_vaael1is(uint64_t va)
+static inline void aarch64_tlbi_vaael1is(virt_addr_t va)
 {
     const uint64_t tlbi_operand = va >> PAGE_SHIFT;
     __asm__ volatile("tlbi vaae1is, %0" : : "r"(tlbi_operand) : "memory");
@@ -135,7 +136,7 @@ void arch_set_pt(phys_addr_t pt)
     aarch64_isb();
 }
 
-static void aarch64_sync_removed_mapping(uint64_t va)
+static void aarch64_sync_removed_mapping(virt_addr_t va)
 {
     aarch64_dsb_ishst();
     aarch64_tlbi_vaael1is(va);
@@ -153,15 +154,15 @@ static bool aarch64_is_pa_encodable(phys_addr_t pa)
     return (pa & ~AARCH64_PTE_ADDR_MASK) == 0;
 }
 
-static bool aarch64_is_canonical_va(uint64_t va)
+static bool aarch64_is_canonical_va(virt_addr_t va)
 {
     const uint64_t high_bits = va & AARCH64_CANONICAL_HIGH_MASK;
     return high_bits == 0 || high_bits == AARCH64_CANONICAL_HIGH_MASK;
 }
 
-static bool aarch64_is_canonical_range(uint64_t va_start, uint64_t size)
+static bool aarch64_is_canonical_range(virt_addr_t va_start, uint64_t size)
 {
-    const uint64_t last_va = va_start + size - PAGE_SIZE;
+    const virt_addr_t last_va = va_start + size - PAGE_SIZE;
     if (!aarch64_is_canonical_va(va_start) || !aarch64_is_canonical_va(last_va))
     {
         return false;
@@ -170,7 +171,7 @@ static bool aarch64_is_canonical_range(uint64_t va_start, uint64_t size)
     return (va_start & AARCH64_CANONICAL_HIGH_MASK) == (last_va & AARCH64_CANONICAL_HIGH_MASK);
 }
 
-static uint64_t aarch64_chunk_size(uint64_t va, uint64_t remaining, uint64_t level_shift)
+static uint64_t aarch64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t level_shift)
 {
     const uint64_t span   = 1ULL << level_shift;
     const uint64_t offset = va & (span - 1ULL);
@@ -180,7 +181,7 @@ static uint64_t aarch64_chunk_size(uint64_t va, uint64_t remaining, uint64_t lev
 
 static uint64_t* aarch64_table_from_pa(phys_addr_t pa)
 {
-    uintptr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
     return (uint64_t*) table_va;
 }
 
@@ -228,7 +229,7 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
     return true;
 }
 
-void __attribute__((weak)) arch_map_page(uint64_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
 {
     if (!aarch64_is_canonical_va(va))
     {
@@ -312,7 +313,7 @@ void __attribute__((weak)) arch_map_page(uint64_t va, phys_addr_t pa, uint64_t f
     aarch64_isb();
 }
 
-void __attribute__((weak)) arch_unmap_page(uint64_t va, phys_addr_t page_table)
+void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
 {
     if (!aarch64_is_canonical_va(va))
     {
@@ -382,7 +383,7 @@ void __attribute__((weak)) arch_unmap_page(uint64_t va, phys_addr_t page_table)
     aarch64_sync_removed_mapping(va);
 }
 
-void __attribute__((weak)) arch_map_range(uint64_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -427,9 +428,9 @@ void __attribute__((weak)) arch_map_range(uint64_t va_start, phys_addr_t pa_star
     bool      replacement_seen = false;
     bool      post_sync_phase  = false;
     bool      writes_pending   = false;
-    uint64_t* l0               = aarch64_table_from_pa((uint64_t) page_table);
-    uint64_t  va               = va_start;
-    phys_addr_t pa             = pa_start;
+    uint64_t*    l0            = aarch64_table_from_pa((uint64_t) page_table);
+    virt_addr_t  va            = va_start;
+    phys_addr_t  pa            = pa_start;
 
     while (va < range_end)
     {
@@ -591,7 +592,7 @@ out:
     }
 }
 
-void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, phys_addr_t page_table)
+void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -632,7 +633,7 @@ void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, ph
     const uint64_t range_end    = va_start + size;
     bool           writes_pending = false;
     uint64_t*      l0           = aarch64_table_from_pa((uint64_t) page_table);
-    uint64_t       va           = va_start;
+    virt_addr_t    va           = va_start;
 
     while (va < range_end)
     {
@@ -705,7 +706,7 @@ out_unmap:
     }
 }
 
-void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table)
 {
     if (!aarch64_is_canonical_va(va))
     {
@@ -786,7 +787,7 @@ void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, phys_addr_t
     }
 }
 
-void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (size == 0)
     {
@@ -828,8 +829,8 @@ void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, 
     const uint64_t range_end       = va_start + size;
 
     bool      writes_pending = false;
-    uint64_t* l0             = aarch64_table_from_pa((uint64_t) page_table);
-    uint64_t  va             = va_start;
+    uint64_t*   l0            = aarch64_table_from_pa((uint64_t) page_table);
+    virt_addr_t va            = va_start;
 
     while (va < range_end)
     {

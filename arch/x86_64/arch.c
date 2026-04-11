@@ -40,9 +40,19 @@
     ((1ULL << X86_64_PTE_BIT_WRITABLE) | (1ULL << X86_64_PTE_BIT_USER) | (1ULL << X86_64_PTE_BIT_PAGE_WRITE_THROUGH) | (1ULL << X86_64_PTE_BIT_PAGE_CACHE_DISABLE) | \
      (1ULL << X86_64_PTE_BIT_ACCESSED) | (1ULL << X86_64_PTE_BIT_DIRTY) | (1ULL << X86_64_PTE_BIT_PAGE_SIZE_OR_PAT) | (1ULL << X86_64_PTE_BIT_GLOBAL) | X86_64_PTE_NO_EXECUTE)
 
+static inline void x86_64_invlpg(uint64_t va)
+{
+    __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
+}
+
 static bool x86_64_is_page_aligned(uint64_t value)
 {
     return (value & X86_64_PAGE_OFFSET_MASK) == 0;
+}
+
+static bool x86_64_is_pa_encodable(uint64_t pa)
+{
+    return (pa & ~X86_64_PTE_ADDR_MASK) == 0;
 }
 
 static bool x86_64_is_canonical_va(uint64_t va)
@@ -95,6 +105,13 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
 
     memset(new_table, 0, PAGE_SIZE);
     const uint64_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+
+    if (!x86_64_is_pa_encodable(new_table_pa))
+    {
+        kprintf("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
+        return false;
+    }
+
     const uint64_t table_flags  = X86_64_PTE_PRESENT | X86_64_PTE_WRITABLE | (inherited_flags & X86_64_PTE_USER);
 
     *entry = (new_table_pa & X86_64_PTE_ADDR_MASK) | table_flags;
@@ -116,9 +133,15 @@ void __attribute__((weak)) arch_map_page(uint64_t va, uint64_t pa, uint64_t flag
         return;
     }
 
-    if ((page_table & X86_64_PTE_ADDR_MASK) == 0)
+    if (page_table == 0)
     {
         kprintf("Arx kernel: arch_map_page rejected null page_table\n");
+        return;
+    }
+
+    if (!x86_64_is_pa_encodable(pa) || !x86_64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_map_page rejected non-encodable PA/page_table\n");
         return;
     }
 
@@ -155,7 +178,15 @@ void __attribute__((weak)) arch_map_page(uint64_t va, uint64_t pa, uint64_t flag
     }
     uint64_t* pt    = x86_64_table_from_pa(pt_pa);
 
-    pt[pt_index] = (pa & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+    const uint64_t new_pte = (pa & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+    const uint64_t old_pte = pt[pt_index];
+    if (old_pte == new_pte)
+    {
+        return;
+    }
+
+    pt[pt_index] = new_pte;
+    x86_64_invlpg(va);
 }
 
 void __attribute__((weak)) arch_unmap_page(uint64_t va, uintptr_t page_table)
@@ -172,9 +203,15 @@ void __attribute__((weak)) arch_unmap_page(uint64_t va, uintptr_t page_table)
         return;
     }
 
-    if ((page_table & X86_64_PTE_ADDR_MASK) == 0)
+    if (page_table == 0)
     {
         kprintf("Arx kernel: arch_unmap_page rejected null page_table\n");
+        return;
+    }
+
+    if (!x86_64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_unmap_page rejected non-encodable page_table\n");
         return;
     }
 
@@ -207,6 +244,13 @@ void __attribute__((weak)) arch_unmap_page(uint64_t va, uintptr_t page_table)
         return;
     }
 
-    uint64_t* pt = x86_64_table_from_pa(pt_pa);
+    uint64_t* pt      = x86_64_table_from_pa(pt_pa);
+    uint64_t  old_pte = pt[pt_index];
+    if ((old_pte & X86_64_PTE_PRESENT) == 0)
+    {
+        return;
+    }
+
     pt[pt_index] = 0;
+    x86_64_invlpg(va);
 }

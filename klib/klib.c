@@ -1,5 +1,5 @@
 #include <klib/klib.h>
-#include <klib/printf.h>
+#include <klib/printf/printf.h>
 
 spinlock_t kprintf_lock = 0;
 

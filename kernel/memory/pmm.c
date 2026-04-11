@@ -1,4 +1,5 @@
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 
 // keep it to one zone containing all memory for now
 zone_t pmm_zone = {0};
@@ -13,12 +14,12 @@ static size_t bytes_to_mb(size_t bytes)
     return bytes / (1024 * 1024);
 }
 
-static inline uint64_t pa_to_pfn(uint64_t pa)
+static inline uint64_t pa_to_pfn(phys_addr_t pa)
 {
     return pa >> PAGE_SHIFT;
 }
 
-static inline uint64_t pfn_to_pa(uint64_t pfn)
+static inline phys_addr_t pfn_to_pa(uint64_t pfn)
 {
     return pfn << PAGE_SHIFT;
 }
@@ -194,9 +195,9 @@ void pmm_init(struct boot_info* boot_info)
     zone->hhdm_present = boot_info->hhdm_present;
     zone->hhdm_offset  = boot_info->hhdm_offset;
 
-    uintptr_t buddy_metadata_pa = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), zone->hhdm_present, zone->hhdm_offset);
-    memset((void*) buddy_metadata_pa, 0, buddy_metadata_size);
-    zone->buddy_metadata = (page_t*) buddy_metadata_pa;
+    virt_addr_t buddy_metadata_va = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), zone->hhdm_present, zone->hhdm_offset);
+    memset((void*) buddy_metadata_va, 0, buddy_metadata_size);
+    zone->buddy_metadata = (page_t*) buddy_metadata_va;
 
     zone->free_pages = zone->total_pages;
     zone->used_pages = 0;
@@ -375,7 +376,8 @@ void* pmm_alloc(zone_t* zone, size_t size)
     zone->used_pages += order_size(order);
 
     spinlock_release(&zone->lock);
-    return (void*) pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
+    virt_addr_t hhdm_va = pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
+    return (void*) hhdm_va;
 }
 
 void pmm_free(zone_t* zone, void* addr)
@@ -390,8 +392,9 @@ void pmm_free(zone_t* zone, void* addr)
         return;
     }
 
-    uintptr_t pa  = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
-    uint64_t  pfn = pa_to_pfn(pa);
+    virt_addr_t hhdm_va = (virt_addr_t) (uintptr_t) addr;
+    phys_addr_t pa      = hhdm_to_pa(hhdm_va, zone->hhdm_present, zone->hhdm_offset);
+    uint64_t   pfn = pa_to_pfn(pa);
 
     spinlock_acquire(&zone->lock);
 

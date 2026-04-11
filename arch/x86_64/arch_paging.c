@@ -784,3 +784,52 @@ void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t siz
     }
 }
 
+phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table)
+{
+    if (!x86_64_is_canonical_va(va))
+    {
+        return 0;
+    }
+
+    if (!x86_64_is_page_aligned((uint64_t) page_table) || page_table == 0 || !x86_64_is_pa_encodable((uint64_t) page_table))
+    {
+        return 0;
+    }
+
+    const uint64_t pml4_index = (va >> X86_64_PT_SHIFT_PML4) & X86_64_PT_INDEX_MASK;
+    const uint64_t pdpt_index = (va >> X86_64_PT_SHIFT_PDPT) & X86_64_PT_INDEX_MASK;
+    const uint64_t pd_index   = (va >> X86_64_PT_SHIFT_PD) & X86_64_PT_INDEX_MASK;
+    const uint64_t pt_index   = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
+
+    uint64_t* pml4 = x86_64_table_from_pa((uint64_t) page_table);
+
+    phys_addr_t pdpt_pa = 0;
+    if (!x86_64_decode_table_entry(pml4[pml4_index], &pdpt_pa))
+    {
+        return 0;
+    }
+    uint64_t* pdpt = x86_64_table_from_pa(pdpt_pa);
+
+    phys_addr_t pd_pa = 0;
+    if (!x86_64_decode_table_entry(pdpt[pdpt_index], &pd_pa))
+    {
+        return 0;
+    }
+    uint64_t* pd = x86_64_table_from_pa(pd_pa);
+
+    phys_addr_t pt_pa = 0;
+    if (!x86_64_decode_table_entry(pd[pd_index], &pt_pa))
+    {
+        return 0;
+    }
+    uint64_t* pt = x86_64_table_from_pa(pt_pa);
+
+    const uint64_t pte = pt[pt_index];
+    if ((pte & X86_64_PTE_PRESENT) == 0)
+    {
+        return 0;
+    }
+
+    return (pte & X86_64_PTE_ADDR_MASK) | (va & X86_64_PAGE_OFFSET_MASK);
+}
+

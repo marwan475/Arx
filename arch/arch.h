@@ -69,4 +69,7 @@ void arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_tabl
 void arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table);
 void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
 
+// Returns physical address for a mapped virtual address, or 0 if unmapped.
+phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
+
 #endif

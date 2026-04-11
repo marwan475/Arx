@@ -45,6 +45,46 @@ static inline void x86_64_invlpg(uint64_t va)
     __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
 }
 
+uintptr_t arch_get_pt(void)
+{
+    uint64_t cr3 = 0;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    return (uintptr_t) (cr3 & X86_64_PTE_ADDR_MASK);
+}
+
+void arch_set_pt(uintptr_t pt)
+{
+    if (pt == 0)
+    {
+        kprintf("Arx kernel: arch_set_pt rejected null page table\n");
+        return;
+    }
+
+    if (!x86_64_is_page_aligned((uint64_t) pt))
+    {
+        kprintf("Arx kernel: arch_set_pt rejected unaligned page table\n");
+        return;
+    }
+
+    if (!x86_64_is_pa_encodable((uint64_t) pt))
+    {
+        kprintf("Arx kernel: arch_set_pt rejected non-encodable page table\n");
+        return;
+    }
+
+    uint64_t old_cr3 = 0;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(old_cr3));
+
+    const uint64_t low_control_bits = old_cr3 & X86_64_PAGE_OFFSET_MASK;
+    const uint64_t new_cr3          = (((uint64_t) pt) & X86_64_PTE_ADDR_MASK) | low_control_bits;
+    if (new_cr3 == old_cr3)
+    {
+        return;
+    }
+
+    __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
+}
+
 static bool x86_64_is_page_aligned(uint64_t value)
 {
     return (value & X86_64_PAGE_OFFSET_MASK) == 0;

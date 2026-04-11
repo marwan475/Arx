@@ -65,6 +65,65 @@ static inline void aarch64_tlbi_vaael1is(uint64_t va)
     __asm__ volatile("tlbi vaae1is, %0" : : "r"(tlbi_operand) : "memory");
 }
 
+static inline void aarch64_tlbi_vmalle1is(void)
+{
+    __asm__ volatile("tlbi vmalle1is" : : : "memory");
+}
+
+static inline uint64_t aarch64_read_ttbr1_el1(void)
+{
+    uint64_t ttbr1 = 0;
+    __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+    return ttbr1;
+}
+
+static inline void aarch64_write_ttbr1_el1(uint64_t ttbr1)
+{
+    __asm__ volatile("msr ttbr1_el1, %0" : : "r"(ttbr1) : "memory");
+}
+
+uintptr_t arch_get_pt(void)
+{
+    return (uintptr_t) (aarch64_read_ttbr1_el1() & AARCH64_PTE_ADDR_MASK);
+}
+
+void arch_set_pt(uintptr_t pt)
+{
+    if (pt == 0)
+    {
+        kprintf("Arx kernel: arch_set_pt rejected null page table\n");
+        return;
+    }
+
+    if (!aarch64_is_page_aligned((uint64_t) pt))
+    {
+        kprintf("Arx kernel: arch_set_pt rejected unaligned page table\n");
+        return;
+    }
+
+    if (!aarch64_is_pa_encodable((uint64_t) pt))
+    {
+        kprintf("Arx kernel: arch_set_pt rejected non-encodable page table\n");
+        return;
+    }
+
+    const uint64_t old_ttbr1   = aarch64_read_ttbr1_el1();
+    const uint64_t new_ttbr1   = (old_ttbr1 & ~AARCH64_PTE_ADDR_MASK) | (((uint64_t) pt) & AARCH64_PTE_ADDR_MASK);
+    const uint64_t old_baddr   = old_ttbr1 & AARCH64_PTE_ADDR_MASK;
+    const uint64_t new_baddr   = new_ttbr1 & AARCH64_PTE_ADDR_MASK;
+    if (old_baddr == new_baddr)
+    {
+        return;
+    }
+
+    aarch64_dsb_ishst();
+    aarch64_tlbi_vmalle1is();
+    aarch64_dsb_ish();
+
+    aarch64_write_ttbr1_el1(new_ttbr1);
+    aarch64_isb();
+}
+
 static void aarch64_sync_removed_mapping(uint64_t va)
 {
     aarch64_dsb_ishst();

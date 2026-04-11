@@ -57,6 +57,18 @@ static void write_cr0(uint64_t cr0)
     __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
 }
 
+static uint64_t read_cr4(void)
+{
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    return cr4;
+}
+
+static void write_cr4(uint64_t cr4)
+{
+    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+}
+
 static void ensure_paging_enabled(void)
 {
     uint64_t cr0 = read_cr0();
@@ -66,6 +78,25 @@ static void ensure_paging_enabled(void)
         cr0 |= (1ull << 31);
         write_cr0(cr0);
     }
+}
+
+static void arch_enable_fp_simd(void)
+{
+    static const uint32_t default_mxcsr = 0x1f80;
+
+    uint64_t cr0 = read_cr0();
+    uint64_t cr4 = read_cr4();
+
+    cr0 &= ~(1ull << 2);
+    cr0 |= (1ull << 1);
+    cr0 &= ~(1ull << 3);
+    write_cr0(cr0);
+
+    cr4 |= (1ull << 9) | (1ull << 10);
+    write_cr4(cr4);
+
+    __asm__ volatile("fninit");
+    __asm__ volatile("ldmxcsr %0" : : "m"(default_mxcsr));
 }
 
 void arch_halt(void)
@@ -100,6 +131,8 @@ static void serial_write_string(const char* s)
 static void smp_entry(struct limine_smp_info* cpu)
 {
     const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
+
+    arch_enable_fp_simd();
 
     if (arg != 0)
     {
@@ -231,6 +264,7 @@ void _start(void)
     uint64_t         cpu_count = 1;
 
     ensure_paging_enabled();
+    arch_enable_fp_simd();
     serial_write_string("Arx kernel: x86_64 entry\n");
     gather_boot_info(&boot_info);
 

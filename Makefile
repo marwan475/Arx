@@ -27,9 +27,10 @@ X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 INCLUDE_DIRS ?= -I. -Ikernel
 DEBUG ?= 1
+OPTIMIZATION ?= 0
 
-CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -ggdb3
-CFLAGS_X86_64 := -mcmodel=kernel
+CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -O$(OPTIMIZATION) -ggdb3
+CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
 LDFLAGS_COMMON := -nostdlib -no-pie
 

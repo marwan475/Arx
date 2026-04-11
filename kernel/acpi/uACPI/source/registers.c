@@ -1,31 +1,34 @@
-#include <uacpi/internal/registers.h>
-#include <uacpi/internal/stdlib.h>
+#include <uacpi/acpi.h>
 #include <uacpi/internal/context.h>
 #include <uacpi/internal/io.h>
 #include <uacpi/internal/log.h>
+#include <uacpi/internal/registers.h>
+#include <uacpi/internal/stdlib.h>
 #include <uacpi/platform/atomic.h>
-#include <uacpi/acpi.h>
 
 #ifndef UACPI_BAREBONES_MODE
 
 static uacpi_handle g_reg_lock;
 
-enum register_kind {
+enum register_kind
+{
     REGISTER_KIND_GAS,
     REGISTER_KIND_IO,
 };
 
-enum register_access_kind {
+enum register_access_kind
+{
     REGISTER_ACCESS_KIND_PRESERVE,
     REGISTER_ACCESS_KIND_WRITE_TO_CLEAR,
     REGISTER_ACCESS_KIND_NORMAL,
 };
 
-struct register_spec {
-    uacpi_u8 kind;
-    uacpi_u8 access_kind;
-    uacpi_u8 access_width; // only REGISTER_KIND_IO
-    void *accessors[2];
+struct register_spec
+{
+    uacpi_u8  kind;
+    uacpi_u8  access_kind;
+    uacpi_u8  access_width; // only REGISTER_KIND_IO
+    void*     accessors[2];
     uacpi_u64 write_only_mask;
     uacpi_u64 preserve_mask;
 };
@@ -96,47 +99,51 @@ static const struct register_spec g_registers[UACPI_REGISTER_MAX + 1] = {
     },
 };
 
-enum register_mapping_state {
-   REGISTER_MAPPING_STATE_NONE = 0,
-   REGISTER_MAPPING_STATE_NOT_NEEDED,
-   REGISTER_MAPPING_STATE_MAPPED,
+enum register_mapping_state
+{
+    REGISTER_MAPPING_STATE_NONE = 0,
+    REGISTER_MAPPING_STATE_NOT_NEEDED,
+    REGISTER_MAPPING_STATE_MAPPED,
 };
 
-struct register_mapping {
+struct register_mapping
+{
     uacpi_mapped_gas mappings[2];
-    uacpi_u8 states[2];
+    uacpi_u8         states[2];
 };
 static struct register_mapping g_register_mappings[UACPI_REGISTER_MAX + 1];
 
-static uacpi_status map_one(
-    const struct register_spec *spec, struct register_mapping *mapping,
-    uacpi_u8 idx
-)
+static uacpi_status map_one(const struct register_spec* spec, struct register_mapping* mapping, uacpi_u8 idx)
 {
     uacpi_status ret = UACPI_STATUS_OK;
 
     if (mapping->states[idx] != REGISTER_MAPPING_STATE_NONE)
         return ret;
 
-    if (spec->kind == REGISTER_KIND_GAS) {
-        struct acpi_gas *gas = spec->accessors[idx];
+    if (spec->kind == REGISTER_KIND_GAS)
+    {
+        struct acpi_gas* gas = spec->accessors[idx];
 
-        if (gas == UACPI_NULL || gas->address == 0) {
+        if (gas == UACPI_NULL || gas->address == 0)
+        {
             mapping->states[idx] = REGISTER_MAPPING_STATE_NOT_NEEDED;
             return ret;
         }
 
         ret = uacpi_map_gas_noalloc(gas, &mapping->mappings[idx]);
-    } else {
-        struct acpi_gas temp_gas = { 0 };
+    }
+    else
+    {
+        struct acpi_gas temp_gas = {0};
 
-        if (idx != 0) {
+        if (idx != 0)
+        {
             mapping->states[idx] = REGISTER_MAPPING_STATE_NOT_NEEDED;
             return ret;
         }
 
-        temp_gas.address_space_id = UACPI_ADDRESS_SPACE_SYSTEM_IO;
-        temp_gas.address = *(uacpi_u32*)spec->accessors[0];
+        temp_gas.address_space_id   = UACPI_ADDRESS_SPACE_SYSTEM_IO;
+        temp_gas.address            = *(uacpi_u32*) spec->accessors[0];
         temp_gas.register_bit_width = spec->access_width * 8;
 
         ret = uacpi_map_gas_noalloc(&temp_gas, &mapping->mappings[idx]);
@@ -148,13 +155,11 @@ static uacpi_status map_one(
     return ret;
 }
 
-static uacpi_status ensure_register_mapped(
-    const struct register_spec *spec, struct register_mapping *mapping
-)
+static uacpi_status ensure_register_mapped(const struct register_spec* spec, struct register_mapping* mapping)
 {
-    uacpi_status ret;
-    uacpi_bool needs_mapping = UACPI_FALSE;
-    uacpi_u8 state;
+    uacpi_status    ret;
+    uacpi_bool      needs_mapping = UACPI_FALSE;
+    uacpi_u8        state;
     uacpi_cpu_flags flags;
 
     state = uacpi_atomic_load8(&mapping->states[0]);
@@ -178,22 +183,17 @@ out:
     return ret;
 }
 
-static uacpi_status get_reg(
-    uacpi_u8 idx, const struct register_spec **out_spec,
-    struct register_mapping **out_mapping
-)
+static uacpi_status get_reg(uacpi_u8 idx, const struct register_spec** out_spec, struct register_mapping** out_mapping)
 {
     if (idx > UACPI_REGISTER_MAX)
         return UACPI_STATUS_INVALID_ARGUMENT;
 
-    *out_spec = &g_registers[idx];
+    *out_spec    = &g_registers[idx];
     *out_mapping = &g_register_mappings[idx];
     return UACPI_STATUS_OK;
 }
 
-static uacpi_status do_read_one(
-    struct register_mapping *mapping, uacpi_u8 idx, uacpi_u64 *out_value
-)
+static uacpi_status do_read_one(struct register_mapping* mapping, uacpi_u8 idx, uacpi_u64* out_value)
 {
     if (mapping->states[idx] != REGISTER_MAPPING_STATE_MAPPED)
         return UACPI_STATUS_OK;
@@ -201,13 +201,10 @@ static uacpi_status do_read_one(
     return uacpi_gas_read_mapped(&mapping->mappings[idx], out_value);
 }
 
-static uacpi_status do_read_register(
-    const struct register_spec *reg, struct register_mapping *mapping,
-    uacpi_u64 *out_value
-)
+static uacpi_status do_read_register(const struct register_spec* reg, struct register_mapping* mapping, uacpi_u64* out_value)
 {
     uacpi_status ret;
-    uacpi_u64 value0 = 0, value1 = 0;
+    uacpi_u64    value0 = 0, value1 = 0;
 
     ret = do_read_one(mapping, 0, &value0);
     if (uacpi_unlikely_error(ret))
@@ -224,13 +221,11 @@ static uacpi_status do_read_register(
     return UACPI_STATUS_OK;
 }
 
-uacpi_status uacpi_read_register(
-    enum uacpi_register reg_enum, uacpi_u64 *out_value
-)
+uacpi_status uacpi_read_register(enum uacpi_register reg_enum, uacpi_u64* out_value)
 {
-    uacpi_status ret;
-    const struct register_spec *reg;
-    struct register_mapping *mapping;
+    uacpi_status                ret;
+    const struct register_spec* reg;
+    struct register_mapping*    mapping;
 
     UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);
 
@@ -245,9 +240,7 @@ uacpi_status uacpi_read_register(
     return do_read_register(reg, mapping, out_value);
 }
 
-static uacpi_status do_write_one(
-    struct register_mapping *mapping, uacpi_u8 idx, uacpi_u64 in_value
-)
+static uacpi_status do_write_one(struct register_mapping* mapping, uacpi_u8 idx, uacpi_u64 in_value)
 {
     if (mapping->states[idx] != REGISTER_MAPPING_STATE_MAPPED)
         return UACPI_STATUS_OK;
@@ -255,17 +248,16 @@ static uacpi_status do_write_one(
     return uacpi_gas_write_mapped(&mapping->mappings[idx], in_value);
 }
 
-static uacpi_status do_write_register(
-    const struct register_spec *reg, struct register_mapping *mapping,
-    uacpi_u64 in_value
-)
+static uacpi_status do_write_register(const struct register_spec* reg, struct register_mapping* mapping, uacpi_u64 in_value)
 {
     uacpi_status ret;
 
-    if (reg->preserve_mask) {
+    if (reg->preserve_mask)
+    {
         in_value &= ~reg->preserve_mask;
 
-        if (reg->access_kind == REGISTER_ACCESS_KIND_PRESERVE) {
+        if (reg->access_kind == REGISTER_ACCESS_KIND_PRESERVE)
+        {
             uacpi_u64 data;
 
             ret = do_read_register(reg, mapping, &data);
@@ -283,13 +275,11 @@ static uacpi_status do_write_register(
     return do_write_one(mapping, 1, in_value);
 }
 
-uacpi_status uacpi_write_register(
-    enum uacpi_register reg_enum, uacpi_u64 in_value
-)
+uacpi_status uacpi_write_register(enum uacpi_register reg_enum, uacpi_u64 in_value)
 {
-    uacpi_status ret;
-    const struct register_spec *reg;
-    struct register_mapping *mapping;
+    uacpi_status                ret;
+    const struct register_spec* reg;
+    struct register_mapping*    mapping;
 
     UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);
 
@@ -304,13 +294,11 @@ uacpi_status uacpi_write_register(
     return do_write_register(reg, mapping, in_value);
 }
 
-uacpi_status uacpi_write_registers(
-    enum uacpi_register reg_enum, uacpi_u64 in_value0, uacpi_u64 in_value1
-)
+uacpi_status uacpi_write_registers(enum uacpi_register reg_enum, uacpi_u64 in_value0, uacpi_u64 in_value1)
 {
-    uacpi_status ret;
-    const struct register_spec *reg;
-    struct register_mapping *mapping;
+    uacpi_status                ret;
+    const struct register_spec* reg;
+    struct register_mapping*    mapping;
 
     UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);
 
@@ -329,9 +317,10 @@ uacpi_status uacpi_write_registers(
     return do_write_one(mapping, 1, in_value1);
 }
 
-struct register_field {
-    uacpi_u8 reg;
-    uacpi_u8 offset;
+struct register_field
+{
+    uacpi_u8  reg;
+    uacpi_u8  offset;
     uacpi_u16 mask;
 };
 
@@ -464,15 +453,17 @@ uacpi_status uacpi_initialize_registers(void)
 
 void uacpi_deinitialize_registers(void)
 {
-    uacpi_u8 i;
-    struct register_mapping *mapping;
+    uacpi_u8                 i;
+    struct register_mapping* mapping;
 
-    if (g_reg_lock != UACPI_NULL) {
+    if (g_reg_lock != UACPI_NULL)
+    {
         uacpi_kernel_free_spinlock(g_reg_lock);
         g_reg_lock = UACPI_NULL;
     }
 
-    for (i = 0; i <= UACPI_REGISTER_MAX; ++i) {
+    for (i = 0; i <= UACPI_REGISTER_MAX; ++i)
+    {
         mapping = &g_register_mappings[i];
 
         if (mapping->states[0] == REGISTER_MAPPING_STATE_MAPPED)
@@ -484,23 +475,21 @@ void uacpi_deinitialize_registers(void)
     uacpi_memzero(&g_register_mappings, sizeof(g_register_mappings));
 }
 
-uacpi_status uacpi_read_register_field(
-    enum uacpi_register_field field_enum, uacpi_u64 *out_value
-)
+uacpi_status uacpi_read_register_field(enum uacpi_register_field field_enum, uacpi_u64* out_value)
 {
-    uacpi_status ret;
-    uacpi_u8 field_idx = field_enum;
-    const struct register_field *field;
-    const struct register_spec *reg;
-    struct register_mapping *mapping;
+    uacpi_status                 ret;
+    uacpi_u8                     field_idx = field_enum;
+    const struct register_field* field;
+    const struct register_spec*  reg;
+    struct register_mapping*     mapping;
 
     UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);
 
     if (uacpi_unlikely(field_idx > UACPI_REGISTER_FIELD_MAX))
         return UACPI_STATUS_INVALID_ARGUMENT;
 
-    field = &g_fields[field_idx];
-    reg = &g_registers[field->reg];
+    field   = &g_fields[field_idx];
+    reg     = &g_registers[field->reg];
     mapping = &g_register_mappings[field->reg];
 
     ret = ensure_register_mapped(reg, mapping);
@@ -515,17 +504,15 @@ uacpi_status uacpi_read_register_field(
     return UACPI_STATUS_OK;
 }
 
-uacpi_status uacpi_write_register_field(
-    enum uacpi_register_field field_enum, uacpi_u64 in_value
-)
+uacpi_status uacpi_write_register_field(enum uacpi_register_field field_enum, uacpi_u64 in_value)
 {
-    uacpi_status ret;
-    uacpi_u8 field_idx = field_enum;
-    const struct register_field *field;
-    const struct register_spec *reg;
-    struct register_mapping *mapping;
+    uacpi_status                 ret;
+    uacpi_u8                     field_idx = field_enum;
+    const struct register_field* field;
+    const struct register_spec*  reg;
+    struct register_mapping*     mapping;
 
-    uacpi_u64 data;
+    uacpi_u64       data;
     uacpi_cpu_flags flags;
 
     UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);
@@ -533,8 +520,8 @@ uacpi_status uacpi_write_register_field(
     if (uacpi_unlikely(field_idx > UACPI_REGISTER_FIELD_MAX))
         return UACPI_STATUS_INVALID_ARGUMENT;
 
-    field = &g_fields[field_idx];
-    reg = &g_registers[field->reg];
+    field   = &g_fields[field_idx];
+    reg     = &g_registers[field->reg];
     mapping = &g_register_mappings[field->reg];
 
     ret = ensure_register_mapped(reg, mapping);
@@ -545,8 +532,10 @@ uacpi_status uacpi_write_register_field(
 
     flags = uacpi_kernel_lock_spinlock(g_reg_lock);
 
-    if (reg->kind == REGISTER_ACCESS_KIND_WRITE_TO_CLEAR) {
-        if (in_value == 0) {
+    if (reg->kind == REGISTER_ACCESS_KIND_WRITE_TO_CLEAR)
+    {
+        if (in_value == 0)
+        {
             ret = UACPI_STATUS_OK;
             goto out;
         }

@@ -153,11 +153,11 @@ void pmm_init(struct boot_info* boot_info)
                 zone->total_memory += aligned_end - aligned_base;
 
                 // Store usable page frame numbers for buddy allocator
-                const uint64_t start_pfn                               = pa_to_pfn(aligned_base);
-                const uint64_t end_pfn                                 = pa_to_pfn(aligned_end);
-                zone->regions[zone->region_count].start_pfn            = start_pfn;
-                zone->regions[zone->region_count].end_pfn              = end_pfn;
-                zone->regions[zone->region_count].page_count           = end_pfn - start_pfn;
+                const uint64_t start_pfn                     = pa_to_pfn(aligned_base);
+                const uint64_t end_pfn                       = pa_to_pfn(aligned_end);
+                zone->regions[zone->region_count].start_pfn  = start_pfn;
+                zone->regions[zone->region_count].end_pfn    = end_pfn;
+                zone->regions[zone->region_count].page_count = end_pfn - start_pfn;
                 zone->total_pages += end_pfn - start_pfn;
                 zone->region_count++;
                 if (zone->min_pfn == 0 || start_pfn < zone->min_pfn)
@@ -179,8 +179,7 @@ void pmm_init(struct boot_info* boot_info)
 
     kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory),
             (unsigned long long) bytes_to_mb(zone->total_memory));
-    kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) zone->total_pages, (unsigned long long) zone->min_pfn,
-            (unsigned long long) zone->max_pfn);
+    kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) zone->total_pages, (unsigned long long) zone->min_pfn, (unsigned long long) zone->max_pfn);
 
     size_t buddy_metadata_size  = align_up((zone->max_pfn * sizeof(page_t)), PAGE_SIZE);
     size_t buddy_metadata_pages = buddy_metadata_size / PAGE_SIZE;

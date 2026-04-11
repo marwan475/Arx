@@ -39,7 +39,7 @@ typedef struct free_list
 
 typedef struct zone
 {
-    spinlock_t    lock;
+    spinlock_t   lock;
     pmm_region_t regions[PMM_MAX_REGIONS];
     size_t       region_count;
     size_t       total_pages;

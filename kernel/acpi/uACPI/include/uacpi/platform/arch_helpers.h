@@ -7,13 +7,16 @@
 #include <uacpi/platform/atomic.h>
 
 #ifndef UACPI_ARCH_FLUSH_CPU_CACHE
-#define UACPI_ARCH_FLUSH_CPU_CACHE() do {} while (0)
+#define UACPI_ARCH_FLUSH_CPU_CACHE()                                                                                                                                                                   \
+    do                                                                                                                                                                                                 \
+    {                                                                                                                                                                                                  \
+    } while (0)
 #endif
 
 typedef unsigned long uacpi_cpu_flags;
 typedef unsigned long uacpi_interrupt_state;
 
-typedef void *uacpi_thread_id;
+typedef void* uacpi_thread_id;
 
 /*
  * Replace as needed depending on your platform's way to represent thread ids.
@@ -21,7 +24,7 @@ typedef void *uacpi_thread_id;
  * (or you could provide your own helpers)
  */
 #ifndef UACPI_ATOMIC_LOAD_THREAD_ID
-#define UACPI_ATOMIC_LOAD_THREAD_ID(ptr) ((uacpi_thread_id)uacpi_atomic_load_ptr(ptr))
+#define UACPI_ATOMIC_LOAD_THREAD_ID(ptr) ((uacpi_thread_id) uacpi_atomic_load_ptr(ptr))
 #endif
 
 #ifndef UACPI_ATOMIC_STORE_THREAD_ID
@@ -33,7 +36,7 @@ typedef void *uacpi_thread_id;
  * uacpi_kernel_get_current_thread_id or this will break
  */
 #ifndef UACPI_THREAD_ID_NONE
-#define UACPI_THREAD_ID_NONE ((uacpi_thread_id)-1)
+#define UACPI_THREAD_ID_NONE ((uacpi_thread_id) - 1)
 #endif
 
 #endif

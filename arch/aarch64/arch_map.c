@@ -39,11 +39,10 @@
 #define AARCH64_CANONICAL_LOW_MASK ((1ULL << AARCH64_CANONICAL_VA_BITS) - 1ULL)
 #define AARCH64_CANONICAL_HIGH_MASK (~AARCH64_CANONICAL_LOW_MASK)
 
-#define AARCH64_PTE_ALLOWED_MAP_FLAGS                                                                                                      \
-    ((1ULL << AARCH64_PTE_BIT_ATTRINDX_0) | (1ULL << AARCH64_PTE_BIT_ATTRINDX_1) | (1ULL << AARCH64_PTE_BIT_ATTRINDX_2) |                \
-     (1ULL << AARCH64_PTE_BIT_NS) | (1ULL << AARCH64_PTE_BIT_AP_0) | (1ULL << AARCH64_PTE_BIT_AP_1) | (1ULL << AARCH64_PTE_BIT_SH_0) |   \
-     (1ULL << AARCH64_PTE_BIT_SH_1) | (1ULL << AARCH64_PTE_BIT_AF) | (1ULL << AARCH64_PTE_BIT_nG) | (1ULL << AARCH64_PTE_BIT_DBM) |       \
-     (1ULL << AARCH64_PTE_BIT_CONTIGUOUS) | (1ULL << AARCH64_PTE_BIT_PXN) | (1ULL << AARCH64_PTE_BIT_UXN))
+#define AARCH64_PTE_ALLOWED_MAP_FLAGS                                                                                                                                                                  \
+    ((1ULL << AARCH64_PTE_BIT_ATTRINDX_0) | (1ULL << AARCH64_PTE_BIT_ATTRINDX_1) | (1ULL << AARCH64_PTE_BIT_ATTRINDX_2) | (1ULL << AARCH64_PTE_BIT_NS) | (1ULL << AARCH64_PTE_BIT_AP_0)                \
+     | (1ULL << AARCH64_PTE_BIT_AP_1) | (1ULL << AARCH64_PTE_BIT_SH_0) | (1ULL << AARCH64_PTE_BIT_SH_1) | (1ULL << AARCH64_PTE_BIT_AF) | (1ULL << AARCH64_PTE_BIT_nG) | (1ULL << AARCH64_PTE_BIT_DBM)  \
+     | (1ULL << AARCH64_PTE_BIT_CONTIGUOUS) | (1ULL << AARCH64_PTE_BIT_PXN) | (1ULL << AARCH64_PTE_BIT_UXN))
 
 static inline void aarch64_dsb_ishst(void)
 {

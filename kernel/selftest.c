@@ -7,11 +7,11 @@
 
 typedef struct pmm_test_alloc
 {
-    void*    ptr;
+    void*     ptr;
     uintptr_t pa_start;
     uintptr_t pa_end;
-    size_t   requested;
-    size_t   actual;
+    size_t    requested;
+    size_t    actual;
 } pmm_test_alloc_t;
 
 static size_t pmm_test_round_up_pow2_pages(size_t size)
@@ -49,22 +49,13 @@ void pmm_test(void)
     static void*            exhaust_ptrs[PMM_TEST_MAX_PTRS];
 
     const size_t scenario_sizes[PMM_TEST_SCENARIOS] = {
-        1,
-        64,
-        511,
-        4096,
-        4097,
-        8192,
-        12288,
-        65536,
-        131072,
-        262144,
+            1, 64, 511, 4096, 4097, 8192, 12288, 65536, 131072, 262144,
     };
 
-    size_t failures = 0;
-    size_t passes   = 0;
-    size_t baseline_free_pages = 0;
-    size_t baseline_used_pages = 0;
+    size_t failures                = 0;
+    size_t passes                  = 0;
+    size_t baseline_free_pages     = 0;
+    size_t baseline_used_pages     = 0;
     size_t scenario_expected_pages = 0;
 
     kprintf("Arx kernel: pmm_test start\n");

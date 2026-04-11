@@ -43,14 +43,20 @@
 void arch_halt(void);
 void arch_pause(void);
 
+// Page table should be raw physical address
 void arch_map_page(uint64_t va, uint64_t pa, uint64_t flags, uintptr_t page_table);
 void arch_unmap_page(uint64_t va, uintptr_t page_table);
 
+// returns/takes physical address of page table
 uintptr_t arch_get_pt(void);
 void arch_set_pt(uintptr_t pt);
 
 // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and TLB clears
 void arch_map_range(uint64_t va_start, uint64_t pa_start, uint64_t size, uint64_t flags, uintptr_t page_table);
 void arch_unmap_range(uint64_t va_start, uint64_t size, uintptr_t page_table);
+
+// Update page flags
+void arch_protect(uint64_t va, uint64_t flags, uintptr_t page_table);
+void arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, uintptr_t page_table);
 
 #endif

@@ -338,7 +338,6 @@ void buddy_free(zone_t* zone, uint64_t pfn)
     add_block_to_free_list(zone, block->order, block->pfn);
 }
 
-// returns hhdm address of allocated block
 void* pmm_alloc(zone_t* zone, size_t size)
 {
     if (zone == NULL)

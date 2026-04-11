@@ -577,3 +577,209 @@ void __attribute__((weak)) arch_unmap_range(uint64_t va_start, uint64_t size, ui
         }
     }
 }
+
+void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, uintptr_t page_table)
+{
+    if (!x86_64_is_canonical_va(va))
+    {
+        kprintf("Arx kernel: arch_protect rejected non-canonical VA: 0x%llx\n", (unsigned long long) va);
+        return;
+    }
+
+    if (!x86_64_is_page_aligned(va) || !x86_64_is_page_aligned((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect rejected unaligned VA/page_table\n");
+        return;
+    }
+
+    if (page_table == 0)
+    {
+        kprintf("Arx kernel: arch_protect rejected null page_table\n");
+        return;
+    }
+
+    if (!x86_64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect rejected non-encodable page_table\n");
+        return;
+    }
+
+    const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
+
+    const uint64_t pml4_index = (va >> X86_64_PT_SHIFT_PML4) & X86_64_PT_INDEX_MASK;
+    const uint64_t pdpt_index = (va >> X86_64_PT_SHIFT_PDPT) & X86_64_PT_INDEX_MASK;
+    const uint64_t pd_index   = (va >> X86_64_PT_SHIFT_PD) & X86_64_PT_INDEX_MASK;
+    const uint64_t pt_index   = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
+
+    uint64_t* pml4 = x86_64_table_from_pa((uint64_t) page_table);
+
+    uint64_t pdpt_pa = 0;
+    if (!x86_64_decode_table_entry(pml4[pml4_index], &pdpt_pa))
+    {
+        return;
+    }
+    uint64_t* pdpt = x86_64_table_from_pa(pdpt_pa);
+
+    uint64_t pd_pa = 0;
+    if (!x86_64_decode_table_entry(pdpt[pdpt_index], &pd_pa))
+    {
+        return;
+    }
+    uint64_t* pd = x86_64_table_from_pa(pd_pa);
+
+    uint64_t pt_pa = 0;
+    if (!x86_64_decode_table_entry(pd[pd_index], &pt_pa))
+    {
+        return;
+    }
+    uint64_t* pt = x86_64_table_from_pa(pt_pa);
+
+    const uint64_t old_pte = pt[pt_index];
+    if ((old_pte & X86_64_PTE_PRESENT) == 0)
+    {
+        return;
+    }
+
+    const uint64_t new_pte = (old_pte & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+    if (old_pte == new_pte)
+    {
+        return;
+    }
+
+    pt[pt_index] = new_pte;
+    if (page_table == arch_get_pt())
+    {
+        x86_64_invlpg(va);
+    }
+}
+
+void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, uintptr_t page_table)
+{
+    if (size == 0)
+    {
+        return;
+    }
+
+    if (!x86_64_is_page_aligned(va_start) || !x86_64_is_page_aligned(size) || !x86_64_is_page_aligned((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected unaligned VA/size/page_table\n");
+        return;
+    }
+
+    if (page_table == 0)
+    {
+        kprintf("Arx kernel: arch_protect_range rejected null page_table\n");
+        return;
+    }
+
+    if (va_start > UINT64_MAX - size)
+    {
+        kprintf("Arx kernel: arch_protect_range rejected overflowing VA range\n");
+        return;
+    }
+
+    if (!x86_64_is_canonical_range(va_start, size))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected non-canonical VA range starting at 0x%llx\n", (unsigned long long) va_start);
+        return;
+    }
+
+    if (!x86_64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected non-encodable page_table\n");
+        return;
+    }
+
+    const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
+    const bool     active_pt       = page_table == arch_get_pt();
+    const uint64_t range_end       = va_start + size;
+
+    bool      any_changed         = false;
+    bool      requires_page_flush = false;
+    uint64_t* pml4                = x86_64_table_from_pa((uint64_t) page_table);
+    uint64_t  va                  = va_start;
+
+    while (va < range_end)
+    {
+        const uint64_t pml4_index = (va >> X86_64_PT_SHIFT_PML4) & X86_64_PT_INDEX_MASK;
+        const uint64_t pml4_end   = va + x86_64_chunk_size(va, range_end - va, X86_64_PT_SHIFT_PML4);
+
+        uint64_t pdpt_pa = 0;
+        if (!x86_64_decode_table_entry(pml4[pml4_index], &pdpt_pa))
+        {
+            va = pml4_end;
+            continue;
+        }
+        uint64_t* pdpt = x86_64_table_from_pa(pdpt_pa);
+
+        while (va < pml4_end)
+        {
+            const uint64_t pdpt_index = (va >> X86_64_PT_SHIFT_PDPT) & X86_64_PT_INDEX_MASK;
+            const uint64_t pdpt_end   = va + x86_64_chunk_size(va, pml4_end - va, X86_64_PT_SHIFT_PDPT);
+
+            uint64_t pd_pa = 0;
+            if (!x86_64_decode_table_entry(pdpt[pdpt_index], &pd_pa))
+            {
+                va = pdpt_end;
+                continue;
+            }
+            uint64_t* pd = x86_64_table_from_pa(pd_pa);
+
+            while (va < pdpt_end)
+            {
+                const uint64_t pd_index = (va >> X86_64_PT_SHIFT_PD) & X86_64_PT_INDEX_MASK;
+                const uint64_t pt_end   = va + x86_64_chunk_size(va, pdpt_end - va, X86_64_PT_SHIFT_PD);
+
+                uint64_t pt_pa = 0;
+                if (!x86_64_decode_table_entry(pd[pd_index], &pt_pa))
+                {
+                    va = pt_end;
+                    continue;
+                }
+                uint64_t*      pt          = x86_64_table_from_pa(pt_pa);
+                const uint64_t pt_index    = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
+                const uint64_t entry_count = (pt_end - va) >> PAGE_SHIFT;
+
+                for (uint64_t entry = 0; entry < entry_count; ++entry)
+                {
+                    const uint64_t old_pte = pt[pt_index + entry];
+                    if ((old_pte & X86_64_PTE_PRESENT) == 0)
+                    {
+                        continue;
+                    }
+
+                    const uint64_t new_pte = (old_pte & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+                    if (old_pte == new_pte)
+                    {
+                        continue;
+                    }
+
+                    pt[pt_index + entry] = new_pte;
+                    any_changed          = true;
+                    if (((old_pte | new_pte) & X86_64_PTE_GLOBAL) != 0)
+                    {
+                        requires_page_flush = true;
+                    }
+                }
+
+                va = pt_end;
+            }
+        }
+    }
+
+    if (active_pt && any_changed)
+    {
+        if (requires_page_flush)
+        {
+            for (uint64_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
+            {
+                x86_64_invlpg(flush_va);
+            }
+        }
+        else
+        {
+            x86_64_flush_active_tlb_non_global();
+        }
+    }
+}
+

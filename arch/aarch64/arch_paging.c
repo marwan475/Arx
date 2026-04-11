@@ -704,3 +704,207 @@ out_unmap:
         aarch64_sync_current_page_table();
     }
 }
+
+void __attribute__((weak)) arch_protect(uint64_t va, uint64_t flags, uintptr_t page_table)
+{
+    if (!aarch64_is_canonical_va(va))
+    {
+        kprintf("Arx kernel: arch_protect rejected non-canonical AArch64 VA: 0x%llx\n", (unsigned long long) va);
+        return;
+    }
+
+    if (!aarch64_is_page_aligned(va) || !aarch64_is_page_aligned((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect rejected unaligned AArch64 VA/page_table\n");
+        return;
+    }
+
+    if (page_table == 0)
+    {
+        kprintf("Arx kernel: arch_protect rejected null AArch64 page_table\n");
+        return;
+    }
+
+    if (!aarch64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect rejected non-encodable AArch64 page_table\n");
+        return;
+    }
+
+    const uint64_t sanitized_flags = (flags & AARCH64_PTE_ALLOWED_MAP_FLAGS) | (1ULL << AARCH64_PTE_BIT_AF);
+
+    const uint64_t l0_index = (va >> AARCH64_PT_SHIFT_L0) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l1_index = (va >> AARCH64_PT_SHIFT_L1) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l2_index = (va >> AARCH64_PT_SHIFT_L2) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l3_index = (va >> AARCH64_PT_SHIFT_L3) & AARCH64_PT_INDEX_MASK;
+
+    uint64_t* l0 = aarch64_table_from_pa((uint64_t) page_table);
+
+    uint64_t l1_pa = 0;
+    if (!aarch64_decode_table_entry(l0[l0_index], &l1_pa))
+    {
+        return;
+    }
+    uint64_t* l1 = aarch64_table_from_pa(l1_pa);
+
+    uint64_t l2_pa = 0;
+    if (!aarch64_decode_table_entry(l1[l1_index], &l2_pa))
+    {
+        return;
+    }
+    uint64_t* l2 = aarch64_table_from_pa(l2_pa);
+
+    uint64_t l3_pa = 0;
+    if (!aarch64_decode_table_entry(l2[l2_index], &l3_pa))
+    {
+        return;
+    }
+    uint64_t* l3 = aarch64_table_from_pa(l3_pa);
+
+    const uint64_t old_pte = l3[l3_index];
+    if ((old_pte & AARCH64_PTE_VALID) == 0)
+    {
+        return;
+    }
+
+    if ((old_pte & AARCH64_PTE_TABLE_OR_PAGE) == 0)
+    {
+        kprintf("Arx kernel: arch_protect found malformed L3 descriptor at index %llu\n", (unsigned long long) l3_index);
+        return;
+    }
+
+    const uint64_t new_pte = (old_pte & AARCH64_PTE_ADDR_MASK) | sanitized_flags | AARCH64_PTE_VALID | AARCH64_PTE_TABLE_OR_PAGE;
+    if (old_pte == new_pte)
+    {
+        return;
+    }
+
+    l3[l3_index] = new_pte;
+    if (page_table == arch_get_pt())
+    {
+        aarch64_sync_removed_mapping(va);
+    }
+}
+
+void __attribute__((weak)) arch_protect_range(uint64_t va_start, uint64_t size, uint64_t flags, uintptr_t page_table)
+{
+    if (size == 0)
+    {
+        return;
+    }
+
+    if (!aarch64_is_page_aligned(va_start) || !aarch64_is_page_aligned(size) || !aarch64_is_page_aligned((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected unaligned AArch64 VA/size/page_table\n");
+        return;
+    }
+
+    if (page_table == 0)
+    {
+        kprintf("Arx kernel: arch_protect_range rejected null AArch64 page_table\n");
+        return;
+    }
+
+    if (va_start > UINT64_MAX - size)
+    {
+        kprintf("Arx kernel: arch_protect_range rejected overflowing AArch64 VA range\n");
+        return;
+    }
+
+    if (!aarch64_is_canonical_range(va_start, size))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected non-canonical AArch64 VA range starting at 0x%llx\n", (unsigned long long) va_start);
+        return;
+    }
+
+    if (!aarch64_is_pa_encodable((uint64_t) page_table))
+    {
+        kprintf("Arx kernel: arch_protect_range rejected non-encodable AArch64 page_table\n");
+        return;
+    }
+
+    const uint64_t sanitized_flags = (flags & AARCH64_PTE_ALLOWED_MAP_FLAGS) | (1ULL << AARCH64_PTE_BIT_AF);
+    const bool     active_pt       = page_table == arch_get_pt();
+    const uint64_t range_end       = va_start + size;
+
+    bool      writes_pending = false;
+    uint64_t* l0             = aarch64_table_from_pa((uint64_t) page_table);
+    uint64_t  va             = va_start;
+
+    while (va < range_end)
+    {
+        const uint64_t l0_index = (va >> AARCH64_PT_SHIFT_L0) & AARCH64_PT_INDEX_MASK;
+        const uint64_t l0_end   = va + aarch64_chunk_size(va, range_end - va, AARCH64_PT_SHIFT_L0);
+
+        uint64_t l1_pa = 0;
+        if (!aarch64_decode_table_entry(l0[l0_index], &l1_pa))
+        {
+            va = l0_end;
+            continue;
+        }
+        uint64_t* l1 = aarch64_table_from_pa(l1_pa);
+
+        while (va < l0_end)
+        {
+            const uint64_t l1_index = (va >> AARCH64_PT_SHIFT_L1) & AARCH64_PT_INDEX_MASK;
+            const uint64_t l1_end   = va + aarch64_chunk_size(va, l0_end - va, AARCH64_PT_SHIFT_L1);
+
+            uint64_t l2_pa = 0;
+            if (!aarch64_decode_table_entry(l1[l1_index], &l2_pa))
+            {
+                va = l1_end;
+                continue;
+            }
+            uint64_t* l2 = aarch64_table_from_pa(l2_pa);
+
+            while (va < l1_end)
+            {
+                const uint64_t l2_index = (va >> AARCH64_PT_SHIFT_L2) & AARCH64_PT_INDEX_MASK;
+                const uint64_t l2_end   = va + aarch64_chunk_size(va, l1_end - va, AARCH64_PT_SHIFT_L2);
+
+                uint64_t l3_pa = 0;
+                if (!aarch64_decode_table_entry(l2[l2_index], &l3_pa))
+                {
+                    va = l2_end;
+                    continue;
+                }
+                uint64_t*      l3          = aarch64_table_from_pa(l3_pa);
+                const uint64_t l3_index    = (va >> AARCH64_PT_SHIFT_L3) & AARCH64_PT_INDEX_MASK;
+                const uint64_t entry_count = (l2_end - va) >> PAGE_SHIFT;
+
+                for (uint64_t entry = 0; entry < entry_count; ++entry)
+                {
+                    const uint64_t old_pte = l3[l3_index + entry];
+                    if ((old_pte & AARCH64_PTE_VALID) == 0)
+                    {
+                        continue;
+                    }
+
+                    if ((old_pte & AARCH64_PTE_TABLE_OR_PAGE) == 0)
+                    {
+                        kprintf("Arx kernel: arch_protect_range found malformed L3 descriptor at index %llu\n", (unsigned long long) (l3_index + entry));
+                        goto out_protect;
+                    }
+
+                    const uint64_t new_pte = (old_pte & AARCH64_PTE_ADDR_MASK) | sanitized_flags | AARCH64_PTE_VALID | AARCH64_PTE_TABLE_OR_PAGE;
+                    if (old_pte == new_pte)
+                    {
+                        continue;
+                    }
+
+                    l3[l3_index + entry] = new_pte;
+                    writes_pending       = true;
+                }
+
+                va = l2_end;
+            }
+        }
+    }
+
+out_protect:
+    if (active_pt && writes_pending)
+    {
+        aarch64_sync_current_page_table();
+    }
+}
+

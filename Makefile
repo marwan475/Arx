@@ -29,6 +29,11 @@ INCLUDE_DIRS ?= -I. -Ikernel
 DEBUG ?= 1
 OPTIMIZATION ?= 0
 
+UACPI_DIR ?= kernel/acpi/uACPI
+UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
+UACPI_DEFINES := -DUACPI_BAREBONES_MODE
+UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/uacpi_port.c
+
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -O$(OPTIMIZATION) -ggdb3
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
@@ -45,9 +50,13 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 debug x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/memory/pmm.c klib/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/memory/pmm.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
+
+CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
+KERNEL_X86_64_SRCS += $(UACPI_SRCS)
+KERNEL_AARCH64_SRCS += $(UACPI_SRCS)
 
 KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
 KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(KERNEL_AARCH64_SRCS))

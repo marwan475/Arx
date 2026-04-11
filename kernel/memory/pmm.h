@@ -7,6 +7,11 @@
 #define PMM_MAX_REGIONS 128
 #define MAX_ORDER 10
 
+#ifndef PHYS_ADDR_T_DEFINED
+#define PHYS_ADDR_T_DEFINED
+typedef uint64_t phys_addr_t;
+#endif
+
 typedef struct pmm_region
 {
     uint64_t start_pfn;

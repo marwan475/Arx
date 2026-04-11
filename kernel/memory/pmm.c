@@ -13,12 +13,12 @@ static size_t bytes_to_mb(size_t bytes)
     return bytes / (1024 * 1024);
 }
 
-static inline uint64_t pa_to_pfn(uint64_t pa)
+static inline uint64_t pa_to_pfn(phys_addr_t pa)
 {
     return pa >> PAGE_SHIFT;
 }
 
-static inline uint64_t pfn_to_pa(uint64_t pfn)
+static inline phys_addr_t pfn_to_pa(uint64_t pfn)
 {
     return pfn << PAGE_SHIFT;
 }
@@ -390,8 +390,8 @@ void pmm_free(zone_t* zone, void* addr)
         return;
     }
 
-    uintptr_t pa  = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
-    uint64_t  pfn = pa_to_pfn(pa);
+    phys_addr_t pa  = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
+    uint64_t   pfn = pa_to_pfn(pa);
 
     spinlock_acquire(&zone->lock);
 

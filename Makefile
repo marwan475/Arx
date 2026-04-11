@@ -42,7 +42,7 @@ ISO_AARCH64_ROOT := $(ISO_DIR)/aarch64
 BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
-.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-aarch64 debug x86_64-debug aarch64-debug
+.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 debug x86_64-debug aarch64-debug
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/memory/pmm.c klib/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
@@ -159,6 +159,7 @@ QEMU_X86_64 ?= qemu-system-x86_64
 QEMU_AARCH64 ?= qemu-system-aarch64
 QEMU_SMP ?= 4
 QEMU_COMMON ?= -m 1024 -smp $(QEMU_SMP) -serial stdio
+QEMU_X86_64_COMMON ?= -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)"
 QEMU_DEBUG_COMMON ?= -m 1024 -smp $(QEMU_SMP)
 GDB_X86_64 ?= gdb
 GDB_AARCH64 ?= $(shell command -v gdb-multiarch >/dev/null 2>&1 && echo gdb-multiarch || echo gdb)
@@ -166,7 +167,10 @@ QEMU_GDB_PORT_X86_64 ?= 1234
 QEMU_GDB_PORT_AARCH64 ?= 1235
 
 qemu-x86_64: 
-	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)" -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
+	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
+
+qemu-kvm:
+	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -enable-kvm -cpu host $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
 
 qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0

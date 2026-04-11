@@ -40,6 +40,22 @@ void* memcpy(void* dest, const void* src, size_t count)
     return dest;
 }
 
+int memcmp(const void* lhs, const void* rhs, size_t count)
+{
+    const uint8_t* a = (const uint8_t*) lhs;
+    const uint8_t* b = (const uint8_t*) rhs;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        if (a[i] != b[i])
+        {
+            return (int) a[i] - (int) b[i];
+        }
+    }
+
+    return 0;
+}
+
 // Physical address to higher half direct map
 uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset)
 {

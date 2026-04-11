@@ -1,6 +1,7 @@
 #include <boot/boot.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 #include <stdint.h>
 
 void run_selftests(void);
@@ -45,6 +46,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     arch_smp_init(boot_info);
 
     pmm_init(boot_info);
+    vmm_init();
 
     run_selftests();
 

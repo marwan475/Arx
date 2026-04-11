@@ -1,6 +1,7 @@
 // Ai generated testing
 
 #include <memory/pmm.h>
+#include <memory/vmm.h>
 
 #define PMM_TEST_MAX_PTRS 2048
 #define PMM_TEST_SCENARIOS 10
@@ -41,6 +42,150 @@ static bool pmm_test_is_page_aligned(const void* ptr)
 static bool pmm_test_check_zone_accounting(const zone_t* zone)
 {
     return (zone->free_pages + zone->used_pages) == zone->total_pages;
+}
+
+static void vmm_test_log_fail(const char* message, size_t* failures)
+{
+    (*failures)++;
+    kprintf("Arx kernel: vmm_test FAIL: %s\n", message);
+}
+
+static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
+{
+    const virt_addr_t candidates[] = {
+        0xFFFFF00000000000ULL,
+        0xFFFFE00000000000ULL,
+        0xFFFFC00000000000ULL,
+        0x0000004000000000ULL,
+    };
+
+    for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++)
+    {
+        virt_addr_t va = align_down(candidates[i], PAGE_SIZE);
+        if (vmm_virt_to_phys(va, &init_kernel_address_space) == 0 && vmm_virt_to_phys(va + PAGE_SIZE, &init_kernel_address_space) == 0)
+        {
+            *va_out = va;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void vmm_test(void)
+{
+    size_t failures = 0;
+    size_t passes   = 0;
+
+    kprintf("Arx kernel: vmm_test start\n");
+
+    void* range_block_va = pmm_alloc(&pmm_zone, PAGE_SIZE * 2ULL);
+    if (range_block_va == NULL)
+    {
+        vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
+        kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+        return;
+    }
+
+    void* page_a_va = range_block_va;
+    void* page_b_va = (void*) ((uintptr_t) range_block_va + PAGE_SIZE);
+
+    phys_addr_t page_a_pa = hhdm_to_pa((uintptr_t) page_a_va, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    phys_addr_t page_b_pa = page_a_pa + PAGE_SIZE;
+
+    virt_addr_t test_va = 0;
+    if (!vmm_test_find_unmapped_window(&test_va))
+    {
+        vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
+        pmm_free(&pmm_zone, range_block_va);
+        kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+        return;
+    }
+    passes++;
+
+    uint64_t map_flags = 0;
+    ARCH_PAGE_FLAGS_INIT(map_flags);
+    ARCH_PAGE_FLAG_SET_READ(map_flags);
+    ARCH_PAGE_FLAG_SET_WRITE(map_flags);
+
+    vmm_map_page(test_va, page_a_pa, map_flags, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != page_a_pa)
+    {
+        vmm_test_log_fail("map_page translation mismatch", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_protect_page(test_va, map_flags, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != page_a_pa)
+    {
+        vmm_test_log_fail("protect_page changed physical mapping", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_map_range(test_va, page_a_pa, PAGE_SIZE * 2ULL, map_flags, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, &init_kernel_address_space) != page_b_pa)
+    {
+        vmm_test_log_fail("map_range translation mismatch", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_protect_range(test_va, PAGE_SIZE * 2ULL, map_flags, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, &init_kernel_address_space) != page_b_pa)
+    {
+        vmm_test_log_fail("protect_range changed physical mapping", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_unmap_page(test_va, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != 0)
+    {
+        vmm_test_log_fail("unmap_page did not clear mapping", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_map_page(test_va, page_a_pa, map_flags, &init_kernel_address_space);
+
+    vmm_unmap_range(test_va, PAGE_SIZE * 2ULL, &init_kernel_address_space);
+    if (vmm_virt_to_phys(test_va, &init_kernel_address_space) != 0 || vmm_virt_to_phys(test_va + PAGE_SIZE, &init_kernel_address_space) != 0)
+    {
+        vmm_test_log_fail("unmap_range did not clear mappings", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_switch_addr_space(&init_kernel_address_space);
+    passes++;
+
+    pmm_free(&pmm_zone, range_block_va);
+
+    kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+    if (failures == 0)
+    {
+        kprintf("Arx kernel: vmm_test RESULT=PASS\n");
+    }
+    else
+    {
+        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+    }
 }
 
 void pmm_test(void)
@@ -316,4 +461,5 @@ void pmm_test(void)
 void run_selftests(void)
 {
     pmm_test();
+    vmm_test();
 }

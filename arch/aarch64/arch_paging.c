@@ -909,3 +909,52 @@ out_protect:
     }
 }
 
+phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table)
+{
+    if (!aarch64_is_canonical_va(va))
+    {
+        return 0;
+    }
+
+    if (!aarch64_is_page_aligned((uint64_t) page_table) || page_table == 0 || !aarch64_is_pa_encodable((uint64_t) page_table))
+    {
+        return 0;
+    }
+
+    const uint64_t l0_index = (va >> AARCH64_PT_SHIFT_L0) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l1_index = (va >> AARCH64_PT_SHIFT_L1) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l2_index = (va >> AARCH64_PT_SHIFT_L2) & AARCH64_PT_INDEX_MASK;
+    const uint64_t l3_index = (va >> AARCH64_PT_SHIFT_L3) & AARCH64_PT_INDEX_MASK;
+
+    uint64_t* l0 = aarch64_table_from_pa((uint64_t) page_table);
+
+    phys_addr_t l1_pa = 0;
+    if (!aarch64_decode_table_entry(l0[l0_index], &l1_pa))
+    {
+        return 0;
+    }
+    uint64_t* l1 = aarch64_table_from_pa(l1_pa);
+
+    phys_addr_t l2_pa = 0;
+    if (!aarch64_decode_table_entry(l1[l1_index], &l2_pa))
+    {
+        return 0;
+    }
+    uint64_t* l2 = aarch64_table_from_pa(l2_pa);
+
+    phys_addr_t l3_pa = 0;
+    if (!aarch64_decode_table_entry(l2[l2_index], &l3_pa))
+    {
+        return 0;
+    }
+    uint64_t* l3 = aarch64_table_from_pa(l3_pa);
+
+    const uint64_t pte = l3[l3_index];
+    if ((pte & AARCH64_PTE_VALID) == 0 || (pte & AARCH64_PTE_TABLE_OR_PAGE) == 0)
+    {
+        return 0;
+    }
+
+    return (pte & AARCH64_PTE_ADDR_MASK) | (va & AARCH64_PAGE_OFFSET_MASK);
+}
+

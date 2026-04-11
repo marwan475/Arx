@@ -201,6 +201,7 @@ void pmm_init(struct boot_info* boot_info)
 
     zone->free_pages = zone->total_pages;
     zone->used_pages = 0;
+    zone->lock       = 0;
 
     buddy_allocator_init(zone);
     kprintf("Arx kernel: buddy allocator initialized\n");

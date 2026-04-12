@@ -5,7 +5,8 @@
  *
  * - Stores memory region information provided by the bootloader
  * - Seperates memory into zones (currently just one zone for all memory)
- * - Per zone buddy allocator
+ * - Per zone buddy allocator (buddy allocator uses Page Frame Numbers (PFNs) for block management)
+ * - buddy metadata contains array of page_t structs for each page in the zone
  * - Alloc and free work with Higher Half Direct Mapping (HHDM) addresses
  *
  * Author: Marwan Mostafa

@@ -395,7 +395,7 @@ void pmm_free(zone_t* zone, void* addr)
 
     virt_addr_t hhdm_va = (virt_addr_t) (uintptr_t) addr;
     phys_addr_t pa      = hhdm_to_pa(hhdm_va, zone->hhdm_present, zone->hhdm_offset);
-    uint64_t   pfn = pa_to_pfn(pa);
+    uint64_t    pfn     = pa_to_pfn(pa);
 
     spinlock_acquire(&zone->lock);
 

@@ -357,7 +357,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
         return;
     }
 
-    const uint64_t range_end = va_start + size;
+    const uint64_t    range_end = va_start + size;
     const phys_addr_t last_pa   = range_end == va_start ? pa_start : pa_start + size - PAGE_SIZE;
     if (!x86_64_is_pa_encodable(pa_start) || !x86_64_is_pa_encodable(last_pa) || !x86_64_is_pa_encodable((uint64_t) page_table))
     {
@@ -368,11 +368,11 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
     const bool     active_pt       = page_table == arch_get_pt();
 
-    bool      any_changed         = false;
-    bool      requires_page_flush = false;
-    uint64_t*    pml4             = x86_64_table_from_pa((uint64_t) page_table);
-    virt_addr_t  va               = va_start;
-    phys_addr_t  pa               = pa_start;
+    bool        any_changed         = false;
+    bool        requires_page_flush = false;
+    uint64_t*   pml4                = x86_64_table_from_pa((uint64_t) page_table);
+    virt_addr_t va                  = va_start;
+    phys_addr_t pa                  = pa_start;
 
     while (va < range_end)
     {
@@ -411,15 +411,15 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                     kprintf("Arx kernel: arch_map_range failed at PD[%llu]\n", (unsigned long long) pd_index);
                     goto out;
                 }
-                uint64_t*       pt          = x86_64_table_from_pa(pt_pa);
-                const uint64_t  pt_index    = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
-                const uint64_t  entry_count = (pt_end - va) >> PAGE_SHIFT;
+                uint64_t*      pt          = x86_64_table_from_pa(pt_pa);
+                const uint64_t pt_index    = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
+                const uint64_t entry_count = (pt_end - va) >> PAGE_SHIFT;
 
                 for (uint64_t entry = 0; entry < entry_count; ++entry)
                 {
                     const phys_addr_t entry_pa = pa + (entry << PAGE_SHIFT);
-                    const uint64_t new_pte  = (entry_pa & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
-                    const uint64_t old_pte  = pt[pt_index + entry];
+                    const uint64_t    new_pte  = (entry_pa & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+                    const uint64_t    old_pte  = pt[pt_index + entry];
 
                     if (old_pte == new_pte)
                     {
@@ -695,10 +695,10 @@ void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t siz
     const bool     active_pt       = page_table == arch_get_pt();
     const uint64_t range_end       = va_start + size;
 
-    bool      any_changed         = false;
-    bool      requires_page_flush = false;
-    uint64_t*   pml4               = x86_64_table_from_pa((uint64_t) page_table);
-    virt_addr_t va                 = va_start;
+    bool        any_changed         = false;
+    bool        requires_page_flush = false;
+    uint64_t*   pml4                = x86_64_table_from_pa((uint64_t) page_table);
+    virt_addr_t va                  = va_start;
 
     while (va < range_end)
     {
@@ -832,4 +832,3 @@ phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t 
 
     return (pte & X86_64_PTE_ADDR_MASK) | (va & X86_64_PAGE_OFFSET_MASK);
 }
-

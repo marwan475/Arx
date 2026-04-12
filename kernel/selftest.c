@@ -53,10 +53,10 @@ static void vmm_test_log_fail(const char* message, size_t* failures)
 static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
 {
     const virt_addr_t candidates[] = {
-        0xFFFFF00000000000ULL,
-        0xFFFFE00000000000ULL,
-        0xFFFFC00000000000ULL,
-        0x0000004000000000ULL,
+            0xFFFFF00000000000ULL,
+            0xFFFFE00000000000ULL,
+            0xFFFFC00000000000ULL,
+            0x0000004000000000ULL,
     };
 
     for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++)

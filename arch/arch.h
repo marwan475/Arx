@@ -48,7 +48,7 @@ void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);
 
 // returns/takes physical address of page table
 phys_addr_t arch_get_pt(void);
-void arch_set_pt(phys_addr_t pt);
+void        arch_set_pt(phys_addr_t pt);
 
 // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears
 void arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);

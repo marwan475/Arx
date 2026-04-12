@@ -4,11 +4,9 @@ virt_addr_space_t init_kernel_address_space = {0};
 
 void vmm_init()
 {
-
     init_kernel_address_space.type = VIRT_ADDR_KERNEL;
     init_kernel_address_space.pt   = arch_get_pt();
     init_kernel_address_space.lock = 0;
-
 }
 
 void vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)

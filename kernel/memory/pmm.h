@@ -61,7 +61,7 @@ typedef struct zone
 
 extern zone_t pmm_zone;
 
-void  pmm_init(struct boot_info* boot_info);
+void pmm_init(struct boot_info* boot_info);
 
 // returns hhdm address of allocated block
 void* pmm_alloc(zone_t* zone, size_t size);

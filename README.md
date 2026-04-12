@@ -11,3 +11,7 @@ Targets:
 - [uACPI](https://github.com/uACPI/uACPI) - ACPI implementation used for table parsing and ACPI support.
 
 All third-party components retain their original licenses.
+
+## Ai usage
+- Build system and scripts are Ai generated
+- selftest.c is Ai generated testing of kernel subsystems

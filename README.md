@@ -12,6 +12,6 @@ Targets:
 
 All third-party components retain their original licenses.
 
-## Ai usage
-- Build system and scripts are Ai generated
-- selftest.c is Ai generated testing of kernel subsystems
+## AI Usage
+- Build system and scripts are AI generated
+- selftest.c is AI generated testing of kernel subsystems

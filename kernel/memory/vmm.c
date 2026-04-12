@@ -30,6 +30,15 @@ virt_region_t* alloc_region_struct(void *metadata, size_t *metadata_count)
    return region;
 }
 
+void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
+{
+    new_region->next = *list_head;
+    if (*list_head != NULL) {
+        (*list_head)->prev = new_region;
+    }
+    *list_head = new_region;
+}
+
 void vmm_init(struct boot_info* boot_info)
 {
     (void) boot_info;
@@ -49,11 +58,13 @@ void vmm_init(struct boot_info* boot_info)
     init_kernel_address_space.kernel_free_regions = NULL;
     init_kernel_address_space.kernel_used_regions = NULL;
     init_kernel_address_space.kernel_region_metadata = pmm_alloc(&pmm_zone, REGION_METADATA_SIZE);
+    memset(init_kernel_address_space.kernel_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.kernel_regions_count = 0;
 
     init_kernel_address_space.user_free_regions   = NULL;
     init_kernel_address_space.user_used_regions   = NULL;
     init_kernel_address_space.user_region_metadata = pmm_alloc(&pmm_zone, REGION_METADATA_SIZE);
+    memset(init_kernel_address_space.user_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.user_regions_count = 0;
 
     // initial regions before removing existing mappings
@@ -63,6 +74,31 @@ void vmm_init(struct boot_info* boot_info)
     initial_kernel_region->size  = KERNEL_VIRTUAL_END - KERNEL_VIRTUAL_BASE;
     initial_kernel_region->type  = VIRT_ADDR_KERNEL;
     init_kernel_address_space.kernel_free_regions = initial_kernel_region;
+
+    // existing regions
+    virt_region_t* existing_kernel_region = alloc_region_struct(init_kernel_address_space.kernel_region_metadata, &init_kernel_address_space.kernel_regions_count);
+    existing_kernel_region->start = boot_info->kernel_start;
+    existing_kernel_region->end   = boot_info->kernel_end;
+    existing_kernel_region->size  = boot_info->kernel_end - boot_info->kernel_start;
+    existing_kernel_region->type  = VIRT_ADDR_KERNEL;
+    init_kernel_address_space.kernel_used_regions = existing_kernel_region;
+
+    virt_region_t *existing_hhdm_region = alloc_region_struct(init_kernel_address_space.kernel_region_metadata, &init_kernel_address_space.kernel_regions_count);
+    existing_hhdm_region->start = boot_info->hhdm_present ? boot_info->hhdm_offset : 0;
+    existing_hhdm_region->end   = boot_info->hhdm_present ? boot_info->hhdm_offset + boot_info->hhdm_size : 0;
+    existing_hhdm_region->size  = boot_info->hhdm_present ? boot_info->hhdm_size : 0;
+    existing_hhdm_region->type  = VIRT_ADDR_KERNEL;
+    if (boot_info->hhdm_present)
+    {
+        add_to_regions_list(existing_hhdm_region, &init_kernel_address_space.kernel_used_regions);
+    }
+
+    virt_region_t* existing_framebuffer_region = alloc_region_struct(init_kernel_address_space.kernel_region_metadata, &init_kernel_address_space.kernel_regions_count);
+    existing_framebuffer_region->start = boot_info->framebuffer_addr;
+    existing_framebuffer_region->end   = boot_info->framebuffer_addr + boot_info->framebuffer_width * boot_info->framebuffer_height * (boot_info->framebuffer_bpp / 8);
+    existing_framebuffer_region->size  = boot_info->framebuffer_width * boot_info->framebuffer_height * (boot_info->framebuffer_bpp / 8);
+    existing_framebuffer_region->type  = VIRT_ADDR_KERNEL;
+    add_to_regions_list(existing_framebuffer_region, &init_kernel_address_space.kernel_used_regions);
 
     virt_region_t* initial_user_region = alloc_region_struct(init_kernel_address_space.user_region_metadata, &init_kernel_address_space.user_regions_count);
     initial_user_region->start = USER_VIRTUAL_BASE;

@@ -1,3 +1,16 @@
+/*
+ * arch_paging.c
+ *
+ * AArch64 architecture-specific paging implementation
+ *
+ * - Provides functions for managing page tables and paging operations
+ * - Optimizations for working with large ranges of pages
+ *      - Avoiding redundant page table walks/cache flushes and batching flushes 
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #include <arch/arch.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>

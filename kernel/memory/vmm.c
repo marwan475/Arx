@@ -1,3 +1,14 @@
+/*
+ * vmm.c
+ *
+ * Virtual Memory Manager (VMM) implementation
+ *
+ * - Implements architecture abstracted thread safe paging operations API
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #include <memory/vmm.h>
 
 virt_addr_space_t init_kernel_address_space = {0};

@@ -1,3 +1,17 @@
+/*
+ * pmm.h
+ *
+ * Physical Memory Manager (PMM) structures and public API
+ *
+ * - Stores memory region information provided by the bootloader
+ * - Seperates memory into zones (currently just one zone for all memory)
+ * - Per zone buddy allocator
+ * - Alloc and free work with Higher Half Direct Mapping (HHDM) addresses
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #ifndef PMM_H
 #define PMM_H
 
@@ -7,10 +21,7 @@
 #define PMM_MAX_REGIONS 128
 #define MAX_ORDER 10
 
-#ifndef PHYS_ADDR_T_DEFINED
-#define PHYS_ADDR_T_DEFINED
 typedef uint64_t phys_addr_t;
-#endif
 
 typedef struct pmm_region
 {

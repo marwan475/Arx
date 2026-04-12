@@ -1,3 +1,20 @@
+/*
+ * kernel.c
+ *
+ * Kernel entry point and initialization
+ *
+ * - Gathers boot information from architecture-specific entry code
+ * - Architecture abstracted initialization
+ * - Initializes core subsystems
+ *      - Physical Memory Manager (PMM)
+ *      - Virtual Memory Manager (VMM)
+ *      - Symmetric Multiprocessing (SMP)
+ * 
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #include <boot/boot.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>

@@ -1,3 +1,14 @@
+/*
+ * arch.h
+ *
+ * This header defines architecture specific handlers 
+ *
+ * - Common architecture interface
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #ifndef ARCH_H
 #define ARCH_H
 

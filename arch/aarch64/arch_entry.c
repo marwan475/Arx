@@ -34,6 +34,12 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .response = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_rsdp_request rsdp_request = {
+    .id       = LIMINE_RSDP_REQUEST,
+    .revision = 0,
+    .response = 0,
+};
+
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_paging_mode_request paging_mode_request = {
         .id       = LIMINE_PAGING_MODE_REQUEST,
         .revision = 0,
@@ -218,6 +224,7 @@ void arch_smp_init(struct boot_info* boot_info)
 static void gather_boot_info(struct boot_info* boot_info)
 {
     boot_info->limine_present     = 0;
+    boot_info->rsdp_address       = 0;
     boot_info->hhdm_present       = 0;
     boot_info->hhdm_offset        = 0;
     boot_info->memmap_entry_count = 0;
@@ -243,6 +250,11 @@ static void gather_boot_info(struct boot_info* boot_info)
     {
         boot_info->hhdm_present = 1;
         boot_info->hhdm_offset  = hhdm_request.response->offset;
+    }
+
+    if (rsdp_request.response != 0)
+    {
+        boot_info->rsdp_address = (uint64_t) (uintptr_t) rsdp_request.response->address;
     }
 
     if (memmap_request.response != 0)

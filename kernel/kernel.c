@@ -16,6 +16,7 @@
  */
 
 #include <boot/boot.h>
+#include <acpi/acpi.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -29,6 +30,7 @@ void run_selftests(void);
 // - smp info
 // - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
 // - paging with no user access and RWX on direct map
+// - acpi rsdp address
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
     kprintf("Arx kernel: kmain entered\n");
@@ -64,6 +66,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     pmm_init(boot_info);
     vmm_init();
+    //acpi_init(boot_info->rsdp_address);
 
     run_selftests();
 

@@ -32,7 +32,7 @@ OPTIMIZATION ?= 0
 UACPI_DIR ?= kernel/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
 UACPI_DEFINES := -DUACPI_BAREBONES_MODE
-UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/uacpi_port.c
+UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -O$(OPTIMIZATION) -ggdb3
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone

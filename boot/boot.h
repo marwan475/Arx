@@ -68,6 +68,7 @@ struct boot_smp_info
 struct boot_info
 {
     uint64_t             limine_present;
+    uint64_t             rsdp_address;
     uint64_t             hhdm_present;
     uint64_t             hhdm_offset;
     uint64_t             memmap_entry_count;

@@ -103,6 +103,8 @@ struct limine_memmap_request
 
 #define LIMINE_HHDM_REQUEST {LIMINE_COMMON_MAGIC, 0x48dcf1cb8ad2b852, 0x63984e959a98244b}
 
+#define LIMINE_RSDP_REQUEST {LIMINE_COMMON_MAGIC, 0xc5e77b6b397e7b43, 0x27637845accdcf3c}
+
 struct limine_hhdm_response
 {
     uint64_t revision;
@@ -114,6 +116,19 @@ struct limine_hhdm_request
     uint64_t id[4];
     uint64_t revision;
     LIMINE_PTR(struct limine_hhdm_response*) response;
+};
+
+struct limine_rsdp_response
+{
+    uint64_t revision;
+    LIMINE_PTR(void*) address;
+};
+
+struct limine_rsdp_request
+{
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_rsdp_response*) response;
 };
 
 #define LIMINE_PAGING_MODE_REQUEST {LIMINE_COMMON_MAGIC, 0x95c1a0edab0944cb, 0xa4e5cb3842f7488a}

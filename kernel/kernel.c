@@ -65,7 +65,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     arch_smp_init(boot_info);
 
     pmm_init(boot_info);
-    vmm_init();
+    vmm_init(boot_info);
     //acpi_init(boot_info->rsdp_address);
 
     run_selftests();

@@ -229,7 +229,7 @@ format:
 			IndentWidth: 4, \
 			TabWidth: 4, \
 			UseTab: Never, \
-			ColumnLimit: 200, \
+			ColumnLimit: 300, \
 			BreakBeforeBraces: Allman, \
 			AllowShortIfStatementsOnASingleLine: false, \
 			AllowShortLoopsOnASingleLine: false, \

@@ -588,7 +588,7 @@ void klib_test(void)
     size_t failures = 0;
     size_t passes   = 0;
 
-    const size_t req_size     = PAGE_SIZE + 123;
+    const size_t req_size     = PAGE_SIZE * 100 + 123;
     const size_t aligned_size = align_up(req_size, PAGE_SIZE);
 
     kprintf("Arx kernel: klib_test start\n");
@@ -602,6 +602,8 @@ void klib_test(void)
         return;
     }
     passes++;
+
+    memset(ptr, 0, req_size); 
 
     if ((((uintptr_t) ptr) & (PAGE_SIZE - 1)) != 0)
     {

@@ -94,6 +94,7 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     }
 }
 
+// currently dosnt rollback if pmm alloc fails
 void* vmalloc(size_t size)
 {
     cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];

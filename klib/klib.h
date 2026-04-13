@@ -89,6 +89,8 @@ uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
 uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 
 // memory allocation
+
+// Allocate large contiguous blocks of virtual memory (slow)
 void* vmalloc(size_t size);
 void  vfree(void* ptr);
 

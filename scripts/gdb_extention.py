@@ -5,7 +5,7 @@ PAGE_SIZE = 4096
 
 
 class ArxPmmCommand(gdb.Command):
-    """Print Arx buddy allocator free lists and usage totals."""
+    """Print Arx buddy allocator state from dispatcher CPU context."""
 
     def __init__(self):
         super().__init__("arx-pmm", gdb.COMMAND_STATUS)
@@ -68,43 +68,68 @@ class ArxPmmCommand(gdb.Command):
         print("free pages:   {} ({} bytes)".format(total_free_pages_from_lists, total_free_pages_from_lists * PAGE_SIZE))
         print("")
 
+    @staticmethod
+    def _parse_cpu_index(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
+
     def invoke(self, arg, from_tty):
-        del arg
         del from_tty
 
         try:
-            zone_count = int(gdb.parse_and_eval("pmm_zone_count"))
-            zones = gdb.parse_and_eval("pmm_zones")
+            dispatcher = gdb.parse_and_eval("dispatcher")
         except gdb.error as err:
-            try:
-                zone = gdb.parse_and_eval("pmm_zone")
-            except gdb.error as single_err:
-                raise gdb.GdbError("Failed to read PMM symbols: {} / {}".format(err, single_err))
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
 
-            print("Arx PMM state")
-            print("=============")
-            print("zones: 1")
-            print("")
-            self._print_zone(zone, "zone[0]")
-            return
-
-        if zone_count < 0:
-            zone_count = 0
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = self._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        requested_cpu = self._parse_cpu_index(arg)
 
         print("Arx PMM state")
         print("=============")
-        print("zones: {}".format(zone_count))
+        print("cpu_count: {}".format(cpu_count))
+        print("cpu_slots: {}".format(cpu_slots))
         print("")
 
-        for index in range(zone_count):
-            self._print_zone(zones[index], "zone[{}]".format(index))
+        cpu_indices = []
+        if requested_cpu is not None:
+            if requested_cpu < 0 or requested_cpu >= cpu_slots:
+                raise gdb.GdbError("cpu index {} out of range [0, {})".format(requested_cpu, cpu_slots))
+            cpu_indices = [requested_cpu]
+        else:
+            cpu_indices = list(range(cpu_slots))
+
+        printed = 0
+        for cpu_index in cpu_indices:
+            cpu = dispatcher["cpus"][cpu_index]
+            numa_node = cpu["numa_node"]
+            if int(numa_node) == 0:
+                if requested_cpu is not None:
+                    print("cpu[{}] numa_node: NULL".format(cpu_index))
+                continue
+
+            print("cpu[{}] id={}".format(cpu_index, int(cpu["id"])))
+            print("")
+            self._print_zone(numa_node["zone"], "cpu[{}].numa_node.zone".format(cpu_index))
+            printed += 1
+
+        if printed == 0 and requested_cpu is None:
+            print("(no CPUs with initialized numa_node pointer)")
 
 
 ArxPmmCommand()
 
 
 class ArxVmmCommand(gdb.Command):
-    """Print Arx VMM init_kernel_address_space state."""
+    """Print Arx VMM address_space state from dispatcher CPU context."""
 
     def __init__(self):
         super().__init__("arx-vmm", gdb.COMMAND_STATUS)
@@ -144,14 +169,43 @@ class ArxVmmCommand(gdb.Command):
         print("regions: {}, total_size=0x{:x} ({})".format(count, total_size, total_size))
         print("")
 
+    @staticmethod
+    def _parse_cpu_index(arg):
+        text = (arg or "").strip()
+        if text == "":
+            try:
+                return int(gdb.parse_and_eval("arch_cpu_id()"))
+            except gdb.error:
+                return 0
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
+
     def invoke(self, arg, from_tty):
-        del arg
         del from_tty
 
         try:
-            space = gdb.parse_and_eval("init_kernel_address_space")
+            dispatcher = gdb.parse_and_eval("dispatcher")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read VMM symbols: {}".format(err))
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        cpu_index = self._parse_cpu_index(arg)
+
+        if cpu_index < 0 or cpu_index >= cpu_slots:
+            raise gdb.GdbError("cpu index {} out of range [0, {})".format(cpu_index, cpu_slots))
+
+        cpu = dispatcher["cpus"][cpu_index]
+        space_ptr = cpu["address_space"]
+        if int(space_ptr) == 0:
+            raise gdb.GdbError("cpu[{}] address_space is NULL".format(cpu_index))
+
+        space = space_ptr.dereference()
 
         space_type = int(space["type"])
         pt = int(space["pt"])
@@ -159,6 +213,7 @@ class ArxVmmCommand(gdb.Command):
 
         print("Arx VMM address space state")
         print("===========================")
+        print("cpu:  {} (id={})".format(cpu_index, int(cpu["id"])))
         print("type: {}".format("KERNEL" if space_type == 0 else "USER"))
         print("pt:   0x{:016x}".format(pt))
         print("lock: {}".format(lock))

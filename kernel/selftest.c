@@ -72,10 +72,35 @@ static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
     return false;
 }
 
+static size_t vmm_test_count_regions(virt_region_t* head)
+{
+    size_t count = 0;
+    for (virt_region_t* it = head; it != NULL; it = it->next)
+    {
+        count++;
+    }
+    return count;
+}
+
+static virt_region_t* vmm_test_find_region_by_start(virt_region_t* head, virt_addr_t start)
+{
+    for (virt_region_t* it = head; it != NULL; it = it->next)
+    {
+        if (it->start == start)
+        {
+            return it;
+        }
+    }
+    return NULL;
+}
+
 void vmm_test(void)
 {
     size_t failures = 0;
     size_t passes   = 0;
+
+    const size_t kernel_used_before = vmm_test_count_regions(init_kernel_address_space.kernel_used_regions);
+    const size_t kernel_free_before = vmm_test_count_regions(init_kernel_address_space.kernel_free_regions);
 
     kprintf("Arx kernel: vmm_test start\n");
 
@@ -174,6 +199,102 @@ void vmm_test(void)
 
     vmm_switch_addr_space(&init_kernel_address_space);
     passes++;
+
+    // Validate virtual region reserve/free list accounting for kernel regions.
+    const size_t reserve_size = PAGE_SIZE + 123;
+    const size_t reserve_size_aligned = align_up(reserve_size, PAGE_SIZE);
+
+    virt_addr_t reserved = vmm_reserve_region(&init_kernel_address_space, reserve_size, VIRT_ADDR_KERNEL);
+    if (reserved == 0)
+    {
+        vmm_test_log_fail("reserve_region returned 0 for kernel allocation", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if ((reserved & (PAGE_SIZE - 1)) != 0)
+    {
+        vmm_test_log_fail("reserve_region returned non-page-aligned address", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    virt_region_t* used_reserved = vmm_test_find_region_by_start(init_kernel_address_space.kernel_used_regions, reserved);
+    if (used_reserved == NULL)
+    {
+        vmm_test_log_fail("reserved region not found in kernel used list", &failures);
+    }
+    else if (used_reserved->size != reserve_size_aligned || used_reserved->type != VIRT_ADDR_KERNEL)
+    {
+        vmm_test_log_fail("reserved kernel used region metadata mismatch", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (vmm_test_find_region_by_start(init_kernel_address_space.kernel_free_regions, reserved) != NULL)
+    {
+        vmm_test_log_fail("reserved region incorrectly present in kernel free list", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    const size_t kernel_used_after_reserve = vmm_test_count_regions(init_kernel_address_space.kernel_used_regions);
+    if (kernel_used_after_reserve != (kernel_used_before + 1))
+    {
+        vmm_test_log_fail("kernel used list count did not increase after reserve", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    vmm_free_region(&init_kernel_address_space, reserved);
+
+    if (vmm_test_find_region_by_start(init_kernel_address_space.kernel_used_regions, reserved) != NULL)
+    {
+        vmm_test_log_fail("freed region still present in kernel used list", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (vmm_test_find_region_by_start(init_kernel_address_space.kernel_free_regions, reserved) == NULL)
+    {
+        vmm_test_log_fail("freed region not found in kernel free list", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    const size_t kernel_used_after_free = vmm_test_count_regions(init_kernel_address_space.kernel_used_regions);
+    if (kernel_used_after_free != kernel_used_before)
+    {
+        vmm_test_log_fail("kernel used list count did not restore after free", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    const size_t kernel_free_after_free = vmm_test_count_regions(init_kernel_address_space.kernel_free_regions);
+    if (kernel_free_after_free != kernel_free_before)
+    {
+        vmm_test_log_fail("kernel free list count did not restore after free", &failures);
+    }
+    else
+    {
+        passes++;
+    }
 
     pmm_free(&pmm_zone, range_block_va);
 

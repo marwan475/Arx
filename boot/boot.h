@@ -87,5 +87,6 @@ struct boot_info
 
 void kmain(struct boot_info* boot_info, uint64_t cpu_count);
 void arch_smp_init(struct boot_info* boot_info);
+void smp_kmain(void);
 
 #endif

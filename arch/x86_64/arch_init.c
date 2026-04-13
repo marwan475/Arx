@@ -61,3 +61,10 @@ void gdt_init()
                          : [gdt] "m"(cpu_info->arch_info.gdt_reg), [tss] "r"((uint16_t) offsetof(gdt_t, tss))
                          : "rax", "memory");
 }
+
+void arch_init(void)
+{
+    gdt_init();
+
+    kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
+}

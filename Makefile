@@ -26,15 +26,21 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 INCLUDE_DIRS ?= -I. -Ikernel
-DEBUG ?= 1
-OPTIMIZATION ?= 0
+DEBUG ?= 0
 
 UACPI_DIR ?= kernel/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
 UACPI_DEFINES := -DUACPI_BAREBONES_MODE
 UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/acpi.c
 
-CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP -O$(OPTIMIZATION) -ggdb3
+CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
+
+ifeq ($(DEBUG),1)
+CFLAGS_COMMON += -O0 -ggdb3
+else
+CFLAGS_COMMON += -O2
+endif
+
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
 LDFLAGS_COMMON := -nostdlib -no-pie
@@ -48,7 +54,7 @@ ISO_AARCH64_ROOT := $(ISO_DIR)/aarch64
 BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
-.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 debug x86_64-debug aarch64-debug
+.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/memory/pmm.c kernel/memory/vmm.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
@@ -185,8 +191,6 @@ qemu-kvm:
 qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0
 
-debug: x86_64-debug
-
 x86_64-debug:
 	@$(MAKE) --no-print-directory -B DEBUG=1 $(ISO_X86_64)
 	@ARCH=x86_64 \
@@ -225,7 +229,7 @@ format:
 			IndentWidth: 4, \
 			TabWidth: 4, \
 			UseTab: Never, \
-			ColumnLimit: 200, \
+			ColumnLimit: 300, \
 			BreakBeforeBraces: Allman, \
 			AllowShortIfStatementsOnASingleLine: false, \
 			AllowShortLoopsOnASingleLine: false, \

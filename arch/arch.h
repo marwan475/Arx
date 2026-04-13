@@ -12,6 +12,14 @@
 #ifndef ARCH_H
 #define ARCH_H
 
+#if defined(__x86_64__)
+#include <arch/x86_64/x86_64.h>
+#elif defined(__aarch64__)
+#include <arch/aarch64/aarch64.h>
+#else
+#error Unsupported architecture
+#endif
+
 #include <stdint.h>
 
 #ifndef PHYS_ADDR_T_DEFINED

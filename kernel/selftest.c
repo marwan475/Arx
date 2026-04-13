@@ -1,4 +1,5 @@
 // Ai generated testing
+// Not thread safe
 
 #include <memory/pmm.h>
 #include <memory/vmm.h>

@@ -595,7 +595,7 @@ void klib_test(void)
 
     kprintf("Arx kernel: klib_test start\n");
 
-    void* ptr = vmalloc(req_size);
+    void* ptr = vmalloc(&pmm_zone, &init_kernel_address_space, req_size);
     if (ptr == NULL)
     {
         klib_test_log_fail("vmalloc returned NULL", &failures);
@@ -637,7 +637,7 @@ void klib_test(void)
         passes++;
     }
 
-    vfree(ptr);
+    vfree(&pmm_zone, &init_kernel_address_space, ptr);
 
     if (vmm_find_region(&init_kernel_address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
     {

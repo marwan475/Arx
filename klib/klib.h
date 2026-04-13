@@ -22,6 +22,9 @@
 
 typedef _Atomic uint8_t spinlock_t;
 
+typedef struct zone zone_t;
+typedef struct virt_addr_space virt_addr_space_t;
+
 // panic
 static _force_inline void panic(void)
 {
@@ -76,7 +79,7 @@ uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
 uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 
 // memory allocation
-void* vmalloc(size_t size);
-void  vfree(void* ptr);
+void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size);
+void  vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr);
 
 #endif

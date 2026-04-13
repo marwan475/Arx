@@ -12,6 +12,14 @@
 #ifndef ARCH_H
 #define ARCH_H
 
+#if defined(__x86_64__)
+#include <arch/x86_64/x86_64.h>
+#elif defined(__aarch64__)
+#include <arch/aarch64/aarch64.h>
+#else
+#error Unsupported architecture
+#endif
+
 #include <stdint.h>
 
 #ifndef PHYS_ADDR_T_DEFINED
@@ -73,5 +81,7 @@ void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phy
 
 // Returns physical address for a mapped virtual address, or 0 if unmapped.
 phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
+
+void arch_init(void);
 
 #endif

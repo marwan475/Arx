@@ -12,6 +12,7 @@
 #ifndef CPU_H
 #define CPU_H
 
+#include <arch/arch.h>
 #include <stdint.h>
 
 typedef struct numa_node       numa_node_t;
@@ -22,6 +23,7 @@ typedef struct cpu_info
     uint8_t            id;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;
+    arch_info_t        arch_info;
 } cpu_info_t;
 
 #endif

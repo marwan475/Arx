@@ -350,7 +350,8 @@ void pmm_test(void)
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages, (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages, (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.total_pages);
+        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages, (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages,
+                (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.total_pages);
     }
 
     baseline_free_pages = dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages;
@@ -427,7 +428,8 @@ void pmm_test(void)
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages, (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages, (unsigned long long) scenario_expected_pages);
+        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages, (unsigned long long) dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages,
+                (unsigned long long) scenario_expected_pages);
     }
 
     for (size_t i = 0; i < PMM_TEST_SCENARIOS; i++)
@@ -603,7 +605,7 @@ void klib_test(void)
     }
     passes++;
 
-    memset(ptr, 0, req_size); 
+    memset(ptr, 0, req_size);
 
     if ((((uintptr_t) ptr) & (PAGE_SIZE - 1)) != 0)
     {

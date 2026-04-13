@@ -14,11 +14,11 @@
 
 #include <arch/arch.h>
 #include <boot/boot.h>
+#include <kernel/cpu/cpu.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <kernel/cpu/cpu.h>
 
 #define _force_inline inline __attribute__((always_inline))
 

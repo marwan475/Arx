@@ -331,3 +331,207 @@ phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space)
     spinlock_release(&space->lock);
     return pa;
 }
+
+virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_t type)
+{
+    if (space == NULL || size == 0)
+    {
+        return 0;
+    }
+
+    size_t aligned_size = align_up(size, PAGE_SIZE);
+    if (aligned_size == 0)
+    {
+        return 0;
+    }
+
+    virt_region_t** free_regions = NULL;
+    virt_region_t** used_regions = NULL;
+    void* metadata               = NULL;
+    size_t* metadata_count       = NULL;
+
+    if (type == VIRT_ADDR_KERNEL)
+    {
+        free_regions  = &space->kernel_free_regions;
+        used_regions  = &space->kernel_used_regions;
+        metadata      = space->kernel_region_metadata;
+        metadata_count = &space->kernel_regions_count;
+    }
+    else
+    {
+        free_regions  = &space->user_free_regions;
+        used_regions  = &space->user_used_regions;
+        metadata      = space->user_region_metadata;
+        metadata_count = &space->user_regions_count;
+    }
+
+    spinlock_acquire(&space->lock);
+
+    for (virt_region_t* free = *free_regions; free != NULL; free = free->next)
+    {
+        if (free->size < aligned_size)
+        {
+            continue;
+        }
+
+        virt_addr_t reserved_start = free->start;
+
+        if (free->size == aligned_size)
+        {
+            remove_from_regions_list(free, free_regions);
+
+            free->start = reserved_start;
+            free->end   = reserved_start + aligned_size;
+            free->size  = aligned_size;
+            free->type  = type;
+
+            add_to_regions_list(free, used_regions);
+            spinlock_release(&space->lock);
+            return reserved_start;
+        }
+
+        virt_region_t* used = alloc_region_struct(metadata, metadata_count);
+        if (used == NULL)
+        {
+            spinlock_release(&space->lock);
+            return 0;
+        }
+
+        used->start = reserved_start;
+        used->end   = reserved_start + aligned_size;
+        used->size  = aligned_size;
+        used->type  = type;
+        used->next  = NULL;
+        used->prev  = NULL;
+
+        free->start += aligned_size;
+        free->size = free->end - free->start;
+
+        add_to_regions_list(used, used_regions);
+        spinlock_release(&space->lock);
+        return reserved_start;
+    }
+
+    spinlock_release(&space->lock);
+    return 0;
+}
+
+void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
+{
+    if (space == NULL || addr == 0)
+    {
+        return;
+    }
+
+    spinlock_acquire(&space->lock);
+
+    virt_region_t* region         = NULL;
+    virt_region_t** used_regions  = NULL;
+    virt_region_t** free_regions  = NULL;
+    size_t* metadata_count        = NULL;
+
+    for (virt_region_t* it = space->kernel_used_regions; it != NULL; it = it->next)
+    {
+        if (it->start == addr)
+        {
+            region        = it;
+            used_regions  = &space->kernel_used_regions;
+            free_regions  = &space->kernel_free_regions;
+            metadata_count = &space->kernel_regions_count;
+            break;
+        }
+    }
+
+    if (region == NULL)
+    {
+        for (virt_region_t* it = space->user_used_regions; it != NULL; it = it->next)
+        {
+            if (it->start == addr)
+            {
+                region        = it;
+                used_regions  = &space->user_used_regions;
+                free_regions  = &space->user_free_regions;
+                metadata_count = &space->user_regions_count;
+                break;
+            }
+        }
+    }
+
+    if (region == NULL)
+    {
+        spinlock_release(&space->lock);
+        return;
+    }
+
+    remove_from_regions_list(region, used_regions);
+
+    virt_region_t* insert_before = *free_regions;
+    while (insert_before != NULL && insert_before->start < region->start)
+    {
+        insert_before = insert_before->next;
+    }
+
+    if (insert_before == NULL)
+    {
+        if (*free_regions == NULL)
+        {
+            region->prev = NULL;
+            region->next = NULL;
+            *free_regions = region;
+        }
+        else
+        {
+            virt_region_t* tail = *free_regions;
+            while (tail->next != NULL)
+            {
+                tail = tail->next;
+            }
+            tail->next   = region;
+            region->prev = tail;
+            region->next = NULL;
+        }
+    }
+    else
+    {
+        region->next = insert_before;
+        region->prev = insert_before->prev;
+        if (insert_before->prev != NULL)
+        {
+            insert_before->prev->next = region;
+        }
+        else
+        {
+            *free_regions = region;
+        }
+        insert_before->prev = region;
+    }
+
+    if (region->prev != NULL && region->prev->end == region->start)
+    {
+        virt_region_t* left = region->prev;
+        left->end  = region->end;
+        left->size = left->end - left->start;
+        left->next = region->next;
+        if (region->next != NULL)
+        {
+            region->next->prev = left;
+        }
+        free_region_struct(region, metadata_count);
+        region = left;
+    }
+
+    if (region->next != NULL && region->end == region->next->start)
+    {
+        virt_region_t* right = region->next;
+        region->end  = right->end;
+        region->size = region->end - region->start;
+        region->next = right->next;
+        if (right->next != NULL)
+        {
+            right->next->prev = region;
+        }
+        free_region_struct(right, metadata_count);
+    }
+
+    spinlock_release(&space->lock);
+}

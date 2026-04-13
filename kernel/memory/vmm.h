@@ -80,5 +80,6 @@ phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space);
 
 virt_addr_t vmm_reserve_region(virt_addr_space_t *space, size_t size, virt_type_t type);
 void vmm_free_region(virt_addr_space_t *space, virt_addr_t addr);
+virt_region_t* vmm_find_region(virt_addr_space_t *space, virt_addr_t addr);
 
 #endif

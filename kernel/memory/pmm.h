@@ -79,8 +79,6 @@ typedef struct numa_node
     size_t cpu_count;
 } numa_node_t;
 
-extern numa_node_t pmm_numa_node;
-
 void pmm_init(struct boot_info* boot_info);
 
 // returns hhdm address of allocated block

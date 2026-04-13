@@ -147,7 +147,7 @@ static uint64_t x86_64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t l
 
 static uint64_t* x86_64_table_from_pa(phys_addr_t pa)
 {
-    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
+    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
     return (uint64_t*) table_va;
 }
 
@@ -180,7 +180,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
         return x86_64_decode_table_entry(*entry, table_pa);
     }
 
-    void* new_table = pmm_alloc(&pmm_numa_node.zone, PAGE_SIZE);
+    void* new_table = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, PAGE_SIZE);
     if (new_table == NULL)
     {
         kprintf("Arx kernel: arch_map_page failed: unable to allocate page table\n");
@@ -188,7 +188,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     }
 
     memset(new_table, 0, PAGE_SIZE);
-    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
+    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
 
     if (!x86_64_is_pa_encodable(new_table_pa))
     {

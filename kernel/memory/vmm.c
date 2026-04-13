@@ -19,7 +19,7 @@ virt_addr_t USER_VIRTUAL_END;
 
 size_t MAX_REGIONS;
 
-virt_addr_space_t init_kernel_address_space = {0};
+static virt_addr_space_t init_kernel_address_space = {0};
 
 virt_region_t* alloc_region_struct(void *metadata, size_t *metadata_count)
 {
@@ -221,13 +221,13 @@ void vmm_init(struct boot_info* boot_info)
 
     init_kernel_address_space.kernel_free_regions = NULL;
     init_kernel_address_space.kernel_used_regions = NULL;
-    init_kernel_address_space.kernel_region_metadata = pmm_alloc(&pmm_numa_node.zone, REGION_METADATA_SIZE);
+    init_kernel_address_space.kernel_region_metadata = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, REGION_METADATA_SIZE);
     memset(init_kernel_address_space.kernel_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.kernel_regions_count = 0;
 
     init_kernel_address_space.user_free_regions   = NULL;
     init_kernel_address_space.user_used_regions   = NULL;
-    init_kernel_address_space.user_region_metadata = pmm_alloc(&pmm_numa_node.zone, REGION_METADATA_SIZE);
+    init_kernel_address_space.user_region_metadata = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, REGION_METADATA_SIZE);
     memset(init_kernel_address_space.user_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.user_regions_count = 0;
 
@@ -272,6 +272,10 @@ void vmm_init(struct boot_info* boot_info)
     initial_user_region->size  = USER_VIRTUAL_END - USER_VIRTUAL_BASE;
     initial_user_region->type  = VIRT_ADDR_USER;
     init_kernel_address_space.user_free_regions = initial_user_region;
+
+    kprintf("Arx kernel: virtual memory manager initialized\n");
+
+    dispatcher.cpus[arch_cpu_id()].address_space = &init_kernel_address_space;
 
 }
 

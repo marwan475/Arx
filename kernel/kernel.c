@@ -24,6 +24,8 @@
 
 void run_selftests(void);
 
+dispatcher_t dispatcher;
+
 // From bootloader we need
 // - memory map
 // - framebuffer info

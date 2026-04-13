@@ -17,7 +17,7 @@
 #include <memory/vmm.h>
 
 // keep it to one zone containing all memory for now
-numa_node_t pmm_numa_node = {0};
+static numa_node_t pmm_numa_node = {0};
 
 static size_t bytes_to_kb(size_t bytes)
 {
@@ -220,6 +220,8 @@ void pmm_init(struct boot_info* boot_info)
 
     buddy_allocator_init(zone);
     kprintf("Arx kernel: buddy allocator initialized\n");
+
+    dispatcher.cpus[arch_cpu_id()].numa_node = &pmm_numa_node;
 }
 
 // removes head of free list

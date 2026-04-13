@@ -13,10 +13,12 @@
 #define KLIB_H
 
 #include <arch/arch.h>
+#include <boot/boot.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <kernel/cpu/cpu.h>
 
 #define _force_inline inline __attribute__((always_inline))
 
@@ -27,7 +29,11 @@ typedef struct virt_addr_space virt_addr_space_t;
 
 typedef struct dispatcher
 {
+    cpu_info_t cpus[BOOT_SMP_MAX_CPUS];
+    size_t     cpu_count;
 } dispatcher_t;
+
+extern dispatcher_t dispatcher;
 
 // panic
 static _force_inline void panic(void)

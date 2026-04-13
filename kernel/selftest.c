@@ -201,7 +201,7 @@ void vmm_test(void)
     passes++;
 
     // Validate virtual region reserve/free list accounting for kernel regions.
-    const size_t reserve_size = PAGE_SIZE + 123;
+    const size_t reserve_size         = PAGE_SIZE + 123;
     const size_t reserve_size_aligned = align_up(reserve_size, PAGE_SIZE);
 
     virt_addr_t reserved = vmm_reserve_region(&init_kernel_address_space, reserve_size, VIRT_ADDR_KERNEL);
@@ -350,8 +350,7 @@ void pmm_test(void)
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages,
-                (unsigned long long) pmm_zone.total_pages);
+        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages, (unsigned long long) pmm_zone.total_pages);
     }
 
     baseline_free_pages = pmm_zone.free_pages;
@@ -428,8 +427,7 @@ void pmm_test(void)
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) pmm_zone.free_pages,
-                (unsigned long long) pmm_zone.used_pages, (unsigned long long) scenario_expected_pages);
+        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages, (unsigned long long) scenario_expected_pages);
     }
 
     for (size_t i = 0; i < PMM_TEST_SCENARIOS; i++)

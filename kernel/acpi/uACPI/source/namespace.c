@@ -17,10 +17,8 @@
 #define MAKE_PREDEFINED(c0, c1, c2, c3) {.name.text = {c0, c1, c2, c3}, .flags = UACPI_NAMESPACE_NODE_PREDEFINED}
 
 static uacpi_namespace_node predefined_namespaces[UACPI_PREDEFINED_NAMESPACE_MAX + 1] = {
-        [UACPI_PREDEFINED_NAMESPACE_ROOT] = MAKE_PREDEFINED('\\', 0, 0, 0),     [UACPI_PREDEFINED_NAMESPACE_GPE] = MAKE_PREDEFINED('_', 'G', 'P', 'E'),
-        [UACPI_PREDEFINED_NAMESPACE_PR] = MAKE_PREDEFINED('_', 'P', 'R', '_'),  [UACPI_PREDEFINED_NAMESPACE_SB] = MAKE_PREDEFINED('_', 'S', 'B', '_'),
-        [UACPI_PREDEFINED_NAMESPACE_SI] = MAKE_PREDEFINED('_', 'S', 'I', '_'),  [UACPI_PREDEFINED_NAMESPACE_TZ] = MAKE_PREDEFINED('_', 'T', 'Z', '_'),
-        [UACPI_PREDEFINED_NAMESPACE_GL] = MAKE_PREDEFINED('_', 'G', 'L', '_'),  [UACPI_PREDEFINED_NAMESPACE_OS] = MAKE_PREDEFINED('_', 'O', 'S', '_'),
+        [UACPI_PREDEFINED_NAMESPACE_ROOT] = MAKE_PREDEFINED('\\', 0, 0, 0),     [UACPI_PREDEFINED_NAMESPACE_GPE] = MAKE_PREDEFINED('_', 'G', 'P', 'E'), [UACPI_PREDEFINED_NAMESPACE_PR] = MAKE_PREDEFINED('_', 'P', 'R', '_'), [UACPI_PREDEFINED_NAMESPACE_SB] = MAKE_PREDEFINED('_', 'S', 'B', '_'),
+        [UACPI_PREDEFINED_NAMESPACE_SI] = MAKE_PREDEFINED('_', 'S', 'I', '_'),  [UACPI_PREDEFINED_NAMESPACE_TZ] = MAKE_PREDEFINED('_', 'T', 'Z', '_'),  [UACPI_PREDEFINED_NAMESPACE_GL] = MAKE_PREDEFINED('_', 'G', 'L', '_'), [UACPI_PREDEFINED_NAMESPACE_OS] = MAKE_PREDEFINED('_', 'O', 'S', '_'),
         [UACPI_PREDEFINED_NAMESPACE_OSI] = MAKE_PREDEFINED('_', 'O', 'S', 'I'), [UACPI_PREDEFINED_NAMESPACE_REV] = MAKE_PREDEFINED('_', 'R', 'E', 'V'),
 };
 
@@ -478,8 +476,7 @@ static uacpi_object_name segment_to_name(const uacpi_char** string, uacpi_size* 
     return out_name;
 }
 
-uacpi_status uacpi_namespace_node_resolve(uacpi_namespace_node* parent, const uacpi_char* path, enum uacpi_should_lock should_lock, enum uacpi_may_search_above_parent may_search_above_parent,
-                                          enum uacpi_permanent_only permanent_only, uacpi_namespace_node** out_node)
+uacpi_status uacpi_namespace_node_resolve(uacpi_namespace_node* parent, const uacpi_char* path, enum uacpi_should_lock should_lock, enum uacpi_may_search_above_parent may_search_above_parent, enum uacpi_permanent_only permanent_only, uacpi_namespace_node** out_node)
 {
     uacpi_namespace_node* cur_node = parent;
     uacpi_status          ret      = UACPI_STATUS_OK;
@@ -789,8 +786,8 @@ uacpi_status uacpi_namespace_node_is(const uacpi_namespace_node* node, uacpi_obj
     return uacpi_namespace_node_is_one_of(node, 1u << type, out);
 }
 
-uacpi_status uacpi_namespace_do_for_each_child(uacpi_namespace_node* node, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits type_mask,
-                                               uacpi_u32 max_depth, enum uacpi_should_lock should_lock, enum uacpi_permanent_only permanent_only, void* user)
+uacpi_status uacpi_namespace_do_for_each_child(uacpi_namespace_node* node, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits type_mask, uacpi_u32 max_depth, enum uacpi_should_lock should_lock, enum uacpi_permanent_only permanent_only,
+                                               void* user)
 {
     uacpi_status             ret = UACPI_STATUS_OK;
     uacpi_iteration_decision decision;
@@ -904,8 +901,7 @@ uacpi_status uacpi_namespace_for_each_child_simple(uacpi_namespace_node* parent,
     return uacpi_namespace_do_for_each_child(parent, callback, UACPI_NULL, UACPI_OBJECT_ANY_BIT, UACPI_MAX_DEPTH_ANY, UACPI_SHOULD_LOCK_YES, UACPI_PERMANENT_ONLY_YES, user);
 }
 
-uacpi_status uacpi_namespace_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits type_mask,
-                                            uacpi_u32 max_depth, void* user)
+uacpi_status uacpi_namespace_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits type_mask, uacpi_u32 max_depth, void* user)
 {
     return uacpi_namespace_do_for_each_child(parent, descending_callback, ascending_callback, type_mask, max_depth, UACPI_SHOULD_LOCK_YES, UACPI_PERMANENT_ONLY_YES, user);
 }

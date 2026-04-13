@@ -1,7 +1,7 @@
 /*
  * arch.h
  *
- * This header defines architecture specific handlers 
+ * This header defines architecture specific handlers
  *
  * - Common architecture interface
  *

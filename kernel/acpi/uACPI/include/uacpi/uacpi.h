@@ -10,12 +10,12 @@
 #define UACPI_PATCH 0
 
 #ifdef UACPI_REDUCED_HARDWARE
-#define UACPI_MAKE_STUB_FOR_REDUCED_HARDWARE(fn, ret)                                                                                                                                                  \
-    UACPI_NO_UNUSED_PARAMETER_WARNINGS_BEGIN                                                                                                                                                           \
-    static inline fn                                                                                                                                                                                   \
-    {                                                                                                                                                                                                  \
-        return ret;                                                                                                                                                                                    \
-    }                                                                                                                                                                                                  \
+#define UACPI_MAKE_STUB_FOR_REDUCED_HARDWARE(fn, ret)                                                                                                                                                                                                                                                      \
+    UACPI_NO_UNUSED_PARAMETER_WARNINGS_BEGIN                                                                                                                                                                                                                                                               \
+    static inline fn                                                                                                                                                                                                                                                                                       \
+    {                                                                                                                                                                                                                                                                                                      \
+        return ret;                                                                                                                                                                                                                                                                                        \
+    }                                                                                                                                                                                                                                                                                                      \
     UACPI_NO_UNUSED_PARAMETER_WARNINGS_END
 
 #define UACPI_STUB_IF_REDUCED_HARDWARE(fn) UACPI_MAKE_STUB_FOR_REDUCED_HARDWARE(fn, )

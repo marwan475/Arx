@@ -989,8 +989,7 @@ void uacpi_events_match_post_dynamic_table_load(void)
 
         while (match_ctx.block)
         {
-            uacpi_namespace_do_for_each_child(match_ctx.block->device_node, do_match_gpe_methods, UACPI_NULL, UACPI_OBJECT_METHOD_BIT, UACPI_MAX_DEPTH_ANY, UACPI_SHOULD_LOCK_YES,
-                                              UACPI_PERMANENT_ONLY_YES, &match_ctx);
+            uacpi_namespace_do_for_each_child(match_ctx.block->device_node, do_match_gpe_methods, UACPI_NULL, UACPI_OBJECT_METHOD_BIT, UACPI_MAX_DEPTH_ANY, UACPI_SHOULD_LOCK_YES, UACPI_PERMANENT_ONLY_YES, &match_ctx);
             match_ctx.block = match_ctx.block->next;
         }
 
@@ -2373,9 +2372,7 @@ out:
     return ret;
 }
 
-#define PM1_STATUS_BITS                                                                                                                                                                                \
-    (ACPI_PM1_STS_TMR_STS_MASK | ACPI_PM1_STS_BM_STS_MASK | ACPI_PM1_STS_GBL_STS_MASK | ACPI_PM1_STS_PWRBTN_STS_MASK | ACPI_PM1_STS_SLPBTN_STS_MASK | ACPI_PM1_STS_RTC_STS_MASK                        \
-     | ACPI_PM1_STS_PCIEXP_WAKE_STS_MASK | ACPI_PM1_STS_WAKE_STS_MASK)
+#define PM1_STATUS_BITS (ACPI_PM1_STS_TMR_STS_MASK | ACPI_PM1_STS_BM_STS_MASK | ACPI_PM1_STS_GBL_STS_MASK | ACPI_PM1_STS_PWRBTN_STS_MASK | ACPI_PM1_STS_SLPBTN_STS_MASK | ACPI_PM1_STS_RTC_STS_MASK | ACPI_PM1_STS_PCIEXP_WAKE_STS_MASK | ACPI_PM1_STS_WAKE_STS_MASK)
 
 uacpi_status uacpi_clear_all_events(void)
 {

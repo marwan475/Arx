@@ -978,20 +978,20 @@ uacpi_bool uacpi_object_is_one_of(uacpi_object* obj, uacpi_object_type_bits type
     return (uacpi_object_get_type_bit(obj) & type_mask) != 0;
 }
 
-#define TYPE_CHECK_USER_OBJ_RET(obj, type_bits, ret)                                                                                                                                                   \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        if (uacpi_unlikely(obj == UACPI_NULL || !uacpi_object_is_one_of(obj, type_bits)))                                                                                                              \
-            return ret;                                                                                                                                                                                \
+#define TYPE_CHECK_USER_OBJ_RET(obj, type_bits, ret)                                                                                                                                                                                                                                                       \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        if (uacpi_unlikely(obj == UACPI_NULL || !uacpi_object_is_one_of(obj, type_bits)))                                                                                                                                                                                                                  \
+            return ret;                                                                                                                                                                                                                                                                                    \
     } while (0)
 
 #define TYPE_CHECK_USER_OBJ(obj, type_bits) TYPE_CHECK_USER_OBJ_RET(obj, type_bits, UACPI_STATUS_INVALID_ARGUMENT)
 
-#define ENSURE_VALID_USER_OBJ_RET(obj, ret)                                                                                                                                                            \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        if (uacpi_unlikely(obj == UACPI_NULL))                                                                                                                                                         \
-            return ret;                                                                                                                                                                                \
+#define ENSURE_VALID_USER_OBJ_RET(obj, ret)                                                                                                                                                                                                                                                                \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        if (uacpi_unlikely(obj == UACPI_NULL))                                                                                                                                                                                                                                                             \
+            return ret;                                                                                                                                                                                                                                                                                    \
     } while (0)
 
 #define ENSURE_VALID_USER_OBJ(obj) ENSURE_VALID_USER_OBJ_RET(obj, UACPI_STATUS_INVALID_ARGUMENT)

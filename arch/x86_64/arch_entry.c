@@ -29,9 +29,9 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_rsdp_request rsdp_request = {
-    .id       = LIMINE_RSDP_REQUEST,
-    .revision = 0,
-    .response = 0,
+        .id       = LIMINE_RSDP_REQUEST,
+        .revision = 0,
+        .response = 0,
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_framebuffer_request framebuffer_request = {
@@ -259,7 +259,7 @@ static void gather_boot_info(struct boot_info* boot_info)
 
     if (memmap_request.response != 0)
     {
-        uint64_t count = memmap_request.response->entry_count;
+        uint64_t count            = memmap_request.response->entry_count;
         uint64_t max_physical_end = 0;
         if (count > BOOT_MEMMAP_MAX_ENTRIES)
         {
@@ -269,7 +269,7 @@ static void gather_boot_info(struct boot_info* boot_info)
         for (uint64_t i = 0; i < memmap_request.response->entry_count; i++)
         {
             struct limine_memmap_entry* entry = memmap_request.response->entries[i];
-            uint64_t end = entry->base + entry->length;
+            uint64_t                    end   = entry->base + entry->length;
 
             if (end > max_physical_end)
             {

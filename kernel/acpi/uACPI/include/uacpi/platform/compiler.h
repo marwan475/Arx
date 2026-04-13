@@ -24,8 +24,8 @@
 
 #define UACPI_ALWAYS_INLINE __forceinline
 
-#define UACPI_PACKED(decl)                                                                                                                                                                             \
-    __pragma(pack(push, 1)) decl;                                                                                                                                                                      \
+#define UACPI_PACKED(decl)                                                                                                                                                                                                                                                                                 \
+    __pragma(pack(push, 1)) decl;                                                                                                                                                                                                                                                                          \
     __pragma(pack(pop))
 #elif defined(__WATCOMC__)
 #define UACPI_ALWAYS_INLINE inline
@@ -91,9 +91,9 @@
 #endif
 
 #ifndef UACPI_FALLTHROUGH
-#define UACPI_FALLTHROUGH                                                                                                                                                                              \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
+#define UACPI_FALLTHROUGH                                                                                                                                                                                                                                                                                  \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
     } while (0)
 #endif
 

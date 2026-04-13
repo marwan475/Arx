@@ -9,7 +9,7 @@
 uacpi_phys_addr uacpi_rsdp_address;
 void*           uacpi_early_table_buffer;
 
-void acpi_init(phys_addr_t rsdp_address)    
+void acpi_init(phys_addr_t rsdp_address)
 {
     uacpi_status status;
 
@@ -34,7 +34,6 @@ void acpi_init(phys_addr_t rsdp_address)
 
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr* out_rsdp_address)
 {
-    
     if (uacpi_rsdp_address == 0)
     {
         *out_rsdp_address = 0;
@@ -47,8 +46,8 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr* out_rsdp_address)
 
 void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
 {
-    uint64_t aligned_pa = align_down((uint64_t) addr, PAGE_SIZE);
-    uint64_t offset     = (uint64_t) addr - aligned_pa;
+    uint64_t aligned_pa  = align_down((uint64_t) addr, PAGE_SIZE);
+    uint64_t offset      = (uint64_t) addr - aligned_pa;
     uint64_t aligned_len = align_up((uint64_t) len + offset, PAGE_SIZE);
 
     virt_addr_t va = vmm_reserve_region(&init_kernel_address_space, aligned_len, VIRT_ADDR_KERNEL);

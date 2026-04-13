@@ -787,9 +787,9 @@ uacpi_status uacpi_execute_simple(uacpi_namespace_node* parent, const uacpi_char
 
 #define TRACE_BAD_RET(path_fmt, type, ...) uacpi_warn("unexpected '%s' object returned by method " path_fmt ", expected type mask: %08X\n", uacpi_object_type_to_string(type), __VA_ARGS__)
 
-#define TRACE_NO_RET(path_fmt, ...)                                                                                                                                                                    \
-    uacpi_warn("no value returned from method " path_fmt ", expected type mask: "                                                                                                                      \
-               "%08X\n",                                                                                                                                                                               \
+#define TRACE_NO_RET(path_fmt, ...)                                                                                                                                                                                                                                                                        \
+    uacpi_warn("no value returned from method " path_fmt ", expected type mask: "                                                                                                                                                                                                                          \
+               "%08X\n",                                                                                                                                                                                                                                                                                   \
                __VA_ARGS__)
 
 static void trace_invalid_return_type(uacpi_namespace_node* parent, const uacpi_char* path, uacpi_object_type_bits expected_mask, uacpi_object_type actual_type)

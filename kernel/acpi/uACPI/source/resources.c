@@ -681,28 +681,24 @@ static const struct uacpi_resource_convert_instruction convert_generic_register[
         END(),
 };
 
-#define CONVERT_TYPE_SPECIFIC_FLAGS(addr_type)                                                                                                                                                         \
-    OP(LOAD_8_STORE, AML_F(addr_type, common.type), NATIVE_F(addr_type, common.type)), OP(SKIP_IF_NOT_EQUALS, ARG0(UACPI_RANGE_MEMORY), IMM(5)),                                                       \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.write_status), IMM(0)),                                                                   \
-            OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.caching), IMM(1)),                                                                        \
-            OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.range_type), IMM(3)),                                                                     \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.translation), IMM(5)), END(), OP(SKIP_IF_NOT_EQUALS, ARG0(UACPI_RANGE_IO), IMM(4)),       \
-            OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.range_type), IMM(0)),                                                                         \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.translation_type), IMM(4)),                                                                   \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.translation), IMM(5)), END(), /* Memory type that we don't know, just copy the byte */        \
+#define CONVERT_TYPE_SPECIFIC_FLAGS(addr_type)                                                                                                                                                                                                                                                             \
+    OP(LOAD_8_STORE, AML_F(addr_type, common.type), NATIVE_F(addr_type, common.type)), OP(SKIP_IF_NOT_EQUALS, ARG0(UACPI_RANGE_MEMORY), IMM(5)), OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.write_status), IMM(0)),                                  \
+            OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.caching), IMM(1)), OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.range_type), IMM(3)),                                                     \
+            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.memory.translation), IMM(5)), END(), OP(SKIP_IF_NOT_EQUALS, ARG0(UACPI_RANGE_IO), IMM(4)),                                                                                                           \
+            OP(BIT_FIELD_2, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.range_type), IMM(0)), OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.translation_type), IMM(4)),                                                    \
+            OP(BIT_FIELD_1, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.io.translation), IMM(5)), END(), /* Memory type that we don't know, just copy the byte */                                                                                                            \
             OP(FIELD_8, AML_F(addr_type, common.type_flags), NATIVE_F(addr_type, common.attribute.type_specific), IMM(0xFF)), END()
 
-#define CONVERT_GENERAL_ADDRESS_FLAGS(addr_type)                                                                                                                                                       \
-    OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.direction), IMM(0)), OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.decode_type), IMM(1)),  \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.fixed_min_address), IMM(2)),                                                                                    \
-            OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.fixed_max_address), IMM(3))
+#define CONVERT_GENERAL_ADDRESS_FLAGS(addr_type)                                                                                                                                                                                                                                                           \
+    OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.direction), IMM(0)), OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.decode_type), IMM(1)),                                                                                                      \
+            OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.fixed_min_address), IMM(2)), OP(BIT_FIELD_1, AML_F(addr_type, common.flags), NATIVE_F(addr_type, common.fixed_max_address), IMM(3))
 
-#define DEFINE_ADDRESS_CONVERSION(width)                                                                                                                                                               \
-    static const struct uacpi_resource_convert_instruction convert_address##width[] = {                                                                                                                \
-            CONVERT_GENERAL_ADDRESS_FLAGS(address##width),                                                                                                                                             \
-            OP(FIELD_##width, AML_F(address##width, granularity), NATIVE_F(address##width, granularity), IMM(5)),                                                                                      \
-            OP(RESOURCE_SOURCE, NATIVE_F(address##width, source)),                                                                                                                                     \
-            CONVERT_TYPE_SPECIFIC_FLAGS(address##width),                                                                                                                                               \
+#define DEFINE_ADDRESS_CONVERSION(width)                                                                                                                                                                                                                                                                   \
+    static const struct uacpi_resource_convert_instruction convert_address##width[] = {                                                                                                                                                                                                                    \
+            CONVERT_GENERAL_ADDRESS_FLAGS(address##width),                                                                                                                                                                                                                                                 \
+            OP(FIELD_##width, AML_F(address##width, granularity), NATIVE_F(address##width, granularity), IMM(5)),                                                                                                                                                                                          \
+            OP(RESOURCE_SOURCE, NATIVE_F(address##width, source)),                                                                                                                                                                                                                                         \
+            CONVERT_TYPE_SPECIFIC_FLAGS(address##width),                                                                                                                                                                                                                                                   \
     };
 
 DEFINE_ADDRESS_CONVERSION(16)
@@ -743,10 +739,9 @@ static const struct uacpi_resource_convert_instruction convert_clock_input[] = {
 
 #define DECODE_SOURCE_INDEX(short_aml_name) OP(FIELD_8, AML_F(short_aml_name, source_index), NATIVE_F(short_aml_name, source.index))
 
-#define DECODE_RES_PIN_TBL_AND_VENDOR_DATA(short_aml_name, res_opcode, offset_field, res_field)                                                                                                        \
-    OP(LOAD_PIN_TABLE_LENGTH, AML_F(short_aml_name, offset_field), NATIVE_F(short_aml_name, pin_table_length)),                                                                                        \
-            OP(RESOURCE_##res_opcode, NATIVE_F(short_aml_name, res_field), AML_F(short_aml_name, offset_field), ARG2(AML_O(short_aml_name, vendor_data_offset))),                                      \
-            OP(PIN_TABLE, AML_F(short_aml_name, pin_table_offset), NATIVE_F(short_aml_name, pin_table_length), ARG2(NATIVE_O(short_aml_name, pin_table))),                                             \
+#define DECODE_RES_PIN_TBL_AND_VENDOR_DATA(short_aml_name, res_opcode, offset_field, res_field)                                                                                                                                                                                                            \
+    OP(LOAD_PIN_TABLE_LENGTH, AML_F(short_aml_name, offset_field), NATIVE_F(short_aml_name, pin_table_length)), OP(RESOURCE_##res_opcode, NATIVE_F(short_aml_name, res_field), AML_F(short_aml_name, offset_field), ARG2(AML_O(short_aml_name, vendor_data_offset))),                                      \
+            OP(PIN_TABLE, AML_F(short_aml_name, pin_table_offset), NATIVE_F(short_aml_name, pin_table_length), ARG2(NATIVE_O(short_aml_name, pin_table))),                                                                                                                                                 \
             OP(VENDOR_DATA, AML_F(short_aml_name, vendor_data_offset), NATIVE_F(short_aml_name, vendor_data_length), ARG2(NATIVE_O(short_aml_name, vendor_data)))
 
 static const struct uacpi_resource_convert_instruction convert_gpio_connection[] = {
@@ -799,11 +794,9 @@ static const struct uacpi_resource_convert_instruction convert_pin_group[] = {
         END(),
 };
 
-#define DECODE_PIN_GROUP_RES_SOURCES(postfix)                                                                                                                                                          \
-    DECODE_SOURCE_INDEX(pin_group_##postfix),                                                                                                                                                          \
-            OP(RESOURCE_SOURCE_NO_INDEX, NATIVE_F(pin_group_##postfix, source), AML_F(pin_group_##postfix, source_offset), ARG2(AML_O(pin_group_##postfix, source_lable_offset))),                     \
-            OP(LOAD_16_NATIVE, NATIVE_F(pin_group_##postfix, source.length)),                                                                                                                          \
-            OP(RESOURCE_LABEL, NATIVE_F(pin_group_##postfix, label), AML_F(pin_group_##postfix, source_lable_offset), ARG2(AML_O(pin_group_##postfix, vendor_data_offset))),                           \
+#define DECODE_PIN_GROUP_RES_SOURCES(postfix)                                                                                                                                                                                                                                                              \
+    DECODE_SOURCE_INDEX(pin_group_##postfix), OP(RESOURCE_SOURCE_NO_INDEX, NATIVE_F(pin_group_##postfix, source), AML_F(pin_group_##postfix, source_offset), ARG2(AML_O(pin_group_##postfix, source_lable_offset))), OP(LOAD_16_NATIVE, NATIVE_F(pin_group_##postfix, source.length)),                     \
+            OP(RESOURCE_LABEL, NATIVE_F(pin_group_##postfix, label), AML_F(pin_group_##postfix, source_lable_offset), ARG2(AML_O(pin_group_##postfix, vendor_data_offset))),                                                                                                                               \
             OP(VENDOR_DATA, AML_F(pin_group_##postfix, vendor_data_offset), NATIVE_F(pin_group_##postfix, vendor_data_length), ARG2(NATIVE_O(pin_group_##postfix, vendor_data)))
 
 static const struct uacpi_resource_convert_instruction convert_pin_group_function[] = {
@@ -870,100 +863,62 @@ static const struct uacpi_resource_convert_instruction convert_generic_serial_bu
 
 #define NATIVE_RESOURCE_HEADER_SIZE 8
 
-#define DEFINE_SMALL_AML_RESOURCE(aml_type_enum, native_type_enum, aml_struct, native_struct, ...)                                                                                                     \
-    [aml_type_enum] = {.type          = aml_type_enum,                                                                                                                                                 \
-                       .native_type   = native_type_enum,                                                                                                                                              \
-                       .resource_kind = UACPI_AML_RESOURCE_KIND_SMALL,                                                                                                                                 \
-                       .aml_size      = sizeof(aml_struct) - SMALL_ITEM_HEADER_SIZE,                                                                                                                   \
-                       .native_size   = sizeof(native_struct) + NATIVE_RESOURCE_HEADER_SIZE,                                                                                                           \
-                       __VA_ARGS__}
+#define DEFINE_SMALL_AML_RESOURCE(aml_type_enum, native_type_enum, aml_struct, native_struct, ...)                                                                                                                                                                                                         \
+    [aml_type_enum] = {.type = aml_type_enum, .native_type = native_type_enum, .resource_kind = UACPI_AML_RESOURCE_KIND_SMALL, .aml_size = sizeof(aml_struct) - SMALL_ITEM_HEADER_SIZE, .native_size = sizeof(native_struct) + NATIVE_RESOURCE_HEADER_SIZE, __VA_ARGS__}
 
-#define DEFINE_SMALL_AML_RESOURCE_NO_NATIVE_REPR(aml_type_enum, native_type_enum, aml_struct, ...)                                                                                                     \
-    [aml_type_enum] = {.type          = aml_type_enum,                                                                                                                                                 \
-                       .native_type   = native_type_enum,                                                                                                                                              \
-                       .resource_kind = UACPI_AML_RESOURCE_KIND_SMALL,                                                                                                                                 \
-                       .aml_size      = sizeof(aml_struct) - SMALL_ITEM_HEADER_SIZE,                                                                                                                   \
-                       .native_size   = NATIVE_RESOURCE_HEADER_SIZE,                                                                                                                                   \
-                       __VA_ARGS__}
+#define DEFINE_SMALL_AML_RESOURCE_NO_NATIVE_REPR(aml_type_enum, native_type_enum, aml_struct, ...)                                                                                                                                                                                                         \
+    [aml_type_enum] = {.type = aml_type_enum, .native_type = native_type_enum, .resource_kind = UACPI_AML_RESOURCE_KIND_SMALL, .aml_size = sizeof(aml_struct) - SMALL_ITEM_HEADER_SIZE, .native_size = NATIVE_RESOURCE_HEADER_SIZE, __VA_ARGS__}
 
-#define DEFINE_LARGE_AML_RESOURCE(aml_type_enum, native_type_enum, aml_struct, native_struct, ...)                                                                                                     \
-    [aml_type_enum] = {.type          = aml_type_enum,                                                                                                                                                 \
-                       .native_type   = native_type_enum,                                                                                                                                              \
-                       .resource_kind = UACPI_AML_RESOURCE_KIND_LARGE,                                                                                                                                 \
-                       .aml_size      = sizeof(aml_struct) - LARGE_ITEM_HEADER_SIZE,                                                                                                                   \
-                       .native_size   = sizeof(native_struct) + NATIVE_RESOURCE_HEADER_SIZE,                                                                                                           \
-                       __VA_ARGS__}
+#define DEFINE_LARGE_AML_RESOURCE(aml_type_enum, native_type_enum, aml_struct, native_struct, ...)                                                                                                                                                                                                         \
+    [aml_type_enum] = {.type = aml_type_enum, .native_type = native_type_enum, .resource_kind = UACPI_AML_RESOURCE_KIND_LARGE, .aml_size = sizeof(aml_struct) - LARGE_ITEM_HEADER_SIZE, .native_size = sizeof(native_struct) + NATIVE_RESOURCE_HEADER_SIZE, __VA_ARGS__}
 
 const struct uacpi_resource_spec aml_resources[UACPI_AML_RESOURCE_MAX + 1] = {
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_IRQ, UACPI_RESOURCE_TYPE_IRQ, struct acpi_resource_irq, uacpi_resource_irq, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED_OR_ONE_LESS,
-                                  .extra_size_for_native = extra_size_for_native_irq_or_dma, .size_for_aml = size_for_aml_irq, .to_native = convert_irq_to_native, .to_aml = convert_irq_to_aml, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_DMA, UACPI_RESOURCE_TYPE_DMA, struct acpi_resource_dma, uacpi_resource_dma, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED,
-                                  .extra_size_for_native = extra_size_for_native_irq_or_dma, .to_native = convert_dma, .to_aml = convert_dma, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_START_DEPENDENT, UACPI_RESOURCE_TYPE_START_DEPENDENT, struct acpi_resource_start_dependent, uacpi_resource_start_dependent,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED_OR_ONE_LESS, .size_for_aml = size_for_aml_start_dependent, .to_native = convert_start_dependent_to_native,
-                                  .to_aml = convert_start_dependent_to_aml, ),
-        DEFINE_SMALL_AML_RESOURCE_NO_NATIVE_REPR(UACPI_AML_RESOURCE_END_DEPENDENT, UACPI_RESOURCE_TYPE_END_DEPENDENT, struct acpi_resource_end_dependent,
-                                                 .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_IO, UACPI_RESOURCE_TYPE_IO, struct acpi_resource_io, uacpi_resource_io, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_io,
-                                  .to_aml = convert_io, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_IO, UACPI_RESOURCE_TYPE_FIXED_IO, struct acpi_resource_fixed_io, uacpi_resource_fixed_io, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED,
-                                  .to_native = convert_fixed_io, .to_aml = convert_fixed_io, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_DMA, UACPI_RESOURCE_TYPE_FIXED_DMA, struct acpi_resource_fixed_dma, uacpi_resource_fixed_dma,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_fixed_dma, .to_aml = convert_fixed_dma, ),
-        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_VENDOR_TYPE0, UACPI_RESOURCE_TYPE_VENDOR_SMALL, struct acpi_resource_vendor_defined_type0, uacpi_resource_vendor,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .size_for_aml = size_for_aml_vendor, .extra_size_for_native = extra_size_for_native_vendor,
-                                  .to_native = convert_vendor_type0, .to_aml = convert_vendor_type0, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_IRQ, UACPI_RESOURCE_TYPE_IRQ, struct acpi_resource_irq, uacpi_resource_irq, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED_OR_ONE_LESS, .extra_size_for_native = extra_size_for_native_irq_or_dma, .size_for_aml = size_for_aml_irq,
+                                  .to_native = convert_irq_to_native, .to_aml = convert_irq_to_aml, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_DMA, UACPI_RESOURCE_TYPE_DMA, struct acpi_resource_dma, uacpi_resource_dma, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .extra_size_for_native = extra_size_for_native_irq_or_dma, .to_native = convert_dma, .to_aml = convert_dma, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_START_DEPENDENT, UACPI_RESOURCE_TYPE_START_DEPENDENT, struct acpi_resource_start_dependent, uacpi_resource_start_dependent, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED_OR_ONE_LESS, .size_for_aml = size_for_aml_start_dependent,
+                                  .to_native = convert_start_dependent_to_native, .to_aml = convert_start_dependent_to_aml, ),
+        DEFINE_SMALL_AML_RESOURCE_NO_NATIVE_REPR(UACPI_AML_RESOURCE_END_DEPENDENT, UACPI_RESOURCE_TYPE_END_DEPENDENT, struct acpi_resource_end_dependent, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_IO, UACPI_RESOURCE_TYPE_IO, struct acpi_resource_io, uacpi_resource_io, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_io, .to_aml = convert_io, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_IO, UACPI_RESOURCE_TYPE_FIXED_IO, struct acpi_resource_fixed_io, uacpi_resource_fixed_io, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_fixed_io, .to_aml = convert_fixed_io, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_DMA, UACPI_RESOURCE_TYPE_FIXED_DMA, struct acpi_resource_fixed_dma, uacpi_resource_fixed_dma, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_fixed_dma, .to_aml = convert_fixed_dma, ),
+        DEFINE_SMALL_AML_RESOURCE(UACPI_AML_RESOURCE_VENDOR_TYPE0, UACPI_RESOURCE_TYPE_VENDOR_SMALL, struct acpi_resource_vendor_defined_type0, uacpi_resource_vendor, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .size_for_aml = size_for_aml_vendor,
+                                  .extra_size_for_native = extra_size_for_native_vendor, .to_native = convert_vendor_type0, .to_aml = convert_vendor_type0, ),
         DEFINE_SMALL_AML_RESOURCE_NO_NATIVE_REPR(UACPI_AML_RESOURCE_END_TAG, UACPI_RESOURCE_TYPE_END_TAG, struct acpi_resource_end_tag, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_MEMORY24, UACPI_RESOURCE_TYPE_MEMORY24, struct acpi_resource_memory24, uacpi_resource_memory24, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED,
-                                  .to_native = convert_memory24, .to_aml = convert_memory24, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_GENERIC_REGISTER, UACPI_RESOURCE_TYPE_GENERIC_REGISTER, struct acpi_resource_generic_register, uacpi_resource_generic_register,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_generic_register, .to_aml = convert_generic_register, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_VENDOR_TYPE1, UACPI_RESOURCE_TYPE_VENDOR_LARGE, struct acpi_resource_vendor_defined_type1, uacpi_resource_vendor,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_vendor, .size_for_aml = size_for_aml_vendor,
-                                  .to_native = convert_vendor_type1, .to_aml = convert_vendor_type1, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_MEMORY32, UACPI_RESOURCE_TYPE_MEMORY32, struct acpi_resource_memory32, uacpi_resource_memory32, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED,
-                                  .to_native = convert_memory32, .to_aml = convert_memory32, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_MEMORY32, UACPI_RESOURCE_TYPE_FIXED_MEMORY32, struct acpi_resource_fixed_memory32, uacpi_resource_fixed_memory32,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_fixed_memory32, .to_aml = convert_fixed_memory32, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS32, UACPI_RESOURCE_TYPE_ADDRESS32, struct acpi_resource_address32, uacpi_resource_address32,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_MEMORY24, UACPI_RESOURCE_TYPE_MEMORY24, struct acpi_resource_memory24, uacpi_resource_memory24, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_memory24, .to_aml = convert_memory24, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_GENERIC_REGISTER, UACPI_RESOURCE_TYPE_GENERIC_REGISTER, struct acpi_resource_generic_register, uacpi_resource_generic_register, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_generic_register,
+                                  .to_aml = convert_generic_register, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_VENDOR_TYPE1, UACPI_RESOURCE_TYPE_VENDOR_LARGE, struct acpi_resource_vendor_defined_type1, uacpi_resource_vendor, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_vendor,
+                                  .size_for_aml = size_for_aml_vendor, .to_native = convert_vendor_type1, .to_aml = convert_vendor_type1, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_MEMORY32, UACPI_RESOURCE_TYPE_MEMORY32, struct acpi_resource_memory32, uacpi_resource_memory32, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_memory32, .to_aml = convert_memory32, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_FIXED_MEMORY32, UACPI_RESOURCE_TYPE_FIXED_MEMORY32, struct acpi_resource_fixed_memory32, uacpi_resource_fixed_memory32, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_fixed_memory32, .to_aml = convert_fixed_memory32, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS32, UACPI_RESOURCE_TYPE_ADDRESS32, struct acpi_resource_address32, uacpi_resource_address32, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
                                   .size_for_aml = size_for_aml_address_or_clock_input, .to_native = convert_address32, .to_aml = convert_address32, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS16, UACPI_RESOURCE_TYPE_ADDRESS16, struct acpi_resource_address16, uacpi_resource_address16,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS16, UACPI_RESOURCE_TYPE_ADDRESS16, struct acpi_resource_address16, uacpi_resource_address16, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
                                   .size_for_aml = size_for_aml_address_or_clock_input, .to_native = convert_address16, .to_aml = convert_address16, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_EXTENDED_IRQ, UACPI_RESOURCE_TYPE_EXTENDED_IRQ, struct acpi_resource_extended_irq, uacpi_resource_extended_irq,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_extended_irq, .size_for_aml = size_for_aml_extended_irq,
-                                  .to_native = convert_extended_irq, .to_aml = convert_extended_irq, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS64, UACPI_RESOURCE_TYPE_ADDRESS64, struct acpi_resource_address64, uacpi_resource_address64,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_EXTENDED_IRQ, UACPI_RESOURCE_TYPE_EXTENDED_IRQ, struct acpi_resource_extended_irq, uacpi_resource_extended_irq, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_extended_irq,
+                                  .size_for_aml = size_for_aml_extended_irq, .to_native = convert_extended_irq, .to_aml = convert_extended_irq, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS64, UACPI_RESOURCE_TYPE_ADDRESS64, struct acpi_resource_address64, uacpi_resource_address64, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
                                   .size_for_aml = size_for_aml_address_or_clock_input, .to_native = convert_address64, .to_aml = convert_address64, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS64_EXTENDED, UACPI_RESOURCE_TYPE_ADDRESS64_EXTENDED, struct acpi_resource_address64_extended, uacpi_resource_address64_extended,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_address64_extended, .to_aml = convert_address64_extended, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_GPIO_CONNECTION, UACPI_RESOURCE_TYPE_GPIO_CONNECTION, struct acpi_resource_gpio_connection, uacpi_resource_gpio_connection,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins, .size_for_aml = size_for_aml_gpio_or_pins,
-                                  .to_aml = convert_gpio_connection, .to_native = convert_gpio_connection, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_FUNCTION, UACPI_RESOURCE_TYPE_PIN_FUNCTION, struct acpi_resource_pin_function, uacpi_resource_pin_function,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins, .size_for_aml = size_for_aml_gpio_or_pins,
-                                  .to_aml = convert_pin_function, .to_native = convert_pin_function, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_ADDRESS64_EXTENDED, UACPI_RESOURCE_TYPE_ADDRESS64_EXTENDED, struct acpi_resource_address64_extended, uacpi_resource_address64_extended, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_FIXED, .to_native = convert_address64_extended,
+                                  .to_aml = convert_address64_extended, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_GPIO_CONNECTION, UACPI_RESOURCE_TYPE_GPIO_CONNECTION, struct acpi_resource_gpio_connection, uacpi_resource_gpio_connection, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins,
+                                  .size_for_aml = size_for_aml_gpio_or_pins, .to_aml = convert_gpio_connection, .to_native = convert_gpio_connection, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_FUNCTION, UACPI_RESOURCE_TYPE_PIN_FUNCTION, struct acpi_resource_pin_function, uacpi_resource_pin_function, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins,
+                                  .size_for_aml = size_for_aml_gpio_or_pins, .to_aml = convert_pin_function, .to_native = convert_pin_function, ),
         DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_SERIAL_CONNECTION,
                                   0, // the native type here is determined dynamically
-                                  struct acpi_resource_serial, uacpi_resource_serial_bus_common, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE,
-                                  .extra_size_for_native = extra_size_for_serial_connection, .size_for_aml = aml_size_for_serial_connection, .to_native = convert_generic_serial_bus,
+                                  struct acpi_resource_serial, uacpi_resource_serial_bus_common, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_serial_connection, .size_for_aml = aml_size_for_serial_connection, .to_native = convert_generic_serial_bus,
                                   .to_aml = convert_generic_serial_bus, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_CONFIGURATION, UACPI_RESOURCE_TYPE_PIN_CONFIGURATION, struct acpi_resource_pin_configuration, uacpi_resource_pin_configuration,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins, .size_for_aml = size_for_aml_gpio_or_pins,
-                                  .to_native = convert_pin_configuration, .to_aml = convert_pin_configuration, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP, UACPI_RESOURCE_TYPE_PIN_GROUP, struct acpi_resource_pin_group, uacpi_resource_pin_group,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins, .size_for_aml = size_for_aml_gpio_or_pins,
-                                  .to_native = convert_pin_group, .to_aml = convert_pin_group, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP_FUNCTION, UACPI_RESOURCE_TYPE_PIN_GROUP_FUNCTION, struct acpi_resource_pin_group_function, uacpi_resource_pin_group_function,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_pin_group, .size_for_aml = size_for_aml_pin_group,
-                                  .to_native = convert_pin_group_function, .to_aml = convert_pin_group_function, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP_CONFIGURATION, UACPI_RESOURCE_TYPE_PIN_GROUP_CONFIGURATION, struct acpi_resource_pin_group_configuration,
-                                  uacpi_resource_pin_group_configuration, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_pin_group,
-                                  .size_for_aml = size_for_aml_pin_group, .to_native = convert_pin_group_configuration, .to_aml = convert_pin_group_configuration, ),
-        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_CLOCK_INPUT, UACPI_RESOURCE_TYPE_CLOCK_INPUT, struct acpi_resource_clock_input, uacpi_resource_clock_input,
-                                  .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_CONFIGURATION, UACPI_RESOURCE_TYPE_PIN_CONFIGURATION, struct acpi_resource_pin_configuration, uacpi_resource_pin_configuration, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins,
+                                  .size_for_aml = size_for_aml_gpio_or_pins, .to_native = convert_pin_configuration, .to_aml = convert_pin_configuration, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP, UACPI_RESOURCE_TYPE_PIN_GROUP, struct acpi_resource_pin_group, uacpi_resource_pin_group, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_gpio_or_pins,
+                                  .size_for_aml = size_for_aml_gpio_or_pins, .to_native = convert_pin_group, .to_aml = convert_pin_group, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP_FUNCTION, UACPI_RESOURCE_TYPE_PIN_GROUP_FUNCTION, struct acpi_resource_pin_group_function, uacpi_resource_pin_group_function, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_pin_group,
+                                  .size_for_aml = size_for_aml_pin_group, .to_native = convert_pin_group_function, .to_aml = convert_pin_group_function, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_PIN_GROUP_CONFIGURATION, UACPI_RESOURCE_TYPE_PIN_GROUP_CONFIGURATION, struct acpi_resource_pin_group_configuration, uacpi_resource_pin_group_configuration, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE,
+                                  .extra_size_for_native = extra_size_for_native_pin_group, .size_for_aml = size_for_aml_pin_group, .to_native = convert_pin_group_configuration, .to_aml = convert_pin_group_configuration, ),
+        DEFINE_LARGE_AML_RESOURCE(UACPI_AML_RESOURCE_CLOCK_INPUT, UACPI_RESOURCE_TYPE_CLOCK_INPUT, struct acpi_resource_clock_input, uacpi_resource_clock_input, .size_kind = UACPI_AML_RESOURCE_SIZE_KIND_VARIABLE, .extra_size_for_native = extra_size_for_native_address_or_clock_input,
                                   .size_for_aml = size_for_aml_address_or_clock_input, .to_native = convert_clock_input, .to_aml = convert_clock_input, ),
 };
 
@@ -1159,71 +1114,71 @@ static uacpi_iteration_decision conditional_continue(struct resource_conversion_
 }
 
 // Opcodes that are the same for both AML->native and native->AML
-#define CONVERSION_OPCODES_COMMON(native_buf)                                                                                                                                                          \
-    case UACPI_RESOURCE_CONVERT_OPCODE_END:                                                                                                                                                            \
-        return conditional_continue(ctx);                                                                                                                                                              \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_8:                                                                                                                                                        \
-    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_16:                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_32:                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_64:                                                                                                                                                       \
-    {                                                                                                                                                                                                  \
-        uacpi_u8 bytes;                                                                                                                                                                                \
-                                                                                                                                                                                                       \
-        bytes       = 1 << (insn->code - UACPI_RESOURCE_CONVERT_OPCODE_FIELD_8);                                                                                                                       \
-        accumulator = insn->f3.imm == 0xFF ? 0 : accumulator + insn->f3.imm;                                                                                                                           \
-                                                                                                                                                                                                       \
-        uacpi_memcpy(dst, src, bytes * UACPI_MAX(1, accumulator));                                                                                                                                     \
-        accumulator = 0;                                                                                                                                                                               \
-        break;                                                                                                                                                                                         \
-    }                                                                                                                                                                                                  \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_SKIP_IF_AML_SIZE_LESS_THAN:                                                                                                                                     \
-        if (aml_size < insn->f1.arg0)                                                                                                                                                                  \
-            pc += insn->f3.imm;                                                                                                                                                                        \
-        break;                                                                                                                                                                                         \
-    case UACPI_RESOURCE_CONVERT_OPCODE_SKIP_IF_NOT_EQUALS:                                                                                                                                             \
-        if (insn->f1.arg0 != accumulator)                                                                                                                                                              \
-            pc += insn->f3.imm;                                                                                                                                                                        \
-        break;                                                                                                                                                                                         \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_SET_TO_IMM:                                                                                                                                                     \
-        uacpi_memcpy(dst, &insn->f3.imm, sizeof(insn->f3.imm));                                                                                                                                        \
-        break;                                                                                                                                                                                         \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_IMM:                                                                                                                                                       \
-        accumulator = insn->f3.imm;                                                                                                                                                                    \
-        break;                                                                                                                                                                                         \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_STORE:                                                                                                                                                   \
-        uacpi_memcpy_zerout(&accumulator, src, sizeof(accumulator), 1);                                                                                                                                \
-        uacpi_memcpy(dst, &accumulator, 1);                                                                                                                                                            \
-                                                                                                                                                                                                       \
-        if (insn->f3.imm)                                                                                                                                                                              \
-            accumulator *= insn->f3.imm;                                                                                                                                                               \
-        break;                                                                                                                                                                                         \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_NATIVE:                                                                                                                                                  \
-    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_16_NATIVE:                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        uacpi_u8 bytes;                                                                                                                                                                                \
-                                                                                                                                                                                                       \
-        bytes = 1 << (insn->code - UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_NATIVE);                                                                                                                       \
-        uacpi_memcpy_zerout(&accumulator, native_buf, sizeof(accumulator), bytes);                                                                                                                     \
-        break;                                                                                                                                                                                         \
-    }                                                                                                                                                                                                  \
-                                                                                                                                                                                                       \
-    case UACPI_RESOURCE_CONVERT_OPCODE_UNREACHABLE:                                                                                                                                                    \
-    default:                                                                                                                                                                                           \
-        if (insn->code != UACPI_RESOURCE_CONVERT_OPCODE_UNREACHABLE)                                                                                                                                   \
-        {                                                                                                                                                                                              \
-            uacpi_error("unhandled resource conversion opcode %d\n", insn->code);                                                                                                                      \
-        }                                                                                                                                                                                              \
-        else                                                                                                                                                                                           \
-        {                                                                                                                                                                                              \
-            uacpi_error("tried to execute unreachable conversion opcode\n");                                                                                                                           \
-        }                                                                                                                                                                                              \
-        ctx->st = UACPI_STATUS_INTERNAL_ERROR;                                                                                                                                                         \
+#define CONVERSION_OPCODES_COMMON(native_buf)                                                                                                                                                                                                                                                              \
+    case UACPI_RESOURCE_CONVERT_OPCODE_END:                                                                                                                                                                                                                                                                \
+        return conditional_continue(ctx);                                                                                                                                                                                                                                                                  \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_8:                                                                                                                                                                                                                                                            \
+    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_16:                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_32:                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_FIELD_64:                                                                                                                                                                                                                                                           \
+    {                                                                                                                                                                                                                                                                                                      \
+        uacpi_u8 bytes;                                                                                                                                                                                                                                                                                    \
+                                                                                                                                                                                                                                                                                                           \
+        bytes       = 1 << (insn->code - UACPI_RESOURCE_CONVERT_OPCODE_FIELD_8);                                                                                                                                                                                                                           \
+        accumulator = insn->f3.imm == 0xFF ? 0 : accumulator + insn->f3.imm;                                                                                                                                                                                                                               \
+                                                                                                                                                                                                                                                                                                           \
+        uacpi_memcpy(dst, src, bytes * UACPI_MAX(1, accumulator));                                                                                                                                                                                                                                         \
+        accumulator = 0;                                                                                                                                                                                                                                                                                   \
+        break;                                                                                                                                                                                                                                                                                             \
+    }                                                                                                                                                                                                                                                                                                      \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_SKIP_IF_AML_SIZE_LESS_THAN:                                                                                                                                                                                                                                         \
+        if (aml_size < insn->f1.arg0)                                                                                                                                                                                                                                                                      \
+            pc += insn->f3.imm;                                                                                                                                                                                                                                                                            \
+        break;                                                                                                                                                                                                                                                                                             \
+    case UACPI_RESOURCE_CONVERT_OPCODE_SKIP_IF_NOT_EQUALS:                                                                                                                                                                                                                                                 \
+        if (insn->f1.arg0 != accumulator)                                                                                                                                                                                                                                                                  \
+            pc += insn->f3.imm;                                                                                                                                                                                                                                                                            \
+        break;                                                                                                                                                                                                                                                                                             \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_SET_TO_IMM:                                                                                                                                                                                                                                                         \
+        uacpi_memcpy(dst, &insn->f3.imm, sizeof(insn->f3.imm));                                                                                                                                                                                                                                            \
+        break;                                                                                                                                                                                                                                                                                             \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_IMM:                                                                                                                                                                                                                                                           \
+        accumulator = insn->f3.imm;                                                                                                                                                                                                                                                                        \
+        break;                                                                                                                                                                                                                                                                                             \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_STORE:                                                                                                                                                                                                                                                       \
+        uacpi_memcpy_zerout(&accumulator, src, sizeof(accumulator), 1);                                                                                                                                                                                                                                    \
+        uacpi_memcpy(dst, &accumulator, 1);                                                                                                                                                                                                                                                                \
+                                                                                                                                                                                                                                                                                                           \
+        if (insn->f3.imm)                                                                                                                                                                                                                                                                                  \
+            accumulator *= insn->f3.imm;                                                                                                                                                                                                                                                                   \
+        break;                                                                                                                                                                                                                                                                                             \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_NATIVE:                                                                                                                                                                                                                                                      \
+    case UACPI_RESOURCE_CONVERT_OPCODE_LOAD_16_NATIVE:                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        uacpi_u8 bytes;                                                                                                                                                                                                                                                                                    \
+                                                                                                                                                                                                                                                                                                           \
+        bytes = 1 << (insn->code - UACPI_RESOURCE_CONVERT_OPCODE_LOAD_8_NATIVE);                                                                                                                                                                                                                           \
+        uacpi_memcpy_zerout(&accumulator, native_buf, sizeof(accumulator), bytes);                                                                                                                                                                                                                         \
+        break;                                                                                                                                                                                                                                                                                             \
+    }                                                                                                                                                                                                                                                                                                      \
+                                                                                                                                                                                                                                                                                                           \
+    case UACPI_RESOURCE_CONVERT_OPCODE_UNREACHABLE:                                                                                                                                                                                                                                                        \
+    default:                                                                                                                                                                                                                                                                                               \
+        if (insn->code != UACPI_RESOURCE_CONVERT_OPCODE_UNREACHABLE)                                                                                                                                                                                                                                       \
+        {                                                                                                                                                                                                                                                                                                  \
+            uacpi_error("unhandled resource conversion opcode %d\n", insn->code);                                                                                                                                                                                                                          \
+        }                                                                                                                                                                                                                                                                                                  \
+        else                                                                                                                                                                                                                                                                                               \
+        {                                                                                                                                                                                                                                                                                                  \
+            uacpi_error("tried to execute unreachable conversion opcode\n");                                                                                                                                                                                                                               \
+        }                                                                                                                                                                                                                                                                                                  \
+        ctx->st = UACPI_STATUS_INTERNAL_ERROR;                                                                                                                                                                                                                                                             \
         return UACPI_ITERATION_DECISION_BREAK;
 
 #define PTR_AT(ptr, offset) (void*) ((uacpi_u8*) (ptr) + (offset))
@@ -1232,24 +1187,24 @@ static uacpi_iteration_decision conditional_continue(struct resource_conversion_
 
 #define NATIVE_FIELD(res, name, field) NATIVE_OFFSET(res, NATIVE_O(name, field))
 
-#define CHECK_AML_OOB(offset, prefix, what)                                                                                                                                                            \
-    if (uacpi_unlikely(offset > ((uacpi_u32) aml_size + header_size)))                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        uacpi_error(prefix what " is OOB: %zu > %u\n", (uacpi_size) offset, (uacpi_u32) aml_size + header_size);                                                                                       \
-        ctx->st = UACPI_STATUS_AML_INVALID_RESOURCE;                                                                                                                                                   \
-        return UACPI_ITERATION_DECISION_BREAK;                                                                                                                                                         \
+#define CHECK_AML_OOB(offset, prefix, what)                                                                                                                                                                                                                                                                \
+    if (uacpi_unlikely(offset > ((uacpi_u32) aml_size + header_size)))                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        uacpi_error(prefix what " is OOB: %zu > %u\n", (uacpi_size) offset, (uacpi_u32) aml_size + header_size);                                                                                                                                                                                           \
+        ctx->st = UACPI_STATUS_AML_INVALID_RESOURCE;                                                                                                                                                                                                                                                       \
+        return UACPI_ITERATION_DECISION_BREAK;                                                                                                                                                                                                                                                             \
     }
 
-#define CHECK_AML_OFFSET_BASE(offset, what)                                                                                                                                                            \
-    if (uacpi_unlikely(offset < base_aml_size_with_header))                                                                                                                                            \
-    {                                                                                                                                                                                                  \
-        uacpi_error("invalid " what " offset: %zu, expected at least %u\n", (uacpi_size) offset, base_aml_size_with_header);                                                                           \
-        ctx->st = UACPI_STATUS_AML_INVALID_RESOURCE;                                                                                                                                                   \
-        return UACPI_ITERATION_DECISION_BREAK;                                                                                                                                                         \
+#define CHECK_AML_OFFSET_BASE(offset, what)                                                                                                                                                                                                                                                                \
+    if (uacpi_unlikely(offset < base_aml_size_with_header))                                                                                                                                                                                                                                                \
+    {                                                                                                                                                                                                                                                                                                      \
+        uacpi_error("invalid " what " offset: %zu, expected at least %u\n", (uacpi_size) offset, base_aml_size_with_header);                                                                                                                                                                               \
+        ctx->st = UACPI_STATUS_AML_INVALID_RESOURCE;                                                                                                                                                                                                                                                       \
+        return UACPI_ITERATION_DECISION_BREAK;                                                                                                                                                                                                                                                             \
     }
 
-#define CHECK_AML_OFFSET(offset, what)                                                                                                                                                                 \
-    CHECK_AML_OOB(offset, "end of ", what)                                                                                                                                                             \
+#define CHECK_AML_OFFSET(offset, what)                                                                                                                                                                                                                                                                     \
+    CHECK_AML_OOB(offset, "end of ", what)                                                                                                                                                                                                                                                                 \
     CHECK_AML_OFFSET_BASE(offset, what)
 
 static uacpi_resource_type aml_serial_to_native_type(uacpi_u8 type)

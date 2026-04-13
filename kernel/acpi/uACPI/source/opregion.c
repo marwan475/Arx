@@ -74,12 +74,10 @@ static void trace_region_io(uacpi_field_unit* field, uacpi_address_space space, 
                         type_str, path, uacpi_address_space_to_string(space), UACPI_FMT64(offset), data.buffer.length);
             break;
         case UACPI_ADDRESS_SPACE_GENERAL_PURPOSE_IO:
-            uacpi_trace("%s [%s] %s pins[%u..%u] = 0x%" UACPI_PRIX64 "\n", type_str, path, uacpi_address_space_to_string(space), field->pin_offset, (field->pin_offset + field->bit_length) - 1,
-                        UACPI_FMT64(*data.integer));
+            uacpi_trace("%s [%s] %s pins[%u..%u] = 0x%" UACPI_PRIX64 "\n", type_str, path, uacpi_address_space_to_string(space), field->pin_offset, (field->pin_offset + field->bit_length) - 1, UACPI_FMT64(*data.integer));
             break;
         default:
-            uacpi_trace("%s [%s] (%d bytes) %s[0x%016" UACPI_PRIX64 "] = 0x%" UACPI_PRIX64 "\n", type_str, path, field->access_width_bytes, uacpi_address_space_to_string(space), UACPI_FMT64(offset),
-                        UACPI_FMT64(*data.integer));
+            uacpi_trace("%s [%s] (%d bytes) %s[0x%016" UACPI_PRIX64 "] = 0x%" UACPI_PRIX64 "\n", type_str, path, field->access_width_bytes, uacpi_address_space_to_string(space), UACPI_FMT64(offset), UACPI_FMT64(*data.integer));
             break;
     }
 
@@ -561,8 +559,7 @@ out:
     return ret;
 }
 
-uacpi_status uacpi_install_address_space_handler_with_flags(uacpi_namespace_node* device_node, enum uacpi_address_space space, uacpi_region_handler handler, uacpi_handle handler_context,
-                                                            uacpi_u16 flags)
+uacpi_status uacpi_install_address_space_handler_with_flags(uacpi_namespace_node* device_node, enum uacpi_address_space space, uacpi_region_handler handler, uacpi_handle handler_context, uacpi_u16 flags)
 {
     uacpi_status                  ret;
     uacpi_address_space_handlers* handlers;

@@ -9,14 +9,14 @@
  *      - Physical Memory Manager (PMM)
  *      - Virtual Memory Manager (VMM)
  *      - Symmetric Multiprocessing (SMP)
- * 
+ *
  *
  * Author: Marwan Mostafa
  *
  */
 
-#include <boot/boot.h>
 #include <acpi/acpi.h>
+#include <boot/boot.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -59,8 +59,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width,
-            (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) boot_info->framebuffer_bpp);
+    kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width, (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch,
+            (unsigned long long) boot_info->framebuffer_bpp);
 
     arch_smp_init(boot_info);
 

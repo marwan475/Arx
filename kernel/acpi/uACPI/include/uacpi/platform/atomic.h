@@ -24,18 +24,18 @@
 #include <intrin.h>
 
 // mimic __atomic_compare_exchange_n that doesn't exist on MSVC
-#define UACPI_MAKE_MSVC_CMPXCHG(width, type, suffix)                                                                                                                                                   \
-    static inline int uacpi_do_atomic_cmpxchg##width(type volatile* ptr, type volatile* expected, type desired)                                                                                        \
-    {                                                                                                                                                                                                  \
-        type current;                                                                                                                                                                                  \
-                                                                                                                                                                                                       \
-        current = _InterlockedCompareExchange##suffix(ptr, *expected, desired);                                                                                                                        \
-        if (current != *expected)                                                                                                                                                                      \
-        {                                                                                                                                                                                              \
-            *expected = current;                                                                                                                                                                       \
-            return 0;                                                                                                                                                                                  \
-        }                                                                                                                                                                                              \
-        return 1;                                                                                                                                                                                      \
+#define UACPI_MAKE_MSVC_CMPXCHG(width, type, suffix)                                                                                                                                                                                                                                                       \
+    static inline int uacpi_do_atomic_cmpxchg##width(type volatile* ptr, type volatile* expected, type desired)                                                                                                                                                                                            \
+    {                                                                                                                                                                                                                                                                                                      \
+        type current;                                                                                                                                                                                                                                                                                      \
+                                                                                                                                                                                                                                                                                                           \
+        current = _InterlockedCompareExchange##suffix(ptr, *expected, desired);                                                                                                                                                                                                                            \
+        if (current != *expected)                                                                                                                                                                                                                                                                          \
+        {                                                                                                                                                                                                                                                                                                  \
+            *expected = current;                                                                                                                                                                                                                                                                           \
+            return 0;                                                                                                                                                                                                                                                                                      \
+        }                                                                                                                                                                                                                                                                                                  \
+        return 1;                                                                                                                                                                                                                                                                                          \
     }
 
 #define UACPI_MSVC_CMPXCHG_INVOKE(ptr, expected, desired, width, type) uacpi_do_atomic_cmpxchg##width((type volatile*) ptr, (type volatile*) expected, desired)
@@ -80,29 +80,29 @@ UACPI_MAKE_MSVC_CMPXCHG(16, short, 16)
 #include <stdint.h>
 
 static int uacpi_do_atomic_cmpxchg16(volatile uint16_t* ptr, volatile uint16_t* expected, uint16_t desired);
-#pragma aux uacpi_do_atomic_cmpxchg16     = ".486"                                                                                                                                                     \
-                                            "mov ax, [esi]"                                                                                                                                            \
-                                            "lock cmpxchg [edi], bx"                                                                                                                                   \
-                                            "mov [esi], ax"                                                                                                                                            \
-                                            "setz al"                                                                                                                                                  \
+#pragma aux uacpi_do_atomic_cmpxchg16     = ".486"                                                                                                                                                                                                                                                         \
+                                            "mov ax, [esi]"                                                                                                                                                                                                                                                \
+                                            "lock cmpxchg [edi], bx"                                                                                                                                                                                                                                       \
+                                            "mov [esi], ax"                                                                                                                                                                                                                                                \
+                                            "setz al"                                                                                                                                                                                                                                                      \
                                             "movzx eax, al" parm[edi][esi][ebx] value[eax]
 
 static int uacpi_do_atomic_cmpxchg32(volatile uint32_t* ptr, volatile uint32_t* expected, uint32_t desired);
-#pragma aux uacpi_do_atomic_cmpxchg32     = ".486"                                                                                                                                                     \
-                                            "mov eax, [esi]"                                                                                                                                           \
-                                            "lock cmpxchg [edi], ebx"                                                                                                                                  \
-                                            "mov [esi], eax"                                                                                                                                           \
-                                            "setz al"                                                                                                                                                  \
+#pragma aux uacpi_do_atomic_cmpxchg32     = ".486"                                                                                                                                                                                                                                                         \
+                                            "mov eax, [esi]"                                                                                                                                                                                                                                               \
+                                            "lock cmpxchg [edi], ebx"                                                                                                                                                                                                                                      \
+                                            "mov [esi], eax"                                                                                                                                                                                                                                               \
+                                            "setz al"                                                                                                                                                                                                                                                      \
                                             "movzx eax, al" parm[edi][esi][ebx] value[eax]
 
 static int uacpi_do_atomic_cmpxchg64_asm(volatile uint64_t* ptr, volatile uint64_t* expected, uint32_t low, uint32_t high);
-#pragma aux uacpi_do_atomic_cmpxchg64_asm = ".586"                                                                                                                                                     \
-                                            "mov eax, [esi]"                                                                                                                                           \
-                                            "mov edx, [esi + 4]"                                                                                                                                       \
-                                            "lock cmpxchg8b [edi]"                                                                                                                                     \
-                                            "mov [esi], eax"                                                                                                                                           \
-                                            "mov [esi + 4], edx"                                                                                                                                       \
-                                            "setz al"                                                                                                                                                  \
+#pragma aux uacpi_do_atomic_cmpxchg64_asm = ".586"                                                                                                                                                                                                                                                         \
+                                            "mov eax, [esi]"                                                                                                                                                                                                                                               \
+                                            "mov edx, [esi + 4]"                                                                                                                                                                                                                                           \
+                                            "lock cmpxchg8b [edi]"                                                                                                                                                                                                                                         \
+                                            "mov [esi], eax"                                                                                                                                                                                                                                               \
+                                            "mov [esi + 4], edx"                                                                                                                                                                                                                                           \
+                                            "setz al"                                                                                                                                                                                                                                                      \
                                             "movzx eax, al" modify[edx] parm[edi][esi][ebx][ecx] value[eax]
 
 static inline int uacpi_do_atomic_cmpxchg64(volatile uint64_t* ptr, volatile uint64_t* expected, uint64_t desired)
@@ -124,13 +124,13 @@ static uint32_t uacpi_do_atomic_load32(volatile uint32_t* ptr);
 #pragma aux uacpi_do_atomic_load32     = "mov eax, [esi]" parm[esi] value[eax]
 
 static void uacpi_do_atomic_load64_asm(volatile uint64_t* ptr, uint64_t* out);
-#pragma aux uacpi_do_atomic_load64_asm = ".586"                                                                                                                                                        \
-                                         "xor eax, eax"                                                                                                                                                \
-                                         "xor ebx, ebx"                                                                                                                                                \
-                                         "xor ecx, ecx"                                                                                                                                                \
-                                         "xor edx, edx"                                                                                                                                                \
-                                         "lock cmpxchg8b [esi]"                                                                                                                                        \
-                                         "mov [edi], eax"                                                                                                                                              \
+#pragma aux uacpi_do_atomic_load64_asm = ".586"                                                                                                                                                                                                                                                            \
+                                         "xor eax, eax"                                                                                                                                                                                                                                                    \
+                                         "xor ebx, ebx"                                                                                                                                                                                                                                                    \
+                                         "xor ecx, ecx"                                                                                                                                                                                                                                                    \
+                                         "xor edx, edx"                                                                                                                                                                                                                                                    \
+                                         "lock cmpxchg8b [esi]"                                                                                                                                                                                                                                            \
+                                         "mov [edi], eax"                                                                                                                                                                                                                                                  \
                                          "mov [edi + 4], edx" modify[eax ebx ecx edx] parm[esi][edi]
 
 static inline uint64_t uacpi_do_atomic_load64(volatile uint64_t* ptr)
@@ -155,10 +155,10 @@ static void uacpi_do_atomic_store32(volatile uint32_t* ptr, uint32_t value);
 #pragma aux uacpi_do_atomic_store32     = "mov [edi], eax" parm[edi][eax]
 
 static void uacpi_do_atomic_store64_asm(volatile uint64_t* ptr, uint32_t low, uint32_t high);
-#pragma aux uacpi_do_atomic_store64_asm = ".586"                                                                                                                                                       \
-                                          "xor eax, eax"                                                                                                                                               \
-                                          "xor edx, edx"                                                                                                                                               \
-                                          "retry: lock cmpxchg8b [edi]"                                                                                                                                \
+#pragma aux uacpi_do_atomic_store64_asm = ".586"                                                                                                                                                                                                                                                           \
+                                          "xor eax, eax"                                                                                                                                                                                                                                                   \
+                                          "xor edx, edx"                                                                                                                                                                                                                                                   \
+                                          "retry: lock cmpxchg8b [edi]"                                                                                                                                                                                                                                    \
                                           "jnz retry" modify[eax edx] parm[edi][ebx][ecx]
 
 static inline void uacpi_do_atomic_store64(volatile uint64_t* ptr, uint64_t value)
@@ -172,30 +172,30 @@ static inline void uacpi_do_atomic_store64(volatile uint64_t* ptr, uint64_t valu
 #define uacpi_atomic_store64(ptr, value) uacpi_do_atomic_store64((volatile uint64_t*) ptr, (uint64_t) value)
 
 static uint16_t uacpi_do_atomic_inc16(volatile uint16_t* ptr);
-#pragma aux uacpi_do_atomic_inc16     = ".486"                                                                                                                                                         \
-                                        "mov ax, 1"                                                                                                                                                    \
-                                        "lock xadd [edi], ax"                                                                                                                                          \
+#pragma aux uacpi_do_atomic_inc16     = ".486"                                                                                                                                                                                                                                                             \
+                                        "mov ax, 1"                                                                                                                                                                                                                                                        \
+                                        "lock xadd [edi], ax"                                                                                                                                                                                                                                              \
                                         "add ax, 1" parm[edi] value[ax]
 
 static uint32_t uacpi_do_atomic_inc32(volatile uint32_t* ptr);
-#pragma aux uacpi_do_atomic_inc32     = ".486"                                                                                                                                                         \
-                                        "mov eax, 1"                                                                                                                                                   \
-                                        "lock xadd [edi], eax"                                                                                                                                         \
+#pragma aux uacpi_do_atomic_inc32     = ".486"                                                                                                                                                                                                                                                             \
+                                        "mov eax, 1"                                                                                                                                                                                                                                                       \
+                                        "lock xadd [edi], eax"                                                                                                                                                                                                                                             \
                                         "add eax, 1" parm[edi] value[eax]
 
 static void uacpi_do_atomic_inc64_asm(volatile uint64_t* ptr, uint64_t* out);
-#pragma aux uacpi_do_atomic_inc64_asm = ".586"                                                                                                                                                         \
-                                        "xor eax, eax"                                                                                                                                                 \
-                                        "xor edx, edx"                                                                                                                                                 \
-                                        "mov ebx, 1"                                                                                                                                                   \
-                                        "mov ecx, 1"                                                                                                                                                   \
-                                        "retry: lock cmpxchg8b [esi]"                                                                                                                                  \
-                                        "mov ebx, eax"                                                                                                                                                 \
-                                        "mov ecx, edx"                                                                                                                                                 \
-                                        "add ebx, 1"                                                                                                                                                   \
-                                        "adc ecx, 0"                                                                                                                                                   \
-                                        "jnz retry"                                                                                                                                                    \
-                                        "mov [edi], ebx"                                                                                                                                               \
+#pragma aux uacpi_do_atomic_inc64_asm = ".586"                                                                                                                                                                                                                                                             \
+                                        "xor eax, eax"                                                                                                                                                                                                                                                     \
+                                        "xor edx, edx"                                                                                                                                                                                                                                                     \
+                                        "mov ebx, 1"                                                                                                                                                                                                                                                       \
+                                        "mov ecx, 1"                                                                                                                                                                                                                                                       \
+                                        "retry: lock cmpxchg8b [esi]"                                                                                                                                                                                                                                      \
+                                        "mov ebx, eax"                                                                                                                                                                                                                                                     \
+                                        "mov ecx, edx"                                                                                                                                                                                                                                                     \
+                                        "add ebx, 1"                                                                                                                                                                                                                                                       \
+                                        "adc ecx, 0"                                                                                                                                                                                                                                                       \
+                                        "jnz retry"                                                                                                                                                                                                                                                        \
+                                        "mov [edi], ebx"                                                                                                                                                                                                                                                   \
                                         "mov [edi + 4], ecx" modify[eax ebx ecx edx] parm[esi][edi]
 
 static inline uint64_t uacpi_do_atomic_inc64(volatile uint64_t* ptr)
@@ -210,30 +210,30 @@ static inline uint64_t uacpi_do_atomic_inc64(volatile uint64_t* ptr)
 #define uacpi_atomic_inc64(ptr) uacpi_do_atomic_inc64((volatile uint64_t*) ptr)
 
 static uint16_t uacpi_do_atomic_dec16(volatile uint16_t* ptr);
-#pragma aux uacpi_do_atomic_dec16     = ".486"                                                                                                                                                         \
-                                        "mov ax, -1"                                                                                                                                                   \
-                                        "lock xadd [edi], ax"                                                                                                                                          \
+#pragma aux uacpi_do_atomic_dec16     = ".486"                                                                                                                                                                                                                                                             \
+                                        "mov ax, -1"                                                                                                                                                                                                                                                       \
+                                        "lock xadd [edi], ax"                                                                                                                                                                                                                                              \
                                         "add ax, -1" parm[edi] value[ax]
 
 static uint32_t uacpi_do_atomic_dec32(volatile uint32_t* ptr);
-#pragma aux uacpi_do_atomic_dec32     = ".486"                                                                                                                                                         \
-                                        "mov eax, -1"                                                                                                                                                  \
-                                        "lock xadd [edi], eax"                                                                                                                                         \
+#pragma aux uacpi_do_atomic_dec32     = ".486"                                                                                                                                                                                                                                                             \
+                                        "mov eax, -1"                                                                                                                                                                                                                                                      \
+                                        "lock xadd [edi], eax"                                                                                                                                                                                                                                             \
                                         "add eax, -1" parm[edi] value[eax]
 
 static void uacpi_do_atomic_dec64_asm(volatile uint64_t* ptr, uint64_t* out);
-#pragma aux uacpi_do_atomic_dec64_asm = ".586"                                                                                                                                                         \
-                                        "xor eax, eax"                                                                                                                                                 \
-                                        "xor edx, edx"                                                                                                                                                 \
-                                        "mov ebx, -1"                                                                                                                                                  \
-                                        "mov ecx, -1"                                                                                                                                                  \
-                                        "retry: lock cmpxchg8b [esi]"                                                                                                                                  \
-                                        "mov ebx, eax"                                                                                                                                                 \
-                                        "mov ecx, edx"                                                                                                                                                 \
-                                        "sub ebx, 1"                                                                                                                                                   \
-                                        "sbb ecx, 0"                                                                                                                                                   \
-                                        "jnz retry"                                                                                                                                                    \
-                                        "mov [edi], ebx"                                                                                                                                               \
+#pragma aux uacpi_do_atomic_dec64_asm = ".586"                                                                                                                                                                                                                                                             \
+                                        "xor eax, eax"                                                                                                                                                                                                                                                     \
+                                        "xor edx, edx"                                                                                                                                                                                                                                                     \
+                                        "mov ebx, -1"                                                                                                                                                                                                                                                      \
+                                        "mov ecx, -1"                                                                                                                                                                                                                                                      \
+                                        "retry: lock cmpxchg8b [esi]"                                                                                                                                                                                                                                      \
+                                        "mov ebx, eax"                                                                                                                                                                                                                                                     \
+                                        "mov ecx, edx"                                                                                                                                                                                                                                                     \
+                                        "sub ebx, 1"                                                                                                                                                                                                                                                       \
+                                        "sbb ecx, 0"                                                                                                                                                                                                                                                       \
+                                        "jnz retry"                                                                                                                                                                                                                                                        \
+                                        "mov [edi], ebx"                                                                                                                                                                                                                                                   \
                                         "mov [edi + 4], ecx" modify[eax ebx ecx edx] parm[esi][edi]
 
 static inline uint64_t uacpi_do_atomic_dec64(volatile uint64_t* ptr)

@@ -7,9 +7,9 @@
 #include <uacpi/platform/atomic.h>
 
 #ifndef UACPI_ARCH_FLUSH_CPU_CACHE
-#define UACPI_ARCH_FLUSH_CPU_CACHE()                                                                                                                                                                   \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
+#define UACPI_ARCH_FLUSH_CPU_CACHE()                                                                                                                                                                                                                                                                       \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
     } while (0)
 #endif
 

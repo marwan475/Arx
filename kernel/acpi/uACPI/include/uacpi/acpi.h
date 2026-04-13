@@ -922,9 +922,8 @@ UACPI_EXPECT_SIZEOF(struct acpi_hpet, 56);
  * software writing 1 to it after resume (as indicated by a similar comment in
  * ACPICA)
  */
-#define ACPI_PM1_CNT_PRESERVE_MASK                                                                                                                                                                     \
-    ((1 << ACPI_PM1_CNT_RSVD0_IDX) | (1 << ACPI_PM1_CNT_RSVD1_IDX) | (1 << ACPI_PM1_CNT_RSVD2_IDX) | (1 << ACPI_PM1_CNT_RSVD3_IDX) | (1 << ACPI_PM1_CNT_RSVD4_IDX) | (1 << ACPI_PM1_CNT_RSVD5_IDX)     \
-     | (1 << ACPI_PM1_CNT_IGN0_IDX) | (1 << ACPI_PM1_CNT_RSVD6_IDX) | (1 << ACPI_PM1_CNT_RSVD7_IDX))
+#define ACPI_PM1_CNT_PRESERVE_MASK                                                                                                                                                                                                                                                                         \
+    ((1 << ACPI_PM1_CNT_RSVD0_IDX) | (1 << ACPI_PM1_CNT_RSVD1_IDX) | (1 << ACPI_PM1_CNT_RSVD2_IDX) | (1 << ACPI_PM1_CNT_RSVD3_IDX) | (1 << ACPI_PM1_CNT_RSVD4_IDX) | (1 << ACPI_PM1_CNT_RSVD5_IDX) | (1 << ACPI_PM1_CNT_IGN0_IDX) | (1 << ACPI_PM1_CNT_RSVD6_IDX) | (1 << ACPI_PM1_CNT_RSVD7_IDX))
 
 // PM2_CNT
 #define ACPI_PM2_CNT_ARB_DIS_IDX 0

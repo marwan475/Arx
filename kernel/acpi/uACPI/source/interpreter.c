@@ -2069,8 +2069,7 @@ static void debug_store_no_recurse(const uacpi_char* prefix, uacpi_object* src)
             uacpi_trace("%s Buffer @%p (%p) (%zu bytes)\n", prefix, src, src->buffer, src->buffer->size);
             break;
         case UACPI_OBJECT_OPERATION_REGION:
-            uacpi_trace("%s OperationRegion (ASID %d) 0x%016" UACPI_PRIX64 " -> 0x%016" UACPI_PRIX64 "\n", prefix, src->op_region->space, UACPI_FMT64(src->op_region->offset),
-                        UACPI_FMT64(src->op_region->offset + src->op_region->length));
+            uacpi_trace("%s OperationRegion (ASID %d) 0x%016" UACPI_PRIX64 " -> 0x%016" UACPI_PRIX64 "\n", prefix, src->op_region->space, UACPI_FMT64(src->op_region->offset), UACPI_FMT64(src->op_region->offset + src->op_region->length));
             break;
         case UACPI_OBJECT_POWER_RESOURCE:
             uacpi_trace("%s Power Resource %d %d\n", prefix, src->power_resource.system_level, src->power_resource.resource_order);
@@ -2167,8 +2166,7 @@ static void object_replace_child(uacpi_object* parent, uacpi_object* new_child)
          * the handler.
          */
         opregion_try_detach_from_parent(parent, uacpi_namespace_root(), 0);
-        uacpi_namespace_do_for_each_child(uacpi_namespace_root(), opregion_try_detach_from_parent, UACPI_NULL, UACPI_OBJECT_OPERATION_REGION_BIT, UACPI_MAX_DEPTH_ANY, UACPI_SHOULD_LOCK_NO,
-                                          UACPI_PERMANENT_ONLY_NO, parent);
+        uacpi_namespace_do_for_each_child(uacpi_namespace_root(), opregion_try_detach_from_parent, UACPI_NULL, UACPI_OBJECT_OPERATION_REGION_BIT, UACPI_MAX_DEPTH_ANY, UACPI_SHOULD_LOCK_NO, UACPI_PERMANENT_ONLY_NO, parent);
     }
 
     uacpi_object_detach_child(parent);
@@ -4600,8 +4598,8 @@ static uacpi_aml_op op_decode_aml_op(struct op_context* op_ctx)
 #define SPEC_STRING "String := TermArg => String"
 #define SPEC_TARGET "Target := SuperName | NullName"
 
-#define SPEC_COMPUTATIONAL_DATA                                                                                                                                                                        \
-    "ComputationalData := ByteConst | WordConst | DWordConst | QWordConst "                                                                                                                            \
+#define SPEC_COMPUTATIONAL_DATA                                                                                                                                                                                                                                                                            \
+    "ComputationalData := ByteConst | WordConst | DWordConst | QWordConst "                                                                                                                                                                                                                                \
     "| String | ConstObj | RevisionOp | DefBuffer"
 
 static uacpi_bool op_wants_supername(enum uacpi_parse_op op)
@@ -5418,8 +5416,7 @@ static uacpi_status exec_op(struct execution_context* ctx)
 
                 if (i == 2)
                 {
-                    EXEC_OP_ERR_3("bad object type: expected one of %s/%s, got %s!", uacpi_object_type_to_string(types[0]), uacpi_object_type_to_string(types[1]),
-                                  uacpi_object_type_to_string(item->obj->type));
+                    EXEC_OP_ERR_3("bad object type: expected one of %s/%s, got %s!", uacpi_object_type_to_string(types[0]), uacpi_object_type_to_string(types[1]), uacpi_object_type_to_string(item->obj->type));
                     break;
                 }
 

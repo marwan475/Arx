@@ -5,7 +5,7 @@
  *
  * - Provides functions for managing page tables and paging operations
  * - Optimizations for working with large ranges of pages
- *      - Avoiding redundant page table walks/cache flushes and batching flushes 
+ *      - Avoiding redundant page table walks/cache flushes and batching flushes
  *
  * Author: Marwan Mostafa
  *
@@ -51,9 +51,9 @@
 #define X86_64_CANONICAL_LOW_MASK ((1ULL << X86_64_CANONICAL_VA_BITS) - 1ULL)
 #define X86_64_CANONICAL_HIGH_MASK (~X86_64_CANONICAL_LOW_MASK)
 
-#define X86_64_PTE_ALLOWED_MAP_FLAGS                                                                                                                                                                   \
-    ((1ULL << X86_64_PTE_BIT_WRITABLE) | (1ULL << X86_64_PTE_BIT_USER) | (1ULL << X86_64_PTE_BIT_PAGE_WRITE_THROUGH) | (1ULL << X86_64_PTE_BIT_PAGE_CACHE_DISABLE) | (1ULL << X86_64_PTE_BIT_ACCESSED) \
-     | (1ULL << X86_64_PTE_BIT_DIRTY) | (1ULL << X86_64_PTE_BIT_PAGE_SIZE_OR_PAT) | (1ULL << X86_64_PTE_BIT_GLOBAL) | X86_64_PTE_NO_EXECUTE)
+#define X86_64_PTE_ALLOWED_MAP_FLAGS                                                                                                                                                                                                                                                                       \
+    ((1ULL << X86_64_PTE_BIT_WRITABLE) | (1ULL << X86_64_PTE_BIT_USER) | (1ULL << X86_64_PTE_BIT_PAGE_WRITE_THROUGH) | (1ULL << X86_64_PTE_BIT_PAGE_CACHE_DISABLE) | (1ULL << X86_64_PTE_BIT_ACCESSED) | (1ULL << X86_64_PTE_BIT_DIRTY) | (1ULL << X86_64_PTE_BIT_PAGE_SIZE_OR_PAT)                        \
+     | (1ULL << X86_64_PTE_BIT_GLOBAL) | X86_64_PTE_NO_EXECUTE)
 
 static inline void x86_64_invlpg(virt_addr_t va)
 {

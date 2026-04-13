@@ -29,18 +29,17 @@ static struct registered_interface* registered_interfaces;
 static uacpi_interface_handler      interface_handler;
 static uacpi_u32                    latest_queried_interface;
 
-#define WINDOWS(string, interface)                                                                                                                                                                     \
-    {.name = "Windows " string, .weight = UACPI_VENDOR_INTERFACE_WINDOWS_##interface, .kind = UACPI_INTERFACE_KIND_VENDOR, .host_type = 0, .disabled = 0, .dynamic = 0, .next = UACPI_NULL}
+#define WINDOWS(string, interface) {.name = "Windows " string, .weight = UACPI_VENDOR_INTERFACE_WINDOWS_##interface, .kind = UACPI_INTERFACE_KIND_VENDOR, .host_type = 0, .disabled = 0, .dynamic = 0, .next = UACPI_NULL}
 
-#define HOST_FEATURE(string, type)                                                                                                                                                                     \
-    {                                                                                                                                                                                                  \
-            .name      = string,                                                                                                                                                                       \
-            .weight    = 0,                                                                                                                                                                            \
-            .kind      = UACPI_INTERFACE_KIND_FEATURE,                                                                                                                                                 \
-            .host_type = UACPI_HOST_INTERFACE_##type,                                                                                                                                                  \
-            .disabled  = 1,                                                                                                                                                                            \
-            .dynamic   = 0,                                                                                                                                                                            \
-            .next      = UACPI_NULL,                                                                                                                                                                   \
+#define HOST_FEATURE(string, type)                                                                                                                                                                                                                                                                         \
+    {                                                                                                                                                                                                                                                                                                      \
+            .name      = string,                                                                                                                                                                                                                                                                           \
+            .weight    = 0,                                                                                                                                                                                                                                                                                \
+            .kind      = UACPI_INTERFACE_KIND_FEATURE,                                                                                                                                                                                                                                                     \
+            .host_type = UACPI_HOST_INTERFACE_##type,                                                                                                                                                                                                                                                      \
+            .disabled  = 1,                                                                                                                                                                                                                                                                                \
+            .dynamic   = 0,                                                                                                                                                                                                                                                                                \
+            .next      = UACPI_NULL,                                                                                                                                                                                                                                                                       \
     }
 
 static struct registered_interface predefined_interfaces[] = {

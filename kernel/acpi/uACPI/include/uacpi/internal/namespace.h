@@ -79,11 +79,9 @@ enum uacpi_should_lock
     UACPI_SHOULD_LOCK_YES,
 };
 
-uacpi_status uacpi_namespace_node_resolve(uacpi_namespace_node* scope, const uacpi_char* path, enum uacpi_should_lock, enum uacpi_may_search_above_parent, enum uacpi_permanent_only,
-                                          uacpi_namespace_node** out_node);
+uacpi_status uacpi_namespace_node_resolve(uacpi_namespace_node* scope, const uacpi_char* path, enum uacpi_should_lock, enum uacpi_may_search_above_parent, enum uacpi_permanent_only, uacpi_namespace_node** out_node);
 
-uacpi_status uacpi_namespace_do_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits,
-                                               uacpi_u32 max_depth, enum uacpi_should_lock, enum uacpi_permanent_only, void* user);
+uacpi_status uacpi_namespace_do_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits, uacpi_u32 max_depth, enum uacpi_should_lock, enum uacpi_permanent_only, void* user);
 
 uacpi_bool uacpi_namespace_node_is_dangling(uacpi_namespace_node* node);
 uacpi_bool uacpi_namespace_node_is_temporary(uacpi_namespace_node* node);

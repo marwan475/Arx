@@ -124,10 +124,10 @@ void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
     ARCH_PAGE_FLAG_SET_WRITE(page_flags);
     ARCH_PAGE_FLAG_SET_GLOBAL(page_flags);
 
-    size_t mapped_size        = 0;
-    size_t max_chunk_size     = ((size_t) 1ULL << MAX_ORDER) * PAGE_SIZE;
-    size_t max_order_chunks   = aligned_size / max_chunk_size;
-    size_t remainder_size     = aligned_size % max_chunk_size;
+    size_t mapped_size      = 0;
+    size_t max_chunk_size   = ((size_t) 1ULL << MAX_ORDER) * PAGE_SIZE;
+    size_t max_order_chunks = aligned_size / max_chunk_size;
+    size_t remainder_size   = aligned_size % max_chunk_size;
 
     for (size_t i = 0; i < max_order_chunks; i++)
     {
@@ -191,8 +191,8 @@ void vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr)
 
     for (size_t offset = 0; offset < region_size;)
     {
-        const virt_addr_t va = region_start + offset;
-        const phys_addr_t pa = vmm_virt_to_phys(va, address_space);
+        const virt_addr_t va   = region_start + offset;
+        const phys_addr_t pa   = vmm_virt_to_phys(va, address_space);
         size_t            step = PAGE_SIZE;
 
         if (pa != 0)

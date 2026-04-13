@@ -20,11 +20,11 @@ uacpi_bool uacpi_table_subsystem_available(void)
     return early_table_access || g_uacpi_rt_ctx.init_level >= UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED;
 }
 
-#define ENSURE_TABLES_ONLINE()                                                                                                                                                                         \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        if (!early_table_access)                                                                                                                                                                       \
-            UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);                                                                                                                  \
+#define ENSURE_TABLES_ONLINE()                                                                                                                                                                                                                                                                             \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        if (!early_table_access)                                                                                                                                                                                                                                                                           \
+            UACPI_ENSURE_INIT_LEVEL_AT_LEAST(UACPI_INIT_LEVEL_SUBSYSTEM_INITIALIZED);                                                                                                                                                                                                                      \
     } while (0)
 
 #else
@@ -48,11 +48,11 @@ static inline uacpi_status dummy_mutex_acquire_release(uacpi_handle mtx)
 #define uacpi_acquire_native_mutex_may_be_null dummy_mutex_acquire_release
 #define uacpi_release_native_mutex_may_be_null dummy_mutex_acquire_release
 
-#define ENSURE_TABLES_ONLINE()                                                                                                                                                                         \
-    do                                                                                                                                                                                                 \
-    {                                                                                                                                                                                                  \
-        if (!early_table_access)                                                                                                                                                                       \
-            return UACPI_STATUS_INIT_LEVEL_MISMATCH;                                                                                                                                                   \
+#define ENSURE_TABLES_ONLINE()                                                                                                                                                                                                                                                                             \
+    do                                                                                                                                                                                                                                                                                                     \
+    {                                                                                                                                                                                                                                                                                                      \
+        if (!early_table_access)                                                                                                                                                                                                                                                                           \
+            return UACPI_STATUS_INIT_LEVEL_MISMATCH;                                                                                                                                                                                                                                                       \
     } while (0)
 
 #endif // !UACPI_BAREBONES_MODE

@@ -101,8 +101,7 @@ extern "C"
      * where 1 is only direct children of 'parent', 2 is children of first-level
      * children etc. Use UACPI_MAX_DEPTH_ANY or -1 to specify infinite depth.
      */
-    uacpi_status uacpi_namespace_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback,
-                                                uacpi_object_type_bits type_mask, uacpi_u32 max_depth, void* user);
+    uacpi_status uacpi_namespace_for_each_child(uacpi_namespace_node* parent, uacpi_iteration_callback descending_callback, uacpi_iteration_callback ascending_callback, uacpi_object_type_bits type_mask, uacpi_u32 max_depth, void* user);
 
     /**
      * Retrieve the next peer namespace node of '*iter', or, if '*iter' is

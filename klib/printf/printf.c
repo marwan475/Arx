@@ -232,8 +232,7 @@ static size_t _out_rev(out_fct_type out, char* buffer, size_t idx, size_t maxlen
 }
 
 // internal itoa format
-static size_t _ntoa_format(out_fct_type out, char* buffer, size_t idx, size_t maxlen, char* buf, size_t len, bool negative, unsigned int base, unsigned int prec, unsigned int width,
-                           unsigned int flags)
+static size_t _ntoa_format(out_fct_type out, char* buffer, size_t idx, size_t maxlen, char* buf, size_t len, bool negative, unsigned int base, unsigned int prec, unsigned int width, unsigned int flags)
 {
     // pad leading zeros
     if (!(flags & FLAGS_LEFT))
@@ -328,8 +327,7 @@ static size_t _ntoa_long(out_fct_type out, char* buffer, size_t idx, size_t maxl
 
 // internal itoa for 'long long' type
 #if defined(PRINTF_SUPPORT_LONG_LONG)
-static size_t _ntoa_long_long(out_fct_type out, char* buffer, size_t idx, size_t maxlen, unsigned long long value, bool negative, unsigned long long base, unsigned int prec, unsigned int width,
-                              unsigned int flags)
+static size_t _ntoa_long_long(out_fct_type out, char* buffer, size_t idx, size_t maxlen, unsigned long long value, bool negative, unsigned long long base, unsigned int prec, unsigned int width, unsigned int flags)
 {
     char   buf[PRINTF_NTOA_BUFFER_SIZE];
     size_t len = 0U;
@@ -869,9 +867,7 @@ static int _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, const
                     }
                     else
                     {
-                        const unsigned int value = (flags & FLAGS_CHAR)    ? (unsigned char) va_arg(va, unsigned int)
-                                                   : (flags & FLAGS_SHORT) ? (unsigned short int) va_arg(va, unsigned int)
-                                                                           : va_arg(va, unsigned int);
+                        const unsigned int value = (flags & FLAGS_CHAR) ? (unsigned char) va_arg(va, unsigned int) : (flags & FLAGS_SHORT) ? (unsigned short int) va_arg(va, unsigned int) : va_arg(va, unsigned int);
                         idx                      = _ntoa_long(out, buffer, idx, maxlen, value, false, base, precision, width, flags);
                     }
                 }

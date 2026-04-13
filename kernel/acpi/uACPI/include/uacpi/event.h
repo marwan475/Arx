@@ -80,8 +80,7 @@ extern "C"
      *
      * NOTE: 'gpe_device' may be null for GPEs managed by \_GPE
      */
-    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_handler(uacpi_namespace_node* gpe_device, uacpi_u16 idx, uacpi_gpe_triggering triggering, uacpi_gpe_handler handler,
-                                                                                   uacpi_handle ctx))
+    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_handler(uacpi_namespace_node* gpe_device, uacpi_u16 idx, uacpi_gpe_triggering triggering, uacpi_gpe_handler handler, uacpi_handle ctx))
 
     /**
      * Installs a raw handler to the provided GPE at 'idx' controlled by device
@@ -90,8 +89,7 @@ extern "C"
      *
      * NOTE: 'gpe_device' may be null for GPEs managed by \_GPE
      */
-    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_handler_raw(uacpi_namespace_node* gpe_device, uacpi_u16 idx, uacpi_gpe_triggering triggering, uacpi_gpe_handler handler,
-                                                                                       uacpi_handle ctx))
+    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_handler_raw(uacpi_namespace_node* gpe_device, uacpi_u16 idx, uacpi_gpe_triggering triggering, uacpi_gpe_handler handler, uacpi_handle ctx))
 
     UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_uninstall_gpe_handler(uacpi_namespace_node* gpe_device, uacpi_u16 idx, uacpi_gpe_handler handler))
 
@@ -198,8 +196,7 @@ extern "C"
      * Install/uninstall a new GPE block, usually defined by a device in the
      * namespace with a _HID of ACPI0006.
      */
-    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_block(uacpi_namespace_node* gpe_device, uacpi_u64 address, uacpi_address_space address_space, uacpi_u16 num_registers,
-                                                                                 uacpi_u32 irq))
+    UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_install_gpe_block(uacpi_namespace_node* gpe_device, uacpi_u64 address, uacpi_address_space address_space, uacpi_u16 num_registers, uacpi_u32 irq))
     UACPI_ALWAYS_ERROR_FOR_REDUCED_HARDWARE(uacpi_status uacpi_uninstall_gpe_block(uacpi_namespace_node* gpe_device))
 
 #endif // !UACPI_BAREBONES_MODE

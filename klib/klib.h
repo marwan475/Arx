@@ -22,8 +22,12 @@
 
 typedef _Atomic uint8_t spinlock_t;
 
-typedef struct zone zone_t;
+typedef struct zone            zone_t;
 typedef struct virt_addr_space virt_addr_space_t;
+
+typedef struct dispatcher
+{
+} dispatcher_t;
 
 // panic
 static _force_inline void panic(void)

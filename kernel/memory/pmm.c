@@ -194,8 +194,7 @@ void pmm_init(struct boot_info* boot_info)
         }
     }
 
-    kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory),
-            (unsigned long long) bytes_to_mb(zone->total_memory));
+    kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory), (unsigned long long) bytes_to_mb(zone->total_memory));
     kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) zone->total_pages, (unsigned long long) zone->min_pfn, (unsigned long long) zone->max_pfn);
 
     size_t buddy_metadata_size  = align_up((zone->max_pfn * sizeof(page_t)), PAGE_SIZE);

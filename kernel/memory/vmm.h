@@ -41,6 +41,7 @@ typedef struct virt_region
     virt_addr_t end;
     size_t      size;
     virt_type_t type;
+    bool allocated; // used for metadata allocations
     virt_region_t* next;
     virt_region_t* prev;
 } virt_region_t;

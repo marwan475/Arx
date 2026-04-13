@@ -6,6 +6,7 @@
  * - Initializes memory regions based on bootloader information
  * - Sets up memory zones
  * - Seeds per-zone buddy allocator free lists and page metadata
+ * - Sets up numa node for cpus in dispatcher
  * - Handles buddy allocation and freeing of physical pages
  * - Implements thread safe PMM API
  *

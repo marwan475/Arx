@@ -1,3 +1,14 @@
+/*
+ * acpi.c
+ *
+ * ACPI (Advanced Configuration and Power Interface) implementation
+ *
+ * - uACPI port
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #include <acpi/acpi.h>
 #include <uacpi/kernel_api.h>
 #include <uacpi/log.h>

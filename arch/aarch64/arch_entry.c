@@ -106,6 +106,13 @@ void arch_pause(void)
     __asm__ volatile("yield");
 }
 
+uint8_t arch_cpu_id(void)
+{
+    uint64_t mpidr = 0;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return (uint8_t) (mpidr & 0xff);
+}
+
 static inline void arch_enable_fp_simd(void)
 {
     uint64_t cpacr;
@@ -176,11 +183,11 @@ static void smp_entry(struct limine_smp_info* cpu)
     arch_enable_fp_simd();
     if (arg != 0)
     {
-        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
+        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", (unsigned) arch_cpu_id(), arg);
     }
     else
     {
-        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
+        kprintf("Arx kernel: cpu[%u] boot entry\n", (unsigned) arch_cpu_id());
     }
 
     for (;;)

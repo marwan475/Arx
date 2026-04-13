@@ -129,6 +129,18 @@ void arch_pause(void)
     __asm__ volatile("pause");
 }
 
+uint8_t arch_cpu_id(void)
+{
+    uint32_t eax = 1;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+
+    return (uint8_t) ((ebx >> 24) & 0xff);
+}
+
 void arch_serial_putchar(char c)
 {
     __asm__ volatile("outb %0, %1" : : "a"(c), "Nd"((unsigned short) 0x3F8));
@@ -156,11 +168,11 @@ static void smp_entry(struct limine_smp_info* cpu)
 
     if (arg != 0)
     {
-        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", cpu->processor_id, arg);
+        kprintf("Arx kernel: cpu[%u] boot entry: %s\n", (unsigned) arch_cpu_id(), arg);
     }
     else
     {
-        kprintf("Arx kernel: cpu[%u] boot entry\n", cpu->processor_id);
+        kprintf("Arx kernel: cpu[%u] boot entry\n", (unsigned) arch_cpu_id());
     }
 
     for (;;)

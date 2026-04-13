@@ -53,6 +53,8 @@ typedef uint64_t virt_addr_t;
 void arch_halt(void);
 void arch_pause(void);
 
+uint8_t arch_cpu_id(void);
+
 // Page table should be raw physical address
 void arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
 void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);

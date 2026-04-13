@@ -1,3 +1,14 @@
+/*
+ * cpu.h
+ *
+ * Per cpu/core information
+ *
+ * - Provides structures to store per cpu/core information
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #ifndef CPU_H
 #define CPU_H
 

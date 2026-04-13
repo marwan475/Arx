@@ -94,8 +94,17 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     }
 }
 
-void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
+void* vmalloc(size_t size)
 {
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL || cpu->address_space == NULL)
+    {
+        return NULL;
+    }
+
+    zone_t*            zone          = &cpu->numa_node->zone;
+    virt_addr_space_t* address_space = cpu->address_space;
+
     if (zone == NULL || address_space == NULL)
     {
         return NULL;
@@ -131,7 +140,7 @@ void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
 
     for (size_t i = 0; i < max_order_chunks; i++)
     {
-        void* chunk_hhdm = pmm_alloc(zone, max_chunk_size);
+        void* chunk_hhdm = pmm_alloc(max_chunk_size);
         if (chunk_hhdm == NULL)
         {
             if (mapped_size > 0)
@@ -149,7 +158,7 @@ void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
 
     if (remainder_size > 0)
     {
-        void* chunk_hhdm = pmm_alloc(zone, remainder_size);
+        void* chunk_hhdm = pmm_alloc(remainder_size);
         if (chunk_hhdm == NULL)
         {
             if (mapped_size > 0)
@@ -168,8 +177,17 @@ void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
     return (void*) (uintptr_t) base;
 }
 
-void vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr)
+void vfree(void* ptr)
 {
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL || cpu->address_space == NULL)
+    {
+        return;
+    }
+
+    zone_t*            zone          = &cpu->numa_node->zone;
+    virt_addr_space_t* address_space = cpu->address_space;
+
     if (zone == NULL || address_space == NULL)
     {
         return;
@@ -206,7 +224,7 @@ void vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr)
                     const uint64_t block_pages = (uint64_t) 1ULL << page->order;
                     if ((pfn & (block_pages - 1)) == 0)
                     {
-                        pmm_free(zone, (void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
+                        pmm_free((void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
                         step = (size_t) block_pages * PAGE_SIZE;
                     }
                 }

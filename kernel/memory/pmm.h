@@ -82,7 +82,7 @@ typedef struct numa_node
 void pmm_init(struct boot_info* boot_info);
 
 // returns hhdm address of allocated block
-void* pmm_alloc(zone_t* zone, size_t size);
-void  pmm_free(zone_t* zone, void* addr);
+void* pmm_alloc(size_t size);
+void  pmm_free(void* addr);
 
 #endif

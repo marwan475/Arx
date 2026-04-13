@@ -104,7 +104,7 @@ void vmm_test(void)
 
     kprintf("Arx kernel: vmm_test start\n");
 
-    void* range_block_va = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, PAGE_SIZE * 2ULL);
+    void* range_block_va = pmm_alloc(PAGE_SIZE * 2ULL);
     if (range_block_va == NULL)
     {
         vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
@@ -123,7 +123,7 @@ void vmm_test(void)
     if (!vmm_test_find_unmapped_window(&test_va))
     {
         vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
-        pmm_free(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, range_block_va);
+        pmm_free(range_block_va);
         kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
         kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
         return;
@@ -296,7 +296,7 @@ void vmm_test(void)
         passes++;
     }
 
-    pmm_free(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, range_block_va);
+    pmm_free(range_block_va);
 
     kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
     if (failures == 0)
@@ -356,9 +356,9 @@ void pmm_test(void)
     baseline_free_pages = dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages;
     baseline_used_pages = dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages;
 
-    if (pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, 0) != NULL)
+    if (pmm_alloc(0) != NULL)
     {
-        pmm_test_log_fail("pmm_alloc(zone, 0) should return NULL", &failures);
+        pmm_test_log_fail("pmm_alloc(0) should return NULL", &failures);
     }
     else
     {
@@ -382,7 +382,7 @@ void pmm_test(void)
         size_t pow2pages = pmm_test_round_up_pow2_pages(req);
         size_t actual    = pow2pages * PAGE_SIZE;
 
-        void* ptr = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, req);
+        void* ptr = pmm_alloc(req);
         if (ptr == NULL)
         {
             pmm_test_log_fail("scenario allocation returned NULL", &failures);
@@ -458,7 +458,7 @@ void pmm_test(void)
     {
         if (allocs[i].ptr != NULL)
         {
-            pmm_free(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, allocs[i].ptr);
+            pmm_free(allocs[i].ptr);
             allocs[i].ptr = NULL;
         }
     }
@@ -486,7 +486,7 @@ void pmm_test(void)
         size_t n = 0;
         while (n < PMM_TEST_MAX_PTRS)
         {
-            void* ptr = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, PAGE_SIZE);
+            void* ptr = pmm_alloc(PAGE_SIZE);
             if (ptr == NULL)
             {
                 break;
@@ -502,7 +502,7 @@ void pmm_test(void)
 
         for (size_t i = 0; i < n; i++)
         {
-            pmm_free(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, exhaust_ptrs[i]);
+            pmm_free(exhaust_ptrs[i]);
             exhaust_ptrs[i] = NULL;
         }
 
@@ -525,7 +525,7 @@ void pmm_test(void)
     size_t exhausted_count = 0;
     while (exhausted_count < PMM_TEST_MAX_PTRS)
     {
-        void* ptr = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, PAGE_SIZE);
+        void* ptr = pmm_alloc(PAGE_SIZE);
         if (ptr == NULL)
         {
             break;
@@ -545,7 +545,7 @@ void pmm_test(void)
 
     for (size_t i = 0; i < exhausted_count; i++)
     {
-        pmm_free(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, exhaust_ptrs[i]);
+        pmm_free(exhaust_ptrs[i]);
         exhaust_ptrs[i] = NULL;
     }
 
@@ -593,7 +593,7 @@ void klib_test(void)
 
     kprintf("Arx kernel: klib_test start\n");
 
-    void* ptr = vmalloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, dispatcher.cpus[arch_cpu_id()].address_space, req_size);
+    void* ptr = vmalloc(req_size);
     if (ptr == NULL)
     {
         klib_test_log_fail("vmalloc returned NULL", &failures);
@@ -635,7 +635,7 @@ void klib_test(void)
         passes++;
     }
 
-    vfree(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, dispatcher.cpus[arch_cpu_id()].address_space, ptr);
+    vfree(ptr);
 
     if (vmm_find_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
     {

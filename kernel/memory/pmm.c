@@ -357,8 +357,16 @@ void buddy_free(zone_t* zone, uint64_t pfn)
     add_block_to_free_list(zone, block->order, block->pfn);
 }
 
-void* pmm_alloc(zone_t* zone, size_t size)
+void* pmm_alloc(size_t size)
 {
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL)
+    {
+        return NULL;
+    }
+
+    zone_t* zone = &cpu->numa_node->zone;
+
     if (zone == NULL)
     {
         return NULL;
@@ -398,8 +406,16 @@ void* pmm_alloc(zone_t* zone, size_t size)
     return (void*) hhdm_va;
 }
 
-void pmm_free(zone_t* zone, void* addr)
+void pmm_free(void* addr)
 {
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL)
+    {
+        return;
+    }
+
+    zone_t* zone = &cpu->numa_node->zone;
+
     if (zone == NULL)
     {
         return;

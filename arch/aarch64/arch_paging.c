@@ -226,7 +226,7 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
         return aarch64_decode_table_entry(*entry, table_pa);
     }
 
-    void* new_table = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, PAGE_SIZE);
+    void* new_table = pmm_alloc(PAGE_SIZE);
     if (new_table == NULL)
     {
         kprintf("Arx kernel: arch_map_page failed: unable to allocate aarch64 table\n");

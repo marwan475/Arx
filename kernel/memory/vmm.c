@@ -221,13 +221,13 @@ void vmm_init(struct boot_info* boot_info)
 
     init_kernel_address_space.kernel_free_regions = NULL;
     init_kernel_address_space.kernel_used_regions = NULL;
-    init_kernel_address_space.kernel_region_metadata = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, REGION_METADATA_SIZE);
+    init_kernel_address_space.kernel_region_metadata = pmm_alloc(REGION_METADATA_SIZE);
     memset(init_kernel_address_space.kernel_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.kernel_regions_count = 0;
 
     init_kernel_address_space.user_free_regions   = NULL;
     init_kernel_address_space.user_used_regions   = NULL;
-    init_kernel_address_space.user_region_metadata = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, REGION_METADATA_SIZE);
+    init_kernel_address_space.user_region_metadata = pmm_alloc(REGION_METADATA_SIZE);
     memset(init_kernel_address_space.user_region_metadata, 0, REGION_METADATA_SIZE);
     init_kernel_address_space.user_regions_count = 0;
 

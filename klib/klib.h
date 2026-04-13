@@ -89,7 +89,7 @@ uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
 uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 
 // memory allocation
-void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size);
-void  vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr);
+void* vmalloc(size_t size);
+void  vfree(void* ptr);
 
 #endif

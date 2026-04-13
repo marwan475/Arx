@@ -20,7 +20,7 @@ void acpi_init(phys_addr_t rsdp_address)
 
     uacpi_rsdp_address = (uacpi_phys_addr) rsdp_address;
 
-    uacpi_early_table_buffer = pmm_alloc(&dispatcher.cpus[arch_cpu_id()].numa_node->zone, ACPI_EARLY_TABLE_BUFFER_SIZE);
+    uacpi_early_table_buffer = pmm_alloc(ACPI_EARLY_TABLE_BUFFER_SIZE);
 
     status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
     if (status != UACPI_STATUS_OK)

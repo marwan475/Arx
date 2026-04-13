@@ -21,6 +21,7 @@
 
 #define PMM_MAX_REGIONS 128
 #define MAX_ORDER 10
+#define PMM_INVALID_PFN UINT64_MAX
 
 typedef uint64_t phys_addr_t;
 

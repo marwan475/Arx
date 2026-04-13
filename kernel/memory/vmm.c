@@ -281,7 +281,11 @@ void vmm_init(struct boot_info* boot_info)
 
     kprintf("Arx kernel: virtual memory manager initialized\n");
 
-    dispatcher.cpus[arch_cpu_id()].address_space = &init_kernel_address_space;
+    uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    for (uint8_t i = 0; i < num_cpus; i++)
+    {
+        dispatcher.cpus[i].address_space = &init_kernel_address_space;
+    }
 }
 
 void vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)

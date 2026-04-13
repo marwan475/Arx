@@ -221,7 +221,11 @@ void pmm_init(struct boot_info* boot_info)
     buddy_allocator_init(zone);
     kprintf("Arx kernel: buddy allocator initialized\n");
 
-    dispatcher.cpus[arch_cpu_id()].numa_node = &pmm_numa_node;
+    uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    for (uint8_t i = 0; i < num_cpus; i++)
+    {
+        dispatcher.cpus[i].numa_node = &pmm_numa_node; 
+    }
 }
 
 // removes head of free list

@@ -30,6 +30,7 @@ dispatcher_t dispatcher;
 // - memory map
 // - framebuffer info
 // - smp info
+// - all cores having same address space/pagetable
 // - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
 // - paging with no user access and RWX on direct map
 // - acpi rsdp address

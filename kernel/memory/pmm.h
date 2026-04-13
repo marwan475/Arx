@@ -72,7 +72,14 @@ typedef struct zone
     size_t       total_memory;
 } zone_t;
 
-extern zone_t pmm_zone;
+typedef struct numa_node
+{
+    zone_t zone;
+    uint8_t cpu_ids[BOOT_SMP_MAX_CPUS];
+    size_t cpu_count;
+} numa_node_t;
+
+extern numa_node_t pmm_numa_node;
 
 void pmm_init(struct boot_info* boot_info);
 

@@ -13,14 +13,14 @@ void acpi_init(phys_addr_t rsdp_address)
 {
     uacpi_status status;
 
-    if (pmm_zone.hhdm_present && rsdp_address >= pmm_zone.hhdm_offset)
+    if (pmm_numa_node.zone.hhdm_present && rsdp_address >= pmm_numa_node.zone.hhdm_offset)
     {
-        rsdp_address = hhdm_to_pa(rsdp_address, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+        rsdp_address = hhdm_to_pa(rsdp_address, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
     }
 
     uacpi_rsdp_address = (uacpi_phys_addr) rsdp_address;
 
-    uacpi_early_table_buffer = pmm_alloc(&pmm_zone, ACPI_EARLY_TABLE_BUFFER_SIZE);
+    uacpi_early_table_buffer = pmm_alloc(&pmm_numa_node.zone, ACPI_EARLY_TABLE_BUFFER_SIZE);
 
     status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
     if (status != UACPI_STATUS_OK)

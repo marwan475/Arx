@@ -104,7 +104,7 @@ void vmm_test(void)
 
     kprintf("Arx kernel: vmm_test start\n");
 
-    void* range_block_va = pmm_alloc(&pmm_zone, PAGE_SIZE * 2ULL);
+    void* range_block_va = pmm_alloc(&pmm_numa_node.zone, PAGE_SIZE * 2ULL);
     if (range_block_va == NULL)
     {
         vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
@@ -116,14 +116,14 @@ void vmm_test(void)
     void* page_a_va = range_block_va;
     void* page_b_va = (void*) ((uintptr_t) range_block_va + PAGE_SIZE);
 
-    phys_addr_t page_a_pa = hhdm_to_pa((uintptr_t) page_a_va, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    phys_addr_t page_a_pa = hhdm_to_pa((uintptr_t) page_a_va, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
     phys_addr_t page_b_pa = page_a_pa + PAGE_SIZE;
 
     virt_addr_t test_va = 0;
     if (!vmm_test_find_unmapped_window(&test_va))
     {
         vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
-        pmm_free(&pmm_zone, range_block_va);
+        pmm_free(&pmm_numa_node.zone, range_block_va);
         kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
         kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
         return;
@@ -296,7 +296,7 @@ void vmm_test(void)
         passes++;
     }
 
-    pmm_free(&pmm_zone, range_block_va);
+    pmm_free(&pmm_numa_node.zone, range_block_va);
 
     kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
     if (failures == 0)
@@ -326,37 +326,37 @@ void pmm_test(void)
 
     kprintf("Arx kernel: pmm_test start\n");
 
-    if (pmm_zone.buddy_metadata == NULL)
+    if (pmm_numa_node.zone.buddy_metadata == NULL)
     {
         pmm_test_log_fail("zone metadata is null (did pmm_init run?)", &failures);
         kprintf("Arx kernel: pmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
-    if (pmm_zone.total_pages == 0)
+    if (pmm_numa_node.zone.total_pages == 0)
     {
         pmm_test_log_fail("zone total_pages is zero", &failures);
     }
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: zone initialized (pages=%llu, regions=%llu)\n", (unsigned long long) pmm_zone.total_pages, (unsigned long long) pmm_zone.region_count);
+        kprintf("Arx kernel: pmm_test pass: zone initialized (pages=%llu, regions=%llu)\n", (unsigned long long) pmm_numa_node.zone.total_pages, (unsigned long long) pmm_numa_node.zone.region_count);
     }
 
-    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    if (!pmm_test_check_zone_accounting(&pmm_numa_node.zone))
     {
         pmm_test_log_fail("zone accounting invariant failed at start (free+used!=total)", &failures);
     }
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages, (unsigned long long) pmm_zone.total_pages);
+        kprintf("Arx kernel: pmm_test pass: initial accounting free=%llu used=%llu total=%llu\n", (unsigned long long) pmm_numa_node.zone.free_pages, (unsigned long long) pmm_numa_node.zone.used_pages, (unsigned long long) pmm_numa_node.zone.total_pages);
     }
 
-    baseline_free_pages = pmm_zone.free_pages;
-    baseline_used_pages = pmm_zone.used_pages;
+    baseline_free_pages = pmm_numa_node.zone.free_pages;
+    baseline_used_pages = pmm_numa_node.zone.used_pages;
 
-    if (pmm_alloc(&pmm_zone, 0) != NULL)
+    if (pmm_alloc(&pmm_numa_node.zone, 0) != NULL)
     {
         pmm_test_log_fail("pmm_alloc(zone, 0) should return NULL", &failures);
     }
@@ -382,7 +382,7 @@ void pmm_test(void)
         size_t pow2pages = pmm_test_round_up_pow2_pages(req);
         size_t actual    = pow2pages * PAGE_SIZE;
 
-        void* ptr = pmm_alloc(&pmm_zone, req);
+        void* ptr = pmm_alloc(&pmm_numa_node.zone, req);
         if (ptr == NULL)
         {
             pmm_test_log_fail("scenario allocation returned NULL", &failures);
@@ -398,7 +398,7 @@ void pmm_test(void)
             passes++;
         }
 
-        uintptr_t pa = hhdm_to_pa((uintptr_t) ptr, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+        uintptr_t pa = hhdm_to_pa((uintptr_t) ptr, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
 
         allocs[i].ptr       = ptr;
         allocs[i].requested = req;
@@ -412,22 +412,22 @@ void pmm_test(void)
         ((volatile uint8_t*) ptr)[actual - 1] = (uint8_t) (0x5A + i);
     }
 
-    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    if (!pmm_test_check_zone_accounting(&pmm_numa_node.zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after scenario allocations", &failures);
     }
-    else if (pmm_zone.used_pages < baseline_used_pages + scenario_expected_pages)
+    else if (pmm_numa_node.zone.used_pages < baseline_used_pages + scenario_expected_pages)
     {
         pmm_test_log_fail("zone used_pages smaller than expected after scenario allocations", &failures);
     }
-    else if (pmm_zone.free_pages > baseline_free_pages)
+    else if (pmm_numa_node.zone.free_pages > baseline_free_pages)
     {
         pmm_test_log_fail("zone free_pages unexpectedly increased after scenario allocations", &failures);
     }
     else
     {
         passes++;
-        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) pmm_zone.free_pages, (unsigned long long) pmm_zone.used_pages, (unsigned long long) scenario_expected_pages);
+        kprintf("Arx kernel: pmm_test pass: accounting after scenarios free=%llu used=%llu (expected used increase >= %llu pages)\n", (unsigned long long) pmm_numa_node.zone.free_pages, (unsigned long long) pmm_numa_node.zone.used_pages, (unsigned long long) scenario_expected_pages);
     }
 
     for (size_t i = 0; i < PMM_TEST_SCENARIOS; i++)
@@ -458,16 +458,16 @@ void pmm_test(void)
     {
         if (allocs[i].ptr != NULL)
         {
-            pmm_free(&pmm_zone, allocs[i].ptr);
+            pmm_free(&pmm_numa_node.zone, allocs[i].ptr);
             allocs[i].ptr = NULL;
         }
     }
 
-    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    if (!pmm_test_check_zone_accounting(&pmm_numa_node.zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after scenario frees", &failures);
     }
-    else if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+    else if (pmm_numa_node.zone.free_pages != baseline_free_pages || pmm_numa_node.zone.used_pages != baseline_used_pages)
     {
         pmm_test_log_fail("zone free/used pages did not return to baseline after scenario frees", &failures);
     }
@@ -486,7 +486,7 @@ void pmm_test(void)
         size_t n = 0;
         while (n < PMM_TEST_MAX_PTRS)
         {
-            void* ptr = pmm_alloc(&pmm_zone, PAGE_SIZE);
+            void* ptr = pmm_alloc(&pmm_numa_node.zone, PAGE_SIZE);
             if (ptr == NULL)
             {
                 break;
@@ -502,17 +502,17 @@ void pmm_test(void)
 
         for (size_t i = 0; i < n; i++)
         {
-            pmm_free(&pmm_zone, exhaust_ptrs[i]);
+            pmm_free(&pmm_numa_node.zone, exhaust_ptrs[i]);
             exhaust_ptrs[i] = NULL;
         }
 
-        if (!pmm_test_check_zone_accounting(&pmm_zone))
+        if (!pmm_test_check_zone_accounting(&pmm_numa_node.zone))
         {
             pmm_test_log_fail("zone accounting invariant failed during stress round", &failures);
             break;
         }
 
-        if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+        if (pmm_numa_node.zone.free_pages != baseline_free_pages || pmm_numa_node.zone.used_pages != baseline_used_pages)
         {
             pmm_test_log_fail("zone free/used pages drifted during stress round", &failures);
             break;
@@ -525,7 +525,7 @@ void pmm_test(void)
     size_t exhausted_count = 0;
     while (exhausted_count < PMM_TEST_MAX_PTRS)
     {
-        void* ptr = pmm_alloc(&pmm_zone, PAGE_SIZE);
+        void* ptr = pmm_alloc(&pmm_numa_node.zone, PAGE_SIZE);
         if (ptr == NULL)
         {
             break;
@@ -545,15 +545,15 @@ void pmm_test(void)
 
     for (size_t i = 0; i < exhausted_count; i++)
     {
-        pmm_free(&pmm_zone, exhaust_ptrs[i]);
+        pmm_free(&pmm_numa_node.zone, exhaust_ptrs[i]);
         exhaust_ptrs[i] = NULL;
     }
 
-    if (!pmm_test_check_zone_accounting(&pmm_zone))
+    if (!pmm_test_check_zone_accounting(&pmm_numa_node.zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after exhaustion cleanup", &failures);
     }
-    else if (pmm_zone.free_pages != baseline_free_pages || pmm_zone.used_pages != baseline_used_pages)
+    else if (pmm_numa_node.zone.free_pages != baseline_free_pages || pmm_numa_node.zone.used_pages != baseline_used_pages)
     {
         pmm_test_log_fail("zone free/used pages not restored after exhaustion cleanup", &failures);
     }
@@ -593,7 +593,7 @@ void klib_test(void)
 
     kprintf("Arx kernel: klib_test start\n");
 
-    void* ptr = vmalloc(&pmm_zone, &init_kernel_address_space, req_size);
+    void* ptr = vmalloc(&pmm_numa_node.zone, &init_kernel_address_space, req_size);
     if (ptr == NULL)
     {
         klib_test_log_fail("vmalloc returned NULL", &failures);
@@ -635,7 +635,7 @@ void klib_test(void)
         passes++;
     }
 
-    vfree(&pmm_zone, &init_kernel_address_space, ptr);
+    vfree(&pmm_numa_node.zone, &init_kernel_address_space, ptr);
 
     if (vmm_find_region(&init_kernel_address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
     {

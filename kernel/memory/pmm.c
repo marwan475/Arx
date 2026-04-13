@@ -17,7 +17,7 @@
 #include <memory/vmm.h>
 
 // keep it to one zone containing all memory for now
-zone_t pmm_zone = {0};
+numa_node_t pmm_numa_node = {0};
 
 static size_t bytes_to_kb(size_t bytes)
 {
@@ -146,8 +146,8 @@ void buddy_allocator_init(zone_t* zone)
 
 void pmm_init(struct boot_info* boot_info)
 {
-    zone_t* zone = &pmm_zone;
-    memset(zone, 0, sizeof(*zone));
+    memset(&pmm_numa_node, 0, sizeof(pmm_numa_node));
+    zone_t* zone = &pmm_numa_node.zone;
 
     struct boot_memmap_entry* memmap             = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
     size_t                    memmap_entry_count = boot_info->memmap_entry_count;
@@ -193,7 +193,8 @@ void pmm_init(struct boot_info* boot_info)
         }
     }
 
-    kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory), (unsigned long long) bytes_to_mb(zone->total_memory));
+    kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory),
+            (unsigned long long) bytes_to_mb(zone->total_memory));
     kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) zone->total_pages, (unsigned long long) zone->min_pfn, (unsigned long long) zone->max_pfn);
 
     size_t buddy_metadata_size  = align_up((zone->max_pfn * sizeof(page_t)), PAGE_SIZE);

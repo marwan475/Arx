@@ -193,7 +193,7 @@ static uint64_t aarch64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t 
 
 static uint64_t* aarch64_table_from_pa(phys_addr_t pa)
 {
-    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
     return (uint64_t*) table_va;
 }
 
@@ -226,7 +226,7 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
         return aarch64_decode_table_entry(*entry, table_pa);
     }
 
-    void* new_table = pmm_alloc(&pmm_zone, PAGE_SIZE);
+    void* new_table = pmm_alloc(&pmm_numa_node.zone, PAGE_SIZE);
     if (new_table == NULL)
     {
         kprintf("Arx kernel: arch_map_page failed: unable to allocate aarch64 table\n");
@@ -234,7 +234,7 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
     }
 
     memset(new_table, 0, PAGE_SIZE);
-    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, pmm_zone.hhdm_present, pmm_zone.hhdm_offset);
+    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, pmm_numa_node.zone.hhdm_present, pmm_numa_node.zone.hhdm_offset);
 
     *entry    = (new_table_pa & AARCH64_PTE_ADDR_MASK) | AARCH64_PTE_VALID | AARCH64_PTE_TABLE_OR_PAGE;
     *table_pa = new_table_pa;

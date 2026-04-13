@@ -73,20 +73,20 @@ typedef struct tss
 
 typedef struct gdt
 {
-    discriptor_t null;
-    discriptor_t kernel_code_64;
-    discriptor_t kernel_data_64;
-    discriptor_t user_code_64;
-    discriptor_t user_data_64;
-    tss_discriptor_t    tss;
+    discriptor_t     null;
+    discriptor_t     kernel_code_64;
+    discriptor_t     kernel_data_64;
+    discriptor_t     user_code_64;
+    discriptor_t     user_data_64;
+    tss_discriptor_t tss;
 } gdt_t;
 
 typedef struct arch_info
 {
-    gdt_t gdt;
-    tss_t tss;
+    gdt_t                 gdt;
+    tss_t                 tss;
     discriptor_register_t gdt_reg;
-    tss_discriptor_t tss_descriptor;
+    tss_discriptor_t      tss_descriptor;
 } arch_info_t;
 
 #endif

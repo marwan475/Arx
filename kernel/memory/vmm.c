@@ -535,3 +535,34 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 
     spinlock_release(&space->lock);
 }
+
+virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
+{
+    if (space == NULL || addr == 0)
+    {
+        return NULL;
+    }
+
+    spinlock_acquire(&space->lock);
+
+    for (virt_region_t* it = space->kernel_used_regions; it != NULL; it = it->next)
+    {
+        if (it->start <= addr && addr < it->end)
+        {
+            spinlock_release(&space->lock);
+            return it;
+        }
+    }
+
+    for (virt_region_t* it = space->user_used_regions; it != NULL; it = it->next)
+    {
+        if (it->start <= addr && addr < it->end)
+        {
+            spinlock_release(&space->lock);
+            return it;
+        }
+    }
+
+    spinlock_release(&space->lock);
+    return NULL;
+}

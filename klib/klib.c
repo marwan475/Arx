@@ -1,5 +1,18 @@
+/*
+ * klib.c
+ *
+ * Kernel library implementation
+ *
+ * - Implements kernel API
+ *
+ * Author: Marwan Mostafa
+ *
+ */
+
 #include <klib/klib.h>
 #include <klib/printf/printf.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
 
 spinlock_t kprintf_lock = 0;
 
@@ -79,4 +92,135 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     {
         return hhdm_addr;
     }
+}
+
+void* vmalloc(zone_t* zone, virt_addr_space_t* address_space, size_t size)
+{
+    if (zone == NULL || address_space == NULL)
+    {
+        return NULL;
+    }
+
+    if (size == 0)
+    {
+        return NULL;
+    }
+
+    size_t aligned_size = align_up(size, PAGE_SIZE);
+    if (aligned_size == 0)
+    {
+        return NULL;
+    }
+
+    virt_addr_t base = vmm_reserve_region(address_space, aligned_size, VIRT_ADDR_KERNEL);
+    if (base == 0)
+    {
+        return NULL;
+    }
+
+    uint64_t page_flags = 0;
+    ARCH_PAGE_FLAGS_INIT(page_flags);
+    ARCH_PAGE_FLAG_SET_READ(page_flags);
+    ARCH_PAGE_FLAG_SET_WRITE(page_flags);
+    ARCH_PAGE_FLAG_SET_GLOBAL(page_flags);
+
+    size_t mapped_size        = 0;
+    size_t max_chunk_size     = ((size_t) 1ULL << MAX_ORDER) * PAGE_SIZE;
+    size_t max_order_chunks   = aligned_size / max_chunk_size;
+    size_t remainder_size     = aligned_size % max_chunk_size;
+
+    for (size_t i = 0; i < max_order_chunks; i++)
+    {
+        void* chunk_hhdm = pmm_alloc(zone, max_chunk_size);
+        if (chunk_hhdm == NULL)
+        {
+            if (mapped_size > 0)
+            {
+                vmm_unmap_range(base, mapped_size, address_space);
+            }
+            vmm_free_region(address_space, base);
+            return NULL;
+        }
+
+        phys_addr_t pa = hhdm_to_pa((uintptr_t) chunk_hhdm, zone->hhdm_present, zone->hhdm_offset);
+        vmm_map_range(base + mapped_size, pa, max_chunk_size, page_flags, address_space);
+        mapped_size += max_chunk_size;
+    }
+
+    if (remainder_size > 0)
+    {
+        void* chunk_hhdm = pmm_alloc(zone, remainder_size);
+        if (chunk_hhdm == NULL)
+        {
+            if (mapped_size > 0)
+            {
+                vmm_unmap_range(base, mapped_size, address_space);
+            }
+            vmm_free_region(address_space, base);
+            return NULL;
+        }
+
+        phys_addr_t pa = hhdm_to_pa((uintptr_t) chunk_hhdm, zone->hhdm_present, zone->hhdm_offset);
+        vmm_map_range(base + mapped_size, pa, remainder_size, page_flags, address_space);
+        mapped_size += remainder_size;
+    }
+
+    return (void*) (uintptr_t) base;
+}
+
+void vfree(zone_t* zone, virt_addr_space_t* address_space, void* ptr)
+{
+    if (zone == NULL || address_space == NULL)
+    {
+        return;
+    }
+
+    if (ptr == NULL)
+    {
+        return;
+    }
+
+    virt_region_t* region = vmm_find_region(address_space, (virt_addr_t) (uintptr_t) ptr);
+    if (region == NULL)
+    {
+        return;
+    }
+
+    const virt_addr_t region_start = region->start;
+    const size_t      region_size  = region->size;
+
+    for (size_t offset = 0; offset < region_size;)
+    {
+        const virt_addr_t va = region_start + offset;
+        const phys_addr_t pa = vmm_virt_to_phys(va, address_space);
+        size_t            step = PAGE_SIZE;
+
+        if (pa != 0)
+        {
+            const uint64_t pfn = pa >> PAGE_SHIFT;
+            if (pfn < zone->max_pfn)
+            {
+                page_t* page = &zone->buddy_metadata[pfn];
+                if (page->flags == PMM_PAGE_USED && page->order <= MAX_ORDER)
+                {
+                    const uint64_t block_pages = (uint64_t) 1ULL << page->order;
+                    if ((pfn & (block_pages - 1)) == 0)
+                    {
+                        pmm_free(zone, (void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
+                        step = (size_t) block_pages * PAGE_SIZE;
+                    }
+                }
+            }
+        }
+
+        if (step == 0)
+        {
+            step = PAGE_SIZE;
+        }
+
+        offset += step;
+    }
+
+    vmm_unmap_range(region_start, region_size, address_space);
+    vmm_free_region(address_space, region_start);
 }

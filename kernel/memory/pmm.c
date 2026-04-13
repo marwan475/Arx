@@ -52,7 +52,7 @@ uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
             return allocated_pfn;
         }
     }
-    return 0;
+    return PMM_INVALID_PFN;
 }
 
 static _force_inline uint64_t order_size(size_t order)
@@ -201,7 +201,7 @@ void pmm_init(struct boot_info* boot_info)
     size_t buddy_metadata_pages = buddy_metadata_size / PAGE_SIZE;
 
     uint64_t buddy_metadata_pfn = pmm_alloc_from_region(zone, buddy_metadata_pages);
-    if (buddy_metadata_pfn == 0)
+    if (buddy_metadata_pfn == PMM_INVALID_PFN)
     {
         kprintf("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
         panic();
@@ -273,13 +273,13 @@ uint64_t buddy_alloc(zone_t* zone, size_t order)
 
     if (order > MAX_ORDER)
     {
-        return 0;
+        return PMM_INVALID_PFN;
     }
 
     page_t* block = remove_block_from_free_list(zone, order);
     if (block == NULL)
     {
-        return 0;
+        return PMM_INVALID_PFN;
     }
 
     if (order == original_order)
@@ -382,7 +382,7 @@ void* pmm_alloc(zone_t* zone, size_t size)
 
     uint64_t pfn = buddy_alloc(zone, order);
 
-    if (pfn == 0)
+    if (pfn == PMM_INVALID_PFN)
     {
         spinlock_release(&zone->lock);
         return NULL;

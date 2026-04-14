@@ -13,6 +13,7 @@
 #define CPU_H
 
 #include <arch/arch.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct numa_node       numa_node_t;
@@ -24,6 +25,7 @@ typedef struct cpu_info
     uint8_t            acpi_has_lapic;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;
+    phys_addr_t        acpi_lapic_base_addr;
     uint32_t           acpi_processor_uid;
     uint32_t           acpi_lapic_id;
     uint32_t           acpi_lapic_flags;

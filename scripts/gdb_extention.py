@@ -271,6 +271,7 @@ class ArxCpusCommand(gdb.Command):
 
             cpu_id = self._read_int_field(cpu, "id", default=0)
             acpi_has_lapic = self._read_int_field(cpu, "acpi_has_lapic", default=None)
+            acpi_lapic_base_addr = self._read_int_field(cpu, "acpi_lapic_base_addr", default=None)
             acpi_uid = self._read_int_field(cpu, "acpi_processor_uid", default=None)
             acpi_lapic_id = self._read_int_field(cpu, "acpi_lapic_id", default=None)
             acpi_lapic_flags = self._read_int_field(cpu, "acpi_lapic_flags", default=None)
@@ -287,6 +288,7 @@ class ArxCpusCommand(gdb.Command):
                 print("  acpi: unavailable in current debug symbols")
             else:
                 print("  acpi_has_lapic:   {}".format(acpi_has_lapic))
+                print("  acpi_lapic_base_addr: 0x{:016x}".format(acpi_lapic_base_addr if acpi_lapic_base_addr is not None else 0))
                 print("  acpi_processor_uid: {}".format(acpi_uid))
                 print("  acpi_lapic_id:      {}".format(acpi_lapic_id))
                 print("  acpi_lapic_flags:   0x{:08x}".format(acpi_lapic_flags if acpi_lapic_flags is not None else 0))

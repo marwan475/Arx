@@ -131,28 +131,84 @@ uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
     return UACPI_STATUS_OK;
 }
 
+uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_lapic_base_addr)
+{
+    struct acpi_entry_hdr* entry;
+    uacpi_u8*              table_end;
+    uint64_t               lapic_base_addr;
+
+    if (madt == NULL || out_lapic_base_addr == NULL)
+    {
+        return UACPI_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (madt->hdr.length < sizeof(*madt))
+    {
+        return UACPI_STATUS_INVALID_TABLE_LENGTH;
+    }
+
+    lapic_base_addr = madt->local_interrupt_controller_address;
+    entry           = madt->entries;
+    table_end       = (uacpi_u8*) madt + madt->hdr.length;
+
+    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    {
+        if (entry->length < sizeof(*entry))
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if ((uacpi_u8*) entry + entry->length > table_end)
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC_ADDRESS_OVERRIDE)
+        {
+            struct acpi_madt_lapic_address_override* lapic_override;
+
+            if (entry->length < sizeof(struct acpi_madt_lapic_address_override))
+            {
+                return UACPI_STATUS_INVALID_TABLE_LENGTH;
+            }
+
+            lapic_override  = (struct acpi_madt_lapic_address_override*) entry;
+            lapic_base_addr = lapic_override->address;
+        }
+
+        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    }
+
+    *out_lapic_base_addr = lapic_base_addr;
+    return UACPI_STATUS_OK;
+}
+
 uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
 {
     struct acpi_entry_hdr* entry;
     uacpi_u8*              table_end;
     size_t                 lapic_count;
+    uint64_t               lapic_base_addr;
+    uacpi_status           status;
 
     if (madt == NULL)
     {
         return UACPI_STATUS_INVALID_ARGUMENT;
     }
 
+    status = get_lapic_base_addr(madt, &lapic_base_addr);
+    if (status != UACPI_STATUS_OK)
+    {
+        return status;
+    }
+
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
         dispatcher.cpus[i].acpi_has_lapic     = 0;
+        dispatcher.cpus[i].acpi_lapic_base_addr = 0;
         dispatcher.cpus[i].acpi_processor_uid = 0;
         dispatcher.cpus[i].acpi_lapic_id      = 0;
         dispatcher.cpus[i].acpi_lapic_flags   = 0;
-    }
-
-    if (madt->hdr.length < sizeof(*madt))
-    {
-        return UACPI_STATUS_INVALID_TABLE_LENGTH;
     }
 
     entry       = madt->entries;
@@ -185,6 +241,7 @@ uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
             if (lapic_count < BOOT_SMP_MAX_CPUS)
             {
                 dispatcher.cpus[lapic_count].acpi_has_lapic     = 1;
+                dispatcher.cpus[lapic_count].acpi_lapic_base_addr = lapic_base_addr;
                 dispatcher.cpus[lapic_count].acpi_processor_uid = lapic->uid;
                 dispatcher.cpus[lapic_count].acpi_lapic_id      = lapic->id;
                 dispatcher.cpus[lapic_count].acpi_lapic_flags   = lapic->flags;

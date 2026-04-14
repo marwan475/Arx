@@ -175,13 +175,28 @@ typedef struct arch_info
     idt_entry_t           idt[NUM_IDT_ENTRIES];
 } arch_info_t;
 
+#define LEGACY_PIC_MAX_IRQS 16
+
 typedef struct arch_dispatcher_info
 {
+    struct
+    {
+        uint8_t  present;
+        uint8_t  source;
+        uint16_t flags;
+        uint32_t gsi;
+    } acpi_iso_overrides[LEGACY_PIC_MAX_IRQS];
     uint8_t  acpi_has_ioapic;
+    uint8_t  ioapic_initialized;
+    uint8_t  acpi_iso_override_count;
     uint8_t  acpi_ioapic_id;
     uint32_t acpi_ioapic_gsi_base;
     uint64_t acpi_ioapic_base_addr;
 } arch_dispatcher_info_t;
+
+typedef void (*arch_irq_handler_t)(registers_t* reg);
+
+int32_t register_device_irq(arch_irq_handler_t callback);
 
 #define DECL_ISR(n) void ISR##n();
     DECL_ISR(0)

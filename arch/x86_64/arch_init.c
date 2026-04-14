@@ -1,7 +1,47 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
 
 static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
+
+#define IA32_APIC_BASE_MSR 0x1B
+#define IA32_APIC_BASE_ENABLE (1ULL << 11)
+
+#define LAPIC_REG_TPR 0x80
+#define LAPIC_REG_EOI 0xB0
+#define LAPIC_REG_SVR 0xF0
+#define LAPIC_REG_LVT_TIMER 0x320
+#define LAPIC_REG_LVT_LINT0 0x350
+#define LAPIC_REG_LVT_LINT1 0x360
+#define LAPIC_REG_LVT_ERROR 0x370
+#define LAPIC_REG_INITIAL_COUNT 0x380
+#define LAPIC_REG_DIVIDE_CONFIG 0x3E0
+
+#define LAPIC_SVR_SW_ENABLE (1U << 8)
+#define LAPIC_LVT_MASKED (1U << 16)
+#define LAPIC_LVT_TIMER_PERIODIC (1U << 17)
+
+#define LAPIC_TIMER_VECTOR 0xE0
+#define LAPIC_TIMER_DIVIDE_BY_16 0x3
+#define LAPIC_TIMER_INITIAL_COUNT 10000000U
+
+static inline uint64_t rdmsr(uint32_t msr)
+{
+    uint32_t low;
+    uint32_t high;
+
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t) high << 32) | low;
+}
+
+static inline void wrmsr(uint32_t msr, uint64_t value)
+{
+    uint32_t low  = (uint32_t) value;
+    uint32_t high = (uint32_t) (value >> 32);
+
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+}
 
 static inline void outb(uint16_t port, uint8_t value)
 {
@@ -132,6 +172,64 @@ void disable_pic()
     outb(PIC_SLAVE_DATA_PORT, PIC_MASK_ALL_IRQS);
 }
 
+
+void lapic_init(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    {
+        kprintf("Arx kernel: cpu %d missing LAPIC info\n", arch_cpu_id());
+        panic();
+    }
+
+    uint64_t apic_base_msr = rdmsr(IA32_APIC_BASE_MSR);
+    apic_base_msr |= IA32_APIC_BASE_ENABLE;
+    wrmsr(IA32_APIC_BASE_MSR, apic_base_msr);
+
+    phys_addr_t lapic_pa = align_down(cpu_info->acpi_lapic_base_addr, PAGE_SIZE);
+    virt_addr_t lapic_va = pa_to_hhdm(lapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+
+    if (vmm_virt_to_phys(lapic_va, cpu_info->address_space) == 0)
+    {
+        uint64_t map_flags = 0;
+        ARCH_PAGE_FLAGS_INIT(map_flags);
+        ARCH_PAGE_FLAG_SET_READ(map_flags);
+        ARCH_PAGE_FLAG_SET_WRITE(map_flags);
+        ARCH_PAGE_FLAG_SET_NOCACHE(map_flags);
+        ARCH_PAGE_FLAG_SET_GLOBAL(map_flags);
+
+        vmm_map_page(lapic_va, lapic_pa, map_flags, cpu_info->address_space);
+    }
+
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+
+    REG(uint32_t, lapic_base + LAPIC_REG_TPR) = 0;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_LINT0) = LAPIC_LVT_MASKED;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_LINT1) = LAPIC_LVT_MASKED;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_ERROR) = LAPIC_LVT_MASKED;
+    REG(uint32_t, lapic_base + LAPIC_REG_SVR) = LAPIC_SVR_SW_ENABLE | 0xFF;
+
+    kprintf("Arx kernel: cpu %d LAPIC initialized at pa=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->acpi_lapic_base_addr);
+}
+
+void lapic_timer_init(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    {
+        return;
+    }
+
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+
+    REG(uint32_t, lapic_base + LAPIC_REG_DIVIDE_CONFIG) = LAPIC_TIMER_DIVIDE_BY_16;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER) = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
+    REG(uint32_t, lapic_base + LAPIC_REG_INITIAL_COUNT) = LAPIC_TIMER_INITIAL_COUNT;
+}
+
 void init_interrupts()
 {
 
@@ -145,13 +243,75 @@ void init_interrupts()
                          : [idt] "m"(cpu_info->arch_info.idt_desc)
                          : "memory");   
 
+    lapic_init();
+    lapic_timer_init();
+
     arch_enable_interrupts();
 
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
+void pagefault_debug(registers_t* reg)
+{
+    uint64_t cr2;
+    uint64_t cr3;
+    uint64_t error_code;
+
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+
+    error_code = reg->error_code;
+
+    kprintf("Arx kernel: PAGE FAULT DEBUG\n");
+    kprintf("  cr2 (fault addr): 0x%llx\n", (unsigned long long) cr2);
+    kprintf("  cr3 (pt base):    0x%llx\n", (unsigned long long) cr3);
+    kprintf("  rip:              0x%llx\n", (unsigned long long) reg->rip);
+    kprintf("  rsp:              0x%llx\n", (unsigned long long) reg->rsp);
+    kprintf("  rflags:           0x%llx\n", (unsigned long long) reg->rflags);
+    kprintf("  cs:ss:            0x%llx:0x%llx\n", (unsigned long long) reg->cs, (unsigned long long) reg->ss);
+    kprintf("  error_code:       0x%llx\n", (unsigned long long) error_code);
+    kprintf("  error bits: P=%u W/R=%u U/S=%u RSVD=%u I/D=%u PK=%u SS=%u SGX=%u\n", (unsigned) ((error_code >> 0) & 1), (unsigned) ((error_code >> 1) & 1), (unsigned) ((error_code >> 2) & 1), (unsigned) ((error_code >> 3) & 1),
+            (unsigned) ((error_code >> 4) & 1), (unsigned) ((error_code >> 5) & 1), (unsigned) ((error_code >> 6) & 1), (unsigned) ((error_code >> 15) & 1));
+
+    kprintf("  regs: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx\n", (unsigned long long) reg->rax, (unsigned long long) reg->rbx, (unsigned long long) reg->rcx, (unsigned long long) reg->rdx);
+    kprintf("        rsi=0x%llx rdi=0x%llx rbp=0x%llx\n", (unsigned long long) reg->rsi, (unsigned long long) reg->rdi, (unsigned long long) reg->rbp);
+    kprintf("        r8 =0x%llx r9 =0x%llx r10=0x%llx r11=0x%llx\n", (unsigned long long) reg->r8, (unsigned long long) reg->r9, (unsigned long long) reg->r10, (unsigned long long) reg->r11);
+    kprintf("        r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n", (unsigned long long) reg->r12, (unsigned long long) reg->r13, (unsigned long long) reg->r14, (unsigned long long) reg->r15);
+}
+
+void lapic_eoi(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    {
+        return;
+    }
+
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+
+    REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;
+}
+
+
 void ISRHANDLER(registers_t* reg)
 {
+    if (reg->interrupt_number >= 32)
+    {
+        lapic_eoi();
+    }
+
+    if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
+    {
+        return;
+    }
+
+    if (reg->interrupt_number == 14)
+    {
+        pagefault_debug(reg);
+    }
+
     kprintf("Arx kernel: received interrupt: %llu\n", (unsigned long long) reg->interrupt_number);
     panic();
 }

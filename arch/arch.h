@@ -21,6 +21,9 @@
 #endif
 
 #include <stdint.h>
+#include <uacpi/status.h>
+
+struct acpi_madt;
 
 #ifndef PHYS_ADDR_T_DEFINED
 #define PHYS_ADDR_T_DEFINED
@@ -88,6 +91,8 @@ phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
 
 void arch_enable_interrupts();
 void arch_disable_interrupts();
+
+uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
 void arch_init(void);
 

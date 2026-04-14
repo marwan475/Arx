@@ -19,6 +19,37 @@
 #define PIC_MASTER_DATA_PORT 0x21
 #define PIC_SLAVE_DATA_PORT  0xA1
 
+#define IA32_APIC_BASE_MSR 0x1B
+#define IA32_APIC_BASE_ENABLE (1ULL << 11)
+
+#define LAPIC_REG_TPR 0x80
+#define LAPIC_REG_EOI 0xB0
+#define LAPIC_REG_SVR 0xF0
+#define LAPIC_REG_LVT_TIMER 0x320
+#define LAPIC_REG_LVT_LINT0 0x350
+#define LAPIC_REG_LVT_LINT1 0x360
+#define LAPIC_REG_LVT_ERROR 0x370
+#define LAPIC_REG_INITIAL_COUNT 0x380
+#define LAPIC_REG_DIVIDE_CONFIG 0x3E0
+
+#define LAPIC_SVR_SW_ENABLE (1U << 8)
+#define LAPIC_LVT_MASKED (1U << 16)
+#define LAPIC_LVT_TIMER_PERIODIC (1U << 17)
+#define LAPIC_TIMER_VECTOR 0x20
+#define LAPIC_TIMER_DIVIDE_BY_16 0x3
+#define LAPIC_TIMER_INITIAL_COUNT 10000000U
+
+#define IOAPIC_REG_IOREGSEL 0x00
+#define IOAPIC_REG_IOWIN 0x10
+
+#define IOAPIC_REG_ID 0x00
+#define IOAPIC_REG_VER 0x01
+
+#define IOAPIC_REDIR_TABLE_BASE 0x10
+#define IOAPIC_REDIR_MASKED (1U << 16)
+#define IOAPIC_REDIR_POLARITY_LOW (1U << 13)
+#define IOAPIC_REDIR_TRIGGER_LEVEL (1U << 15)
+
 typedef struct discriptor_register
 {
     uint16_t limit;
@@ -177,6 +208,9 @@ typedef struct arch_info
 
 #define LEGACY_PIC_MAX_IRQS 16
 
+#define IRQ_VECTOR_BASE (LAPIC_TIMER_VECTOR + 1)
+#define VECTOR_DEVICE_BASE (IRQ_VECTOR_BASE + LEGACY_PIC_MAX_IRQS)
+
 typedef struct arch_dispatcher_info
 {
     struct
@@ -191,12 +225,17 @@ typedef struct arch_dispatcher_info
     uint8_t  acpi_iso_override_count;
     uint8_t  acpi_ioapic_id;
     uint32_t acpi_ioapic_gsi_base;
+    uint32_t ioapic_max_redir;
+    uint32_t ioapic_redir_count;
     uint64_t acpi_ioapic_base_addr;
 } arch_dispatcher_info_t;
 
-typedef void (*arch_irq_handler_t)(registers_t* reg);
-
-int32_t register_device_irq(arch_irq_handler_t callback);
+void lapic_init(void);
+void lapic_timer_init(void);
+void lapic_eoi(void);
+void ioapic_init(void);
+void ioapic_mask_vector(uint8_t vector);
+void ioapic_unmask_vector(uint8_t vector);
 
 #define DECL_ISR(n) void ISR##n();
     DECL_ISR(0)

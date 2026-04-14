@@ -25,6 +25,7 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
+X86_64_AS ?= nasm
 INCLUDE_DIRS ?= -I. -Ikernel
 DEBUG ?= 0
 
@@ -43,6 +44,7 @@ endif
 
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
+ASFLAGS_X86_64 := -f elf64
 LDFLAGS_COMMON := -nostdlib -no-pie
 
 ISO_X86_64 ?= $(BIN_DIR)/arx-x86_64.img
@@ -58,6 +60,7 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/vmm.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
+KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
 
 CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
@@ -65,6 +68,7 @@ KERNEL_X86_64_SRCS += $(UACPI_SRCS)
 KERNEL_AARCH64_SRCS += $(UACPI_SRCS)
 
 KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
+KERNEL_X86_64_OBJS += $(patsubst %.asm,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_ASM_SRCS))
 KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(KERNEL_AARCH64_SRCS))
 
 -include $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
@@ -86,6 +90,11 @@ prepare-iso-tools:
 $(BUILD_DIR)/x86_64/%.o: %.c
 	@mkdir -p $(dir $@) $(BIN_DIR)
 	$(X86_64_CC) $(CFLAGS_COMMON) $(CFLAGS_X86_64) -c -o $@ $<
+
+$(BUILD_DIR)/x86_64/%.o: %.asm
+	@mkdir -p $(dir $@) $(BIN_DIR)
+	@command -v $(X86_64_AS) >/dev/null 2>&1 || { echo "Error: $(X86_64_AS) not found. Install nasm or set X86_64_AS=<assembler>." >&2; exit 1; }
+	$(X86_64_AS) $(ASFLAGS_X86_64) -o $@ $<
 
 $(BUILD_DIR)/aarch64/%.o: %.c
 	@mkdir -p $(dir $@) $(BIN_DIR)

@@ -16,6 +16,9 @@
 #define USER_SS (GDT_USER_DATA_SEGMENT | 0x3)
 #define IDT_DEFAULT_GATE_FLAGS (IDT_FLAG_PRESENT | IDT_FLAG_RING0 | IDT_FLAG_GATE_32BIT_INT)
 
+#define PIC_MASTER_DATA_PORT 0x21
+#define PIC_SLAVE_DATA_PORT  0xA1
+
 typedef struct discriptor_register
 {
     uint16_t limit;

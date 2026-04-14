@@ -1,6 +1,13 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 
+static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
+
+static inline void outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
 void build_tss_descriptor(const tss_t* tss, tss_discriptor_t* tss_descriptor)
 {
     uint64_t tss_address = (uint64_t) tss;
@@ -117,12 +124,30 @@ void idt_init()
 
     isr_init(cpu_info->arch_info.idt);
 
+}
+
+void disable_pic()
+{
+    outb(PIC_MASTER_DATA_PORT, PIC_MASK_ALL_IRQS);
+    outb(PIC_SLAVE_DATA_PORT, PIC_MASK_ALL_IRQS);
+}
+
+void init_interrupts()
+{
+
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    idt_init();
+    disable_pic();
+
     __asm__ __volatile__("lidt %[idt]"
                          :
                          : [idt] "m"(cpu_info->arch_info.idt_desc)
                          : "memory");   
 
-    asm volatile("sti");
+    arch_enable_interrupts();
+
+    kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
 void ISRHANDLER(registers_t* reg)
@@ -134,6 +159,7 @@ void ISRHANDLER(registers_t* reg)
 void arch_init(void)
 {
     gdt_init();
+    init_interrupts();
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 }

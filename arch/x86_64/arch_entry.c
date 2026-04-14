@@ -119,6 +119,16 @@ static void arch_enable_fp_simd(void)
     __asm__ volatile("ldmxcsr %0" : : "m"(default_mxcsr));
 }
 
+void arch_enable_interrupts()
+{
+    asm volatile("sti");
+}
+
+void arch_disable_interrupts()
+{
+    asm volatile("cli");
+}
+
 void arch_halt(void)
 {
     __asm__ volatile("hlt");

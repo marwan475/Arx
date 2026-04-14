@@ -96,6 +96,16 @@ static inline volatile unsigned int* pl011_reg(unsigned int offset)
     return (volatile unsigned int*) (pl011_base + offset);
 }
 
+void arch_enable_interrupts()
+{
+    __asm__ volatile("msr daifclr, #2");
+}
+
+void arch_disable_interrupts()
+{
+    __asm__ volatile("msr daifset, #2");
+}
+
 void arch_halt(void)
 {
     __asm__ volatile("wfi");

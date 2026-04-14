@@ -193,6 +193,79 @@ static uacpi_status get_ioapic_from_madt(struct acpi_madt* madt, struct acpi_mad
     return UACPI_STATUS_NOT_FOUND;
 }
 
+static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
+{
+    struct acpi_entry_hdr* entry;
+    uacpi_u8*              table_end;
+
+    if (madt == NULL)
+    {
+        return UACPI_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (madt->hdr.length < sizeof(*madt))
+    {
+        return UACPI_STATUS_INVALID_TABLE_LENGTH;
+    }
+
+    dispatcher.arch_info.acpi_iso_override_count = 0;
+
+    for (size_t i = 0; i < 16; i++)
+    {
+        dispatcher.arch_info.acpi_iso_overrides[i].present = 0;
+        dispatcher.arch_info.acpi_iso_overrides[i].source  = 0;
+        dispatcher.arch_info.acpi_iso_overrides[i].flags   = 0;
+        dispatcher.arch_info.acpi_iso_overrides[i].gsi     = 0;
+    }
+
+    entry     = madt->entries;
+    table_end = (uacpi_u8*) madt + madt->hdr.length;
+
+    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    {
+        if (entry->length < sizeof(*entry))
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if ((uacpi_u8*) entry + entry->length > table_end)
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if (entry->type == ACPI_MADT_ENTRY_TYPE_INTERRUPT_SOURCE_OVERRIDE)
+        {
+            struct acpi_madt_interrupt_source_override* iso;
+
+            if (entry->length < sizeof(struct acpi_madt_interrupt_source_override))
+            {
+                return UACPI_STATUS_INVALID_TABLE_LENGTH;
+            }
+
+            iso = (struct acpi_madt_interrupt_source_override*) entry;
+
+            if (iso->bus == 0 && iso->source < 16)
+            {
+                uint8_t source = iso->source;
+
+                if (!dispatcher.arch_info.acpi_iso_overrides[source].present)
+                {
+                    dispatcher.arch_info.acpi_iso_override_count++;
+                }
+
+                dispatcher.arch_info.acpi_iso_overrides[source].present = 1;
+                dispatcher.arch_info.acpi_iso_overrides[source].source  = source;
+                dispatcher.arch_info.acpi_iso_overrides[source].flags   = iso->flags;
+                dispatcher.arch_info.acpi_iso_overrides[source].gsi     = iso->gsi;
+            }
+        }
+
+        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    }
+
+    return UACPI_STATUS_OK;
+}
+
 uacpi_status arch_acpi_init(struct acpi_madt* madt)
 {
     struct acpi_madt_ioapic* ioapic;
@@ -205,6 +278,12 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt)
     }
 
     status = get_ioapic_from_madt(madt, &ioapic);
+    if (status != UACPI_STATUS_OK)
+    {
+        return status;
+    }
+
+    status = get_iso_overrides_from_madt(madt);
     if (status != UACPI_STATUS_OK)
     {
         return status;

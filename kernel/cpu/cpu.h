@@ -22,13 +22,8 @@ typedef struct virt_addr_space virt_addr_space_t;
 typedef struct cpu_info
 {
     uint8_t            id;
-    uint8_t            acpi_has_lapic;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;
-    phys_addr_t        acpi_lapic_base_addr;
-    uint32_t           acpi_processor_uid;
-    uint32_t           acpi_lapic_id;
-    uint32_t           acpi_lapic_flags;
     arch_info_t        arch_info;
 } cpu_info_t;
 

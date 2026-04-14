@@ -246,6 +246,24 @@ class ArxCpusCommand(gdb.Command):
         except Exception:
             return default
 
+    @staticmethod
+    def _read_nested_int_field(value, field_names, default=None):
+        try:
+            current = value
+            for name in field_names:
+                current = current[name]
+            return int(current)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _arch_name(arch_value):
+        if arch_value == 0:
+            return "x86_64"
+        if arch_value == 1:
+            return "aarch64"
+        return "unknown({})".format(arch_value)
+
     def invoke(self, arg, from_tty):
         del from_tty
 
@@ -259,39 +277,67 @@ class ArxCpusCommand(gdb.Command):
 
         cpu_count = int(dispatcher["cpu_count"])
         cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        dispatcher_arch = self._read_int_field(dispatcher, "arch", default=-1)
+        dispatcher_arch_info = dispatcher["arch_info"]
 
         print("Arx CPU state")
         print("=============")
         print("cpu_count: {}".format(cpu_count))
         print("cpu_slots: {}".format(cpu_slots))
+        print("arch:      {}".format(self._arch_name(dispatcher_arch)))
+        print("")
+
+        print("Dispatcher")
+        print("----------")
+        if dispatcher_arch == 0:
+            ioapic_present = self._read_int_field(dispatcher_arch_info, "acpi_has_ioapic", default=None)
+            ioapic_id = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_id", default=None)
+            ioapic_gsi_base = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_gsi_base", default=None)
+            ioapic_base = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_base_addr", default=None)
+
+            if ioapic_present is None:
+                print("arch_info: unavailable in current debug symbols")
+            else:
+                print("acpi_has_ioapic:      {}".format(ioapic_present))
+                print("acpi_ioapic_id:       {}".format(ioapic_id if ioapic_id is not None else 0))
+                print("acpi_ioapic_gsi_base: {}".format(ioapic_gsi_base if ioapic_gsi_base is not None else 0))
+                print("acpi_ioapic_base_addr: 0x{:016x}".format(ioapic_base if ioapic_base is not None else 0))
+        else:
+            print("arch_info: n/a for {}".format(self._arch_name(dispatcher_arch)))
         print("")
 
         for i in range(cpu_slots):
             cpu = dispatcher["cpus"][i]
 
             cpu_id = self._read_int_field(cpu, "id", default=0)
-            acpi_has_lapic = self._read_int_field(cpu, "acpi_has_lapic", default=None)
-            acpi_lapic_base_addr = self._read_int_field(cpu, "acpi_lapic_base_addr", default=None)
-            acpi_uid = self._read_int_field(cpu, "acpi_processor_uid", default=None)
-            acpi_lapic_id = self._read_int_field(cpu, "acpi_lapic_id", default=None)
-            acpi_lapic_flags = self._read_int_field(cpu, "acpi_lapic_flags", default=None)
+            acpi_has_lapic = self._read_nested_int_field(cpu, ["arch_info", "acpi_has_lapic"], default=None)
+            acpi_lapic_base_addr = self._read_nested_int_field(cpu, ["arch_info", "acpi_lapic_base_addr"], default=None)
+            acpi_uid = self._read_nested_int_field(cpu, ["arch_info", "acpi_processor_uid"], default=None)
+            acpi_lapic_id = self._read_nested_int_field(cpu, ["arch_info", "acpi_lapic_id"], default=None)
+            acpi_lapic_flags = self._read_nested_int_field(cpu, ["arch_info", "acpi_lapic_flags"], default=None)
 
             numa_node = int(cpu["numa_node"])
             address_space = int(cpu["address_space"])
+
+            # Skip empty slots beyond configured CPU count.
+            if i >= cpu_count and numa_node == 0 and address_space == 0:
+                continue
 
             print("cpu[{}]".format(i))
             print("  id: {}".format(cpu_id))
             print("  numa_node:     0x{:016x}".format(numa_node))
             print("  address_space: 0x{:016x}".format(address_space))
 
-            if acpi_has_lapic is None:
-                print("  acpi: unavailable in current debug symbols")
+            if dispatcher_arch != 0:
+                print("  arch_info: n/a for {}".format(self._arch_name(dispatcher_arch)))
+            elif acpi_has_lapic is None:
+                print("  arch_info: unavailable in current debug symbols")
             else:
-                print("  acpi_has_lapic:   {}".format(acpi_has_lapic))
+                print("  acpi_has_lapic:      {}".format(acpi_has_lapic))
                 print("  acpi_lapic_base_addr: 0x{:016x}".format(acpi_lapic_base_addr if acpi_lapic_base_addr is not None else 0))
-                print("  acpi_processor_uid: {}".format(acpi_uid))
-                print("  acpi_lapic_id:      {}".format(acpi_lapic_id))
-                print("  acpi_lapic_flags:   0x{:08x}".format(acpi_lapic_flags if acpi_lapic_flags is not None else 0))
+                print("  acpi_processor_uid:   {}".format(acpi_uid if acpi_uid is not None else 0))
+                print("  acpi_lapic_id:        {}".format(acpi_lapic_id if acpi_lapic_id is not None else 0))
+                print("  acpi_lapic_flags:     0x{:08x}".format(acpi_lapic_flags if acpi_lapic_flags is not None else 0))
 
             print("")
 

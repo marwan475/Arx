@@ -21,48 +21,6 @@
 uacpi_phys_addr uacpi_rsdp_address;
 void*           uacpi_early_table_buffer;
 
-void acpi_init(phys_addr_t rsdp_address)
-{
-    uacpi_status status;
-    struct acpi_madt* madt;
-    uacpi_table       madt_table;
-
-    if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
-    {
-        rsdp_address = hhdm_to_pa(rsdp_address, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
-    }
-
-    uacpi_rsdp_address = (uacpi_phys_addr) rsdp_address;
-
-    uacpi_early_table_buffer = pmm_alloc(ACPI_EARLY_TABLE_BUFFER_SIZE);
-
-    status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
-    if (status != UACPI_STATUS_OK)
-    {
-        kprintf("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
-    }
-
-    kprintf("ACPI: uACPI barebones early table access initialized\n");
-
-    status = acpi_get_madt(&madt, &madt_table);
-    if (status != UACPI_STATUS_OK)
-    {
-        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
-    }
-
-    status = get_lapics_from_mdat(madt);
-    uacpi_table_unref(&madt_table);
-    if (status != UACPI_STATUS_OK)
-    {
-        kprintf("ACPI: failed to parse MADT LAPIC entries: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
-    }
-
-    kprintf("ACPI: MADT LAPIC entries loaded into dispatcher\n");
-}
-
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr* out_rsdp_address)
 {
     if (uacpi_rsdp_address == 0)
@@ -131,137 +89,46 @@ uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
     return UACPI_STATUS_OK;
 }
 
-uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_lapic_base_addr)
+void acpi_init(phys_addr_t rsdp_address)
 {
-    struct acpi_entry_hdr* entry;
-    uacpi_u8*              table_end;
-    uint64_t               lapic_base_addr;
+    uacpi_status status;
+    struct acpi_madt* madt;
+    uacpi_table       madt_table;
 
-    if (madt == NULL || out_lapic_base_addr == NULL)
+    if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
     {
-        return UACPI_STATUS_INVALID_ARGUMENT;
+        rsdp_address = hhdm_to_pa(rsdp_address, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
     }
 
-    if (madt->hdr.length < sizeof(*madt))
-    {
-        return UACPI_STATUS_INVALID_TABLE_LENGTH;
-    }
+    uacpi_rsdp_address = (uacpi_phys_addr) rsdp_address;
 
-    lapic_base_addr = madt->local_interrupt_controller_address;
-    entry           = madt->entries;
-    table_end       = (uacpi_u8*) madt + madt->hdr.length;
+    uacpi_early_table_buffer = pmm_alloc(ACPI_EARLY_TABLE_BUFFER_SIZE);
 
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
-    {
-        if (entry->length < sizeof(*entry))
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC_ADDRESS_OVERRIDE)
-        {
-            struct acpi_madt_lapic_address_override* lapic_override;
-
-            if (entry->length < sizeof(struct acpi_madt_lapic_address_override))
-            {
-                return UACPI_STATUS_INVALID_TABLE_LENGTH;
-            }
-
-            lapic_override  = (struct acpi_madt_lapic_address_override*) entry;
-            lapic_base_addr = lapic_override->address;
-        }
-
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
-    }
-
-    *out_lapic_base_addr = lapic_base_addr;
-    return UACPI_STATUS_OK;
-}
-
-uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
-{
-    struct acpi_entry_hdr* entry;
-    uacpi_u8*              table_end;
-    size_t                 lapic_count;
-    uint64_t               lapic_base_addr;
-    uacpi_status           status;
-
-    if (madt == NULL)
-    {
-        return UACPI_STATUS_INVALID_ARGUMENT;
-    }
-
-    status = get_lapic_base_addr(madt, &lapic_base_addr);
+    status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
     if (status != UACPI_STATUS_OK)
     {
-        return status;
+        kprintf("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return;
     }
 
-    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
+    kprintf("ACPI: uACPI barebones early table access initialized\n");
+
+    status = acpi_get_madt(&madt, &madt_table);
+    if (status != UACPI_STATUS_OK)
     {
-        dispatcher.cpus[i].acpi_has_lapic     = 0;
-        dispatcher.cpus[i].acpi_lapic_base_addr = 0;
-        dispatcher.cpus[i].acpi_processor_uid = 0;
-        dispatcher.cpus[i].acpi_lapic_id      = 0;
-        dispatcher.cpus[i].acpi_lapic_flags   = 0;
+        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return;
     }
 
-    entry       = madt->entries;
-    table_end   = (uacpi_u8*) madt + madt->hdr.length;
-    lapic_count = 0;
-
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    status = arch_acpi_init(madt);
+    if (status != UACPI_STATUS_OK)
     {
-        if (entry->length < sizeof(*entry))
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC)
-        {
-            struct acpi_madt_lapic* lapic;
-
-            if (entry->length < sizeof(struct acpi_madt_lapic))
-            {
-                return UACPI_STATUS_INVALID_TABLE_LENGTH;
-            }
-
-            lapic = (struct acpi_madt_lapic*) entry;
-
-            if (lapic_count < BOOT_SMP_MAX_CPUS)
-            {
-                dispatcher.cpus[lapic_count].acpi_has_lapic     = 1;
-                dispatcher.cpus[lapic_count].acpi_lapic_base_addr = lapic_base_addr;
-                dispatcher.cpus[lapic_count].acpi_processor_uid = lapic->uid;
-                dispatcher.cpus[lapic_count].acpi_lapic_id      = lapic->id;
-                dispatcher.cpus[lapic_count].acpi_lapic_flags   = lapic->flags;
-            }
-
-            lapic_count++;
-        }
-
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+        uacpi_table_unref(&madt_table);
+        kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return;
     }
 
-    if (lapic_count == 0)
-    {
-        return UACPI_STATUS_NOT_FOUND;
-    }
+    uacpi_table_unref(&madt_table);
 
-    if (lapic_count > BOOT_SMP_MAX_CPUS)
-    {
-        return UACPI_STATUS_OUT_OF_MEMORY;
-    }
-
-    return UACPI_STATUS_OK;
+    kprintf("ACPI: arch MADT init complete\n");
 }

@@ -24,13 +24,21 @@
 
 typedef _Atomic uint8_t spinlock_t;
 
+typedef enum arch_type
+{
+    ARCH_X86_64,
+    ARCH_AARCH64,
+} arch_type_t;
+
 typedef struct zone            zone_t;
 typedef struct virt_addr_space virt_addr_space_t;
 
 typedef struct dispatcher
 {
-    cpu_info_t cpus[BOOT_SMP_MAX_CPUS];
-    size_t     cpu_count;
+    cpu_info_t             cpus[BOOT_SMP_MAX_CPUS];
+    size_t                 cpu_count;
+    arch_type_t            arch;
+    arch_dispatcher_info_t arch_info;
 } dispatcher_t;
 
 extern dispatcher_t dispatcher;

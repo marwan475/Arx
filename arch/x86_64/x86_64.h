@@ -162,6 +162,11 @@ typedef struct registers
 
 typedef struct arch_info
 {
+    uint8_t               acpi_has_lapic;
+    uint64_t              acpi_lapic_base_addr;
+    uint32_t              acpi_processor_uid;
+    uint32_t              acpi_lapic_id;
+    uint32_t              acpi_lapic_flags;
     gdt_t                 gdt;
     tss_t                 tss;
     discriptor_register_t gdt_reg;
@@ -169,6 +174,14 @@ typedef struct arch_info
     idt_description_t     idt_desc;
     idt_entry_t           idt[NUM_IDT_ENTRIES];
 } arch_info_t;
+
+typedef struct arch_dispatcher_info
+{
+    uint8_t  acpi_has_ioapic;
+    uint8_t  acpi_ioapic_id;
+    uint32_t acpi_ioapic_gsi_base;
+    uint64_t acpi_ioapic_base_addr;
+} arch_dispatcher_info_t;
 
 #define DECL_ISR(n) void ISR##n();
     DECL_ISR(0)

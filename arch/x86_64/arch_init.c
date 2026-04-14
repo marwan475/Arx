@@ -26,6 +26,15 @@ static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
 #define LAPIC_TIMER_DIVIDE_BY_16 0x3
 #define LAPIC_TIMER_INITIAL_COUNT 10000000U
 
+#define IOAPIC_REG_IOREGSEL 0x00
+#define IOAPIC_REG_IOWIN 0x10
+
+#define IOAPIC_REG_ID 0x00
+#define IOAPIC_REG_VER 0x01
+
+#define IOAPIC_REDIR_TABLE_BASE 0x10
+#define IOAPIC_REDIR_MASKED (1U << 16)
+
 static inline uint64_t rdmsr(uint32_t msr)
 {
     uint32_t low;
@@ -177,7 +186,7 @@ void lapic_init(void)
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
         kprintf("Arx kernel: cpu %d missing LAPIC info\n", arch_cpu_id());
         panic();
@@ -187,7 +196,7 @@ void lapic_init(void)
     apic_base_msr |= IA32_APIC_BASE_ENABLE;
     wrmsr(IA32_APIC_BASE_MSR, apic_base_msr);
 
-    phys_addr_t lapic_pa = align_down(cpu_info->acpi_lapic_base_addr, PAGE_SIZE);
+    phys_addr_t lapic_pa = align_down(cpu_info->arch_info.acpi_lapic_base_addr, PAGE_SIZE);
     virt_addr_t lapic_va = pa_to_hhdm(lapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
 
     if (vmm_virt_to_phys(lapic_va, cpu_info->address_space) == 0)
@@ -210,24 +219,76 @@ void lapic_init(void)
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_ERROR) = LAPIC_LVT_MASKED;
     REG(uint32_t, lapic_base + LAPIC_REG_SVR) = LAPIC_SVR_SW_ENABLE | 0xFF;
 
-    kprintf("Arx kernel: cpu %d LAPIC initialized at pa=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->acpi_lapic_base_addr);
+    kprintf("Arx kernel: cpu %d LAPIC initialized at pa=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->arch_info.acpi_lapic_base_addr);
 }
 
 void lapic_timer_init(void)
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
         return;
     }
 
-    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
     REG(uint32_t, lapic_base + LAPIC_REG_DIVIDE_CONFIG) = LAPIC_TIMER_DIVIDE_BY_16;
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER) = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
     REG(uint32_t, lapic_base + LAPIC_REG_INITIAL_COUNT) = LAPIC_TIMER_INITIAL_COUNT;
+}
+
+void ioapic_init(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (arch_cpu_id() != 0)
+    {
+        return;
+    }
+
+    if (!dispatcher.arch_info.acpi_has_ioapic || dispatcher.arch_info.acpi_ioapic_base_addr == 0)
+    {
+        kprintf("Arx kernel: missing IOAPIC info\n");
+        panic();
+    }
+
+    phys_addr_t ioapic_pa = align_down(dispatcher.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
+    virt_addr_t ioapic_va = pa_to_hhdm(ioapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+
+    if (vmm_virt_to_phys(ioapic_va, cpu_info->address_space) == 0)
+    {
+        uint64_t map_flags = 0;
+        ARCH_PAGE_FLAGS_INIT(map_flags);
+        ARCH_PAGE_FLAG_SET_READ(map_flags);
+        ARCH_PAGE_FLAG_SET_WRITE(map_flags);
+        ARCH_PAGE_FLAG_SET_NOCACHE(map_flags);
+        ARCH_PAGE_FLAG_SET_GLOBAL(map_flags);
+
+        vmm_map_page(ioapic_va, ioapic_pa, map_flags, cpu_info->address_space);
+    }
+
+    volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
+
+    REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
+    uint32_t ioapic_ver = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
+    uint32_t max_redir  = (ioapic_ver >> 16) & 0xFF;
+
+    for (uint32_t i = 0; i <= max_redir; i++)
+    {
+        uint8_t low_index  = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + i * 2);
+        uint8_t high_index = (uint8_t) (low_index + 1);
+
+        REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = high_index;
+        REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = 0;
+
+        REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
+        REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = IOAPIC_REDIR_MASKED | i;
+    }
+
+    kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) dispatcher.arch_info.acpi_ioapic_id, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base,
+            (unsigned) max_redir);
 }
 
 void init_interrupts()
@@ -244,6 +305,7 @@ void init_interrupts()
                          : "memory");   
 
     lapic_init();
+    ioapic_init();
     lapic_timer_init();
 
     arch_enable_interrupts();
@@ -283,12 +345,12 @@ void lapic_eoi(void)
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
         return;
     }
 
-    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
     REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;

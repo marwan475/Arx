@@ -9,13 +9,22 @@ static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
 #define IA32_APIC_BASE_ENABLE (1ULL << 11)
 
 #define LAPIC_REG_TPR 0x80
+#define LAPIC_REG_EOI 0xB0
 #define LAPIC_REG_SVR 0xF0
+#define LAPIC_REG_LVT_TIMER 0x320
 #define LAPIC_REG_LVT_LINT0 0x350
 #define LAPIC_REG_LVT_LINT1 0x360
 #define LAPIC_REG_LVT_ERROR 0x370
+#define LAPIC_REG_INITIAL_COUNT 0x380
+#define LAPIC_REG_DIVIDE_CONFIG 0x3E0
 
 #define LAPIC_SVR_SW_ENABLE (1U << 8)
 #define LAPIC_LVT_MASKED (1U << 16)
+#define LAPIC_LVT_TIMER_PERIODIC (1U << 17)
+
+#define LAPIC_TIMER_VECTOR 0xE0
+#define LAPIC_TIMER_DIVIDE_BY_16 0x3
+#define LAPIC_TIMER_INITIAL_COUNT 10000000U
 
 static inline uint64_t rdmsr(uint32_t msr)
 {
@@ -204,6 +213,23 @@ void lapic_init(void)
     kprintf("Arx kernel: cpu %d LAPIC initialized at pa=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->acpi_lapic_base_addr);
 }
 
+void lapic_timer_init(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    {
+        return;
+    }
+
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+
+    REG(uint32_t, lapic_base + LAPIC_REG_DIVIDE_CONFIG) = LAPIC_TIMER_DIVIDE_BY_16;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER) = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
+    REG(uint32_t, lapic_base + LAPIC_REG_INITIAL_COUNT) = LAPIC_TIMER_INITIAL_COUNT;
+}
+
 void init_interrupts()
 {
 
@@ -218,6 +244,7 @@ void init_interrupts()
                          : "memory");   
 
     lapic_init();
+    lapic_timer_init();
 
     arch_enable_interrupts();
 
@@ -252,9 +279,34 @@ void pagefault_debug(registers_t* reg)
     kprintf("        r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n", (unsigned long long) reg->r12, (unsigned long long) reg->r13, (unsigned long long) reg->r14, (unsigned long long) reg->r15);
 }
 
+void lapic_eoi(void)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->acpi_has_lapic || cpu_info->acpi_lapic_base_addr == 0)
+    {
+        return;
+    }
+
+    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+
+    REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;
+}
+
 
 void ISRHANDLER(registers_t* reg)
 {
+    if (reg->interrupt_number >= 32)
+    {
+        lapic_eoi();
+    }
+
+    if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
+    {
+        return;
+    }
+
     if (reg->interrupt_number == 14)
     {
         pagefault_debug(reg);

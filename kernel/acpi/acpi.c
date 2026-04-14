@@ -13,6 +13,7 @@
 #include <uacpi/kernel_api.h>
 #include <uacpi/log.h>
 #include <uacpi/status.h>
+#include <uacpi/tables.h>
 #include <uacpi/uacpi.h>
 
 #define ACPI_EARLY_TABLE_BUFFER_SIZE 4096
@@ -23,6 +24,8 @@ void*           uacpi_early_table_buffer;
 void acpi_init(phys_addr_t rsdp_address)
 {
     uacpi_status status;
+    struct acpi_madt* madt;
+    uacpi_table       madt_table;
 
     if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
     {
@@ -41,6 +44,23 @@ void acpi_init(phys_addr_t rsdp_address)
     }
 
     kprintf("ACPI: uACPI barebones early table access initialized\n");
+
+    status = acpi_get_madt(&madt, &madt_table);
+    if (status != UACPI_STATUS_OK)
+    {
+        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return;
+    }
+
+    status = get_lapics_from_mdat(madt);
+    uacpi_table_unref(&madt_table);
+    if (status != UACPI_STATUS_OK)
+    {
+        kprintf("ACPI: failed to parse MADT LAPIC entries: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return;
+    }
+
+    kprintf("ACPI: MADT LAPIC entries loaded into dispatcher\n");
 }
 
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr* out_rsdp_address)
@@ -89,4 +109,102 @@ void uacpi_kernel_unmap(void* addr, uacpi_size len)
 void uacpi_kernel_log(uacpi_log_level level, const uacpi_char* text)
 {
     kprintf("uACPI[%u]: %s", (unsigned) level, (const char*) text);
+}
+
+uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
+{
+    uacpi_status status;
+
+    if (out_madt == NULL || out_table == NULL)
+    {
+        return UACPI_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = uacpi_table_find_by_signature(ACPI_MADT_SIGNATURE, out_table);
+    if (status != UACPI_STATUS_OK)
+    {
+        *out_madt = NULL;
+        return status;
+    }
+
+    *out_madt = (struct acpi_madt*) out_table->hdr;
+    return UACPI_STATUS_OK;
+}
+
+uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
+{
+    struct acpi_entry_hdr* entry;
+    uacpi_u8*              table_end;
+    size_t                 lapic_count;
+
+    if (madt == NULL)
+    {
+        return UACPI_STATUS_INVALID_ARGUMENT;
+    }
+
+    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
+    {
+        dispatcher.cpus[i].acpi_has_lapic     = 0;
+        dispatcher.cpus[i].acpi_processor_uid = 0;
+        dispatcher.cpus[i].acpi_lapic_id      = 0;
+        dispatcher.cpus[i].acpi_lapic_flags   = 0;
+    }
+
+    if (madt->hdr.length < sizeof(*madt))
+    {
+        return UACPI_STATUS_INVALID_TABLE_LENGTH;
+    }
+
+    entry       = madt->entries;
+    table_end   = (uacpi_u8*) madt + madt->hdr.length;
+    lapic_count = 0;
+
+    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    {
+        if (entry->length < sizeof(*entry))
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if ((uacpi_u8*) entry + entry->length > table_end)
+        {
+            return UACPI_STATUS_INVALID_TABLE_LENGTH;
+        }
+
+        if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC)
+        {
+            struct acpi_madt_lapic* lapic;
+
+            if (entry->length < sizeof(struct acpi_madt_lapic))
+            {
+                return UACPI_STATUS_INVALID_TABLE_LENGTH;
+            }
+
+            lapic = (struct acpi_madt_lapic*) entry;
+
+            if (lapic_count < BOOT_SMP_MAX_CPUS)
+            {
+                dispatcher.cpus[lapic_count].acpi_has_lapic     = 1;
+                dispatcher.cpus[lapic_count].acpi_processor_uid = lapic->uid;
+                dispatcher.cpus[lapic_count].acpi_lapic_id      = lapic->id;
+                dispatcher.cpus[lapic_count].acpi_lapic_flags   = lapic->flags;
+            }
+
+            lapic_count++;
+        }
+
+        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    }
+
+    if (lapic_count == 0)
+    {
+        return UACPI_STATUS_NOT_FOUND;
+    }
+
+    if (lapic_count > BOOT_SMP_MAX_CPUS)
+    {
+        return UACPI_STATUS_OUT_OF_MEMORY;
+    }
+
+    return UACPI_STATUS_OK;
 }

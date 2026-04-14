@@ -231,3 +231,67 @@ class ArxVmmCommand(gdb.Command):
 
 
 ArxVmmCommand()
+
+
+class ArxCpusCommand(gdb.Command):
+    """Print Arx dispatcher CPU info for all CPU slots."""
+
+    def __init__(self):
+        super().__init__("arx-cpus", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _read_int_field(value, field_name, default=None):
+        try:
+            return int(value[field_name])
+        except Exception:
+            return default
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        if (arg or "").strip() != "":
+            raise gdb.GdbError("arx-cpus takes no arguments")
+
+        try:
+            dispatcher = gdb.parse_and_eval("dispatcher")
+        except gdb.error as err:
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+
+        print("Arx CPU state")
+        print("=============")
+        print("cpu_count: {}".format(cpu_count))
+        print("cpu_slots: {}".format(cpu_slots))
+        print("")
+
+        for i in range(cpu_slots):
+            cpu = dispatcher["cpus"][i]
+
+            cpu_id = self._read_int_field(cpu, "id", default=0)
+            acpi_has_lapic = self._read_int_field(cpu, "acpi_has_lapic", default=None)
+            acpi_uid = self._read_int_field(cpu, "acpi_processor_uid", default=None)
+            acpi_lapic_id = self._read_int_field(cpu, "acpi_lapic_id", default=None)
+            acpi_lapic_flags = self._read_int_field(cpu, "acpi_lapic_flags", default=None)
+
+            numa_node = int(cpu["numa_node"])
+            address_space = int(cpu["address_space"])
+
+            print("cpu[{}]".format(i))
+            print("  id: {}".format(cpu_id))
+            print("  numa_node:     0x{:016x}".format(numa_node))
+            print("  address_space: 0x{:016x}".format(address_space))
+
+            if acpi_has_lapic is None:
+                print("  acpi: unavailable in current debug symbols")
+            else:
+                print("  acpi_has_lapic:   {}".format(acpi_has_lapic))
+                print("  acpi_processor_uid: {}".format(acpi_uid))
+                print("  acpi_lapic_id:      {}".format(acpi_lapic_id))
+                print("  acpi_lapic_flags:   0x{:08x}".format(acpi_lapic_flags if acpi_lapic_flags is not None else 0))
+
+            print("")
+
+
+ArxCpusCommand()

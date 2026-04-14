@@ -64,13 +64,15 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width, (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch,
             (unsigned long long) boot_info->framebuffer_bpp);
-
-    arch_init();
     
+    cpus_init(cpu_count);
+
     pmm_init(boot_info);
     vmm_init(boot_info);
 
     acpi_init(boot_info->rsdp_address);
+
+    arch_init();
 
     run_selftests();
 

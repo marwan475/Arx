@@ -16,7 +16,12 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <stdint.h>
+#include <uacpi/acpi.h>
+#include <uacpi/status.h>
+#include <uacpi/tables.h>
 
 void acpi_init(phys_addr_t rsdp_address);
+uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table);
+uacpi_status get_lapics_from_mdat(struct acpi_madt* madt);
 
 #endif

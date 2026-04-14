@@ -32,6 +32,10 @@ typedef uint64_t phys_addr_t;
 typedef uint64_t virt_addr_t;
 #endif
 
+#ifndef REG
+#define REG(type, x) (*((volatile type*) (uintptr_t) (x)))
+#endif
+
 #if defined(__x86_64__)
 #define ARCH_PAGE_FLAGS_INIT(flags) ((flags) = (1ULL << 63))
 

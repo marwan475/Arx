@@ -236,6 +236,7 @@ void lapic_eoi(void);
 void ioapic_init(void);
 void ioapic_mask_vector(uint8_t vector);
 void ioapic_unmask_vector(uint8_t vector);
+uint32_t ioapic_register_device(uint32_t gsi);
 
 #define DECL_ISR(n) void ISR##n();
     DECL_ISR(0)

@@ -17,6 +17,38 @@ static volatile uint8_t* ioapic_get_base(void)
     return (volatile uint8_t*) (uintptr_t) ioapic_va;
 }
 
+static void route_irq(volatile uint8_t* ioapic_base, uint32_t pin, uint32_t vector, uint16_t flags, uint8_t destination_lapic_id, uint8_t masked)
+{
+    uint32_t low  = vector;
+    uint32_t high = ((uint32_t) destination_lapic_id) << 24;
+
+    if (masked)
+    {
+        low |= IOAPIC_REDIR_MASKED;
+    }
+
+    if ((flags & ACPI_MADT_POLARITY_MASK) == ACPI_MADT_POLARITY_ACTIVE_LOW)
+    {
+        low |= IOAPIC_REDIR_POLARITY_LOW;
+    }
+
+    if ((flags & ACPI_MADT_TRIGGERING_MASK) == ACPI_MADT_TRIGGERING_LEVEL)
+    {
+        low |= IOAPIC_REDIR_TRIGGER_LEVEL;
+    }
+
+    uint8_t low_index  = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + pin * 2);
+    uint8_t high_index = (uint8_t) (low_index + 1);
+
+    REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = high_index;
+    REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = high;
+
+    REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
+    REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = low;
+
+    dispatcher.arch_info.ioapic_redir_count++;
+}
+
 static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
 {
     volatile uint8_t* ioapic_base = ioapic_get_base();
@@ -65,36 +97,39 @@ void ioapic_unmask_vector(uint8_t vector)
     ioapic_set_vector_mask(vector, 0);
 }
 
-static void route_irq(volatile uint8_t* ioapic_base, uint32_t pin, uint32_t vector, uint16_t flags, uint8_t destination_lapic_id, uint8_t masked)
+uint32_t ioapic_register_device(uint32_t gsi)
 {
-    uint32_t low  = vector;
-    uint32_t high = ((uint32_t) destination_lapic_id) << 24;
-
-    if (masked)
+    volatile uint8_t* ioapic_base = ioapic_get_base();
+    if (!ioapic_base)
     {
-        low |= IOAPIC_REDIR_MASKED;
+        return 0;
     }
 
-    if ((flags & ACPI_MADT_POLARITY_MASK) == ACPI_MADT_POLARITY_ACTIVE_LOW)
+    uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
+    if (gsi < ioapic_gsi_base)
     {
-        low |= IOAPIC_REDIR_POLARITY_LOW;
+        return 0;
     }
 
-    if ((flags & ACPI_MADT_TRIGGERING_MASK) == ACPI_MADT_TRIGGERING_LEVEL)
+    uint32_t pin = gsi - ioapic_gsi_base;
+    if (pin > dispatcher.arch_info.ioapic_max_redir)
     {
-        low |= IOAPIC_REDIR_TRIGGER_LEVEL;
+        return 0;
     }
 
-    uint8_t low_index  = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + pin * 2);
-    uint8_t high_index = (uint8_t) (low_index + 1);
+    uint32_t vector = dispatcher.vector_base;
+    if (vector >= 0xFF)
+    {
+        return 0;
+    }
 
-    REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = high_index;
-    REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = high;
+    uint16_t flags      = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
+    uint8_t  bsp_lapic_id = dispatcher.cpus[0].arch_info.acpi_lapic_id;
 
-    REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
-    REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = low;
+    route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 0);
+    dispatcher.vector_base++;
 
-    dispatcher.arch_info.ioapic_redir_count++;
+    return vector;
 }
 
 // route legacy pic irqs to bsp
@@ -170,6 +205,7 @@ void ioapic_init(void)
 
     dispatcher.arch_info.ioapic_max_redir   = max_redir;
     dispatcher.arch_info.ioapic_redir_count = 0;
+    dispatcher.vector_base = VECTOR_DEVICE_BASE;
 
     uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
     uint8_t  bsp_lapic_id    = dispatcher.cpus[0].arch_info.acpi_lapic_id;

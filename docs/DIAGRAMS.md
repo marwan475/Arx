@@ -51,3 +51,19 @@ flowchart TD
     end
 ```
 
+```mermaid
+graph TD
+
+    subgraph Dispatcher
+        CPU1[cpu entry 0]
+        CPU2[cpu entry 1]
+        SLOT[selected cpu entry]
+        CPUN[cpu entry N]
+    end
+
+    SLOT --> CPU[cpu_info struct]
+    CPU --> NUMA[numa_node pointer]
+    CPU --> VAS[address_space pointer]
+    CPU --> ARCH[arch_info]
+```
+

@@ -21,11 +21,10 @@ Design in order of initialization
 - kmain will initialize kernel subsystems
 
 ### Dispatcher
+
+![Dispatcher Access Flow](docs/dispatcher-2026-04-15-070216.svg)
 - Global dispatcher variable which stores important global and per cpu data structures
-- Defined in klib.h and accessiable from anypart of the kernel
-- Array of cpu structs defined in cpu.h which is indexed by cores id 
-- Core id comes from arch_cpu_id() 
-- This allows easy managment of smp cores
+- index by arch cpu id
 
 ### Memory Management
 

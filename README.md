@@ -31,8 +31,6 @@ Design in order of initialization
 
 Physical memory managment
 
-<div style="width: 100%; max-width: 1100px; overflow-x: auto;">
-
 ```mermaid
 graph TD
 
@@ -52,15 +50,10 @@ graph TD
     NUMA --> ZONE[Zone]
     ZONE --> BUDDY[Buddy Allocator]
 ```
-
-</div>
-
 - Zone is built from boot memory map
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
 Allocations
-<div style="width: 100%; max-width: 1100px; overflow-x: auto;">
-
 ```mermaid
 flowchart TD
     subgraph Alloc
@@ -75,13 +68,9 @@ flowchart TD
         R --> S[return HHDM virtual address]
     end
 ```
+- pmm_alloc(size)
 
-</div>
-
-    - pmm_alloc(size)
 Frees
-<div style="width: 100%; max-width: 1100px; overflow-x: auto;">
-
 ```mermaid
 flowchart TD
     subgraph Free
@@ -95,10 +84,7 @@ flowchart TD
         Z --> AA[unlock zone]
     end
 ```
-
-</div>
-
-    - pmm_free(addr)
+- pmm_free(addr)
 _
 - Virtual memory managment (vmm.c)
     - page table managment

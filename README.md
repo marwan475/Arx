@@ -74,6 +74,15 @@ Klib allocations
 - uses pmm and vmm api to allocate large contiguous virtual memory chunks
 - slow due to needing to map pages
 
+### SMP init
+- Limine provides SMP cpu list and bsp id through the boot info
+- BSP runs arch_smp_init(boot_info) after base kernel init in kmain
+- arch_smp_init walks all cpus and skips the BSP
+- each AP gets goto_address = smp_entry set from its Limine SMP record
+- AP enters smp_entry and then calls smp_kmain
+- smp_kmain runs per-core arch init
+
+
 ### Arch Init
 ran on each smp core
 - x86_64

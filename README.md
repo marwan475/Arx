@@ -34,32 +34,33 @@ Physical memory managment
 - Zone is built from boot memory map
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
-Allocations
+Allocations | pmm_alloc(size)
 ![PMM Allocation Flow](docs/pmmalloc-2026-04-15-065023.svg)
-- pmm_alloc(size)
 
-Frees
+
+Frees | pmm_free(addr)
 ![PMM Free Flow](docs/pmmfree-2026-04-15-065114.svg)
-- pmm_free(addr)
 
-Virtual memory managment (vmm.c)
-    - page table managment
-    - maping and unmaping pages
-    - changing page flags
-    - each arch implements paging api in arch_paging.c
-    - also implement arch_map/unmap/protect_range functions
-        - optimization to avoid redundant page table walks , cache flushes and batching flushes
-        - instead of calling arch_map/unmap/protect_page on each page in a range which would be much slower
-    - vmm_map/unmap/protect_page/range are wrappers over arch specific implmentation that lock on address space
-    - pagetable is stored in virt_addr_space defined in vmm.h
-- Virtual address space management (vmm.c)
-    - uses canonical addressing
-    - address space stores free lists of usable virt_region
-    - user and kernel free lists 
-    - on vmm init we init the initial address space by subtracting hhdm, framebuffer, and kernel form the kernel address space
-    - expose vmm_reserve_region and vmm_free_region api which allows you to reserve a virtual memory region to map physical pages
-        - locks on virtual address space access/editing
-    - store initial address space in each cpu in dispatcher
+
+Virtual memory managment
+- page table managment apis
+- each arch implements paging api
+- also implement arch_map/unmap/protect_range functions
+    - optimization to avoid redundant page table walks , cache flushes and batching flushes
+    - instead of calling arch_map/unmap/protect_page on each page in a range which would be much slower
+- vmm paging apis are wrappers over arch specific implmentation that lock on address space
+
+Virtual address space management
+- uses canonical addressing
+- on vmm init we init the initial address space by subtracting hhdm, framebuffer, and kernel form the kernel address space
+
+Reserve region in address space
+![VMM reserve](docs/vmmreserve-2026-04-15-072825.svg)
+
+Free region in address space
+![VMM free](docs/vmmfree-2026-04-15-072859.svg)
+
+    
 - Klib allocations
     - vmalloc and vfree
     - uses pmm and vmm api to allocate large contiguous virtual memory chunks

@@ -67,3 +67,43 @@ graph TD
     CPU --> ARCH[arch_info]
 ```
 
+
+
+```mermaid
+flowchart TD
+
+    subgraph Reserve Path
+        R0[vmm_reserve_region] --> R1[validate and align size]
+        R1 --> R2[select kernel or user lists]
+        R2 --> R3[lock space]
+        R3 --> R4[scan free list for fit]
+        R4 --> R5{exact size match}
+        R5 -- yes --> R6[move free node to used]
+        R5 -- no --> R7[alloc metadata node]
+        R7 --> R8{metadata available}
+        R8 -- no --> R9[unlock and return 0]
+        R8 -- yes --> R10[create used at free start]
+        R10 --> R11[advance free start shrink size]
+        R6 --> R12[unlock and return reserved start]
+        R11 --> R12
+    end
+
+```
+```mermaid
+flowchart TD
+    subgraph Free Path
+        F0[vmm_free_region] --> F1[validate inputs]
+        F1 --> F2[lock space]
+        F2 --> F3[find by start in used lists]
+        F3 --> F4{region found}
+        F4 -- no --> F5[unlock and return]
+        F4 -- yes --> F6[remove region from used list]
+        F6 --> F7[insert into free list sorted]
+        F7 --> F8[merge left if adjacent]
+        F8 --> F9[merge right if adjacent]
+        F9 --> F10[unlock]
+    end
+```
+
+
+

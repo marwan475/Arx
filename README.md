@@ -30,17 +30,20 @@ Design in order of initialization
 ### Memory Management
 
 Physical memory managment
+
 ![NUMA Node Allocation Flow](docs/NUMA%20Node%20Allocation%20Flow-2026-04-15-064600.svg)
 - Zone is built from boot memory map
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
 Allocations
+![PMM Allocation Flow](docs/pmmalloc-2026-04-15-065023.svg)
 - pmm_alloc(size)
 
 Frees
+![PMM Free Flow](docs/pmmfree-2026-04-15-065114.svg)
 - pmm_free(addr)
 
-- Virtual memory managment (vmm.c)
+Virtual memory managment (vmm.c)
     - page table managment
     - maping and unmaping pages
     - changing page flags

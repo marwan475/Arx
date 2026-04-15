@@ -1,9 +1,3 @@
-/*
- * arch_acpi.c
- *
- * x86_64 APIC helpers used by ACPI initialization.
- */
-
 #include <acpi/acpi.h>
 
 static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_lapic_base_addr)

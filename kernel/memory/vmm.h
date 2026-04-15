@@ -1,17 +1,3 @@
-/*
- * vmm.h
- *
- * Virtual Memory Manager (VMM) structures and public API
- *
- * - Stores virtual address space information
- * - Stores virtual memory region information
- * - Virtual address space has free lists of used and unused virtual memory regions
- * - Architecture abstracted paging operations API
- *
- * Author: Marwan Mostafa
- *
- */
-
 #ifndef VMM_H
 #define VMM_H
 

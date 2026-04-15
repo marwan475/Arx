@@ -1,14 +1,3 @@
-/*
- * acpi.h
- *
- * ACPI (Advanced Configuration and Power Interface) header
- *
- * - Provides functions to initialize and interact with ACPI tables
- *
- * Author: Marwan Mostafa
- *
- */
-
 #ifndef ARX_KERNEL_ACPI_H
 #define ARX_KERNEL_ACPI_H
 

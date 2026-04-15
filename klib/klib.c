@@ -1,14 +1,3 @@
-/*
- * klib.c
- *
- * Kernel library implementation
- *
- * - Implements kernel API
- *
- * Author: Marwan Mostafa
- *
- */
-
 #include <klib/klib.h>
 #include <klib/printf/printf.h>
 #include <memory/pmm.h>

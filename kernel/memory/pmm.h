@@ -1,19 +1,3 @@
-/*
- * pmm.h
- *
- * Physical Memory Manager (PMM) structures and public API
- *
- * - Stores memory region information provided by the bootloader
- * - Seperates memory into zones (currently just one zone for all memory)
- * - Stores numa node information (currently just one numa node pointing to the one zone)
- * - Per zone buddy allocator (buddy allocator uses Page Frame Numbers (PFNs) for block management)
- * - buddy metadata contains array of page_t structs for each page in the zone
- * - Alloc and free work with Higher Half Direct Mapping (HHDM) addresses
- *
- * Author: Marwan Mostafa
- *
- */
-
 #ifndef PMM_H
 #define PMM_H
 
@@ -75,9 +59,9 @@ typedef struct zone
 
 typedef struct numa_node
 {
-    zone_t  zone;
+    zone_t zone;
     uint8_t cpu_ids[BOOT_SMP_MAX_CPUS];
-    size_t  cpu_count;
+    size_t cpu_count;
 } numa_node_t;
 
 void pmm_init(struct boot_info* boot_info);

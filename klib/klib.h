@@ -1,14 +1,3 @@
-/*
- * klib.h
- *
- * Kernel library definitions
- *
- * - Definitions for kernel API
- *
- * Author: Marwan Mostafa
- *
- */
-
 #ifndef KLIB_H
 #define KLIB_H
 

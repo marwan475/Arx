@@ -1,15 +1,3 @@
-/*
- * boot.h
- *
- * Arx Boot Protocol structures and definitions
- *
- * - arch_entry will populate the boot_info struct and pass it to kmain
- * - Only limine bootloader currently supported
- *
- * Author: Marwan Mostafa
- *
- */
-
 #ifndef ARX_BOOT_H
 #define ARX_BOOT_H
 

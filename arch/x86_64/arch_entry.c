@@ -1,14 +1,3 @@
-/*
- * arch_entry.c
- *
- * Entry point for architecture-specific initialization for pre kernel handoff
- *
- * - x86_64 pre-kernel entry point and SMP entry point
- *
- * Author: Marwan Mostafa
- *
- */
-
 #include <boot/boot.h>
 #include <boot/limine.h>
 #include <klib/klib.h>

@@ -1,19 +1,3 @@
-/*
- * pmm.c
- *
- * Physical Memory Manager (PMM) implementation
- *
- * - Initializes memory regions based on bootloader information
- * - Sets up memory zones
- * - Seeds per-zone buddy allocator free lists and page metadata
- * - Sets up numa node for cpus in dispatcher
- * - Handles buddy allocation and freeing of physical pages
- * - Implements thread safe PMM API
- *
- * Author: Marwan Mostafa
- *
- */
-
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 

@@ -30,62 +30,16 @@ Design in order of initialization
 ### Memory Management
 
 Physical memory managment
-
-```mermaid
-graph TD
-
-    subgraph Dispatcher
-        CPU1[CPU 1]
-        CPU2[CPU 2]
-        CPU3[CPU 3]
-        CPUN[CPU N]
-    end
-
-    CPU1 --> NUMA
-    CPU2 --> NUMA
-    CPU3 --> NUMA
-    CPUN --> NUMA
-
-    NUMA[NUMA Node]
-    NUMA --> ZONE[Zone]
-    ZONE --> BUDDY[Buddy Allocator]
-```
+![NUMA Node Allocation Flow](docs/NUMA%20Node%20Allocation%20Flow-2026-04-15-064600.svg)
 - Zone is built from boot memory map
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
 Allocations
-```mermaid
-flowchart TD
-    subgraph Alloc
-        K[bytes to pages to order] --> L[lock zone]
-        L --> M[buddy alloc]
-        M --> N{higher order block}
-        N -- yes --> O[split until requested order]
-        N -- no --> P[use block]
-        O --> Q[update free pages and used pages]
-        P --> Q
-        Q --> R[unlock zone]
-        R --> S[return HHDM virtual address]
-    end
-```
 - pmm_alloc(size)
 
 Frees
-```mermaid
-flowchart TD
-    subgraph Free
-        T[HHDM VA to PA to PFN] --> U[lock zone]
-        U --> V[buddy free]
-        V --> W{buddy free and same order}
-        W -- yes --> X[merge and retry]
-        W -- no --> Y[insert block in free list]
-        X --> W
-        Y --> Z[update free pages and used pages]
-        Z --> AA[unlock zone]
-    end
-```
 - pmm_free(addr)
-_
+
 - Virtual memory managment (vmm.c)
     - page table managment
     - maping and unmaping pages

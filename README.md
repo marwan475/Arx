@@ -35,15 +35,17 @@ Physical memory managment
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
 Allocations | pmm_alloc(size)
+
 ![PMM Allocation Flow](docs/pmmalloc-2026-04-15-065023.svg)
 
 
 Frees | pmm_free(addr)
+
 ![PMM Free Flow](docs/pmmfree-2026-04-15-065114.svg)
 
 
 Virtual memory managment
-- page table managment apis
+- page table managment apis (map/unmap/protect)
 - each arch implements paging api
 - also implement arch_map/unmap/protect_range functions
     - optimization to avoid redundant page table walks , cache flushes and batching flushes
@@ -54,17 +56,23 @@ Virtual address space management
 - uses canonical addressing
 - on vmm init we init the initial address space by subtracting hhdm, framebuffer, and kernel form the kernel address space
 
+Virtual address space structure
+
+![VMM addrspace](docs/vaddr-2026-04-15-074940.svg)
+
 Reserve region in address space
+
 ![VMM reserve](docs/vmmreserve-2026-04-15-072825.svg)
 
 Free region in address space
+
 ![VMM free](docs/vmmfree-2026-04-15-072859.svg)
 
     
-- Klib allocations
-    - vmalloc and vfree
-    - uses pmm and vmm api to allocate large contiguous virtual memory chunks
-    - slow due to needing to map pages
+Klib allocations
+- vmalloc and vfree
+- uses pmm and vmm api to allocate large contiguous virtual memory chunks
+- slow due to needing to map pages
 
 ### Arch Init
 ran on each smp core

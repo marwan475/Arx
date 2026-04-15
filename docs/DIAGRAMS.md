@@ -107,3 +107,41 @@ flowchart TD
 
 
 
+
+
+```mermaid
+flowchart LR
+    A[Address Space]
+    B[State and lock]
+    C[Kernel Free List]
+    D[Kernel Used List]
+    E[User Free List]
+    F[User Used List]
+    G[Region Metadata Pool]
+    H[Virtual Region]
+    I[Region info: start end size]
+    K[Neighbor links]
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    A --> F
+    A --> G
+
+    C --> H
+    D --> H
+    E --> H
+    F --> H
+
+    H --> I
+    H --> K
+    K --> H
+```
+
+
+
+
+
+
+

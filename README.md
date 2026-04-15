@@ -28,27 +28,60 @@ Design in order of initialization
 - This allows easy managment of smp cores
 
 ### Memory Management
-- Physical memory management init (pmm.c)
-    - memory map is passed into pmm_init
-    - using memory map we create region discriptors of usable memory regions
-    - these regions are placed in a zone struct
-    - we then create metadata for the memory zone which contains a page_t struct for every page in the memory zone
-    - using the region discriptors and metadata we seed the zones buddy free lists
-    - max order is currently 10 with a block size of 4096
-    - zone is placed in a numa node, this allows use to support Non uniform memory access in the future
-    - store pointer to numa node in each cpu in dispatcher
-- Physical memory management allocations (pmm.c)
-    - for allocations we have a buddy allocator
-    - we request an allocation using an order buddy_alloc(order)
-    - on alloc we find the smallest availble block to satisfy order
-        - if the block is larger then request we split it
-    - on free we place it back in free list and if its buddy exists we merge them
-    - basic buddy allocator algorithm (Very paraphrased)
-    - pmm_alloc and pmm_free are wrappers over buddy allocation functions
-        - locks when accessing/editing memory zone 
-        - auto bytes -> pages -> order conversion
-        - auto pa -> hhdm and hhdm -> pa conversions
-    - because of our dispatcher and zone buddy metadata allows the api to be pmm_alloc(size) and pmm_free(addr)
+
+Physical memory managment
+
+```mermaid
+graph TD
+
+    subgraph Dispatcher
+        CPU1[CPU 1]
+        CPU2[CPU 2]
+        CPU3[CPU 3]
+        CPUN[CPU N]
+    end
+
+    CPU1 --> NUMA
+    CPU2 --> NUMA
+    CPU3 --> NUMA
+    CPUN --> NUMA
+
+    NUMA[NUMA Node]
+    NUMA --> ZONE[Zone]
+    ZONE --> BUDDY[Buddy Allocator]
+```
+- Zone is built from boot memory map
+- Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
+
+Allocations
+```mermaid
+flowchart TD
+    subgraph Alloc
+        K[bytes to pages to order] --> L[lock zone]
+        L --> M[buddy alloc]
+        M --> N{higher order block}
+        N -- yes --> O[split until requested order]
+        N -- no --> P[use block]
+        O --> Q[update free pages and used pages]
+        P --> Q
+        Q --> R[unlock zone]
+        R --> S[return HHDM virtual address]
+    end
+```
+Frees
+```mermaid
+flowchart TD
+    subgraph Free
+        T[HHDM VA to PA to PFN] --> U[lock zone]
+        U --> V[buddy free]
+        V --> W{buddy free and same order}
+        W -- yes --> X[merge and retry]
+        W -- no --> Y[insert block in free list]
+        X --> W
+        Y --> Z[update free pages and used pages]
+        Z --> AA[unlock zone]
+    end
+```
 - Virtual memory managment (vmm.c)
     - page table managment
     - maping and unmaping pages

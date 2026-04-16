@@ -50,6 +50,7 @@ int kprintf(const char* format, ...);
 void kterm_write(const char* msg);
 int  kterm_printf(const char* format, ...);
 int  kterm_vprintf(const char* format, va_list args);
+void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count);
 
 #ifndef DEBUG
 #define DEBUG 0

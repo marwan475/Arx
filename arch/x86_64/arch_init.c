@@ -43,8 +43,6 @@ void gdt_init()
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    KDEBUG("Arx debug: cpu %d gdt_init begin cpu_info=0x%llx\n", arch_cpu_id(), (unsigned long long) (uintptr_t) cpu_info);
-
     build_tss_descriptor(&cpu_info->arch_info.tss, &cpu_info->arch_info.tss_descriptor);
     build_gdt(&cpu_info->arch_info.gdt, &cpu_info->arch_info.tss_descriptor);
 
@@ -72,9 +70,6 @@ void gdt_init()
                          :
                          : [gdt] "m"(cpu_info->arch_info.gdt_reg), [tss] "r"((uint16_t) offsetof(gdt_t, tss))
                          : "rax", "memory");
-
-    KDEBUG("Arx debug: cpu %d gdt_init done gdt_base=0x%llx tss_off=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->arch_info.gdt_reg.base,
-           (unsigned long long) offsetof(gdt_t, tss));
 }
 
 static void (*const isr_handlers[NUM_IDT_ENTRIES])() = {
@@ -128,23 +123,16 @@ void idt_init()
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    KDEBUG("Arx debug: cpu %d idt_init begin\n", arch_cpu_id());
-
     cpu_info->arch_info.idt_desc = (idt_description_t){sizeof(cpu_info->arch_info.idt) - 1, cpu_info->arch_info.idt};
 
     isr_init(cpu_info->arch_info.idt);
-
-    KDEBUG("Arx debug: cpu %d idt_init done idt_ptr=0x%llx limit=%u\n", arch_cpu_id(), (unsigned long long) (uintptr_t) cpu_info->arch_info.idt_desc.ptr,
-           (unsigned) cpu_info->arch_info.idt_desc.limit);
 
 }
 
 void disable_pic()
 {
-    KDEBUG("Arx debug: cpu %d disable_pic begin\n", arch_cpu_id());
     outb(PIC_MASTER_DATA_PORT, PIC_MASK_ALL_IRQS);
     outb(PIC_SLAVE_DATA_PORT, PIC_MASK_ALL_IRQS);
-    KDEBUG("Arx debug: cpu %d disable_pic done\n", arch_cpu_id());
 }
 
 
@@ -153,49 +141,26 @@ void init_interrupts()
 
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
-    KDEBUG("Arx debug: cpu %d init_interrupts begin\n", arch_cpu_id());
-
     idt_init();
     disable_pic();
-
-    KDEBUG("Arx debug: cpu %d init_interrupts lidt\n", arch_cpu_id());
 
     __asm__ __volatile__("lidt %[idt]"
                          :
                          : [idt] "m"(cpu_info->arch_info.idt_desc)
                          : "memory");
 
-    KDEBUG("Arx debug: cpu %d init_interrupts -> lapic_init\n", arch_cpu_id());
-
     lapic_init();
-    KDEBUG("Arx debug: cpu %d init_interrupts <- lapic_init\n", arch_cpu_id());
-
-    KDEBUG("Arx debug: cpu %d init_interrupts -> ioapic_init\n", arch_cpu_id());
     ioapic_init();
-    KDEBUG("Arx debug: cpu %d init_interrupts <- ioapic_init\n", arch_cpu_id());
-
-    KDEBUG("Arx debug: cpu %d init_interrupts -> lapic_timer_init\n", arch_cpu_id());
     lapic_timer_init();
-    KDEBUG("Arx debug: cpu %d init_interrupts <- lapic_timer_init\n", arch_cpu_id());
-
-    KDEBUG("Arx debug: cpu %d init_interrupts -> arch_enable_interrupts\n", arch_cpu_id());
     arch_enable_interrupts();
-    KDEBUG("Arx debug: cpu %d init_interrupts <- arch_enable_interrupts\n", arch_cpu_id());
 
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
 void arch_init(void)
 {
-    KDEBUG("Arx debug: cpu %d arch_init begin\n", arch_cpu_id());
-
-    KDEBUG("Arx debug: cpu %d arch_init -> gdt_init\n", arch_cpu_id());
     gdt_init();
-
-    KDEBUG("Arx debug: cpu %d arch_init -> init_interrupts\n", arch_cpu_id());
     init_interrupts();
-
-    KDEBUG("Arx debug: cpu %d arch_init done\n", arch_cpu_id());
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 }

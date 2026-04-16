@@ -130,11 +130,6 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
         return UACPI_STATUS_NOT_FOUND;
     }
 
-    if (lapic_count > BOOT_SMP_MAX_CPUS)
-    {
-        KDEBUG("Arx debug: MADT LAPIC entries=%llu exceed BOOT_SMP_MAX_CPUS=%u, truncating\n", (unsigned long long) lapic_count, BOOT_SMP_MAX_CPUS);
-    }
-
     return UACPI_STATUS_OK;
 }
 

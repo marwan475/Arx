@@ -21,12 +21,15 @@ typedef enum arch_type
 
 typedef struct zone            zone_t;
 typedef struct virt_addr_space virt_addr_space_t;
+struct flanterm_context;
 
 typedef struct dispatcher
 {
     cpu_info_t             cpus[BOOT_SMP_MAX_CPUS];
     size_t                 cpu_count;
     uint32_t               vector_base;
+    struct flanterm_context* terminal_context;
+    spinlock_t              terminal_lock;
     arch_type_t            arch;
     arch_dispatcher_info_t arch_info;
 } dispatcher_t;
@@ -44,6 +47,9 @@ static _force_inline void panic(void)
 
 // logging
 int kprintf(const char* format, ...);
+void kterm_write(const char* msg);
+int  kterm_printf(const char* format, ...);
+int  kterm_vprintf(const char* format, va_list args);
 
 // spinlock
 static _force_inline void spinlock_acquire(spinlock_t* lock)
@@ -83,6 +89,7 @@ static _force_inline uint64_t align_down(uint64_t x, uint64_t a)
 void*     memset(void* dest, int value, size_t count);
 void*     memcpy(void* dest, const void* src, size_t count);
 int       memcmp(const void* lhs, const void* rhs, size_t count);
+size_t    strlen(const char* str);
 uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
 uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 

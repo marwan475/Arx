@@ -189,6 +189,8 @@ static void smp_entry(struct limine_smp_info* cpu)
         kprintf("Arx kernel: cpu[%u] boot entry\n", (unsigned) arch_cpu_id());
     }
 
+    smp_kmain();
+
     for (;;)
     {
         __asm__ volatile("wfi");
@@ -247,6 +249,12 @@ static void gather_boot_info(struct boot_info* boot_info)
     boot_info->framebuffer_height = 0;
     boot_info->framebuffer_pitch  = 0;
     boot_info->framebuffer_bpp    = 0;
+    boot_info->framebuffer_red_mask_size   = 0;
+    boot_info->framebuffer_red_mask_shift  = 0;
+    boot_info->framebuffer_green_mask_size = 0;
+    boot_info->framebuffer_green_mask_shift = 0;
+    boot_info->framebuffer_blue_mask_size  = 0;
+    boot_info->framebuffer_blue_mask_shift = 0;
     boot_info->smp.flags          = 0;
     boot_info->smp.bsp_id         = 0;
     boot_info->smp.cpu_count      = 0;
@@ -318,6 +326,12 @@ static void gather_boot_info(struct boot_info* boot_info)
         boot_info->framebuffer_height = fb->height;
         boot_info->framebuffer_pitch  = fb->pitch;
         boot_info->framebuffer_bpp    = fb->bpp;
+        boot_info->framebuffer_red_mask_size   = fb->red_mask_size;
+        boot_info->framebuffer_red_mask_shift  = fb->red_mask_shift;
+        boot_info->framebuffer_green_mask_size = fb->green_mask_size;
+        boot_info->framebuffer_green_mask_shift = fb->green_mask_shift;
+        boot_info->framebuffer_blue_mask_size  = fb->blue_mask_size;
+        boot_info->framebuffer_blue_mask_shift = fb->blue_mask_shift;
     }
 
     if (smp_request.response != 0)

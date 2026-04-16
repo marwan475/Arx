@@ -203,6 +203,12 @@ void ioapic_init(void)
     uint32_t ioapic_ver = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
     uint32_t max_redir  = (ioapic_ver >> 16) & 0xFF;
 
+    if (ioapic_ver == 0 || ioapic_ver == 0xFFFFFFFF)
+    {
+        kprintf("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr);
+        panic();
+    }
+
     dispatcher.arch_info.ioapic_max_redir   = max_redir;
     dispatcher.arch_info.ioapic_redir_count = 0;
     dispatcher.vector_base = VECTOR_DEVICE_BASE;

@@ -57,6 +57,7 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
     struct acpi_entry_hdr* entry;
     uacpi_u8*              table_end;
     size_t                 lapic_count;
+    size_t                 lapic_stored_count;
     uint64_t               lapic_base_addr;
     uacpi_status           status;
 
@@ -83,6 +84,7 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
     entry       = madt->entries;
     table_end   = (uacpi_u8*) madt + madt->hdr.length;
     lapic_count = 0;
+    lapic_stored_count = 0;
 
     while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
     {
@@ -107,13 +109,14 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
 
             lapic = (struct acpi_madt_lapic*) entry;
 
-            if (lapic_count < BOOT_SMP_MAX_CPUS)
+            if (lapic_stored_count < BOOT_SMP_MAX_CPUS)
             {
-                dispatcher.cpus[lapic_count].arch_info.acpi_has_lapic      = 1;
-                dispatcher.cpus[lapic_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
-                dispatcher.cpus[lapic_count].arch_info.acpi_processor_uid  = lapic->uid;
-                dispatcher.cpus[lapic_count].arch_info.acpi_lapic_id       = lapic->id;
-                dispatcher.cpus[lapic_count].arch_info.acpi_lapic_flags    = lapic->flags;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_has_lapic      = 1;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_processor_uid  = lapic->uid;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_id       = lapic->id;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_flags    = lapic->flags;
+                lapic_stored_count++;
             }
 
             lapic_count++;
@@ -125,11 +128,6 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
     if (lapic_count == 0)
     {
         return UACPI_STATUS_NOT_FOUND;
-    }
-
-    if (lapic_count > BOOT_SMP_MAX_CPUS)
-    {
-        return UACPI_STATUS_OUT_OF_MEMORY;
     }
 
     return UACPI_STATUS_OK;

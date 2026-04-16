@@ -147,12 +147,11 @@ void init_interrupts()
     __asm__ __volatile__("lidt %[idt]"
                          :
                          : [idt] "m"(cpu_info->arch_info.idt_desc)
-                         : "memory");   
+                         : "memory");
 
     lapic_init();
     ioapic_init();
     lapic_timer_init();
-
     arch_enable_interrupts();
 
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());

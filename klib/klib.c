@@ -1,5 +1,6 @@
 #include <klib/klib.h>
 #include <klib/printf/printf.h>
+#include <flanterm.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 
@@ -18,6 +19,78 @@ int kprintf(const char* format, ...)
     va_end(args);
     spinlock_release(&kprintf_lock);
     return written;
+}
+
+void kterm_write(const char* msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    size_t len = strlen(msg);
+    if (len == 0)
+    {
+        return;
+    }
+
+    spinlock_acquire(&dispatcher.terminal_lock);
+
+    if (dispatcher.terminal_context != NULL)
+    {
+        char previous = '\0';
+        for (size_t i = 0; i < len; i++)
+        {
+            char c = msg[i];
+
+            if (c == '\n' && previous != '\r')
+            {
+                static const char crlf[] = "\r\n";
+                flanterm_write(dispatcher.terminal_context, crlf, 2);
+            }
+            else
+            {
+                flanterm_write(dispatcher.terminal_context, &c, 1);
+            }
+
+            previous = c;
+        }
+    }
+
+    spinlock_release(&dispatcher.terminal_lock);
+}
+
+int kterm_printf(const char* format, ...)
+{
+    if (format == NULL)
+    {
+        return 0;
+    }
+
+    va_list args;
+    va_start(args, format);
+    const int written = kterm_vprintf(format, args);
+    va_end(args);
+
+    return written;
+}
+
+int kterm_vprintf(const char* format, va_list args)
+{
+    if (format == NULL)
+    {
+        return 0;
+    }
+
+    char out[512];
+    const int result = vsnprintf_(out, sizeof(out), format, args);
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    kterm_write(out);
+    return result;
 }
 
 // memory
@@ -56,6 +129,22 @@ int memcmp(const void* lhs, const void* rhs, size_t count)
     }
 
     return 0;
+}
+
+size_t strlen(const char* str)
+{
+    if (str == NULL)
+    {
+        return 0;
+    }
+
+    size_t len = 0;
+    while (str[len] != '\0')
+    {
+        len++;
+    }
+
+    return len;
 }
 
 // Physical address to higher half direct map

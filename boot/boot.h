@@ -70,6 +70,12 @@ struct boot_info
     uint64_t             framebuffer_height;
     uint64_t             framebuffer_pitch;
     uint64_t             framebuffer_bpp;
+    uint64_t             framebuffer_red_mask_size;
+    uint64_t             framebuffer_red_mask_shift;
+    uint64_t             framebuffer_green_mask_size;
+    uint64_t             framebuffer_green_mask_shift;
+    uint64_t             framebuffer_blue_mask_size;
+    uint64_t             framebuffer_blue_mask_shift;
     struct boot_smp_info smp;
 };
 

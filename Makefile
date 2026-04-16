@@ -26,7 +26,7 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_AS ?= nasm
-INCLUDE_DIRS ?= -I. -Ikernel
+INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/terminal/flanterm -Ikernel/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
 
 UACPI_DIR ?= kernel/acpi/uACPI
@@ -35,6 +35,7 @@ UACPI_DEFINES := -DUACPI_BAREBONES_MODE
 UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
+CFLAGS_COMMON += -DDEBUG=$(DEBUG)
 
 ifeq ($(DEBUG),1)
 CFLAGS_COMMON += -O0 -ggdb3
@@ -58,14 +59,17 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/selftest.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/vmm.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/debug.c kernel/selftest.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/vmm.c kernel/terminal/terminal.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
+FLANTERM_SRCS := kernel/terminal/flanterm/flanterm.c kernel/terminal/flanterm/flanterm_backends/fb.c
 
 CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
 KERNEL_X86_64_SRCS += $(UACPI_SRCS)
 KERNEL_AARCH64_SRCS += $(UACPI_SRCS)
+KERNEL_X86_64_SRCS += $(FLANTERM_SRCS)
+KERNEL_AARCH64_SRCS += $(FLANTERM_SRCS)
 
 KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
 KERNEL_X86_64_OBJS += $(patsubst %.asm,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_ASM_SRCS))

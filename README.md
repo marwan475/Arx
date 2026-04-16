@@ -101,6 +101,7 @@ ran on each smp core
 - [Limine](https://github.com/limine-bootloader/limine) - Bootloader/protocol used to load the kernel and provide boot info.
 - [printf](https://github.com/mpaland/printf) - Small freestanding printf implementation used for kernel logging output.
 - [uACPI](https://github.com/uACPI/uACPI) - ACPI implementation used for table parsing and ACPI support.
+- [Flanterm](https://github.com/Mintsuki/Flanterm) - fast and reasonably complete terminal emulator
 
 All third-party components retain their original licenses.
 

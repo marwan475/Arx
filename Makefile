@@ -35,6 +35,7 @@ UACPI_DEFINES := -DUACPI_BAREBONES_MODE
 UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
+CFLAGS_COMMON += -DDEBUG=$(DEBUG)
 
 ifeq ($(DEBUG),1)
 CFLAGS_COMMON += -O0 -ggdb3

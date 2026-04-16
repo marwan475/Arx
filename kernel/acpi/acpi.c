@@ -97,7 +97,7 @@ void acpi_init(phys_addr_t rsdp_address)
     if (status != UACPI_STATUS_OK)
     {
         kprintf("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
+        panic();
     }
 
     kprintf("ACPI: uACPI barebones early table access initialized\n");
@@ -106,7 +106,7 @@ void acpi_init(phys_addr_t rsdp_address)
     if (status != UACPI_STATUS_OK)
     {
         kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
+        panic();
     }
 
     status = arch_acpi_init(madt);
@@ -114,7 +114,7 @@ void acpi_init(phys_addr_t rsdp_address)
     {
         uacpi_table_unref(&madt_table);
         kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        return;
+        panic();
     }
 
     uacpi_table_unref(&madt_table);

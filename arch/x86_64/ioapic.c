@@ -166,13 +166,18 @@ void ioapic_init(void)
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
+    KDEBUG("Arx debug: cpu %d ioapic_init begin initialized=%u has_ioapic=%u ioapic_pa=0x%llx gsi_base=%u\n", arch_cpu_id(), (unsigned) dispatcher.arch_info.ioapic_initialized,
+           (unsigned) dispatcher.arch_info.acpi_has_ioapic, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base);
+
     if (arch_cpu_id() != 0)
     {
+        KDEBUG("Arx debug: cpu %d ioapic_init skip: only BSP configures IOAPIC\n", arch_cpu_id());
         return;
     }
 
     if (dispatcher.arch_info.ioapic_initialized)
     {
+        KDEBUG("Arx debug: cpu %d ioapic_init skip: already initialized\n", arch_cpu_id());
         return;
     }
 
@@ -185,6 +190,9 @@ void ioapic_init(void)
     phys_addr_t ioapic_pa = align_down(dispatcher.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
     virt_addr_t ioapic_va = pa_to_hhdm(ioapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
 
+    KDEBUG("Arx debug: cpu %d ioapic_init map check ioapic_pa=0x%llx ioapic_va=0x%llx hhdm_present=%u hhdm_offset=0x%llx\n", arch_cpu_id(), (unsigned long long) ioapic_pa,
+           (unsigned long long) ioapic_va, (unsigned) cpu_info->numa_node->zone.hhdm_present, (unsigned long long) cpu_info->numa_node->zone.hhdm_offset);
+
     if (vmm_virt_to_phys(ioapic_va, cpu_info->address_space) == 0)
     {
         uint64_t map_flags = 0;
@@ -195,13 +203,28 @@ void ioapic_init(void)
         ARCH_PAGE_FLAG_SET_GLOBAL(map_flags);
 
         vmm_map_page(ioapic_va, ioapic_pa, map_flags, cpu_info->address_space);
+        KDEBUG("Arx debug: cpu %d ioapic_init mapped ioapic page\n", arch_cpu_id());
+    }
+    else
+    {
+        KDEBUG("Arx debug: cpu %d ioapic_init mapping already present\n", arch_cpu_id());
     }
 
     volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
 
+    KDEBUG("Arx debug: cpu %d ioapic_init read IOAPIC version\n", arch_cpu_id());
+
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
     uint32_t ioapic_ver = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
     uint32_t max_redir  = (ioapic_ver >> 16) & 0xFF;
+
+    KDEBUG("Arx debug: cpu %d ioapic_init ver=0x%x max_redir=%u\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned) max_redir);
+
+    if (ioapic_ver == 0 || ioapic_ver == 0xFFFFFFFF)
+    {
+        kprintf("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr);
+        panic();
+    }
 
     dispatcher.arch_info.ioapic_max_redir   = max_redir;
     dispatcher.arch_info.ioapic_redir_count = 0;
@@ -209,6 +232,8 @@ void ioapic_init(void)
 
     uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
     uint8_t  bsp_lapic_id    = dispatcher.cpus[0].arch_info.acpi_lapic_id;
+
+    KDEBUG("Arx debug: cpu %d ioapic_init mask all entries count=%u\n", arch_cpu_id(), (unsigned) (max_redir + 1));
 
     // mask all entries
     for (uint32_t i = 0; i <= max_redir; i++)
@@ -221,11 +246,21 @@ void ioapic_init(void)
 
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = IOAPIC_REDIR_MASKED | i;
+
+        if (DEBUG && (i == 0 || i == max_redir))
+        {
+            KDEBUG("Arx debug: cpu %d ioapic_init masked pin=%u low=0x%x\n", arch_cpu_id(), (unsigned) i, (unsigned) (IOAPIC_REDIR_MASKED | i));
+        }
     }
 
+    KDEBUG("Arx debug: cpu %d ioapic_init route legacy IRQs\n", arch_cpu_id());
     route_legacy_irqs(ioapic_base, max_redir, ioapic_gsi_base, bsp_lapic_id);
 
+    KDEBUG("Arx debug: cpu %d ioapic_init routed_count=%u vector_base_now=0x%x\n", arch_cpu_id(), (unsigned) dispatcher.arch_info.ioapic_redir_count, (unsigned) dispatcher.vector_base);
+
     dispatcher.arch_info.ioapic_initialized = 1;
+
+    KDEBUG("Arx debug: cpu %d ioapic_init done\n", arch_cpu_id());
 
     kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) dispatcher.arch_info.acpi_ioapic_id, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base,
             (unsigned) max_redir);

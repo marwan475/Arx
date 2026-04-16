@@ -51,6 +51,16 @@ void kterm_write(const char* msg);
 int  kterm_printf(const char* format, ...);
 int  kterm_vprintf(const char* format, va_list args);
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
+#define KDEBUG(...) kterm_printf(__VA_ARGS__)
+#else
+#define KDEBUG(...) ((void) 0)
+#endif
+
 // spinlock
 static _force_inline void spinlock_acquire(spinlock_t* lock)
 {

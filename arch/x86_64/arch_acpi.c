@@ -52,7 +52,7 @@ static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_la
     return UACPI_STATUS_OK;
 }
 
-static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
+static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 {
     struct acpi_entry_hdr* entry;
     uacpi_u8*              table_end;
@@ -263,7 +263,7 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt)
     struct acpi_madt_ioapic* ioapic;
     uacpi_status             status;
 
-    status = get_lapics_from_mdat(madt);
+    status = get_lapics_from_madt(madt);
     if (status != UACPI_STATUS_OK)
     {
         return status;

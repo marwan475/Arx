@@ -88,12 +88,12 @@ ran on each smp core
 - x86_64
     - build and install 64 bit GDT for kernel and user segments including a TSS
     - build and install IDT all isrs call a common isr handler and jumps to c code ISRHANDLER passing regs
-    - get mdat from acpi using uacpi
-    - get per core lapic info from mdat
+    - get madt from acpi using uacpi
+    - get per core lapic info from madt
     - init lapic per core
     - init per core lapic timer
     - init global ioapic (masking all entries)
-    - get iso overides from mdat
+    - get iso overides from madt
     - route legacy irqs to bsp lapic
     - expose api to mask/unmask vectors, register new vectors, and route vectors
 

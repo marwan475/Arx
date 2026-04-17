@@ -80,7 +80,7 @@ uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
 
 void acpi_init(phys_addr_t rsdp_address)
 {
-    uacpi_status status;
+    uacpi_status      status;
     struct acpi_madt* madt;
     uacpi_table       madt_table;
 

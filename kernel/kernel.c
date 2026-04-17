@@ -3,8 +3,8 @@
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
-#include <terminal/terminal.h>
 #include <stdint.h>
+#include <terminal/terminal.h>
 
 void run_selftests(void);
 
@@ -50,16 +50,16 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
             (unsigned long long) boot_info->framebuffer_bpp);
 
     kernel_framebuffer_t framebuffer = {
-        .address          = (void*) (uintptr_t) boot_info->framebuffer_addr,
-        .width            = (size_t) boot_info->framebuffer_width,
-        .height           = (size_t) boot_info->framebuffer_height,
-        .pitch            = (size_t) boot_info->framebuffer_pitch,
-        .red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size,
-        .red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift,
-        .green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size,
-        .green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift,
-        .blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size,
-        .blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift,
+            .address          = (void*) (uintptr_t) boot_info->framebuffer_addr,
+            .width            = (size_t) boot_info->framebuffer_width,
+            .height           = (size_t) boot_info->framebuffer_height,
+            .pitch            = (size_t) boot_info->framebuffer_pitch,
+            .red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size,
+            .red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift,
+            .green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size,
+            .green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift,
+            .blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size,
+            .blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift,
     };
 
     if (!terminal_init(&framebuffer))
@@ -67,7 +67,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         kprintf("Arx kernel: failed to initialize terminal\n");
         panic();
     }
-    
+
     kterm_printf("Arx kernel: terminal initialized\n");
 
     debug_validate_boot(boot_info, cpu_count);

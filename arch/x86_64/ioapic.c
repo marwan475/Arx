@@ -58,14 +58,14 @@ static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
     }
 
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
-    uint32_t ioapic_ver = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
-    uint32_t max_redir  = (ioapic_ver >> 16) & 0xFF;
+    uint32_t ioapic_ver                              = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
+    uint32_t max_redir                               = (ioapic_ver >> 16) & 0xFF;
 
     for (uint32_t pin = 0; pin <= max_redir; pin++)
     {
-        uint8_t low_index = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + pin * 2);
+        uint8_t low_index                                = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + pin * 2);
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
-        uint32_t low = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
+        uint32_t low                                     = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
 
         if ((uint8_t) (low & 0xFF) != vector)
         {
@@ -123,7 +123,7 @@ uint32_t ioapic_register_device(uint32_t gsi)
         return 0;
     }
 
-    uint16_t flags      = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
+    uint16_t flags        = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
     uint8_t  bsp_lapic_id = dispatcher.cpus[0].arch_info.acpi_lapic_id;
 
     route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 0);
@@ -200,8 +200,8 @@ void ioapic_init(void)
     volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
 
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
-    uint32_t ioapic_ver = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
-    uint32_t max_redir  = (ioapic_ver >> 16) & 0xFF;
+    uint32_t ioapic_ver                              = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
+    uint32_t max_redir                               = (ioapic_ver >> 16) & 0xFF;
 
     if (ioapic_ver == 0 || ioapic_ver == 0xFFFFFFFF)
     {
@@ -211,7 +211,7 @@ void ioapic_init(void)
 
     dispatcher.arch_info.ioapic_max_redir   = max_redir;
     dispatcher.arch_info.ioapic_redir_count = 0;
-    dispatcher.vector_base = VECTOR_DEVICE_BASE;
+    dispatcher.vector_base                  = VECTOR_DEVICE_BASE;
 
     uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
     uint8_t  bsp_lapic_id    = dispatcher.cpus[0].arch_info.acpi_lapic_id;
@@ -233,6 +233,5 @@ void ioapic_init(void)
 
     dispatcher.arch_info.ioapic_initialized = 1;
 
-    kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) dispatcher.arch_info.acpi_ioapic_id, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base,
-            (unsigned) max_redir);
+    kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) dispatcher.arch_info.acpi_ioapic_id, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base, (unsigned) max_redir);
 }

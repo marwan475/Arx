@@ -1,6 +1,6 @@
+#include <flanterm.h>
 #include <klib/klib.h>
 #include <klib/printf/printf.h>
-#include <flanterm.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 
@@ -82,7 +82,7 @@ int kterm_vprintf(const char* format, va_list args)
         return 0;
     }
 
-    char out[512];
+    char      out[512];
     const int result = vsnprintf_(out, sizeof(out), format, args);
     if (result <= 0)
     {

@@ -5,12 +5,10 @@
 
 typedef struct arch_info
 {
-
 } arch_info_t;
 
 typedef struct arch_dispatcher_info
 {
-
 } arch_dispatcher_info_t;
 
 #endif

@@ -85,5 +85,4 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
 void arch_init(void);
 
-
 #endif

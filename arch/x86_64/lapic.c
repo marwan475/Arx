@@ -51,11 +51,11 @@ void lapic_init(void)
 
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
-    REG(uint32_t, lapic_base + LAPIC_REG_TPR) = 0;
+    REG(uint32_t, lapic_base + LAPIC_REG_TPR)       = 0;
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_LINT0) = LAPIC_LVT_MASKED;
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_LINT1) = LAPIC_LVT_MASKED;
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_ERROR) = LAPIC_LVT_MASKED;
-    REG(uint32_t, lapic_base + LAPIC_REG_SVR) = LAPIC_SVR_SW_ENABLE | 0xFF;
+    REG(uint32_t, lapic_base + LAPIC_REG_SVR)       = LAPIC_SVR_SW_ENABLE | 0xFF;
 
     kprintf("Arx kernel: cpu %d LAPIC initialized at pa=0x%llx\n", arch_cpu_id(), (unsigned long long) cpu_info->arch_info.acpi_lapic_base_addr);
 }
@@ -69,11 +69,11 @@ void lapic_timer_init(void)
         return;
     }
 
-    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    virt_addr_t       lapic_va   = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
     REG(uint32_t, lapic_base + LAPIC_REG_DIVIDE_CONFIG) = LAPIC_TIMER_DIVIDE_BY_16;
-    REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER) = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
+    REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER)     = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
     REG(uint32_t, lapic_base + LAPIC_REG_INITIAL_COUNT) = LAPIC_TIMER_INITIAL_COUNT;
 }
 
@@ -86,7 +86,7 @@ void lapic_eoi(void)
         return;
     }
 
-    virt_addr_t lapic_va = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    virt_addr_t       lapic_va   = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
     REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;

@@ -25,13 +25,13 @@ struct flanterm_context;
 
 typedef struct dispatcher
 {
-    cpu_info_t             cpus[BOOT_SMP_MAX_CPUS];
-    size_t                 cpu_count;
-    uint32_t               vector_base;
+    cpu_info_t               cpus[BOOT_SMP_MAX_CPUS];
+    size_t                   cpu_count;
+    uint32_t                 vector_base;
     struct flanterm_context* terminal_context;
-    spinlock_t              terminal_lock;
-    arch_type_t            arch;
-    arch_dispatcher_info_t arch_info;
+    spinlock_t               terminal_lock;
+    arch_type_t              arch;
+    arch_dispatcher_info_t   arch_info;
 } dispatcher_t;
 
 extern dispatcher_t dispatcher;
@@ -46,7 +46,7 @@ static _force_inline void panic(void)
 }
 
 // logging
-int kprintf(const char* format, ...);
+int  kprintf(const char* format, ...);
 void kterm_write(const char* msg);
 int  kterm_printf(const char* format, ...);
 int  kterm_vprintf(const char* format, va_list args);

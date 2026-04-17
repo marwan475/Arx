@@ -20,8 +20,8 @@ static void pagefault_debug(registers_t* reg)
     kprintf("  rflags:           0x%llx\n", (unsigned long long) reg->rflags);
     kprintf("  cs:ss:            0x%llx:0x%llx\n", (unsigned long long) reg->cs, (unsigned long long) reg->ss);
     kprintf("  error_code:       0x%llx\n", (unsigned long long) error_code);
-    kprintf("  error bits: P=%u W/R=%u U/S=%u RSVD=%u I/D=%u PK=%u SS=%u SGX=%u\n", (unsigned) ((error_code >> 0) & 1), (unsigned) ((error_code >> 1) & 1), (unsigned) ((error_code >> 2) & 1), (unsigned) ((error_code >> 3) & 1),
-            (unsigned) ((error_code >> 4) & 1), (unsigned) ((error_code >> 5) & 1), (unsigned) ((error_code >> 6) & 1), (unsigned) ((error_code >> 15) & 1));
+    kprintf("  error bits: P=%u W/R=%u U/S=%u RSVD=%u I/D=%u PK=%u SS=%u SGX=%u\n", (unsigned) ((error_code >> 0) & 1), (unsigned) ((error_code >> 1) & 1), (unsigned) ((error_code >> 2) & 1), (unsigned) ((error_code >> 3) & 1), (unsigned) ((error_code >> 4) & 1), (unsigned) ((error_code >> 5) & 1),
+            (unsigned) ((error_code >> 6) & 1), (unsigned) ((error_code >> 15) & 1));
 
     kprintf("  regs: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx\n", (unsigned long long) reg->rax, (unsigned long long) reg->rbx, (unsigned long long) reg->rcx, (unsigned long long) reg->rdx);
     kprintf("        rsi=0x%llx rdi=0x%llx rbp=0x%llx\n", (unsigned long long) reg->rsi, (unsigned long long) reg->rdi, (unsigned long long) reg->rbp);

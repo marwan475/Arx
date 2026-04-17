@@ -74,16 +74,16 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
-        dispatcher.cpus[i].arch_info.acpi_has_lapic      = 0;
+        dispatcher.cpus[i].arch_info.acpi_has_lapic       = 0;
         dispatcher.cpus[i].arch_info.acpi_lapic_base_addr = 0;
-        dispatcher.cpus[i].arch_info.acpi_processor_uid  = 0;
-        dispatcher.cpus[i].arch_info.acpi_lapic_id       = 0;
-        dispatcher.cpus[i].arch_info.acpi_lapic_flags    = 0;
+        dispatcher.cpus[i].arch_info.acpi_processor_uid   = 0;
+        dispatcher.cpus[i].arch_info.acpi_lapic_id        = 0;
+        dispatcher.cpus[i].arch_info.acpi_lapic_flags     = 0;
     }
 
-    entry       = madt->entries;
-    table_end   = (uacpi_u8*) madt + madt->hdr.length;
-    lapic_count = 0;
+    entry              = madt->entries;
+    table_end          = (uacpi_u8*) madt + madt->hdr.length;
+    lapic_count        = 0;
     lapic_stored_count = 0;
 
     while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
@@ -111,11 +111,11 @@ static uacpi_status get_lapics_from_mdat(struct acpi_madt* madt)
 
             if (lapic_stored_count < BOOT_SMP_MAX_CPUS)
             {
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_has_lapic      = 1;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_has_lapic       = 1;
                 dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_processor_uid  = lapic->uid;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_id       = lapic->id;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_flags    = lapic->flags;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_processor_uid   = lapic->uid;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_id        = lapic->id;
+                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_flags     = lapic->flags;
                 lapic_stored_count++;
             }
 

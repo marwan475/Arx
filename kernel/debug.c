@@ -2,12 +2,9 @@
 
 void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
 {
-    KDEBUG("Arx debug: boot summary cpu_count=%llu smp.cpu_count=%llu smp.cpus=0x%llx bsp_id=0x%llx\n", (unsigned long long) cpu_count, (unsigned long long) boot_info->smp.cpu_count,
-           (unsigned long long) boot_info->smp.cpus, (unsigned long long) boot_info->smp.bsp_id);
-    KDEBUG("Arx debug: memmap entries=%llu ptr=0x%llx hhdm_present=%llu hhdm_offset=0x%llx\n", (unsigned long long) boot_info->memmap_entry_count,
-           (unsigned long long) boot_info->memmap_entries, (unsigned long long) boot_info->hhdm_present, (unsigned long long) boot_info->hhdm_offset);
-    KDEBUG("Arx debug: rsdp=0x%llx kernel=[0x%llx..0x%llx) fb=0x%llx\n", (unsigned long long) boot_info->rsdp_address, (unsigned long long) boot_info->kernel_start,
-           (unsigned long long) boot_info->kernel_end, (unsigned long long) boot_info->framebuffer_addr);
+    KDEBUG("Arx debug: boot summary cpu_count=%llu smp.cpu_count=%llu smp.cpus=0x%llx bsp_id=0x%llx\n", (unsigned long long) cpu_count, (unsigned long long) boot_info->smp.cpu_count, (unsigned long long) boot_info->smp.cpus, (unsigned long long) boot_info->smp.bsp_id);
+    KDEBUG("Arx debug: memmap entries=%llu ptr=0x%llx hhdm_present=%llu hhdm_offset=0x%llx\n", (unsigned long long) boot_info->memmap_entry_count, (unsigned long long) boot_info->memmap_entries, (unsigned long long) boot_info->hhdm_present, (unsigned long long) boot_info->hhdm_offset);
+    KDEBUG("Arx debug: rsdp=0x%llx kernel=[0x%llx..0x%llx) fb=0x%llx\n", (unsigned long long) boot_info->rsdp_address, (unsigned long long) boot_info->kernel_start, (unsigned long long) boot_info->kernel_end, (unsigned long long) boot_info->framebuffer_addr);
 
     if (cpu_count > BOOT_SMP_MAX_CPUS)
     {

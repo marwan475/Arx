@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 
-void arch_init(void)
+bool arch_init(void)
 {
+    return false;
 }

@@ -20,6 +20,9 @@ dispatcher_t dispatcher;
 // - acpi rsdp address
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
+
+    bool status = true;
+
     kprintf("Arx kernel: kmain entered\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
@@ -89,8 +92,15 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("Arx debug: <- acpi_init done\n");
 
     KDEBUG("Arx debug: -> arch_init\n");
-    arch_init();
+    status = arch_init();
     KDEBUG("Arx debug: <- arch_init done\n");
+
+    if (!status)
+    {
+        kprintf("Arx kernel: architecture initialization failed\n");
+        kterm_printf("Arx kernel: architecture initialization failed\n");
+        panic();
+    }
 
     KDEBUG("Arx debug: -> run_selftests\n");
     run_selftests();

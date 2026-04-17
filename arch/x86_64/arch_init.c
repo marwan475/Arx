@@ -146,10 +146,12 @@ void init_interrupts()
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
-void arch_init(void)
+bool arch_init(void)
 {
     gdt_init();
     init_interrupts();
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
+
+    return true;
 }

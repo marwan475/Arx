@@ -83,6 +83,6 @@ void arch_disable_interrupts();
 
 uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
-void arch_init(void);
+bool arch_init(void);
 
 #endif

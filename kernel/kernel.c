@@ -20,7 +20,6 @@ dispatcher_t dispatcher;
 // - acpi rsdp address
 void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 {
-
     bool status = true;
 
     kprintf("Arx kernel: kmain entered\n");
@@ -52,20 +51,18 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width, (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch,
             (unsigned long long) boot_info->framebuffer_bpp);
 
-    kernel_framebuffer_t framebuffer = {
-            .address          = (void*) (uintptr_t) boot_info->framebuffer_addr,
-            .width            = (size_t) boot_info->framebuffer_width,
-            .height           = (size_t) boot_info->framebuffer_height,
-            .pitch            = (size_t) boot_info->framebuffer_pitch,
-            .red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size,
-            .red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift,
-            .green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size,
-            .green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift,
-            .blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size,
-            .blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift,
-    };
+    dispatcher.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
+    dispatcher.framebuffer.width            = (size_t) boot_info->framebuffer_width;
+    dispatcher.framebuffer.height           = (size_t) boot_info->framebuffer_height;
+    dispatcher.framebuffer.pitch            = (size_t) boot_info->framebuffer_pitch;
+    dispatcher.framebuffer.red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size;
+    dispatcher.framebuffer.red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift;
+    dispatcher.framebuffer.green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size;
+    dispatcher.framebuffer.green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift;
+    dispatcher.framebuffer.blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size;
+    dispatcher.framebuffer.blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift;
 
-    if (!terminal_init(&framebuffer))
+    if (!terminal_init(&dispatcher.framebuffer))
     {
         kprintf("Arx kernel: failed to initialize terminal\n");
         panic();
@@ -106,7 +103,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     bool waiting_for_other_cpus = true;
 
-    while (waiting_for_other_cpus){
+    while (waiting_for_other_cpus)
+    {
         for (size_t i = 0; i < dispatcher.cpu_count; i++)
         {
             if (!dispatcher.cpus[i].initialized)

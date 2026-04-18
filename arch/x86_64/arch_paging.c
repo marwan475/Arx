@@ -83,13 +83,13 @@ static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
 
 static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t size, bool requires_page_flush)
 {
-    const uint8_t self_cpu_id = arch_cpu_id();
+    const uint8_t      self_cpu_id = arch_cpu_id();
     ipi_request_data_t request_data;
 
-    request_data.type                        = IPI_REQUEST_INVALIDATE_TLB;
-    request_data.tlb_invalidation.va_start   = va_start;
-    request_data.tlb_invalidation.size       = size;
-    request_data.tlb_invalidation.requires_page_flush = requires_page_flush;
+    request_data.type                                   = IPI_REQUEST_INVALIDATE_TLB;
+    request_data.tlb_invalidation.va_start              = va_start;
+    request_data.tlb_invalidation.size                  = size;
+    request_data.tlb_invalidation.requires_page_flush   = requires_page_flush;
     request_data.tlb_invalidation.tlb_invalidation_type = size == PAGE_SIZE ? IPI_TLB_INVALIDATE_SINGLE_PAGE : IPI_TLB_INVALIDATE_RANGE;
 
     for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; ++cpu_id)
@@ -598,8 +598,8 @@ void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size,
 
     const bool     active_pt           = page_table == arch_get_pt();
     const uint64_t range_end           = va_start + size;
-    bool any_changed         = false;
-    bool requires_page_flush = false;
+    bool           any_changed         = false;
+    bool           requires_page_flush = false;
 
     (void) x86_64_walk_page_table(va_start, size, page_table, false, NULL, X86_64_WALK_OP_UNMAP, 0, 0, &any_changed, &requires_page_flush);
 

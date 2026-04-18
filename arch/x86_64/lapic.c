@@ -118,7 +118,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
     spinlock_acquire(&target_cpu_info->ipi_lock);
     if (request_data != NULL)
     {
-        target_cpu_info->ipi_request_data = *((const ipi_request_data_t*) request_data);
+        target_cpu_info->ipi_request_data      = *((const ipi_request_data_t*) request_data);
         target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
     }
     else
@@ -127,8 +127,8 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
         target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
     }
 
-    virt_addr_t       lapic_va   = pa_to_hhdm(source_cpu_info->arch_info.acpi_lapic_base_addr, source_cpu_info->numa_node->zone.hhdm_present, source_cpu_info->numa_node->zone.hhdm_offset);
-    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+    virt_addr_t       lapic_va    = pa_to_hhdm(source_cpu_info->arch_info.acpi_lapic_base_addr, source_cpu_info->numa_node->zone.hhdm_present, source_cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base  = (volatile uint8_t*) (uintptr_t) lapic_va;
     const uint32_t    destination = ((uint32_t) target_cpu_info->arch_info.acpi_lapic_id) << 24;
 
     while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)

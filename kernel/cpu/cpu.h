@@ -29,15 +29,15 @@ typedef enum ipi_tlb_invalidation_type
 
 typedef struct ipi_tlb_invalidation_data
 {
-    virt_addr_t                  va_start;
-    uint64_t                     size;
-    bool                         requires_page_flush;
-    ipi_tlb_invalidation_type_t  tlb_invalidation_type;
+    virt_addr_t                 va_start;
+    uint64_t                    size;
+    bool                        requires_page_flush;
+    ipi_tlb_invalidation_type_t tlb_invalidation_type;
 } ipi_tlb_invalidation_data_t;
 
 typedef struct ipi_request_data
 {
-    ipi_request_type_t type;
+    ipi_request_type_t          type;
     ipi_tlb_invalidation_data_t tlb_invalidation;
 } ipi_request_data_t;
 

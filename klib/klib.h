@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <terminal/terminal.h>
 
 #define _force_inline inline __attribute__((always_inline))
 
@@ -30,6 +31,7 @@ typedef struct dispatcher
 {
     cpu_info_t               cpus[BOOT_SMP_MAX_CPUS];
     size_t                   cpu_count;
+    kernel_framebuffer_t     framebuffer;
     uint32_t                 vector_base;
     struct flanterm_context* terminal_context;
     spinlock_t               terminal_lock;

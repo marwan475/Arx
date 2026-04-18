@@ -91,3 +91,47 @@ void lapic_eoi(void)
 
     REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;
 }
+
+// we lock target ipi lock but handler needs to unclock it
+void send_ipi(uint8_t target_cpu_id, uint8_t request_type)
+{
+    cpu_info_t* source_cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!source_cpu_info->arch_info.acpi_has_lapic || source_cpu_info->arch_info.acpi_lapic_base_addr == 0)
+    {
+        return;
+    }
+
+    if (target_cpu_id >= dispatcher.cpu_count)
+    {
+        kprintf("Arx kernel: send_ipi rejected invalid target cpu id %u\n", (unsigned) target_cpu_id);
+        return;
+    }
+
+    cpu_info_t* target_cpu_info = &dispatcher.cpus[target_cpu_id];
+    if (!target_cpu_info->arch_info.acpi_has_lapic)
+    {
+        kprintf("Arx kernel: send_ipi rejected target cpu %u without LAPIC\n", (unsigned) target_cpu_id);
+        return;
+    }
+
+    spinlock_acquire(&target_cpu_info->ipi_lock);
+    target_cpu_info->ipi_request = (ipi_request_type_t) request_type;
+
+    virt_addr_t       lapic_va   = pa_to_hhdm(source_cpu_info->arch_info.acpi_lapic_base_addr, source_cpu_info->numa_node->zone.hhdm_present, source_cpu_info->numa_node->zone.hhdm_offset);
+    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+    const uint32_t    destination = ((uint32_t) target_cpu_info->arch_info.acpi_lapic_id) << 24;
+
+    while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
+    {
+        arch_pause();
+    }
+
+    REG(uint32_t, lapic_base + LAPIC_REG_ICR_HIGH) = destination;
+    REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW)  = LAPIC_IPI_VECTOR;
+
+    while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
+    {
+        arch_pause();
+    }
+}

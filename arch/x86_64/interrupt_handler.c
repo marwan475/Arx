@@ -29,6 +29,31 @@ static void pagefault_debug(registers_t* reg)
     kprintf("        r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n", (unsigned long long) reg->r12, (unsigned long long) reg->r13, (unsigned long long) reg->r14, (unsigned long long) reg->r15);
 }
 
+// cpus ipi is locked when this is called. so handler needs to unlock it
+void handle_ipi(registers_t* reg)
+{
+    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+
+    if (!cpu_info->arch_info.acpi_has_lapic)
+    {
+        return;
+    }
+
+    if (reg->interrupt_number != LAPIC_IPI_VECTOR)
+    {
+        return;
+    }
+
+    ipi_request_type_t request_type = IPI_REQUEST_NONE;
+
+    request_type = cpu_info->ipi_request;
+
+    kprintf("Arx kernel: cpu %d received IPI with request type %d\n", arch_cpu_id(), (int) request_type);
+
+    cpu_info->ipi_request = IPI_REQUEST_NONE;
+    spinlock_release(&cpu_info->ipi_lock);
+}
+
 void ISRHANDLER(registers_t* reg)
 {
     if (reg->interrupt_number >= 32)
@@ -38,6 +63,12 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
+        return;
+    }
+
+    if (reg->interrupt_number == LAPIC_IPI_VECTOR)
+    {
+        handle_ipi(reg);
         return;
     }
 

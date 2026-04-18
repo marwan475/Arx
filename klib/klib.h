@@ -11,7 +11,10 @@
 
 #define _force_inline inline __attribute__((always_inline))
 
+#ifndef SPINLOCK_T_DEFINED
+#define SPINLOCK_T_DEFINED
 typedef _Atomic uint8_t spinlock_t;
+#endif
 
 typedef enum arch_type
 {

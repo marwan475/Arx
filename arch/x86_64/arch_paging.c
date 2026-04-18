@@ -257,7 +257,10 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     }
 
     pt[pt_index] = new_pte;
-    x86_64_invlpg(va);
+    if (page_table == arch_get_pt())
+    {
+        x86_64_invlpg(va);
+    }
 }
 
 void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
@@ -323,7 +326,10 @@ void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_tabl
     }
 
     pt[pt_index] = 0;
-    x86_64_invlpg(va);
+    if (page_table == arch_get_pt())
+    {
+        x86_64_invlpg(va);
+    }
 }
 
 void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)

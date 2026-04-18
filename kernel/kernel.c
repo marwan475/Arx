@@ -69,25 +69,25 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_validate_boot(boot_info, cpu_count);
 
-    KDEBUG("Arx debug: -> cpus_init(%llu)\n", (unsigned long long) cpu_count);
+    KDEBUG("-> cpus_init(%llu)\n", (unsigned long long) cpu_count);
     cpus_init(cpu_count);
-    KDEBUG("Arx debug: <- cpus_init done dispatcher.cpu_count=%llu\n", (unsigned long long) dispatcher.cpu_count);
+    KDEBUG("<- cpus_init done dispatcher.cpu_count=%llu\n", (unsigned long long) dispatcher.cpu_count);
 
-    KDEBUG("Arx debug: -> pmm_init\n");
+    KDEBUG("-> pmm_init\n");
     pmm_init(boot_info);
-    KDEBUG("Arx debug: <- pmm_init done\n");
+    KDEBUG("<- pmm_init done\n");
 
-    KDEBUG("Arx debug: -> vmm_init\n");
+    KDEBUG("-> vmm_init\n");
     vmm_init(boot_info);
-    KDEBUG("Arx debug: <- vmm_init done\n");
+    KDEBUG("<- vmm_init done\n");
 
-    KDEBUG("Arx debug: -> acpi_init(rsdp=0x%llx)\n", (unsigned long long) boot_info->rsdp_address);
+    KDEBUG("-> acpi_init(rsdp=0x%llx)\n", (unsigned long long) boot_info->rsdp_address);
     acpi_init(boot_info->rsdp_address);
-    KDEBUG("Arx debug: <- acpi_init done\n");
+    KDEBUG("<- acpi_init done\n");
 
-    KDEBUG("Arx debug: -> arch_init\n");
+    KDEBUG("-> arch_init\n");
     status = arch_init();
-    KDEBUG("Arx debug: <- arch_init done\n");
+    KDEBUG("<- arch_init done\n");
 
     if (!status)
     {
@@ -113,9 +113,9 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         }
     }
 
-    KDEBUG("Arx debug: -> run_selftests\n");
+    KDEBUG("-> run_selftests\n");
     run_selftests();
-    KDEBUG("Arx debug: <- run_selftests done\n");
+    KDEBUG("<- run_selftests done\n");
 
     kterm_printf("Arx kernel: initialization complete\n");
 

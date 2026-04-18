@@ -47,9 +47,12 @@ Frees | pmm_free(addr)
 Virtual memory managment
 - page table managment apis (map/unmap/protect)
 - each arch implements paging api
-- also implement arch_map/unmap/protect_range functions
-    - optimization to avoid redundant page table walks , cache flushes and batching flushes
-    - instead of calling arch_map/unmap/protect_page on each page in a range which would be much slower
+- x86_64 paging uses a shared page-table walker for map/unmap/protect on both single-page and range paths
+    - keeps page-table traversal behavior consistent across operations
+    - range functions batch work to avoid redundant table walks and reduce flush overhead
+- tlb sync on x86_64 includes SMP shootdown for CPUs running the same active page table
+    - local core performs invlpg or non-global CR3 reload depending on change type
+    - remote cores receive an IPI request with typed request data (single-page or range invalidation)
 - vmm paging apis are wrappers over arch specific implmentation that lock on address space
 
 Virtual address space management

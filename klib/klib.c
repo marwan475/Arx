@@ -1,4 +1,3 @@
-#include <flanterm.h>
 #include <klib/klib.h>
 #include <klib/printf/printf.h>
 #include <memory/pmm.h>
@@ -46,11 +45,11 @@ void kterm_write(const char* msg)
             if (c == '\n' && previous != '\r')
             {
                 static const char crlf[] = "\r\n";
-                flanterm_write(dispatcher.terminal_context, crlf, 2);
+                terminal_write(crlf, 2);
             }
             else
             {
-                flanterm_write(dispatcher.terminal_context, &c, 1);
+                terminal_write(&c, 1);
             }
 
             previous = c;

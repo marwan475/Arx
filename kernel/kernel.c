@@ -48,9 +48,6 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    kprintf("Arx kernel: framebuffer addr=0x%llx size=%llu x %llu pitch=%llu bpp=%llu\n", (unsigned long long) boot_info->framebuffer_addr, (unsigned long long) boot_info->framebuffer_width, (unsigned long long) boot_info->framebuffer_height, (unsigned long long) boot_info->framebuffer_pitch,
-            (unsigned long long) boot_info->framebuffer_bpp);
-
     dispatcher.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
     dispatcher.framebuffer.width            = (size_t) boot_info->framebuffer_width;
     dispatcher.framebuffer.height           = (size_t) boot_info->framebuffer_height;

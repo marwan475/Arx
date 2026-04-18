@@ -60,7 +60,6 @@ typedef struct zone
 typedef struct numa_node
 {
     zone_t  zone;
-    uint8_t cpu_ids[BOOT_SMP_MAX_CPUS];
     size_t  cpu_count;
 } numa_node_t;
 

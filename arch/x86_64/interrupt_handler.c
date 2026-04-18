@@ -1,6 +1,47 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 
+void blue_screen(void)
+{
+    const kernel_framebuffer_t* fb = &dispatcher.framebuffer;
+
+    if (fb->address == NULL || fb->width == 0 || fb->height == 0 || fb->pitch == 0)
+    {
+        return;
+    }
+
+    size_t bytes_per_pixel = fb->pitch / fb->width;
+    if (bytes_per_pixel == 0)
+    {
+        bytes_per_pixel = 4;
+    }
+
+    uint32_t pixel = 0;
+    if (fb->blue_mask_size >= 32)
+    {
+        pixel = 0xFFFFFFFFu;
+    }
+    else if (fb->blue_mask_size > 0)
+    {
+        pixel = ((1u << fb->blue_mask_size) - 1u) << fb->blue_mask_shift;
+    }
+
+    uint8_t* base = (uint8_t*) fb->address;
+
+    for (size_t y = 0; y < fb->height; y++)
+    {
+        uint8_t* row = base + (y * fb->pitch);
+        for (size_t x = 0; x < fb->width; x++)
+        {
+            uint8_t* px = row + (x * bytes_per_pixel);
+            for (size_t b = 0; b < bytes_per_pixel; b++)
+            {
+                px[b] = (uint8_t) ((pixel >> (8 * b)) & 0xFFu);
+            }
+        }
+    }
+}
+
 static void pagefault_debug(registers_t* reg)
 {
     uint64_t cr2;
@@ -90,6 +131,11 @@ void ISRHANDLER(registers_t* reg)
     {
         handle_ipi(reg);
         return;
+    }
+
+    if (reg->interrupt_number < 32)
+    {
+        blue_screen();
     }
 
     if (reg->interrupt_number == 14)

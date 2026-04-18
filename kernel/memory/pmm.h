@@ -59,8 +59,8 @@ typedef struct zone
 
 typedef struct numa_node
 {
-    zone_t  zone;
-    size_t  cpu_count;
+    zone_t zone;
+    size_t cpu_count;
 } numa_node_t;
 
 void pmm_init(struct boot_info* boot_info);

@@ -47,30 +47,25 @@ void handle_ipi(registers_t* reg)
 
     request_type = cpu_info->ipi_request_data.type;
 
-    kprintf("Arx kernel: cpu %d received IPI with request type %d\n", arch_cpu_id(), (int) request_type);
-
     if (request_type == IPI_REQUEST_INVALIDATE_TLB)
     {
         const ipi_request_data_t* req = &cpu_info->ipi_request_data;
 
-        if (req->tlb_invalidation.page_table == arch_get_pt())
+        if (req->tlb_invalidation.tlb_invalidation_type == IPI_TLB_INVALIDATE_SINGLE_PAGE)
         {
-            if (req->tlb_invalidation.tlb_invalidation_type == IPI_TLB_INVALIDATE_SINGLE_PAGE)
+            x86_64_invlpg(req->tlb_invalidation.va_start);
+        }
+        else if (req->tlb_invalidation.requires_page_flush)
+        {
+            const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
+            for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
             {
-                x86_64_invlpg(req->tlb_invalidation.va_start);
+                x86_64_invlpg(va);
             }
-            else if (req->tlb_invalidation.requires_page_flush)
-            {
-                const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
-                for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
-                {
-                    x86_64_invlpg(va);
-                }
-            }
-            else
-            {
-                x86_64_flush_active_tlb_non_global();
-            }
+        }
+        else
+        {
+            x86_64_flush_active_tlb_non_global();
         }
     }
 

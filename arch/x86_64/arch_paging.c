@@ -87,7 +87,6 @@ static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t
     ipi_request_data_t request_data;
 
     request_data.type                        = IPI_REQUEST_INVALIDATE_TLB;
-    request_data.tlb_invalidation.page_table = page_table;
     request_data.tlb_invalidation.va_start   = va_start;
     request_data.tlb_invalidation.size       = size;
     request_data.tlb_invalidation.requires_page_flush = requires_page_flush;
@@ -107,8 +106,10 @@ static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t
             continue;
         }
 
+        // send ipi locks the targets ipi lock. its handler will release the lock
         send_ipi(cpu_id, (uint8_t) IPI_REQUEST_INVALIDATE_TLB, &request_data);
 
+        // wait on targets ipi lock. the lock will be released after the ipi is handled
         spinlock_acquire(&cpu_info->ipi_lock);
         spinlock_release(&cpu_info->ipi_lock);
     }

@@ -50,7 +50,7 @@ Virtual memory managment
 - x86_64 paging uses a shared page-table walker for map/unmap/protect on both single-page and range paths
     - keeps page-table traversal behavior consistent across operations
     - range functions batch work to avoid redundant table walks and reduce flush overhead
-- tlb sync on x86_64 includes SMP shootdown for CPUs running the same active page table
+- smp sync on x86_64 includes TLB shootdown for CPUs running the same active page table
     - local core performs invlpg or non-global CR3 reload depending on change type
     - remote cores receive an IPI request with typed request data (single-page or range invalidation)
 - vmm paging apis are wrappers over arch specific implmentation that lock on address space

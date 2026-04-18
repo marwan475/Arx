@@ -29,7 +29,6 @@ typedef enum ipi_tlb_invalidation_type
 
 typedef struct ipi_tlb_invalidation_data
 {
-    phys_addr_t                  page_table;
     virt_addr_t                  va_start;
     uint64_t                     size;
     bool                         requires_page_flush;

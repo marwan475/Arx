@@ -93,7 +93,7 @@ void lapic_eoi(void)
 }
 
 // we lock target ipi lock but handler needs to unclock it
-void send_ipi(uint8_t target_cpu_id, uint8_t request_type)
+void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_data)
 {
     cpu_info_t* source_cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
@@ -116,7 +116,16 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type)
     }
 
     spinlock_acquire(&target_cpu_info->ipi_lock);
-    target_cpu_info->ipi_request = (ipi_request_type_t) request_type;
+    if (request_data != NULL)
+    {
+        target_cpu_info->ipi_request_data = *((const ipi_request_data_t*) request_data);
+        target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
+    }
+    else
+    {
+        memset(&target_cpu_info->ipi_request_data, 0, sizeof(target_cpu_info->ipi_request_data));
+        target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
+    }
 
     virt_addr_t       lapic_va   = pa_to_hhdm(source_cpu_info->arch_info.acpi_lapic_base_addr, source_cpu_info->numa_node->zone.hhdm_present, source_cpu_info->numa_node->zone.hhdm_offset);
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;

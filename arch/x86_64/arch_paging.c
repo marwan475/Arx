@@ -42,12 +42,12 @@
     ((1ULL << X86_64_PTE_BIT_WRITABLE) | (1ULL << X86_64_PTE_BIT_USER) | (1ULL << X86_64_PTE_BIT_PAGE_WRITE_THROUGH) | (1ULL << X86_64_PTE_BIT_PAGE_CACHE_DISABLE) | (1ULL << X86_64_PTE_BIT_ACCESSED) | (1ULL << X86_64_PTE_BIT_DIRTY) | (1ULL << X86_64_PTE_BIT_PAGE_SIZE_OR_PAT)                        \
      | (1ULL << X86_64_PTE_BIT_GLOBAL) | X86_64_PTE_NO_EXECUTE)
 
-static inline void x86_64_invlpg(virt_addr_t va)
+void x86_64_invlpg(virt_addr_t va)
 {
     __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
 }
 
-static inline void x86_64_flush_active_tlb_non_global(void)
+void x86_64_flush_active_tlb_non_global(void)
 {
     uint64_t cr3 = 0;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -81,9 +81,17 @@ static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
     return (va_start & X86_64_CANONICAL_HIGH_MASK) == (last_va & X86_64_CANONICAL_HIGH_MASK);
 }
 
-static void tlb_shootdown(phys_addr_t page_table)
+static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t size, bool requires_page_flush)
 {
     const uint8_t self_cpu_id = arch_cpu_id();
+    ipi_request_data_t request_data;
+
+    request_data.type                        = IPI_REQUEST_INVALIDATE_TLB;
+    request_data.tlb_invalidation.page_table = page_table;
+    request_data.tlb_invalidation.va_start   = va_start;
+    request_data.tlb_invalidation.size       = size;
+    request_data.tlb_invalidation.requires_page_flush = requires_page_flush;
+    request_data.tlb_invalidation.tlb_invalidation_type = size == PAGE_SIZE ? IPI_TLB_INVALIDATE_SINGLE_PAGE : IPI_TLB_INVALIDATE_RANGE;
 
     for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; ++cpu_id)
     {
@@ -99,7 +107,10 @@ static void tlb_shootdown(phys_addr_t page_table)
             continue;
         }
 
-        send_ipi(cpu_id, (uint8_t) IPI_REQUEST_INVALIDATE_TLB);
+        send_ipi(cpu_id, (uint8_t) IPI_REQUEST_INVALIDATE_TLB, &request_data);
+
+        spinlock_acquire(&cpu_info->ipi_lock);
+        spinlock_release(&cpu_info->ipi_lock);
     }
 }
 
@@ -110,7 +121,7 @@ static void x86_64_sync_tlb_single_page(virt_addr_t va, phys_addr_t page_table)
         x86_64_invlpg(va);
     }
 
-    tlb_shootdown(page_table);
+    tlb_shootdown(page_table, va, PAGE_SIZE, true);
 }
 
 static void x86_64_sync_tlb_range(virt_addr_t va_start, virt_addr_t range_end, bool any_changed, bool active_pt, bool requires_page_flush, phys_addr_t page_table)
@@ -135,7 +146,7 @@ static void x86_64_sync_tlb_range(virt_addr_t va_start, virt_addr_t range_end, b
         }
     }
 
-    tlb_shootdown(page_table);
+    tlb_shootdown(page_table, va_start, range_end - va_start, requires_page_flush);
 }
 
 static bool x86_64_validate_single_page_op(const char* op, virt_addr_t va, phys_addr_t page_table, bool requires_pa, phys_addr_t pa)

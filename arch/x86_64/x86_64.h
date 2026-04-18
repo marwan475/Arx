@@ -236,7 +236,9 @@ typedef struct arch_dispatcher_info
 void     lapic_init(void);
 void     lapic_timer_init(void);
 void     lapic_eoi(void);
-void     send_ipi(uint8_t target_cpu_id, uint8_t request_type);
+void     send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_data);
+void     x86_64_invlpg(uint64_t va);
+void     x86_64_flush_active_tlb_non_global(void);
 void     ioapic_init(void);
 void     ioapic_mask_vector(uint8_t vector);
 void     ioapic_unmask_vector(uint8_t vector);

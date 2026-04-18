@@ -151,6 +151,8 @@ bool arch_init(void)
     gdt_init();
     init_interrupts();
 
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
+
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 
     return true;

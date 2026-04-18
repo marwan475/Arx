@@ -102,13 +102,27 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
+    arch_smp_init(boot_info);
+
+    bool waiting_for_other_cpus = true;
+
+    while (waiting_for_other_cpus){
+        for (size_t i = 0; i < dispatcher.cpu_count; i++)
+        {
+            if (!dispatcher.cpus[i].initialized)
+            {
+                waiting_for_other_cpus = true;
+                break;
+            }
+            waiting_for_other_cpus = false;
+        }
+    }
+
     KDEBUG("Arx debug: -> run_selftests\n");
     run_selftests();
     KDEBUG("Arx debug: <- run_selftests done\n");
 
     kterm_printf("Arx kernel: initialization complete\n");
-
-    arch_smp_init(boot_info);
 
     for (;;)
     {
@@ -119,9 +133,9 @@ void smp_kmain(void)
 {
     kprintf("Arx kernel: cpu %d entered smp_kmain\n", arch_cpu_id());
 
-    kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
-
     arch_init();
+
+    kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
 
     for (;;)
     {

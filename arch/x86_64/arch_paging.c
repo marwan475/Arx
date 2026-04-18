@@ -54,8 +54,89 @@ static inline void x86_64_flush_active_tlb_non_global(void)
     __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
 }
 
-static bool x86_64_is_page_aligned(uint64_t value);
-static bool x86_64_is_pa_encodable(phys_addr_t pa);
+static bool x86_64_is_page_aligned(uint64_t value)
+{
+    return (value & X86_64_PAGE_OFFSET_MASK) == 0;
+}
+
+static bool x86_64_is_pa_encodable(phys_addr_t pa)
+{
+    return (pa & ~X86_64_PTE_ADDR_MASK) == 0;
+}
+
+static bool x86_64_is_canonical_va(virt_addr_t va)
+{
+    const uint64_t high_bits = va & X86_64_CANONICAL_HIGH_MASK;
+    return high_bits == 0 || high_bits == X86_64_CANONICAL_HIGH_MASK;
+}
+
+static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
+{
+    const virt_addr_t last_va = va_start + size - PAGE_SIZE;
+    if (!x86_64_is_canonical_va(va_start) || !x86_64_is_canonical_va(last_va))
+    {
+        return false;
+    }
+
+    return (va_start & X86_64_CANONICAL_HIGH_MASK) == (last_va & X86_64_CANONICAL_HIGH_MASK);
+}
+
+static void tlb_shootdown(phys_addr_t page_table)
+{
+    const uint8_t self_cpu_id = arch_cpu_id();
+
+    for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; ++cpu_id)
+    {
+        cpu_info_t* cpu_info = &dispatcher.cpus[cpu_id];
+
+        if (cpu_id == self_cpu_id || !cpu_info->initialized)
+        {
+            continue;
+        }
+
+        if (cpu_info->address_space == NULL || cpu_info->address_space->pt != page_table)
+        {
+            continue;
+        }
+
+        send_ipi(cpu_id, (uint8_t) IPI_REQUEST_INVALIDATE_TLB);
+    }
+}
+
+static void x86_64_sync_tlb_single_page(virt_addr_t va, phys_addr_t page_table)
+{
+    if (page_table == arch_get_pt())
+    {
+        x86_64_invlpg(va);
+    }
+
+    tlb_shootdown(page_table);
+}
+
+static void x86_64_sync_tlb_range(virt_addr_t va_start, virt_addr_t range_end, bool any_changed, bool active_pt, bool requires_page_flush, phys_addr_t page_table)
+{
+    if (!any_changed)
+    {
+        return;
+    }
+
+    if (active_pt)
+    {
+        if (requires_page_flush)
+        {
+            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
+            {
+                x86_64_invlpg(flush_va);
+            }
+        }
+        else
+        {
+            x86_64_flush_active_tlb_non_global();
+        }
+    }
+
+    tlb_shootdown(page_table);
+}
 
 phys_addr_t arch_get_pt(void)
 {
@@ -95,33 +176,6 @@ void arch_set_pt(phys_addr_t pt)
     }
 
     __asm__ volatile("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
-}
-
-static bool x86_64_is_page_aligned(uint64_t value)
-{
-    return (value & X86_64_PAGE_OFFSET_MASK) == 0;
-}
-
-static bool x86_64_is_pa_encodable(phys_addr_t pa)
-{
-    return (pa & ~X86_64_PTE_ADDR_MASK) == 0;
-}
-
-static bool x86_64_is_canonical_va(virt_addr_t va)
-{
-    const uint64_t high_bits = va & X86_64_CANONICAL_HIGH_MASK;
-    return high_bits == 0 || high_bits == X86_64_CANONICAL_HIGH_MASK;
-}
-
-static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
-{
-    const virt_addr_t last_va = va_start + size - PAGE_SIZE;
-    if (!x86_64_is_canonical_va(va_start) || !x86_64_is_canonical_va(last_va))
-    {
-        return false;
-    }
-
-    return (va_start & X86_64_CANONICAL_HIGH_MASK) == (last_va & X86_64_CANONICAL_HIGH_MASK);
 }
 
 static uint64_t x86_64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t level_shift)
@@ -257,10 +311,7 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     }
 
     pt[pt_index] = new_pte;
-    if (page_table == arch_get_pt())
-    {
-        x86_64_invlpg(va);
-    }
+    x86_64_sync_tlb_single_page(va, page_table);
 }
 
 void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
@@ -326,10 +377,7 @@ void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_tabl
     }
 
     pt[pt_index] = 0;
-    if (page_table == arch_get_pt())
-    {
-        x86_64_invlpg(va);
-    }
+    x86_64_sync_tlb_single_page(va, page_table);
 }
 
 void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
@@ -447,20 +495,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     }
 
 out:
-    if (active_pt && any_changed)
-    {
-        if (requires_page_flush)
-        {
-            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
-            {
-                x86_64_invlpg(flush_va);
-            }
-        }
-        else
-        {
-            x86_64_flush_active_tlb_non_global();
-        }
-    }
+    x86_64_sync_tlb_range(va_start, range_end, any_changed, active_pt, requires_page_flush, page_table);
 }
 
 void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table)
@@ -569,20 +604,7 @@ void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size,
         }
     }
 
-    if (active_pt && any_changed)
-    {
-        if (requires_page_flush)
-        {
-            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
-            {
-                x86_64_invlpg(flush_va);
-            }
-        }
-        else
-        {
-            x86_64_flush_active_tlb_non_global();
-        }
-    }
+    x86_64_sync_tlb_range(va_start, range_end, any_changed, active_pt, requires_page_flush, page_table);
 }
 
 void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table)
@@ -654,10 +676,7 @@ void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_add
     }
 
     pt[pt_index] = new_pte;
-    if (page_table == arch_get_pt())
-    {
-        x86_64_invlpg(va);
-    }
+    x86_64_sync_tlb_single_page(va, page_table);
 }
 
 void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
@@ -774,20 +793,7 @@ void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t siz
         }
     }
 
-    if (active_pt && any_changed)
-    {
-        if (requires_page_flush)
-        {
-            for (virt_addr_t flush_va = va_start; flush_va < range_end; flush_va += PAGE_SIZE)
-            {
-                x86_64_invlpg(flush_va);
-            }
-        }
-        else
-        {
-            x86_64_flush_active_tlb_non_global();
-        }
-    }
+    x86_64_sync_tlb_range(va_start, range_end, any_changed, active_pt, requires_page_flush, page_table);
 }
 
 phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table)

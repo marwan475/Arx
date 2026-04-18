@@ -23,6 +23,7 @@ typedef enum ipi_request_type
 typedef struct cpu_info
 {
     uint8_t            id;
+    bool               initialized;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;
     arch_info_t        arch_info;

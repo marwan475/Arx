@@ -353,3 +353,46 @@ void vfree(void* ptr)
     vmm_unmap_range(region_start, region_size, address_space);
     vmm_free_region(address_space, region_start);
 }
+
+void* kmalloc(size_t size)
+{
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL)
+    {
+        return NULL;
+    }
+
+    if (size == 0)
+    {
+        return NULL;
+    }
+
+    kernel_heap_t* heap = &cpu->numa_node->heap;
+
+    spinlock_acquire(&heap->lock);
+    void* ptr = heap_alloc(heap, size);
+    spinlock_release(&heap->lock);
+
+    return ptr;
+}
+
+void kfree(void* ptr)
+{
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL)
+    {
+        return;
+    }
+
+    if (ptr == NULL)
+    {
+        return;
+    }
+
+    kernel_heap_t* heap = &cpu->numa_node->heap;
+
+    spinlock_acquire(&heap->lock);
+    heap_free(heap, ptr);
+    spinlock_release(&heap->lock);
+}
+    

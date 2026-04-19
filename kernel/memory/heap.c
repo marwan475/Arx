@@ -262,6 +262,8 @@ void heap_init(void)
 {
     for (size_t i = 0; i < dispatcher.numa_node_count; i++)
     {
+        dispatcher.numa_nodes[i].heap.lock = 0;
+
         for (size_t j = 0; j < OBJECT_SIZE_CLASS_COUNT; j++)
         {
             cache_init(&dispatcher.numa_nodes[i].heap.caches[j], heap_object_sizes[j]);

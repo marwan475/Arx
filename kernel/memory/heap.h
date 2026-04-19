@@ -2,6 +2,7 @@
 #define HEAP_H
 
 #include <boot/boot.h>
+#include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -45,6 +46,7 @@ typedef struct cache {
 } cache_t;
 
 typedef struct kernel_heap {
+    spinlock_t lock;
     cache_t caches[OBJECT_SIZE_CLASS_COUNT];
 }kernel_heap_t;
 

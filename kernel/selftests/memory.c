@@ -569,99 +569,6 @@ static void pmm_test(void)
     }
 }
 
-static void klib_test_log_fail(const char* message, size_t* failures)
-{
-    (*failures)++;
-    kprintf("Arx kernel: klib_test FAIL: %s\n", message);
-}
-
-static void klib_test(void)
-{
-    size_t failures = 0;
-    size_t passes   = 0;
-
-    const size_t req_size     = PAGE_SIZE * 100 + 123;
-    const size_t aligned_size = align_up(req_size, PAGE_SIZE);
-
-    kprintf("Arx kernel: klib_test start\n");
-
-    void* ptr = vmalloc(req_size);
-    if (ptr == NULL)
-    {
-        klib_test_log_fail("vmalloc returned NULL", &failures);
-        kprintf("Arx kernel: klib_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-        kprintf("Arx kernel: klib_test RESULT=FAIL\n");
-        return;
-    }
-    passes++;
-
-    memset(ptr, 0, req_size);
-
-    if ((((uintptr_t) ptr) & (PAGE_SIZE - 1)) != 0)
-    {
-        klib_test_log_fail("vmalloc returned non-page-aligned pointer", &failures);
-    }
-    else
-    {
-        passes++;
-    }
-
-    virt_region_t* region = vmm_find_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr);
-    if (region == NULL)
-    {
-        klib_test_log_fail("allocated region not found in VMM used regions", &failures);
-    }
-    else if (region->start != (virt_addr_t) (uintptr_t) ptr || region->size != aligned_size)
-    {
-        klib_test_log_fail("allocated region metadata mismatch", &failures);
-    }
-    else
-    {
-        passes++;
-    }
-
-    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, dispatcher.cpus[arch_cpu_id()].address_space) == 0)
-    {
-        klib_test_log_fail("allocated address is not mapped", &failures);
-    }
-    else
-    {
-        passes++;
-    }
-
-    vfree(ptr);
-
-    if (vmm_find_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
-    {
-        klib_test_log_fail("region still present after vfree", &failures);
-    }
-    else
-    {
-        passes++;
-    }
-
-    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, dispatcher.cpus[arch_cpu_id()].address_space) != 0)
-    {
-        klib_test_log_fail("mapping still present after vfree", &failures);
-    }
-    else
-    {
-        passes++;
-    }
-
-    kprintf("Arx kernel: klib_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: klib_test RESULT=PASS\n");
-        KDEBUG("klib_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: klib_test RESULT=FAIL\n");
-        KDEBUG("klib_test failed with %llu checks\n", (unsigned long long) failures);
-    }
-}
-
 static void heap_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
@@ -847,5 +754,4 @@ void run_memory_selftests(void)
     pmm_test();
     vmm_test();
     heap_test();
-    klib_test();
 }

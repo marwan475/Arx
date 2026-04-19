@@ -10,7 +10,7 @@ size_t MAX_REGIONS;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
-virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
+static virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
 {
     for (size_t i = 0; i < MAX_REGIONS; i++)
     {
@@ -25,7 +25,7 @@ virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
     return NULL;
 }
 
-void free_region_struct(virt_region_t* region, size_t* metadata_count)
+static void free_region_struct(virt_region_t* region, size_t* metadata_count)
 {
     if (region == NULL || !region->allocated)
     {
@@ -35,7 +35,7 @@ void free_region_struct(virt_region_t* region, size_t* metadata_count)
     (*metadata_count)--;
 }
 
-void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
+static void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
 {
     new_region->next = *list_head;
     if (*list_head != NULL)
@@ -45,7 +45,7 @@ void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
     *list_head = new_region;
 }
 
-void remove_from_regions_list(virt_region_t* region, virt_region_t** list_head)
+static void remove_from_regions_list(virt_region_t* region, virt_region_t** list_head)
 {
     if (region->prev != NULL)
     {
@@ -141,7 +141,7 @@ static virt_region_t* handle_middle_split_case(virt_region_t* free, virt_addr_t 
     return right_region->next;
 }
 
-void remove_existing_mappings(virt_region_t* free_regions, virt_region_t* used_regions, void* metadata, size_t* metadata_count)
+static void remove_existing_mappings(virt_region_t* free_regions, virt_region_t* used_regions, void* metadata, size_t* metadata_count)
 {
     if (free_regions == NULL || used_regions == NULL || metadata == NULL || metadata_count == NULL)
     {

@@ -25,7 +25,7 @@ static inline phys_addr_t pfn_to_pa(uint64_t pfn)
 }
 
 // this function should only be used before main pmm is setup
-uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
+static uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
 {
     for (size_t i = 0; i < zone->region_count; i++)
     {
@@ -56,7 +56,7 @@ static _force_inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
     return pfn ^ order_size(order);
 }
 
-void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
+static void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
 {
     page_t* block = &zone->buddy_metadata[pfn];
     block->flags  = PMM_PAGE_FREE;
@@ -77,7 +77,7 @@ void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
     }
 }
 
-void buddy_seed_region(zone_t* zone, size_t region_index)
+static void buddy_seed_region(zone_t* zone, size_t region_index)
 {
     uint64_t start_pfn       = zone->regions[region_index].start_pfn;
     uint64_t end_pfn         = zone->regions[region_index].end_pfn;
@@ -108,7 +108,7 @@ void buddy_seed_region(zone_t* zone, size_t region_index)
 
 // since we memset buddy_metadata to 0 all pages are set to reserved with order 0
 // we only need to set usable pages to free with their pfns then seed the buddy free lists
-void buddy_allocator_init(zone_t* zone)
+static void buddy_allocator_init(zone_t* zone)
 {
     for (size_t i = 0; i < zone->region_count; i++)
     {
@@ -213,7 +213,7 @@ void pmm_init(struct boot_info* boot_info)
 }
 
 // removes head of free list
-page_t* remove_block_from_free_list(zone_t* zone, size_t order)
+static page_t* remove_block_from_free_list(zone_t* zone, size_t order)
 {
     free_list_t* free_list = &zone->buddy_free_lists[order];
     if (free_list->head == NULL)
@@ -234,7 +234,7 @@ page_t* remove_block_from_free_list(zone_t* zone, size_t order)
     return block;
 }
 
-page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_order)
+static page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_order)
 {
     if (from_order <= to_order)
     {
@@ -252,7 +252,7 @@ page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_or
     return block;
 }
 
-uint64_t buddy_alloc(zone_t* zone, size_t order)
+static uint64_t buddy_alloc(zone_t* zone, size_t order)
 {
     size_t original_order = order;
     // find first order with free blocks that can satisfy request
@@ -284,7 +284,7 @@ uint64_t buddy_alloc(zone_t* zone, size_t order)
 }
 
 // merges block with buddy, only does one merge
-page_t* merge_block(zone_t* zone, page_t* block)
+static page_t* merge_block(zone_t* zone, page_t* block)
 {
     if (block->order >= MAX_ORDER)
     {
@@ -326,7 +326,7 @@ page_t* merge_block(zone_t* zone, page_t* block)
     }
 }
 
-void buddy_free(zone_t* zone, uint64_t pfn)
+static void buddy_free(zone_t* zone, uint64_t pfn)
 {
     page_t* block = &zone->buddy_metadata[pfn];
     size_t  order = block->order;

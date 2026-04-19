@@ -1,5 +1,5 @@
 #include <memory/vmm.h>
-#include <klib/list.h>
+#include <klib/intrusive_list.h>
 
 virt_addr_t KERNEL_VIRTUAL_BASE;
 virt_addr_t KERNEL_VIRTUAL_END;

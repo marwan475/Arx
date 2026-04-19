@@ -1,5 +1,5 @@
-#ifndef KLIB_LIST_H
-#define KLIB_LIST_H
+#ifndef KLIB_INTRUSIVE_LIST_H
+#define KLIB_INTRUSIVE_LIST_H
 
 #include <stddef.h>
 

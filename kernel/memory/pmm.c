@@ -1,6 +1,6 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
-#include <klib/list.h>
+#include <klib/intrusive_list.h>
 
 // keep it to one zone containing all memory for now
 static numa_node_t pmm_numa_node = {0};

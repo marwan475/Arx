@@ -11,6 +11,22 @@ static inline void outb(uint16_t port, uint8_t value)
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+__attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg)
+{
+    __asm__ volatile("mov %0, %%rsp\n"
+                     "andq $-16, %%rsp\n"
+                     "mov %2, %%rdi\n"
+                     "call *%1\n"
+                     :
+                     : "r"(stack_top), "r"(entry), "r"(arg)
+                     : "rdi", "memory");
+
+    for (;;)
+    {
+        arch_halt();
+    }
+}
+
 void build_tss_descriptor(const tss_t* tss, tss_discriptor_t* tss_descriptor)
 {
     uint64_t tss_address = (uint64_t) tss;
@@ -150,8 +166,6 @@ bool arch_init(void)
 {
     gdt_init();
     init_interrupts();
-
-    dispatcher.cpus[arch_cpu_id()].initialized = true;
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 

@@ -23,3 +23,24 @@ void cpus_init(size_t cpu_count)
 
     dispatcher.cpu_count = bounded_cpu_count;
 }
+
+__attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg)
+{
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+
+    if (cpu->kernel_stack_base == NULL)
+    {
+        void* stack = vmalloc(CPU_KERNEL_STACK_SIZE);
+        if (stack == NULL)
+        {
+            kprintf("Arx kernel: failed to allocate kernel stack for CPU %d\n", arch_cpu_id());
+            panic();
+        }
+
+        cpu->kernel_stack_base = stack;
+        cpu->kernel_stack_size = CPU_KERNEL_STACK_SIZE;
+    }
+
+    void* stack_top = (void*) ((uint8_t*) cpu->kernel_stack_base + cpu->kernel_stack_size);
+    arch_set_stack(stack_top, entry, arg);
+}

@@ -7,6 +7,7 @@
 #include <terminal/terminal.h>
 
 void run_selftests(void);
+void kmain_post_init(void* arg);
 
 dispatcher_t dispatcher;
 
@@ -89,6 +90,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     status = arch_init();
     KDEBUG("<- arch_init done\n");
 
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
+
     if (!status)
     {
         kprintf("Arx kernel: architecture initialization failed\n");
@@ -119,9 +122,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     kterm_printf("Arx kernel: initialization complete\n");
 
-    for (;;)
-    {
-    }
+    cpu_init_stack(kmain_post_init, 0);
 }
 
 void smp_kmain(void)
@@ -132,7 +133,26 @@ void smp_kmain(void)
 
     kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
 
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
+
+    cpu_init_stack(kmain_post_init, 0);
+}
+
+void kmain_post_init(void* arg)
+{
+
+    dispatcher.cpus_initialized++;
+    while(dispatcher.cpus_initialized < dispatcher.cpu_count)
+    {
+        arch_pause();
+    }
+
+    (void) arg;
+    kprintf("Arx kernel: cpu %d kmain_post_init entered\n", arch_cpu_id());
+    KDEBUG("cpu %d kmain_post_init entered\n", arch_cpu_id());
+    
     for (;;)
     {
     }
 }
+

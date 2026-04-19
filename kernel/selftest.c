@@ -303,10 +303,12 @@ void vmm_test(void)
     if (failures == 0)
     {
         kprintf("Arx kernel: vmm_test RESULT=PASS\n");
+        KDEBUG("vmm_test passed with %llu checks\n", (unsigned long long) passes);
     }
     else
     {
         kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+        KDEBUG("vmm_test failed with %llu checks\n", (unsigned long long) failures);
     }
 }
 
@@ -573,10 +575,12 @@ void pmm_test(void)
     if (failures == 0)
     {
         kprintf("Arx kernel: pmm_test RESULT=PASS\n");
+        KDEBUG("pmm_test passed with %llu checks\n", (unsigned long long) passes);
     }
     else
     {
         kprintf("Arx kernel: pmm_test RESULT=FAIL\n");
+        KDEBUG("pmm_test failed with %llu checks\n", (unsigned long long) failures);
     }
 }
 
@@ -664,10 +668,12 @@ void klib_test(void)
     if (failures == 0)
     {
         kprintf("Arx kernel: klib_test RESULT=PASS\n");
+        KDEBUG("klib_test passed with %llu checks\n", (unsigned long long) passes);
     }
     else
     {
         kprintf("Arx kernel: klib_test RESULT=FAIL\n");
+        KDEBUG("klib_test failed with %llu checks\n", (unsigned long long) failures);   
     }
 }
 

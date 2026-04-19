@@ -32,6 +32,7 @@ typedef struct dispatcher
 {
     cpu_info_t               cpus[BOOT_SMP_MAX_CPUS];
     size_t                   cpu_count;
+    uint8_t                  cpus_initialized;
     kernel_framebuffer_t     framebuffer;
     uint32_t                 vector_base;
     struct flanterm_context* terminal_context;

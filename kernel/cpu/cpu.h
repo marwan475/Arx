@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define CPU_KERNEL_STACK_SIZE (16 * PAGE_SIZE)
+
 #ifndef SPINLOCK_T_DEFINED
 #define SPINLOCK_T_DEFINED
 typedef _Atomic uint8_t spinlock_t;
@@ -50,9 +52,11 @@ typedef struct cpu_info
     arch_info_t        arch_info;
     ipi_request_data_t ipi_request_data;
     spinlock_t         ipi_lock;
-
+    void*              kernel_stack_base;
+    size_t             kernel_stack_size;
 } cpu_info_t;
 
 void cpus_init(size_t cpu_count);
+__attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
 
 #endif

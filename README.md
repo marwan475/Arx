@@ -99,6 +99,11 @@ ran on each smp core
     - get iso overides from madt
     - route legacy irqs to bsp lapic
     - expose api to mask/unmask vectors, register new vectors, and route vectors
+- General
+    - set cpu stack and jump to kmain_post_init
+
+### Post Init
+currently all cores wait for the rest of the cores to enter post init then continue.
 
 ## Third Party
 - [Limine](https://github.com/limine-bootloader/limine) - Bootloader/protocol used to load the kernel and provide boot info.

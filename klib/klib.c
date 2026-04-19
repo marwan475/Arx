@@ -171,7 +171,48 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     }
 }
 
-// currently dosnt rollback if pmm alloc fails
+static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
+{
+    for (size_t offset = 0; offset < mapped_size;)
+    {
+        const virt_addr_t va   = base + offset;
+        const phys_addr_t pa   = vmm_virt_to_phys(va, address_space);
+        size_t            step = PAGE_SIZE;
+
+        if (pa != 0)
+        {
+            const uint64_t pfn = pa >> PAGE_SHIFT;
+            if (pfn < zone->max_pfn)
+            {
+                page_t* page = &zone->buddy_metadata[pfn];
+                if (page->flags == PMM_PAGE_USED && page->order <= MAX_ORDER)
+                {
+                    const uint64_t block_pages = (uint64_t) 1ULL << page->order;
+                    if ((pfn & (block_pages - 1)) == 0)
+                    {
+                        pmm_free((void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
+                        step = (size_t) block_pages * PAGE_SIZE;
+                    }
+                }
+            }
+        }
+
+        if (step == 0)
+        {
+            step = PAGE_SIZE;
+        }
+
+        offset += step;
+    }
+
+    if (mapped_size > 0)
+    {
+        vmm_unmap_range(base, mapped_size, address_space);
+    }
+
+    vmm_free_region(address_space, base);
+}
+
 void* vmalloc(size_t size)
 {
     cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
@@ -221,11 +262,7 @@ void* vmalloc(size_t size)
         void* chunk_hhdm = pmm_alloc(max_chunk_size);
         if (chunk_hhdm == NULL)
         {
-            if (mapped_size > 0)
-            {
-                vmm_unmap_range(base, mapped_size, address_space);
-            }
-            vmm_free_region(address_space, base);
+            rollback_vmalloc(zone, address_space, base, mapped_size);
             return NULL;
         }
 
@@ -239,11 +276,7 @@ void* vmalloc(size_t size)
         void* chunk_hhdm = pmm_alloc(remainder_size);
         if (chunk_hhdm == NULL)
         {
-            if (mapped_size > 0)
-            {
-                vmm_unmap_range(base, mapped_size, address_space);
-            }
-            vmm_free_region(address_space, base);
+            rollback_vmalloc(zone, address_space, base, mapped_size);
             return NULL;
         }
 

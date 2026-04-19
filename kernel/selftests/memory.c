@@ -3,6 +3,7 @@
 
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <memory/heap.h>
 #include <selftests/selftests.h>
 
 #define PMM_TEST_MAX_PTRS 2048
@@ -661,9 +662,190 @@ static void klib_test(void)
     }
 }
 
+static void heap_test_log_fail(const char* message, size_t* failures)
+{
+    (*failures)++;
+    kprintf("Arx kernel: heap_test FAIL: %s\n", message);
+}
+
+static void heap_test(void)
+{
+    size_t failures = 0;
+    size_t passes   = 0;
+
+    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    if (cpu->numa_node == NULL)
+    {
+        heap_test_log_fail("cpu numa_node is NULL", &failures);
+        kprintf("Arx kernel: heap_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+        kprintf("Arx kernel: heap_test RESULT=FAIL\n");
+        return;
+    }
+
+    kernel_heap_t* heap = &cpu->numa_node->heap;
+
+    kprintf("Arx kernel: heap_test start\n");
+
+    if (heap_alloc(heap, 0) != NULL)
+    {
+        heap_test_log_fail("heap_alloc(0) should return NULL", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    void* p16 = heap_alloc(heap, 16);
+    void* p32 = heap_alloc(heap, 32);
+    void* p64 = heap_alloc(heap, 64);
+
+    if (p16 == NULL || p32 == NULL || p64 == NULL)
+    {
+        heap_test_log_fail("basic class allocations returned NULL", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (p16 == p32 || p16 == p64 || p32 == p64)
+    {
+        heap_test_log_fail("distinct allocations returned duplicate pointers", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    heap_free(heap, p16);
+    heap_free(heap, p32);
+    heap_free(heap, p64);
+    passes++;
+
+    const size_t odd_sizes[] = {17, 33, 65, 129, 257, 513, 777, 1500, 2047};
+    void*        odd_ptrs[sizeof(odd_sizes) / sizeof(odd_sizes[0])];
+
+    for (size_t i = 0; i < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); i++)
+    {
+        odd_ptrs[i] = heap_alloc(heap, odd_sizes[i]);
+        if (odd_ptrs[i] == NULL)
+        {
+            heap_test_log_fail("odd-size allocation returned NULL", &failures);
+        }
+    }
+
+    bool odd_unique = true;
+    for (size_t i = 0; i < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); i++)
+    {
+        for (size_t j = i + 1; j < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); j++)
+        {
+            if (odd_ptrs[i] != NULL && odd_ptrs[i] == odd_ptrs[j])
+            {
+                odd_unique = false;
+            }
+        }
+    }
+
+    if (!odd_unique)
+    {
+        heap_test_log_fail("odd-size allocations returned duplicate pointers", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (heap_alloc(heap, 2049) != NULL)
+    {
+        heap_test_log_fail("oversized heap_alloc(2049) should return NULL", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    for (size_t i = 0; i < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); i++)
+    {
+        heap_free(heap, odd_ptrs[i]);
+    }
+    passes++;
+
+    void* reuse_a = heap_alloc(heap, 32);
+    if (reuse_a == NULL)
+    {
+        heap_test_log_fail("reuse probe first alloc failed", &failures);
+    }
+    else
+    {
+        void* reuse_b = heap_alloc(heap, 32);
+        if (reuse_b == NULL)
+        {
+            heap_test_log_fail("reuse probe second alloc failed", &failures);
+        }
+        else
+        {
+            heap_free(heap, reuse_a);
+            void* reuse_c = heap_alloc(heap, 32);
+
+            if (reuse_c != reuse_a)
+            {
+                heap_test_log_fail("freed object was not reused", &failures);
+            }
+            else
+            {
+                passes++;
+            }
+
+            heap_free(heap, reuse_b);
+            heap_free(heap, reuse_c);
+        }
+    }
+
+    void* stress_ptrs[300];
+    size_t stress_count = 0;
+
+    for (size_t i = 0; i < 300; i++)
+    {
+        stress_ptrs[i] = heap_alloc(heap, 64);
+        if (stress_ptrs[i] == NULL)
+        {
+            break;
+        }
+        stress_count++;
+    }
+
+    if (stress_count < 257)
+    {
+        heap_test_log_fail("cache growth probe did not allocate beyond initial slab set", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    for (size_t i = 0; i < stress_count; i++)
+    {
+        heap_free(heap, stress_ptrs[i]);
+    }
+    passes++;
+
+    kprintf("Arx kernel: heap_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+    if (failures == 0)
+    {
+        kprintf("Arx kernel: heap_test RESULT=PASS\n");
+        KDEBUG("heap_test passed with %llu checks\n", (unsigned long long) passes);
+    }
+    else
+    {
+        kprintf("Arx kernel: heap_test RESULT=FAIL\n");
+        KDEBUG("heap_test failed with %llu checks\n", (unsigned long long) failures);
+    }
+}
+
 void run_memory_selftests(void)
 {
     pmm_test();
     vmm_test();
+    heap_test();
     klib_test();
 }

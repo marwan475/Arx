@@ -429,3 +429,146 @@ class ArxCpusCommand(gdb.Command):
 
 
 ArxCpusCommand()
+
+
+class ArxHeapCommand(gdb.Command):
+    """Print Arx heap cache/slab state from dispatcher CPU context."""
+
+    def __init__(self):
+        super().__init__("arx-heap", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _iter_slabs(head):
+        node = head
+        while int(node) != 0:
+            yield node
+            node = node["next"]
+
+    @staticmethod
+    def _list_stats(head):
+        slab_count = 0
+        free_objects = 0
+        total_objects = 0
+
+        for slab in ArxHeapCommand._iter_slabs(head):
+            slab_count += 1
+            free_objects += int(slab["free_objects"])
+            total_objects += int(slab["total_objects"])
+
+        used_objects = total_objects - free_objects
+        return slab_count, total_objects, free_objects, used_objects
+
+    @staticmethod
+    def _print_cache(cache_index, cache):
+        object_size = int(cache["object_size"])
+        metadata_ptr = int(cache["slab_metadata"])
+        metadata_count = int(cache["slab_metadata_count"])
+
+        partial_stats = ArxHeapCommand._list_stats(cache["partial_slabs"])
+        full_stats = ArxHeapCommand._list_stats(cache["full_slabs"])
+        empty_stats = ArxHeapCommand._list_stats(cache["empty_slabs"])
+
+        total_slabs = partial_stats[0] + full_stats[0] + empty_stats[0]
+        total_objects = partial_stats[1] + full_stats[1] + empty_stats[1]
+        total_free = partial_stats[2] + full_stats[2] + empty_stats[2]
+        total_used = partial_stats[3] + full_stats[3] + empty_stats[3]
+
+        print("cache[{}] object_size={}".format(cache_index, object_size))
+        print("  slab_metadata:       0x{:016x}".format(metadata_ptr))
+        print("  slab_metadata_count: {}".format(metadata_count))
+        print("  partial_slabs: count={} total_objects={} free_objects={} used_objects={}".format(
+            partial_stats[0], partial_stats[1], partial_stats[2], partial_stats[3]
+        ))
+        print("  full_slabs:    count={} total_objects={} free_objects={} used_objects={}".format(
+            full_stats[0], full_stats[1], full_stats[2], full_stats[3]
+        ))
+        print("  empty_slabs:   count={} total_objects={} free_objects={} used_objects={}".format(
+            empty_stats[0], empty_stats[1], empty_stats[2], empty_stats[3]
+        ))
+        print("  totals:        slabs={} total_objects={} free_objects={} used_objects={}".format(
+            total_slabs, total_objects, total_free, total_used
+        ))
+        print("")
+
+    @staticmethod
+    def _parse_cpu_index(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        try:
+            dispatcher = gdb.parse_and_eval("dispatcher")
+        except gdb.error as err:
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        requested_cpu = self._parse_cpu_index(arg)
+
+        cpu_indices = []
+        if requested_cpu is not None:
+            if requested_cpu < 0:
+                raise gdb.GdbError("cpu selector must be non-negative")
+
+            # Prefer matching logical cpu.id first, then fall back to slot index.
+            for i in range(cpu_count):
+                cpu = dispatcher["cpus"][i]
+                if int(cpu["id"]) == requested_cpu:
+                    cpu_indices = [i]
+                    break
+
+            if len(cpu_indices) == 0 and requested_cpu < cpu_slots:
+                cpu_indices = [requested_cpu]
+
+            if len(cpu_indices) == 0:
+                raise gdb.GdbError(
+                    "cpu selector {} did not match any cpu.id or cpu slot [0, {})"
+                    .format(requested_cpu, cpu_slots)
+                )
+        else:
+            cpu_indices = list(range(cpu_slots))
+
+        print("Arx heap state")
+        print("==============")
+        print("cpu_count: {}".format(cpu_count))
+        print("cpu_slots: {}".format(cpu_slots))
+        print("")
+
+        printed = 0
+        for cpu_index in cpu_indices:
+            cpu = dispatcher["cpus"][cpu_index]
+            numa_node = cpu["numa_node"]
+
+            if int(numa_node) == 0:
+                if requested_cpu is not None:
+                    print("cpu[{}] numa_node: NULL".format(cpu_index))
+                continue
+
+            heap = numa_node["heap"]
+            cache_count = ArxPmmCommand._array_len(heap["caches"], fallback=8)
+
+            print("cpu[{}] id={}".format(cpu_index, int(cpu["id"])))
+            print("heap.lock: {}".format(int(heap["lock"])))
+            print("cache_count: {}".format(cache_count))
+            print("")
+
+            for cache_index in range(cache_count):
+                self._print_cache(cache_index, heap["caches"][cache_index])
+
+            printed += 1
+
+        if printed == 0 and requested_cpu is None:
+            print("(no CPUs with initialized numa_node pointer)")
+
+
+ArxHeapCommand()

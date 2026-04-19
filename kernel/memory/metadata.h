@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define METADATA_CHUNK_SIZE PAGE_SIZE
+#define METADATA_CHUNK_SIZE (16 * PAGE_SIZE)
 
 typedef struct metadata_chunk metadata_chunk_t;
 

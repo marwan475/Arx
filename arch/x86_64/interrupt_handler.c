@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 
-void blue_screen(void)
+static void blue_screen(void)
 {
     const kernel_framebuffer_t* fb = &dispatcher.framebuffer;
 
@@ -70,8 +70,49 @@ static void pagefault_debug(registers_t* reg)
     kprintf("        r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n", (unsigned long long) reg->r12, (unsigned long long) reg->r13, (unsigned long long) reg->r14, (unsigned long long) reg->r15);
 }
 
+static void ipi_invalidate_tlb(const ipi_request_data_t* req)
+{
+    if (req->tlb_invalidation.tlb_invalidation_type == IPI_TLB_INVALIDATE_SINGLE_PAGE)
+    {
+        x86_64_invlpg(req->tlb_invalidation.va_start);
+    }
+    else if (req->tlb_invalidation.requires_page_flush)
+    {
+        const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
+        for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
+        {
+            x86_64_invlpg(va);
+        }
+    }
+    else
+    {
+        x86_64_flush_active_tlb_non_global();
+    }
+}
+
+static void ipi_broadcast_exception(void)
+{
+    const uint8_t source_cpu_id = arch_cpu_id();
+
+    for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; cpu_id++)
+    {
+        if (cpu_id == source_cpu_id)
+        {
+            continue;
+        }
+
+        cpu_info_t* target_cpu_info = &dispatcher.cpus[cpu_id];
+        if (!target_cpu_info->initialized || !target_cpu_info->arch_info.acpi_has_lapic)
+        {
+            continue;
+        }
+
+        send_ipi(cpu_id, (uint8_t) IPI_REQUEST_EXCEPTION, NULL);
+    }
+}
+
 // cpus ipi is locked when this is called. so handler needs to unlock it
-void handle_ipi(registers_t* reg)
+static void handle_ipi(registers_t* reg)
 {
     cpu_info_t*        cpu_info     = &dispatcher.cpus[arch_cpu_id()];
     ipi_request_type_t request_type = IPI_REQUEST_NONE;
@@ -91,23 +132,16 @@ void handle_ipi(registers_t* reg)
     if (request_type == IPI_REQUEST_INVALIDATE_TLB)
     {
         const ipi_request_data_t* req = &cpu_info->ipi_request_data;
+        ipi_invalidate_tlb(req);
+    }
+    else if (request_type == IPI_REQUEST_EXCEPTION)
+    {
+        cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
+        memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
+        spinlock_release(&cpu_info->ipi_lock);
 
-        if (req->tlb_invalidation.tlb_invalidation_type == IPI_TLB_INVALIDATE_SINGLE_PAGE)
-        {
-            x86_64_invlpg(req->tlb_invalidation.va_start);
-        }
-        else if (req->tlb_invalidation.requires_page_flush)
-        {
-            const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
-            for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
-            {
-                x86_64_invlpg(va);
-            }
-        }
-        else
-        {
-            x86_64_flush_active_tlb_non_global();
-        }
+        blue_screen();
+        panic();
     }
 
     cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
@@ -135,6 +169,7 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number < 32)
     {
+        ipi_broadcast_exception();
         blue_screen();
     }
 

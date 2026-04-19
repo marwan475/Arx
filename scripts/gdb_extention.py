@@ -101,9 +101,24 @@ class ArxPmmCommand(gdb.Command):
 
         cpu_indices = []
         if requested_cpu is not None:
-            if requested_cpu < 0 or requested_cpu >= cpu_slots:
-                raise gdb.GdbError("cpu index {} out of range [0, {})".format(requested_cpu, cpu_slots))
-            cpu_indices = [requested_cpu]
+            if requested_cpu < 0:
+                raise gdb.GdbError("cpu selector must be non-negative")
+
+            # Prefer matching logical cpu.id first, then fall back to slot index.
+            for i in range(cpu_count):
+                cpu = dispatcher["cpus"][i]
+                if int(cpu["id"]) == requested_cpu:
+                    cpu_indices = [i]
+                    break
+
+            if len(cpu_indices) == 0 and requested_cpu < cpu_slots:
+                cpu_indices = [requested_cpu]
+
+            if len(cpu_indices) == 0:
+                raise gdb.GdbError(
+                    "cpu selector {} did not match any cpu.id or cpu slot [0, {})"
+                    .format(requested_cpu, cpu_slots)
+                )
         else:
             cpu_indices = list(range(cpu_slots))
 
@@ -173,10 +188,7 @@ class ArxVmmCommand(gdb.Command):
     def _parse_cpu_index(arg):
         text = (arg or "").strip()
         if text == "":
-            try:
-                return int(gdb.parse_and_eval("arch_cpu_id()"))
-            except gdb.error:
-                return 0
+            return None
         try:
             return int(gdb.parse_and_eval(text))
         except gdb.error:
@@ -185,25 +197,16 @@ class ArxVmmCommand(gdb.Command):
             except ValueError as err:
                 raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
 
-    def invoke(self, arg, from_tty):
-        del from_tty
-
-        try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
-
-        cpu_count = int(dispatcher["cpu_count"])
-        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
-        cpu_index = self._parse_cpu_index(arg)
-
-        if cpu_index < 0 or cpu_index >= cpu_slots:
-            raise gdb.GdbError("cpu index {} out of range [0, {})".format(cpu_index, cpu_slots))
-
-        cpu = dispatcher["cpus"][cpu_index]
+    def _print_space(self, cpu_index, cpu):
         space_ptr = cpu["address_space"]
+
+        print("cpu:  {} (id={})".format(cpu_index, int(cpu["id"])))
+        print("address_space: 0x{:016x}".format(int(space_ptr)))
+
         if int(space_ptr) == 0:
-            raise gdb.GdbError("cpu[{}] address_space is NULL".format(cpu_index))
+            print("(address_space is NULL)")
+            print("")
+            return
 
         space = space_ptr.dereference()
 
@@ -211,9 +214,6 @@ class ArxVmmCommand(gdb.Command):
         pt = int(space["pt"])
         lock = int(space["lock"])
 
-        print("Arx VMM address space state")
-        print("===========================")
-        print("cpu:  {} (id={})".format(cpu_index, int(cpu["id"])))
         print("type: {}".format("KERNEL" if space_type == 0 else "USER"))
         print("pt:   0x{:016x}".format(pt))
         print("lock: {}".format(lock))
@@ -228,6 +228,57 @@ class ArxVmmCommand(gdb.Command):
         print("--------")
         print("kernel_regions_count: {}".format(int(space["kernel_regions_count"])))
         print("user_regions_count:   {}".format(int(space["user_regions_count"])))
+        print("")
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        try:
+            dispatcher = gdb.parse_and_eval("dispatcher")
+        except gdb.error as err:
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        requested_cpu = self._parse_cpu_index(arg)
+
+        cpu_indices = []
+        if requested_cpu is not None:
+            if requested_cpu < 0:
+                raise gdb.GdbError("cpu selector must be non-negative")
+
+            # Prefer matching logical cpu.id first, then fall back to slot index.
+            for i in range(cpu_count):
+                cpu = dispatcher["cpus"][i]
+                if int(cpu["id"]) == requested_cpu:
+                    cpu_indices = [i]
+                    break
+
+            if len(cpu_indices) == 0 and requested_cpu < cpu_slots:
+                cpu_indices = [requested_cpu]
+
+            if len(cpu_indices) == 0:
+                raise gdb.GdbError(
+                    "cpu selector {} did not match any cpu.id or cpu slot [0, {})"
+                    .format(requested_cpu, cpu_slots)
+                )
+        else:
+            cpu_indices = list(range(cpu_slots))
+
+        print("Arx VMM address space state")
+        print("===========================")
+        print("cpu_count: {}".format(cpu_count))
+        print("cpu_slots: {}".format(cpu_slots))
+        print("")
+
+        printed = 0
+        for cpu_index in cpu_indices:
+            cpu = dispatcher["cpus"][cpu_index]
+            self._print_space(cpu_index, cpu)
+            printed += 1
+
+        if printed == 0 and requested_cpu is None:
+            print("(no CPU slots found)")
 
 
 ArxVmmCommand()
@@ -264,11 +315,21 @@ class ArxCpusCommand(gdb.Command):
             return "aarch64"
         return "unknown({})".format(arch_value)
 
+    @staticmethod
+    def _parse_cpu_index(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
+
     def invoke(self, arg, from_tty):
         del from_tty
-
-        if (arg or "").strip() != "":
-            raise gdb.GdbError("arx-cpus takes no arguments")
 
         try:
             dispatcher = gdb.parse_and_eval("dispatcher")
@@ -277,6 +338,31 @@ class ArxCpusCommand(gdb.Command):
 
         cpu_count = int(dispatcher["cpu_count"])
         cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        requested_cpu = self._parse_cpu_index(arg)
+        cpu_indices = []
+
+        if requested_cpu is not None:
+            if requested_cpu < 0:
+                raise gdb.GdbError("cpu selector must be non-negative")
+
+            # Prefer matching logical cpu.id first, then fall back to slot index.
+            for i in range(cpu_count):
+                cpu = dispatcher["cpus"][i]
+                if int(cpu["id"]) == requested_cpu:
+                    cpu_indices = [i]
+                    break
+
+            if len(cpu_indices) == 0 and requested_cpu < cpu_slots:
+                cpu_indices = [requested_cpu]
+
+            if len(cpu_indices) == 0:
+                raise gdb.GdbError(
+                    "cpu selector {} did not match any cpu.id or cpu slot [0, {})"
+                    .format(requested_cpu, cpu_slots)
+                )
+        else:
+            cpu_indices = list(range(cpu_slots))
+
         dispatcher_arch = self._read_int_field(dispatcher, "arch", default=-1)
         dispatcher_arch_info = dispatcher["arch_info"]
 
@@ -306,7 +392,7 @@ class ArxCpusCommand(gdb.Command):
             print("arch_info: n/a for {}".format(self._arch_name(dispatcher_arch)))
         print("")
 
-        for i in range(cpu_slots):
+        for i in cpu_indices:
             cpu = dispatcher["cpus"][i]
 
             cpu_id = self._read_int_field(cpu, "id", default=0)
@@ -343,3 +429,146 @@ class ArxCpusCommand(gdb.Command):
 
 
 ArxCpusCommand()
+
+
+class ArxHeapCommand(gdb.Command):
+    """Print Arx heap cache/slab state from dispatcher CPU context."""
+
+    def __init__(self):
+        super().__init__("arx-heap", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _iter_slabs(head):
+        node = head
+        while int(node) != 0:
+            yield node
+            node = node["next"]
+
+    @staticmethod
+    def _list_stats(head):
+        slab_count = 0
+        free_objects = 0
+        total_objects = 0
+
+        for slab in ArxHeapCommand._iter_slabs(head):
+            slab_count += 1
+            free_objects += int(slab["free_objects"])
+            total_objects += int(slab["total_objects"])
+
+        used_objects = total_objects - free_objects
+        return slab_count, total_objects, free_objects, used_objects
+
+    @staticmethod
+    def _print_cache(cache_index, cache):
+        object_size = int(cache["object_size"])
+        metadata_ptr = int(cache["slab_metadata"])
+        metadata_count = int(cache["slab_metadata_count"])
+
+        partial_stats = ArxHeapCommand._list_stats(cache["partial_slabs"])
+        full_stats = ArxHeapCommand._list_stats(cache["full_slabs"])
+        empty_stats = ArxHeapCommand._list_stats(cache["empty_slabs"])
+
+        total_slabs = partial_stats[0] + full_stats[0] + empty_stats[0]
+        total_objects = partial_stats[1] + full_stats[1] + empty_stats[1]
+        total_free = partial_stats[2] + full_stats[2] + empty_stats[2]
+        total_used = partial_stats[3] + full_stats[3] + empty_stats[3]
+
+        print("cache[{}] object_size={}".format(cache_index, object_size))
+        print("  slab_metadata:       0x{:016x}".format(metadata_ptr))
+        print("  slab_metadata_count: {}".format(metadata_count))
+        print("  partial_slabs: count={} total_objects={} free_objects={} used_objects={}".format(
+            partial_stats[0], partial_stats[1], partial_stats[2], partial_stats[3]
+        ))
+        print("  full_slabs:    count={} total_objects={} free_objects={} used_objects={}".format(
+            full_stats[0], full_stats[1], full_stats[2], full_stats[3]
+        ))
+        print("  empty_slabs:   count={} total_objects={} free_objects={} used_objects={}".format(
+            empty_stats[0], empty_stats[1], empty_stats[2], empty_stats[3]
+        ))
+        print("  totals:        slabs={} total_objects={} free_objects={} used_objects={}".format(
+            total_slabs, total_objects, total_free, total_used
+        ))
+        print("")
+
+    @staticmethod
+    def _parse_cpu_index(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid CPU index '{}': {}".format(text, err))
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        try:
+            dispatcher = gdb.parse_and_eval("dispatcher")
+        except gdb.error as err:
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        cpu_count = int(dispatcher["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        requested_cpu = self._parse_cpu_index(arg)
+
+        cpu_indices = []
+        if requested_cpu is not None:
+            if requested_cpu < 0:
+                raise gdb.GdbError("cpu selector must be non-negative")
+
+            # Prefer matching logical cpu.id first, then fall back to slot index.
+            for i in range(cpu_count):
+                cpu = dispatcher["cpus"][i]
+                if int(cpu["id"]) == requested_cpu:
+                    cpu_indices = [i]
+                    break
+
+            if len(cpu_indices) == 0 and requested_cpu < cpu_slots:
+                cpu_indices = [requested_cpu]
+
+            if len(cpu_indices) == 0:
+                raise gdb.GdbError(
+                    "cpu selector {} did not match any cpu.id or cpu slot [0, {})"
+                    .format(requested_cpu, cpu_slots)
+                )
+        else:
+            cpu_indices = list(range(cpu_slots))
+
+        print("Arx heap state")
+        print("==============")
+        print("cpu_count: {}".format(cpu_count))
+        print("cpu_slots: {}".format(cpu_slots))
+        print("")
+
+        printed = 0
+        for cpu_index in cpu_indices:
+            cpu = dispatcher["cpus"][cpu_index]
+            numa_node = cpu["numa_node"]
+
+            if int(numa_node) == 0:
+                if requested_cpu is not None:
+                    print("cpu[{}] numa_node: NULL".format(cpu_index))
+                continue
+
+            heap = numa_node["heap"]
+            cache_count = ArxPmmCommand._array_len(heap["caches"], fallback=8)
+
+            print("cpu[{}] id={}".format(cpu_index, int(cpu["id"])))
+            print("heap.lock: {}".format(int(heap["lock"])))
+            print("cache_count: {}".format(cache_count))
+            print("")
+
+            for cache_index in range(cache_count):
+                self._print_cache(cache_index, heap["caches"][cache_index])
+
+            printed += 1
+
+        if printed == 0 and requested_cpu is None:
+            print("(no CPUs with initialized numa_node pointer)")
+
+
+ArxHeapCommand()

@@ -78,6 +78,9 @@ void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phy
 // Returns physical address for a mapped virtual address, or 0 if unmapped.
 phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
 
+typedef void (*arch_stack_entry_t)(void* arg);
+__attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
+
 void arch_enable_interrupts();
 void arch_disable_interrupts();
 

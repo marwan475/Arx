@@ -7,8 +7,7 @@
 #include <terminal/terminal.h>
 
 void run_selftests(void);
-
-dispatcher_t dispatcher;
+void kmain_post_init(void* arg);
 
 // From bootloader we need
 // - memory map
@@ -69,6 +68,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_validate_boot(boot_info, cpu_count);
 
+    // Can access per cpu structs from dispatcher after this function
     KDEBUG("-> cpus_init(%llu)\n", (unsigned long long) cpu_count);
     cpus_init(cpu_count);
     KDEBUG("<- cpus_init done dispatcher.cpu_count=%llu\n", (unsigned long long) dispatcher.cpu_count);
@@ -81,6 +81,10 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     vmm_init(boot_info);
     KDEBUG("<- vmm_init done\n");
 
+    KDEBUG("-> heap_init\n");
+    heap_init();
+    KDEBUG("<- heap_init done\n");
+
     KDEBUG("-> acpi_init(rsdp=0x%llx)\n", (unsigned long long) boot_info->rsdp_address);
     acpi_init(boot_info->rsdp_address);
     KDEBUG("<- acpi_init done\n");
@@ -88,6 +92,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("-> arch_init\n");
     status = arch_init();
     KDEBUG("<- arch_init done\n");
+
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
 
     if (!status)
     {
@@ -119,9 +125,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     kterm_printf("Arx kernel: initialization complete\n");
 
-    for (;;)
-    {
-    }
+    cpu_init_stack(kmain_post_init, 0);
 }
 
 void smp_kmain(void)
@@ -132,7 +136,26 @@ void smp_kmain(void)
 
     kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
 
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
+
+    cpu_init_stack(kmain_post_init, 0);
+}
+
+void kmain_post_init(void* arg)
+{
+
+    dispatcher.cpus_initialized++;
+    while(dispatcher.cpus_initialized < dispatcher.cpu_count)
+    {
+        arch_pause();
+    }
+
+    (void) arg;
+    kprintf("Arx kernel: cpu %d kmain_post_init entered\n", arch_cpu_id());
+    KDEBUG("cpu %d kmain_post_init entered\n", arch_cpu_id());
+    
     for (;;)
     {
     }
 }
+

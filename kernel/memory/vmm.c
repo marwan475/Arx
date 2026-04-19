@@ -1,4 +1,5 @@
 #include <memory/vmm.h>
+#include <klib/intrusive_list.h>
 
 virt_addr_t KERNEL_VIRTUAL_BASE;
 virt_addr_t KERNEL_VIRTUAL_END;
@@ -10,7 +11,7 @@ size_t MAX_REGIONS;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
-virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
+static virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
 {
     for (size_t i = 0; i < MAX_REGIONS; i++)
     {
@@ -19,13 +20,14 @@ virt_region_t* alloc_region_struct(void* metadata, size_t* metadata_count)
         {
             (*metadata_count)++;
             region->allocated = true;
+            ILIST_NODE_INIT(region);
             return region;
         }
     }
     return NULL;
 }
 
-void free_region_struct(virt_region_t* region, size_t* metadata_count)
+static void free_region_struct(virt_region_t* region, size_t* metadata_count)
 {
     if (region == NULL || !region->allocated)
     {
@@ -35,86 +37,45 @@ void free_region_struct(virt_region_t* region, size_t* metadata_count)
     (*metadata_count)--;
 }
 
-void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
+static void add_to_regions_list(virt_region_t* new_region, virt_region_t** list_head)
 {
-    new_region->next = *list_head;
-    if (*list_head != NULL)
-    {
-        (*list_head)->prev = new_region;
-    }
-    *list_head = new_region;
+    ILIST_PUSH_FRONT(*list_head, new_region);
 }
 
-void remove_from_regions_list(virt_region_t* region, virt_region_t** list_head)
+static void remove_from_regions_list(virt_region_t* region, virt_region_t** list_head)
 {
-    if (region->prev != NULL)
-    {
-        region->prev->next = region->next;
-    }
-    else
-    {
-        *list_head = region->next;
-    }
-    if (region->next != NULL)
-    {
-        region->next->prev = region->prev;
-    }
-    region->next = NULL;
-    region->prev = NULL;
+    ILIST_REMOVE(*list_head, region);
 }
 
-static virt_region_t* handle_full_cover_case(virt_region_t* free, size_t* metadata_count, bool* stop)
+static virt_region_t* handle_full_cover_case(virt_region_t* free, virt_region_t** free_regions, size_t* metadata_count, bool* stop)
 {
     virt_region_t* next_free = free->next;
     *stop                    = false;
 
-    if (free->prev == NULL)
-    {
-        if (next_free != NULL)
-        {
-            if (next_free->next != NULL)
-            {
-                next_free->next->prev = free;
-            }
-            *free      = *next_free;
-            free->prev = NULL;
-            free_region_struct(next_free, metadata_count);
-            return free;
-        }
-
-        free->start = 0;
-        free->end   = 0;
-        free->size  = 0;
-        free->next  = NULL;
-        free->prev  = NULL;
-        *stop       = true;
-        return NULL;
-    }
-
-    free->prev->next = free->next;
-    if (free->next != NULL)
-    {
-        free->next->prev = free->prev;
-    }
+    remove_from_regions_list(free, free_regions);
     free_region_struct(free, metadata_count);
+
+    if (*free_regions == NULL)
+    {
+        *stop = true;
+    }
+
     return next_free;
 }
 
-static virt_region_t* handle_left_trim_case(virt_region_t* free, virt_addr_t overlap_end)
+static void handle_left_trim_case(virt_region_t* free, virt_addr_t overlap_end)
 {
     free->start = overlap_end;
     free->size  = free->end - free->start;
-    return free->next;
 }
 
-static virt_region_t* handle_right_trim_case(virt_region_t* free, virt_addr_t overlap_start)
+static void handle_right_trim_case(virt_region_t* free, virt_addr_t overlap_start)
 {
     free->end  = overlap_start;
     free->size = free->end - free->start;
-    return free->next;
 }
 
-static virt_region_t* handle_middle_split_case(virt_region_t* free, virt_addr_t overlap_start, virt_addr_t overlap_end, void* metadata, size_t* metadata_count)
+static void handle_middle_split_case(virt_region_t* free, virt_region_t** free_regions, virt_addr_t overlap_start, virt_addr_t overlap_end, void* metadata, size_t* metadata_count)
 {
     virt_addr_t old_end = free->end;
     free->end           = overlap_start;
@@ -130,38 +91,33 @@ static virt_region_t* handle_middle_split_case(virt_region_t* free, virt_addr_t 
     right_region->end   = old_end;
     right_region->size  = right_region->end - right_region->start;
     right_region->type  = free->type;
-    right_region->next  = free->next;
-    right_region->prev  = free;
+
     if (free->next != NULL)
     {
-        free->next->prev = right_region;
+        ILIST_INSERT_BEFORE(*free_regions, free->next, right_region);
     }
-    free->next = right_region;
-
-    return right_region->next;
+    else
+    {
+        ILIST_APPEND(*free_regions, right_region);
+    }
 }
 
-void remove_existing_mappings(virt_region_t* free_regions, virt_region_t* used_regions, void* metadata, size_t* metadata_count)
+static void remove_existing_mappings(virt_region_t** free_regions, virt_region_t* used_regions, void* metadata, size_t* metadata_count)
 {
-    if (free_regions == NULL || used_regions == NULL || metadata == NULL || metadata_count == NULL)
+    if (free_regions == NULL || *free_regions == NULL || used_regions == NULL || metadata == NULL || metadata_count == NULL)
     {
         return;
     }
 
-    for (virt_region_t* used = used_regions; used != NULL; used = used->next)
+    ILIST_FOR_EACH(used, used_regions)
     {
-        virt_region_t* free = free_regions;
-
-        while (free != NULL)
+        ILIST_FOR_EACH_SAFE(free, next_free, *free_regions)
         {
-            virt_region_t* next_free = free->next;
-
             virt_addr_t overlap_start = free->start > used->start ? free->start : used->start;
             virt_addr_t overlap_end   = free->end < used->end ? free->end : used->end;
 
             if (overlap_start >= overlap_end)
             {
-                free = next_free;
                 continue;
             }
 
@@ -171,7 +127,7 @@ void remove_existing_mappings(virt_region_t* free_regions, virt_region_t* used_r
             if (touches_left && touches_right)
             {
                 bool stop = false;
-                free      = handle_full_cover_case(free, metadata_count, &stop);
+                handle_full_cover_case(free, free_regions, metadata_count, &stop);
                 if (stop)
                 {
                     break;
@@ -181,17 +137,17 @@ void remove_existing_mappings(virt_region_t* free_regions, virt_region_t* used_r
 
             if (touches_left)
             {
-                free = handle_left_trim_case(free, overlap_end);
+                handle_left_trim_case(free, overlap_end);
                 continue;
             }
 
             if (touches_right)
             {
-                free = handle_right_trim_case(free, overlap_start);
+                handle_right_trim_case(free, overlap_start);
                 continue;
             }
 
-            free = handle_middle_split_case(free, overlap_start, overlap_end, metadata, metadata_count);
+            handle_middle_split_case(free, free_regions, overlap_start, overlap_end, metadata, metadata_count);
         }
     }
 }
@@ -257,7 +213,7 @@ void vmm_init(struct boot_info* boot_info)
     existing_framebuffer_region->type          = VIRT_ADDR_KERNEL;
     add_to_regions_list(existing_framebuffer_region, &init_kernel_address_space.kernel_used_regions);
 
-    remove_existing_mappings(init_kernel_address_space.kernel_free_regions, init_kernel_address_space.kernel_used_regions, init_kernel_address_space.kernel_region_metadata, &init_kernel_address_space.kernel_regions_count);
+    remove_existing_mappings(&init_kernel_address_space.kernel_free_regions, init_kernel_address_space.kernel_used_regions, init_kernel_address_space.kernel_region_metadata, &init_kernel_address_space.kernel_regions_count);
 
     virt_region_t* initial_user_region          = alloc_region_struct(init_kernel_address_space.user_region_metadata, &init_kernel_address_space.user_regions_count);
     initial_user_region->start                  = USER_VIRTUAL_BASE;
@@ -367,7 +323,7 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
 
     spinlock_acquire(&space->lock);
 
-    for (virt_region_t* free = *free_regions; free != NULL; free = free->next)
+    ILIST_FOR_EACH(free, *free_regions)
     {
         if (free->size < aligned_size)
         {
@@ -401,8 +357,7 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
         used->end   = reserved_start + aligned_size;
         used->size  = aligned_size;
         used->type  = type;
-        used->next  = NULL;
-        used->prev  = NULL;
+        ILIST_NODE_INIT(used);
 
         free->start += aligned_size;
         free->size = free->end - free->start;
@@ -430,7 +385,7 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
     virt_region_t** free_regions   = NULL;
     size_t*         metadata_count = NULL;
 
-    for (virt_region_t* it = space->kernel_used_regions; it != NULL; it = it->next)
+    ILIST_FOR_EACH(it, space->kernel_used_regions)
     {
         if (it->start == addr)
         {
@@ -444,7 +399,7 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 
     if (region == NULL)
     {
-        for (virt_region_t* it = space->user_used_regions; it != NULL; it = it->next)
+        ILIST_FOR_EACH(it, space->user_used_regions)
         {
             if (it->start == addr)
             {
@@ -473,37 +428,11 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 
     if (insert_before == NULL)
     {
-        if (*free_regions == NULL)
-        {
-            region->prev  = NULL;
-            region->next  = NULL;
-            *free_regions = region;
-        }
-        else
-        {
-            virt_region_t* tail = *free_regions;
-            while (tail->next != NULL)
-            {
-                tail = tail->next;
-            }
-            tail->next   = region;
-            region->prev = tail;
-            region->next = NULL;
-        }
+        ILIST_APPEND(*free_regions, region);
     }
     else
     {
-        region->next = insert_before;
-        region->prev = insert_before->prev;
-        if (insert_before->prev != NULL)
-        {
-            insert_before->prev->next = region;
-        }
-        else
-        {
-            *free_regions = region;
-        }
-        insert_before->prev = region;
+        ILIST_INSERT_BEFORE(*free_regions, insert_before, region);
     }
 
     if (region->prev != NULL && region->prev->end == region->start)
@@ -511,11 +440,7 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
         virt_region_t* left = region->prev;
         left->end           = region->end;
         left->size          = left->end - left->start;
-        left->next          = region->next;
-        if (region->next != NULL)
-        {
-            region->next->prev = left;
-        }
+        ILIST_REMOVE(*free_regions, region);
         free_region_struct(region, metadata_count);
         region = left;
     }
@@ -525,11 +450,7 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
         virt_region_t* right = region->next;
         region->end          = right->end;
         region->size         = region->end - region->start;
-        region->next         = right->next;
-        if (right->next != NULL)
-        {
-            right->next->prev = region;
-        }
+        ILIST_REMOVE(*free_regions, right);
         free_region_struct(right, metadata_count);
     }
 
@@ -545,7 +466,7 @@ virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
 
     spinlock_acquire(&space->lock);
 
-    for (virt_region_t* it = space->kernel_used_regions; it != NULL; it = it->next)
+    ILIST_FOR_EACH(it, space->kernel_used_regions)
     {
         if (it->start <= addr && addr < it->end)
         {
@@ -554,7 +475,7 @@ virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
         }
     }
 
-    for (virt_region_t* it = space->user_used_regions; it != NULL; it = it->next)
+    ILIST_FOR_EACH(it, space->user_used_regions)
     {
         if (it->start <= addr && addr < it->end)
         {

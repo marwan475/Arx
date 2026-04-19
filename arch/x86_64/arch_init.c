@@ -11,7 +11,23 @@ static inline void outb(uint16_t port, uint8_t value)
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
-void build_tss_descriptor(const tss_t* tss, tss_discriptor_t* tss_descriptor)
+__attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg)
+{
+    __asm__ volatile("mov %0, %%rsp\n"
+                     "andq $-16, %%rsp\n"
+                     "mov %2, %%rdi\n"
+                     "call *%1\n"
+                     :
+                     : "r"(stack_top), "r"(entry), "r"(arg)
+                     : "rdi", "memory");
+
+    for (;;)
+    {
+        arch_halt();
+    }
+}
+
+static void build_tss_descriptor(const tss_t* tss, tss_discriptor_t* tss_descriptor)
 {
     uint64_t tss_address = (uint64_t) tss;
     uint32_t tss_limit   = (uint32_t) (sizeof(tss_t) - 1);
@@ -29,7 +45,7 @@ void build_tss_descriptor(const tss_t* tss, tss_discriptor_t* tss_descriptor)
     tss_descriptor->reserved  = 0;
 }
 
-void build_gdt(gdt_t* gdt, const tss_discriptor_t* tss_descriptor)
+static void build_gdt(gdt_t* gdt, const tss_discriptor_t* tss_descriptor)
 {
     gdt->null.value           = 0x0000000000000000;
     gdt->kernel_code_64.value = 0x00AF9A000000FFFF;
@@ -39,7 +55,7 @@ void build_gdt(gdt_t* gdt, const tss_discriptor_t* tss_descriptor)
     gdt->tss                  = *tss_descriptor;
 }
 
-void gdt_init()
+static void gdt_init()
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
@@ -83,7 +99,7 @@ static void (*const isr_handlers[NUM_IDT_ENTRIES])() = {
         ISR224, ISR225, ISR226, ISR227, ISR228, ISR229, ISR230, ISR231, ISR232, ISR233, ISR234, ISR235, ISR236, ISR237, ISR238, ISR239, ISR240, ISR241, ISR242, ISR243, ISR244, ISR245, ISR246, ISR247, ISR248, ISR249, ISR250, ISR251, ISR252, ISR253, ISR254, ISR255,
 };
 
-void set_idt_entry(int interrupt, void (*base)(), uint16_t segment, uint8_t flags, idt_entry_t* idt)
+static void set_idt_entry(int interrupt, void (*base)(), uint16_t segment, uint8_t flags, idt_entry_t* idt)
 {
     uintptr_t base_addr        = (uintptr_t) base;
     idt[interrupt].offset_low  = (uint16_t) (base_addr & 0xFFFF);
@@ -95,17 +111,17 @@ void set_idt_entry(int interrupt, void (*base)(), uint16_t segment, uint8_t flag
     idt[interrupt].zero        = 0;
 }
 
-void enable_idt_entry(int interrupt, idt_entry_t* idt)
+static void enable_idt_entry(int interrupt, idt_entry_t* idt)
 {
     idt[interrupt].type_attr |= IDT_FLAG_PRESENT;
 }
 
-void disable_idt_entry(int interrupt, idt_entry_t* idt)
+static void disable_idt_entry(int interrupt, idt_entry_t* idt)
 {
     idt[interrupt].type_attr &= ~IDT_FLAG_PRESENT;
 }
 
-void isr_init(idt_entry_t* idt)
+static void isr_init(idt_entry_t* idt)
 {
     for (int interrupt = 0; interrupt < NUM_IDT_ENTRIES; interrupt++)
     {
@@ -114,7 +130,7 @@ void isr_init(idt_entry_t* idt)
     }
 }
 
-void idt_init()
+static void idt_init()
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
@@ -123,13 +139,13 @@ void idt_init()
     isr_init(cpu_info->arch_info.idt);
 }
 
-void disable_pic()
+static void disable_pic()
 {
     outb(PIC_MASTER_DATA_PORT, PIC_MASK_ALL_IRQS);
     outb(PIC_SLAVE_DATA_PORT, PIC_MASK_ALL_IRQS);
 }
 
-void init_interrupts()
+static void init_interrupts()
 {
     cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
 
@@ -150,8 +166,6 @@ bool arch_init(void)
 {
     gdt_init();
     init_interrupts();
-
-    dispatcher.cpus[arch_cpu_id()].initialized = true;
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 

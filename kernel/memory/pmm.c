@@ -1,8 +1,6 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
-
-// keep it to one zone containing all memory for now
-static numa_node_t pmm_numa_node = {0};
+#include <klib/intrusive_list.h>
 
 static size_t bytes_to_kb(size_t bytes)
 {
@@ -25,7 +23,7 @@ static inline phys_addr_t pfn_to_pa(uint64_t pfn)
 }
 
 // this function should only be used before main pmm is setup
-uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
+static uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
 {
     for (size_t i = 0; i < zone->region_count; i++)
     {
@@ -40,44 +38,34 @@ uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
     return PMM_INVALID_PFN;
 }
 
-static _force_inline uint64_t order_size(size_t order)
+static inline uint64_t order_size(size_t order)
 {
     return 1UL << order;
 }
 
-static _force_inline bool is_aligned_to_order(uint64_t pfn, size_t order)
+static inline bool is_aligned_to_order(uint64_t pfn, size_t order)
 {
     return (pfn & (order_size(order) - 1)) == 0;
 }
 
 // to find buddy pfn base pfn needs to be aligned to order for this calculation to work
-static _force_inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
+static inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
 {
     return pfn ^ order_size(order);
 }
 
-void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
+static void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
 {
     page_t* block = &zone->buddy_metadata[pfn];
     block->flags  = PMM_PAGE_FREE;
     block->order  = order;
-    block->next   = NULL;
-    block->prev   = NULL;
+    ILIST_NODE_INIT(block);
 
     free_list_t* free_list = &zone->buddy_free_lists[order];
-    if (free_list->head == NULL)
-    {
-        free_list->head = block;
-    }
-    else
-    {
-        block->next           = free_list->head;
-        free_list->head->prev = block;
-        free_list->head       = block;
-    }
+    ILIST_PUSH_FRONT(free_list->head, block);
 }
 
-void buddy_seed_region(zone_t* zone, size_t region_index)
+static void buddy_seed_region(zone_t* zone, size_t region_index)
 {
     uint64_t start_pfn       = zone->regions[region_index].start_pfn;
     uint64_t end_pfn         = zone->regions[region_index].end_pfn;
@@ -108,7 +96,7 @@ void buddy_seed_region(zone_t* zone, size_t region_index)
 
 // since we memset buddy_metadata to 0 all pages are set to reserved with order 0
 // we only need to set usable pages to free with their pfns then seed the buddy free lists
-void buddy_allocator_init(zone_t* zone)
+static void buddy_allocator_init(zone_t* zone)
 {
     for (size_t i = 0; i < zone->region_count; i++)
     {
@@ -131,8 +119,10 @@ void buddy_allocator_init(zone_t* zone)
 
 void pmm_init(struct boot_info* boot_info)
 {
-    memset(&pmm_numa_node, 0, sizeof(pmm_numa_node));
-    zone_t* zone = &pmm_numa_node.zone;
+    // single numa node for now
+    memset(&dispatcher.numa_nodes, 0, sizeof(dispatcher.numa_nodes));
+    dispatcher.numa_node_count = 1;
+    zone_t* zone               = &dispatcher.numa_nodes[0].zone;
 
     struct boot_memmap_entry* memmap             = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
     size_t                    memmap_entry_count = boot_info->memmap_entry_count;
@@ -206,14 +196,15 @@ void pmm_init(struct boot_info* boot_info)
     kprintf("Arx kernel: buddy allocator initialized\n");
 
     uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    dispatcher.numa_nodes[0].cpu_count = num_cpus;
     for (uint8_t i = 0; i < num_cpus; i++)
     {
-        dispatcher.cpus[i].numa_node = &pmm_numa_node;
+        dispatcher.cpus[i].numa_node = &dispatcher.numa_nodes[0];
     }
 }
 
 // removes head of free list
-page_t* remove_block_from_free_list(zone_t* zone, size_t order)
+static page_t* remove_block_from_free_list(zone_t* zone, size_t order)
 {
     free_list_t* free_list = &zone->buddy_free_lists[order];
     if (free_list->head == NULL)
@@ -221,20 +212,14 @@ page_t* remove_block_from_free_list(zone_t* zone, size_t order)
         return NULL;
     }
 
-    page_t* block   = free_list->head;
-    free_list->head = block->next;
-    if (free_list->head != NULL)
-    {
-        free_list->head->prev = NULL;
-    }
-    block->next  = NULL;
-    block->prev  = NULL;
+    page_t* block = free_list->head;
+    ILIST_REMOVE(free_list->head, block);
     block->flags = PMM_PAGE_USED;
 
     return block;
 }
 
-page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_order)
+static page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_order)
 {
     if (from_order <= to_order)
     {
@@ -252,7 +237,7 @@ page_t* split_block(zone_t* zone, page_t* block, size_t from_order, size_t to_or
     return block;
 }
 
-uint64_t buddy_alloc(zone_t* zone, size_t order)
+static uint64_t buddy_alloc(zone_t* zone, size_t order)
 {
     size_t original_order = order;
     // find first order with free blocks that can satisfy request
@@ -284,7 +269,7 @@ uint64_t buddy_alloc(zone_t* zone, size_t order)
 }
 
 // merges block with buddy, only does one merge
-page_t* merge_block(zone_t* zone, page_t* block)
+static page_t* merge_block(zone_t* zone, page_t* block)
 {
     if (block->order >= MAX_ORDER)
     {
@@ -300,18 +285,7 @@ page_t* merge_block(zone_t* zone, page_t* block)
     }
 
     // remove buddy from free list
-    if (buddy->prev != NULL)
-    {
-        buddy->prev->next = buddy->next;
-    }
-    else
-    {
-        zone->buddy_free_lists[buddy->order].head = buddy->next;
-    }
-    if (buddy->next != NULL)
-    {
-        buddy->next->prev = buddy->prev;
-    }
+    ILIST_REMOVE(zone->buddy_free_lists[buddy->order].head, buddy);
 
     // merge block and buddy
     if (buddy_pfn < block->pfn)
@@ -326,7 +300,7 @@ page_t* merge_block(zone_t* zone, page_t* block)
     }
 }
 
-void buddy_free(zone_t* zone, uint64_t pfn)
+static void buddy_free(zone_t* zone, uint64_t pfn)
 {
     page_t* block = &zone->buddy_metadata[pfn];
     size_t  order = block->order;

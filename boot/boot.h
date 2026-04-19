@@ -8,6 +8,7 @@
 
 #define BOOT_MEMMAP_MAX_ENTRIES 256
 #define BOOT_SMP_MAX_CPUS 8
+#define MAX_NUMA_NODES 8
 
 enum boot_memmap_type
 {

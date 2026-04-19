@@ -9,8 +9,6 @@
 void run_selftests(void);
 void kmain_post_init(void* arg);
 
-dispatcher_t dispatcher;
-
 // From bootloader we need
 // - memory map
 // - framebuffer info

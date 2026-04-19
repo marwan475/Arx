@@ -2,9 +2,6 @@
 #include <memory/vmm.h>
 #include <klib/intrusive_list.h>
 
-// keep it to one zone containing all memory for now
-static numa_node_t pmm_numa_node = {0};
-
 static size_t bytes_to_kb(size_t bytes)
 {
     return bytes / 1024;
@@ -41,18 +38,18 @@ static uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
     return PMM_INVALID_PFN;
 }
 
-static _force_inline uint64_t order_size(size_t order)
+static inline uint64_t order_size(size_t order)
 {
     return 1UL << order;
 }
 
-static _force_inline bool is_aligned_to_order(uint64_t pfn, size_t order)
+static inline bool is_aligned_to_order(uint64_t pfn, size_t order)
 {
     return (pfn & (order_size(order) - 1)) == 0;
 }
 
 // to find buddy pfn base pfn needs to be aligned to order for this calculation to work
-static _force_inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
+static inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
 {
     return pfn ^ order_size(order);
 }
@@ -122,8 +119,10 @@ static void buddy_allocator_init(zone_t* zone)
 
 void pmm_init(struct boot_info* boot_info)
 {
-    memset(&pmm_numa_node, 0, sizeof(pmm_numa_node));
-    zone_t* zone = &pmm_numa_node.zone;
+    // single numa node for now
+    memset(&dispatcher.numa_nodes, 0, sizeof(dispatcher.numa_nodes));
+    dispatcher.numa_node_count = 1;
+    zone_t* zone               = &dispatcher.numa_nodes[0].zone;
 
     struct boot_memmap_entry* memmap             = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
     size_t                    memmap_entry_count = boot_info->memmap_entry_count;
@@ -197,9 +196,10 @@ void pmm_init(struct boot_info* boot_info)
     kprintf("Arx kernel: buddy allocator initialized\n");
 
     uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    dispatcher.numa_nodes[0].cpu_count = num_cpus;
     for (uint8_t i = 0; i < num_cpus; i++)
     {
-        dispatcher.cpus[i].numa_node = &pmm_numa_node;
+        dispatcher.cpus[i].numa_node = &dispatcher.numa_nodes[0];
     }
 }
 

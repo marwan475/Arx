@@ -1,8 +1,11 @@
 #ifndef CPU_H
 #define CPU_H
 
-#include <klib/klib.h>
 #include <arch/arch.h>
+#include <klib/spinlock.h>
+#include <memory/pmm.h>
+#include <memory/heap.h>
+#include <terminal/terminal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -11,6 +14,13 @@
 
 typedef struct numa_node       numa_node_t;
 typedef struct virt_addr_space virt_addr_space_t;
+struct flanterm_context;
+
+typedef enum arch_type
+{
+    ARCH_X86_64,
+    ARCH_AARCH64,
+} arch_type_t;
 
 typedef enum ipi_request_type
 {
@@ -52,6 +62,24 @@ typedef struct cpu_info
     void*              kernel_stack_base;
     size_t             kernel_stack_size;
 } cpu_info_t;
+
+typedef struct dispatcher
+{
+    cpu_info_t*              cpus;
+    size_t                   cpu_count;
+    uint8_t                  cpus_initialized;
+    numa_node_t              numa_nodes[MAX_NUMA_NODES];
+    size_t                   numa_node_count;
+    kernel_framebuffer_t     framebuffer;
+    uint32_t                 vector_base;
+    struct flanterm_context* terminal_context;
+    spinlock_t               terminal_lock;
+    arch_type_t              arch;
+    arch_dispatcher_info_t   arch_info;
+    kernel_heap_t            heap;
+} dispatcher_t;
+
+extern dispatcher_t dispatcher;
 
 void cpus_init(size_t cpu_count);
 __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);

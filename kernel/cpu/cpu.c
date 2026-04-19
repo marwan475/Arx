@@ -1,6 +1,8 @@
 #include <cpu/cpu.h>
 #include <klib/klib.h>
 
+dispatcher_t dispatcher;
+
 static cpu_info_t dispatcher_cpus[BOOT_SMP_MAX_CPUS];
 
 void cpus_init(size_t cpu_count)

@@ -2,7 +2,10 @@
 #define PMM_H
 
 #include <boot/boot.h>
-#include <klib/klib.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <klib/spinlock.h>
 
 #define PMM_MAX_REGIONS 128
 #define MAX_ORDER 10

@@ -76,7 +76,6 @@ typedef struct dispatcher
     spinlock_t               terminal_lock;
     arch_type_t              arch;
     arch_dispatcher_info_t   arch_info;
-    kernel_heap_t            heap;
 } dispatcher_t;
 
 extern dispatcher_t dispatcher;

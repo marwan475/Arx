@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <klib/spinlock.h>
+#include <memory/heap.h>
 
 #define PMM_MAX_REGIONS 128
 #define MAX_ORDER 10
@@ -64,6 +65,7 @@ typedef struct numa_node
 {
     zone_t zone;
     size_t cpu_count;
+    kernel_heap_t heap;
 } numa_node_t;
 
 void pmm_init(struct boot_info* boot_info);

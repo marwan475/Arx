@@ -3,17 +3,17 @@
 
 void heap_init(void)
 {
-    void* heap_base = vmalloc(KERNEL_HEAP_SIZE);
-    if (heap_base == NULL)
+    for (size_t i = 0; i < dispatcher.numa_node_count; i++)
     {
-        kprintf("Arx kernel: failed to allocate kernel heap\n");
-        panic();
+        dispatcher.numa_nodes[i].heap.base = vmalloc(KERNEL_HEAP_SIZE);
+        dispatcher.numa_nodes[i].heap.size = KERNEL_HEAP_SIZE;
+
+        if (dispatcher.numa_nodes[i].heap.base == NULL)
+        {
+            kprintf("Arx kernel: failed to initialize heap for NUMA node %zu\n", i);
+            panic();
+        }
     }
 
-    memset(heap_base, 0, KERNEL_HEAP_SIZE);
-
-    dispatcher.heap.base = heap_base;
-    dispatcher.heap.size = KERNEL_HEAP_SIZE;
-
-    kprintf("Arx kernel: kernel heap initialized at %p with size %zu bytes\n", heap_base, KERNEL_HEAP_SIZE);
+    kprintf("Arx kernel: heap initialized\n");
 }

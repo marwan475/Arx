@@ -1,5 +1,6 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <klib/list.h>
 
 // keep it to one zone containing all memory for now
 static numa_node_t pmm_numa_node = {0};
@@ -61,20 +62,10 @@ static void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
     page_t* block = &zone->buddy_metadata[pfn];
     block->flags  = PMM_PAGE_FREE;
     block->order  = order;
-    block->next   = NULL;
-    block->prev   = NULL;
+    ILIST_NODE_INIT(block);
 
     free_list_t* free_list = &zone->buddy_free_lists[order];
-    if (free_list->head == NULL)
-    {
-        free_list->head = block;
-    }
-    else
-    {
-        block->next           = free_list->head;
-        free_list->head->prev = block;
-        free_list->head       = block;
-    }
+    ILIST_PUSH_FRONT(free_list->head, block);
 }
 
 static void buddy_seed_region(zone_t* zone, size_t region_index)
@@ -221,14 +212,8 @@ static page_t* remove_block_from_free_list(zone_t* zone, size_t order)
         return NULL;
     }
 
-    page_t* block   = free_list->head;
-    free_list->head = block->next;
-    if (free_list->head != NULL)
-    {
-        free_list->head->prev = NULL;
-    }
-    block->next  = NULL;
-    block->prev  = NULL;
+    page_t* block = free_list->head;
+    ILIST_REMOVE(free_list->head, block);
     block->flags = PMM_PAGE_USED;
 
     return block;
@@ -300,18 +285,7 @@ static page_t* merge_block(zone_t* zone, page_t* block)
     }
 
     // remove buddy from free list
-    if (buddy->prev != NULL)
-    {
-        buddy->prev->next = buddy->next;
-    }
-    else
-    {
-        zone->buddy_free_lists[buddy->order].head = buddy->next;
-    }
-    if (buddy->next != NULL)
-    {
-        buddy->next->prev = buddy->prev;
-    }
+    ILIST_REMOVE(zone->buddy_free_lists[buddy->order].head, buddy);
 
     // merge block and buddy
     if (buddy_pfn < block->pfn)

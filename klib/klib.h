@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <terminal/terminal.h>
+#include "debug.h"
 
 #define _force_inline inline __attribute__((always_inline))
 
@@ -55,17 +56,6 @@ int  kprintf(const char* format, ...);
 void kterm_write(const char* msg);
 int  kterm_printf(const char* format, ...);
 int  kterm_vprintf(const char* format, va_list args);
-void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count);
-
-#ifndef DEBUG
-#define DEBUG 0
-#endif
-
-#if DEBUG
-#define KDEBUG(fmt, ...) kterm_printf("\x1b[32m[debug]\x1b[0m " fmt, ##__VA_ARGS__)
-#else
-#define KDEBUG(...) ((void) 0)
-#endif
 
 // spinlock
 static _force_inline void spinlock_acquire(spinlock_t* lock)

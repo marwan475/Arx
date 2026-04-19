@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 
-void blue_screen(void)
+static void blue_screen(void)
 {
     const kernel_framebuffer_t* fb = &dispatcher.framebuffer;
 
@@ -112,7 +112,7 @@ static void ipi_broadcast_exception(void)
 }
 
 // cpus ipi is locked when this is called. so handler needs to unlock it
-void handle_ipi(registers_t* reg)
+static void handle_ipi(registers_t* reg)
 {
     cpu_info_t*        cpu_info     = &dispatcher.cpus[arch_cpu_id()];
     ipi_request_type_t request_type = IPI_REQUEST_NONE;

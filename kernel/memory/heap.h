@@ -9,7 +9,7 @@
 #define HEAP_MAX_OBJECT_SIZE (1UL << 17)
 #define SLAB_SIZE HEAP_MAX_OBJECT_SIZE
 #define INITIAL_SLABS_PER_CACHE 4
-#define MAX_SLABS_PER_CACHE 128
+#define MAX_SLABS_PER_CACHE 1024
 
 typedef enum object_size
 {

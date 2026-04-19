@@ -54,6 +54,7 @@ void* vmalloc(size_t size);
 void  vfree(void* ptr);
 
 void* kmalloc(size_t size);
+void* kzalloc(size_t size);
 void  kfree(void* ptr);
 
 #endif

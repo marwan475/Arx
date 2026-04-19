@@ -166,6 +166,65 @@ static void kmalloc_test(size_t* passes, size_t* failures)
     }
 }
 
+static void kzalloc_test(size_t* passes, size_t* failures)
+{
+    if (kzalloc(0) != NULL)
+    {
+        klib_test_log_fail("kzalloc(0) should return NULL", failures);
+    }
+    else
+    {
+        (*passes)++;
+    }
+
+    const size_t sizes[] = {1, 8, 17, 64, 129, 777, 1500, 2047};
+    void*        ptrs[sizeof(sizes) / sizeof(sizes[0])];
+
+    for (size_t i = 0; i < (sizeof(ptrs) / sizeof(ptrs[0])); i++)
+    {
+        ptrs[i] = kzalloc(sizes[i]);
+        if (ptrs[i] == NULL)
+        {
+            klib_test_log_fail("kzalloc allocation returned NULL", failures);
+            continue;
+        }
+
+        bool all_zero = true;
+        for (size_t j = 0; j < sizes[i]; j++)
+        {
+            if (((uint8_t*) ptrs[i])[j] != 0)
+            {
+                all_zero = false;
+                break;
+            }
+        }
+
+        if (!all_zero)
+        {
+            klib_test_log_fail("kzalloc memory not zero-initialized", failures);
+        }
+        else
+        {
+            (*passes)++;
+        }
+    }
+
+    if (kzalloc(2049) != NULL)
+    {
+        klib_test_log_fail("kzalloc(2049) should return NULL", failures);
+    }
+    else
+    {
+        (*passes)++;
+    }
+
+    for (size_t i = 0; i < (sizeof(ptrs) / sizeof(ptrs[0])); i++)
+    {
+        kfree(ptrs[i]);
+    }
+    (*passes)++;
+}
+
 void run_klib_selftests(void)
 {
     size_t failures = 0;
@@ -175,6 +234,7 @@ void run_klib_selftests(void)
 
     vmalloc_test(&passes, &failures);
     kmalloc_test(&passes, &failures);
+    kzalloc_test(&passes, &failures);
 
     kprintf("Arx kernel: klib_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
     if (failures == 0)

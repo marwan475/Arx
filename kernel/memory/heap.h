@@ -6,7 +6,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define SLAB_SIZE PAGE_SIZE
+#define HEAP_MAX_OBJECT_SIZE (1UL << 17)
+#define SLAB_SIZE HEAP_MAX_OBJECT_SIZE
 #define INITIAL_SLABS_PER_CACHE 4
 #define MAX_SLABS_PER_CACHE 128
 
@@ -20,6 +21,12 @@ typedef enum object_size
     OBJECT_SIZE_512  = 5,
     OBJECT_SIZE_1024 = 6,
     OBJECT_SIZE_2048 = 7,
+    OBJECT_SIZE_4096 = 8,
+    OBJECT_SIZE_8192 = 9,
+    OBJECT_SIZE_16384 = 10,
+    OBJECT_SIZE_32768 = 11,
+    OBJECT_SIZE_65536 = 12,
+    OBJECT_SIZE_131072 = 13,
     OBJECT_SIZE_CLASS_COUNT
 } object_size_t; 
 

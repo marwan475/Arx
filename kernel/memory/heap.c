@@ -4,7 +4,7 @@
 #include <klib/bitmap.h>   
 #include <memory/pmm.h>
 
-const size_t heap_object_sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048};
+const size_t heap_object_sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072};
 
 static void* slab_alloc(slab_t* slab)
 {

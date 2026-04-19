@@ -662,9 +662,9 @@ static void heap_test(void)
         passes++;
     }
 
-    if (heap_alloc(heap, 2049) != NULL)
+    if (heap_alloc(heap, 131073) != NULL)
     {
-        heap_test_log_fail("oversized heap_alloc(2049) should return NULL", &failures);
+        heap_test_log_fail("oversized heap_alloc(131073) should return NULL", &failures);
     }
     else
     {

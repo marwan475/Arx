@@ -127,9 +127,9 @@ static void kmalloc_test(size_t* passes, size_t* failures)
         (*passes)++;
     }
 
-    if (kmalloc(2049) != NULL)
+    if (kmalloc(131073) != NULL)
     {
-        klib_test_log_fail("kmalloc(2049) should return NULL", failures);
+        klib_test_log_fail("kmalloc(131073) should return NULL", failures);
     }
     else
     {
@@ -209,9 +209,9 @@ static void kzalloc_test(size_t* passes, size_t* failures)
         }
     }
 
-    if (kzalloc(2049) != NULL)
+    if (kzalloc(131073) != NULL)
     {
-        klib_test_log_fail("kzalloc(2049) should return NULL", failures);
+        klib_test_log_fail("kzalloc(131073) should return NULL", failures);
     }
     else
     {

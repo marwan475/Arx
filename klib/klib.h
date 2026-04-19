@@ -53,6 +53,8 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
 void* vmalloc(size_t size);
 void  vfree(void* ptr);
 
+// Allocate smaller blocks of memory from the kernel heap (fast)
+// Returns null if allocation is too big for the heap
 void* kmalloc(size_t size);
 void* kzalloc(size_t size);
 void  kfree(void* ptr);

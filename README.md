@@ -71,11 +71,25 @@ Free region in address space
 
 ![VMM free](docs/vmmfree-2026-04-15-072859.svg)
 
+Heap structure
+
+![Heap](docs/heap-2026-04-19-224905.svg)
+
+Heap Alloc
+
+![Heap alloc](docs/heapalloc-2026-04-19-225900.svg)
+
+Heap Free
+
+![Heap free](docs/heapfree-2026-04-19-225920.svg)
     
 Klib allocations
 - vmalloc and vfree
-- uses pmm and vmm api to allocate large contiguous virtual memory chunks
-- slow due to needing to map pages
+    - uses pmm and vmm api to allocate large contiguous virtual memory chunks
+    - slow due to needing to map pages
+- kmalloc, kzalloc, kfree
+    - uses heap api to allocate fast small blocks of contiguous memory
+    - fast due to not needing to map pages
 
 ### SMP init
 - Limine provides SMP cpu list and bsp id through the boot info

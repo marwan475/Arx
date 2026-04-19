@@ -139,6 +139,76 @@ flowchart LR
     K --> H
 ```
 
+```mermaid
+flowchart LR
+    A[Kernel Heap]
+    B[Heap lock]
+    C[Caches by size class]
+    D[Cache]
+    E[Partial list]
+    F[Full list]
+    G[Empty list]
+    H[Slab metadata array]
+    I[Slab]
+
+    A --> B
+    A --> C
+    C --> D
+    D --> E
+    D --> F
+    D --> G
+    D --> H
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+```
+
+```mermaid
+flowchart TD
+    subgraph Heap Alloc Path
+        A0[request] --> A1[validate heap and size]
+        A1 --> A2{valid}
+        A2 -- no --> A3[return NULL]
+        A2 -- yes --> A4[pick cache for size]
+        A4 --> A5{cache found}
+        A5 -- no --> A3
+        A5 -- yes --> A6[try partial list]
+        A6 --> A7{success}
+        A7 -- yes --> A8[return ptr]
+        A7 -- no --> A9[try full list]
+        A9 --> A10{success}
+        A10 -- yes --> A11[move full to partial]
+        A11 --> A8
+        A10 -- no --> A12[grow cache then retry full]
+        A12 --> A13{success}
+        A13 -- yes --> A11
+        A13 -- no --> A3
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph Heap Free Path
+        F0[request] --> F1[validate heap and ptr]
+        F1 --> F2{valid}
+        F2 -- no --> F3[return]
+        F2 -- yes --> F4[scan caches]
+        F4 --> F5[try empty list first]
+        F5 --> F6{found owner slab}
+        F6 -- yes --> F7[free object]
+        F7 --> F8[move empty to partial if needed]
+        F8 --> F3
+        F6 -- no --> F9[try partial list]
+        F9 --> F10{found owner slab}
+        F10 -- no --> F11[next cache]
+        F11 --> F4
+        F10 -- yes --> F12[free object]
+        F12 --> F13[move partial to full if slab fully free]
+        F13 --> F3
+    end
+```
+
 
 
 

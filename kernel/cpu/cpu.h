@@ -21,6 +21,7 @@ typedef enum ipi_request_type
     IPI_REQUEST_NONE,
     IPI_REQUEST_RESCHEDULE,
     IPI_REQUEST_INVALIDATE_TLB,
+    IPI_REQUEST_EXCEPTION,
 } ipi_request_type_t;
 
 typedef enum ipi_tlb_invalidation_type

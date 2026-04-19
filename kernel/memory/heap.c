@@ -101,6 +101,128 @@ static void free_slab_struct(slab_t* slab, size_t* metadata_count)
     (*metadata_count)++;
 }
 
+static bool slab_contains_ptr(const slab_t* slab, const void* ptr)
+{
+    if (slab == NULL || ptr == NULL || slab->objects_array == NULL)
+    {
+        return false;
+    }
+
+    uintptr_t start = (uintptr_t) slab->objects_array;
+    uintptr_t end   = start + slab->total_objects * slab->object_size;
+    uintptr_t p     = (uintptr_t) ptr;
+
+    if (p < start || p >= end)
+    {
+        return false;
+    }
+
+    return ((p - start) % slab->object_size) == 0;
+}
+
+static void* cache_alloc(cache_t* cache)
+{
+    if (cache == NULL)
+    {
+        return NULL;
+    }
+
+    ILIST_FOR_EACH(slab, cache->partial_slabs)
+    {
+        void* ptr = slab_alloc(slab);
+        if (ptr != NULL)
+        {
+            return ptr;
+        }
+    }
+
+    ILIST_FOR_EACH(slab, cache->full_slabs)
+    {
+        void* ptr = slab_alloc(slab);
+        if (ptr != NULL)
+        {
+            ILIST_REMOVE(cache->full_slabs, slab);
+            ILIST_PUSH_FRONT(cache->partial_slabs, slab);
+            return ptr;
+        }
+    }
+
+    for (size_t i = 0; i < INITIAL_SLABS_PER_CACHE; i++)
+    {
+        slab_t* slab = alloc_slab_struct(cache->slab_metadata, &cache->slab_metadata_count);
+        if (slab == NULL)
+        {
+            break;
+        }
+
+        if (!slab_init(slab, cache->object_size))
+        {
+            free_slab_struct(slab, &cache->slab_metadata_count);
+            break;
+        }
+
+        ILIST_PUSH_FRONT(cache->full_slabs, slab);
+    }
+
+    ILIST_FOR_EACH(slab, cache->full_slabs)
+    {
+        void* ptr = slab_alloc(slab);
+        if (ptr != NULL)
+        {
+            ILIST_REMOVE(cache->full_slabs, slab);
+            ILIST_PUSH_FRONT(cache->partial_slabs, slab);
+            return ptr;
+        }
+    }
+
+    return NULL;
+
+}
+
+static void cache_free(cache_t* cache, void* ptr)
+{
+    if (cache == NULL || ptr == NULL)
+    {
+        return;
+    }
+
+    ILIST_FOR_EACH(slab, cache->empty_slabs)
+    {
+        if (!slab_contains_ptr(slab, ptr))
+        {
+            continue;
+        }
+
+        slab_free(slab, ptr);
+
+        if (slab->free_objects > 0)
+        {
+            ILIST_REMOVE(cache->empty_slabs, slab);
+            ILIST_PUSH_FRONT(cache->partial_slabs, slab);
+        }
+
+        return;
+    }
+
+    ILIST_FOR_EACH(slab, cache->partial_slabs)
+    {
+        if (!slab_contains_ptr(slab, ptr))
+        {
+            continue;
+        }
+
+        slab_free(slab, ptr);
+
+        if (slab->free_objects == slab->total_objects)
+        {
+            ILIST_REMOVE(cache->partial_slabs, slab);
+            ILIST_PUSH_FRONT(cache->full_slabs, slab);
+        }
+
+        return;
+    }
+}
+
 static void cache_init(cache_t* cache, size_t object_size)
 {
     cache->object_size   = object_size;

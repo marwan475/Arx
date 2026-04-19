@@ -3,11 +3,13 @@
 
 #include <boot/boot.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #define KERNEL_HEAP_SIZE (250 * PAGE_SIZE) // 1 mb
 
 #define SLAB_SIZE PAGE_SIZE
 #define INITIAL_SLABS_PER_CACHE 4
+#define MAX_SLABS_PER_CACHE 128
 
 typedef enum object_size
 {
@@ -32,6 +34,7 @@ typedef struct slab {
     uint8_t*    object_bitmap;
     slab_t*     next;
     slab_t*     prev;
+    bool        allocated;
 } slab_t;
 
 typedef struct cache {
@@ -39,6 +42,8 @@ typedef struct cache {
     slab_t*     partial_slabs;
     slab_t*     full_slabs;
     slab_t*     empty_slabs;
+    slab_t*     slab_metadata;
+    size_t      slab_metadata_count;
 } cache_t;
 
 typedef struct kernel_heap {

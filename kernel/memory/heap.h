@@ -7,6 +7,20 @@
 #define KERNEL_HEAP_SIZE (250 * PAGE_SIZE) // 1 mb
 
 #define SLAB_SIZE PAGE_SIZE
+#define INITIAL_SLABS_PER_CACHE 4
+
+typedef enum object_size
+{
+    OBJECT_SIZE_16   = 0,
+    OBJECT_SIZE_32   = 1,
+    OBJECT_SIZE_64   = 2,
+    OBJECT_SIZE_128  = 3,
+    OBJECT_SIZE_256  = 4,
+    OBJECT_SIZE_512  = 5,
+    OBJECT_SIZE_1024 = 6,
+    OBJECT_SIZE_2048 = 7,
+    OBJECT_SIZE_CLASS_COUNT
+} object_size_t; 
 
 typedef struct slab slab_t;
 
@@ -20,8 +34,12 @@ typedef struct slab {
     slab_t*     prev;
 } slab_t;
 
-typedef struct cache {} cache_t;
-
+typedef struct cache {
+    size_t      object_size;
+    slab_t*     partial_slabs;
+    slab_t*     full_slabs;
+    slab_t*     empty_slabs;
+} cache_t;
 
 typedef struct kernel_heap {
     void*  base;

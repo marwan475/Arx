@@ -262,15 +262,42 @@ void heap_init(void)
 {
     for (size_t i = 0; i < dispatcher.numa_node_count; i++)
     {
-        dispatcher.numa_nodes[i].heap.base = vmalloc(KERNEL_HEAP_SIZE);
-        dispatcher.numa_nodes[i].heap.size = KERNEL_HEAP_SIZE;
-
-        if (dispatcher.numa_nodes[i].heap.base == NULL)
+        for (size_t j = 0; j < OBJECT_SIZE_CLASS_COUNT; j++)
         {
-            kprintf("Arx kernel: failed to initialize heap for NUMA node %zu\n", i);
-            panic();
+            cache_init(&dispatcher.numa_nodes[i].heap.caches[j], heap_object_sizes[j]);
         }
     }
 
     kprintf("Arx kernel: heap initialized\n");
+}
+
+void* heap_alloc(kernel_heap_t* heap, size_t size)
+{
+    if (heap == NULL || size == 0)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < OBJECT_SIZE_CLASS_COUNT; i++)
+    {
+        if (size <= heap->caches[i].object_size)
+        {
+            return cache_alloc(&heap->caches[i]);
+        }
+    }
+
+    return NULL;
+}  
+
+void heap_free(kernel_heap_t* heap, void* ptr)
+{
+    if (heap == NULL || ptr == NULL)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < OBJECT_SIZE_CLASS_COUNT; i++)
+    {
+        cache_free(&heap->caches[i], ptr);
+    }
 }

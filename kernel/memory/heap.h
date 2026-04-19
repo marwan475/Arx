@@ -5,8 +5,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define KERNEL_HEAP_SIZE (250 * PAGE_SIZE) // 1 mb
-
 #define SLAB_SIZE PAGE_SIZE
 #define INITIAL_SLABS_PER_CACHE 4
 #define MAX_SLABS_PER_CACHE 128
@@ -47,10 +45,11 @@ typedef struct cache {
 } cache_t;
 
 typedef struct kernel_heap {
-    void*  base;
-    size_t size;
+    cache_t caches[OBJECT_SIZE_CLASS_COUNT];
 }kernel_heap_t;
 
 void heap_init(void);
+void* heap_alloc(kernel_heap_t* heap, size_t size);
+void  heap_free(kernel_heap_t* heap, void* ptr);
 
 #endif

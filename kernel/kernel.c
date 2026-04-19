@@ -83,6 +83,10 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     vmm_init(boot_info);
     KDEBUG("<- vmm_init done\n");
 
+    KDEBUG("-> heap_init\n");
+    heap_init();
+    KDEBUG("<- heap_init done\n");
+
     KDEBUG("-> acpi_init(rsdp=0x%llx)\n", (unsigned long long) boot_info->rsdp_address);
     acpi_init(boot_info->rsdp_address);
     KDEBUG("<- acpi_init done\n");

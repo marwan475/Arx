@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <terminal/terminal.h>
+#include <memory/heap.h>
 #include "debug.h"
 
 #define _force_inline inline __attribute__((always_inline))
@@ -36,6 +37,7 @@ typedef struct dispatcher
     spinlock_t               terminal_lock;
     arch_type_t              arch;
     arch_dispatcher_info_t   arch_info;
+    kernel_heap_t            heap;
 } dispatcher_t;
 
 extern dispatcher_t dispatcher;

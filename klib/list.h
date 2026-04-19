@@ -3,7 +3,8 @@
 
 #include <stddef.h>
 
-//struct must expose next and prev pointers
+// doubly linked intrusive list macros
+// work on structs next and prev pointers
 
 // Initialize a detached intrusive node by clearing link pointers.
 #define ILIST_NODE_INIT(node)        \

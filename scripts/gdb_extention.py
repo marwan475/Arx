@@ -461,8 +461,11 @@ class ArxHeapCommand(gdb.Command):
     @staticmethod
     def _print_cache(cache_index, cache):
         object_size = int(cache["object_size"])
-        metadata_ptr = int(cache["slab_metadata"])
-        metadata_count = int(cache["slab_metadata_count"])
+        metadata_pool = cache["slab_metadata_pool"]
+        metadata_free_list = int(metadata_pool["free_list"])
+        metadata_chunks = int(metadata_pool["chunks"])
+        metadata_elem_size = int(metadata_pool["element_size"])
+        metadata_elems_per_chunk = int(metadata_pool["elements_per_chunk"])
 
         partial_stats = ArxHeapCommand._list_stats(cache["partial_slabs"])
         full_stats = ArxHeapCommand._list_stats(cache["full_slabs"])
@@ -474,8 +477,10 @@ class ArxHeapCommand(gdb.Command):
         total_used = partial_stats[3] + full_stats[3] + empty_stats[3]
 
         print("cache[{}] object_size={}".format(cache_index, object_size))
-        print("  slab_metadata:       0x{:016x}".format(metadata_ptr))
-        print("  slab_metadata_count: {}".format(metadata_count))
+        print("  slab_metadata_pool.chunks:            0x{:016x}".format(metadata_chunks))
+        print("  slab_metadata_pool.free_list:         0x{:016x}".format(metadata_free_list))
+        print("  slab_metadata_pool.element_size:      {}".format(metadata_elem_size))
+        print("  slab_metadata_pool.elements_per_chunk:{}".format(metadata_elems_per_chunk))
         print("  partial_slabs: count={} total_objects={} free_objects={} used_objects={}".format(
             partial_stats[0], partial_stats[1], partial_stats[2], partial_stats[3]
         ))

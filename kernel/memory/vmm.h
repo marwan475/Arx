@@ -4,14 +4,13 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <klib/klib.h>
+#include <memory/metadata.h>
 #include <memory/pmm.h>
 
 #define CANONICAL_USER_BASE UINT64_C(0x0000000000000000)
 #define CANONICAL_USER_END UINT64_C(0x00007fffffffffff)
 #define CANONICAL_KERNEL_BASE UINT64_C(0xffff800000000000)
 #define CANONICAL_KERNEL_END UINT64_C(0xffffffffffffffff)
-
-#define REGION_METADATA_SIZE PAGE_SIZE
 
 typedef uint64_t virt_addr_t;
 
@@ -41,11 +40,11 @@ typedef struct virt_addr_space
     spinlock_t     lock;
     virt_region_t* kernel_free_regions;
     virt_region_t* kernel_used_regions;
-    void*          kernel_region_metadata;
+    metadata_pool_t kernel_region_metadata_pool;
     size_t         kernel_regions_count;
     virt_region_t* user_free_regions;
     virt_region_t* user_used_regions;
-    void*          user_region_metadata;
+    metadata_pool_t user_region_metadata_pool;
     size_t         user_regions_count;
 } virt_addr_space_t;
 

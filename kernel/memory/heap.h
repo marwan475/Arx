@@ -3,13 +3,13 @@
 
 #include <boot/boot.h>
 #include <klib/spinlock.h>
+#include <memory/metadata.h>
 #include <stddef.h>
 #include <stdbool.h>
 
 #define HEAP_MAX_OBJECT_SIZE (1UL << 17)
 #define SLAB_SIZE HEAP_MAX_OBJECT_SIZE
 #define INITIAL_SLABS_PER_CACHE 4
-#define MAX_SLABS_PER_CACHE 1024
 
 typedef enum object_size
 {
@@ -48,8 +48,7 @@ typedef struct cache {
     slab_t*     partial_slabs;
     slab_t*     full_slabs;
     slab_t*     empty_slabs;
-    slab_t*     slab_metadata;
-    size_t      slab_metadata_count;
+    metadata_pool_t slab_metadata_pool;
 } cache_t;
 
 typedef struct kernel_heap {

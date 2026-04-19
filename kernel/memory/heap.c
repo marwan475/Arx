@@ -2,6 +2,7 @@
 #include <klib/klib.h>
 #include <klib/intrusive_list.h>
 #include <klib/bitmap.h>   
+#include <memory/metadata.h>
 #include <memory/pmm.h>
 
 const size_t heap_object_sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072};
@@ -76,29 +77,33 @@ static bool slab_init(slab_t* slab, size_t object_size)
     return true;
 }
 
-static slab_t* alloc_slab_struct(void* metadata, size_t* metadata_count)
+static slab_t* alloc_slab_struct(cache_t* cache)
 {
-    for (size_t i = 0; i < MAX_SLABS_PER_CACHE; i++)
+    if (cache == NULL)
     {
-        slab_t* slab = &((slab_t*) metadata)[i];
-        if (!slab->allocated)
-        {
-            (*metadata_count)--;
-            slab->allocated = true;
-            return slab;
-        }
+        return NULL;
     }
-    return NULL;
+
+    slab_t* slab = (slab_t*) metadata_pool_alloc(&cache->slab_metadata_pool);
+    if (slab == NULL)
+    {
+        return NULL;
+    }
+
+    slab->allocated = true;
+    ILIST_NODE_INIT(slab);
+    return slab;
 }
 
-static void free_slab_struct(slab_t* slab, size_t* metadata_count)
+static void free_slab_struct(cache_t* cache, slab_t* slab)
 {
-    if (slab == NULL || !slab->allocated)
+    if (cache == NULL || slab == NULL || !slab->allocated)
     {
         return;
     }
+
     slab->allocated = false;
-    (*metadata_count)++;
+    metadata_pool_free(&cache->slab_metadata_pool, slab);
 }
 
 static bool slab_contains_ptr(const slab_t* slab, const void* ptr)
@@ -149,7 +154,7 @@ static void* cache_alloc(cache_t* cache)
 
     for (size_t i = 0; i < INITIAL_SLABS_PER_CACHE; i++)
     {
-        slab_t* slab = alloc_slab_struct(cache->slab_metadata, &cache->slab_metadata_count);
+        slab_t* slab = alloc_slab_struct(cache);
         if (slab == NULL)
         {
             break;
@@ -157,7 +162,7 @@ static void* cache_alloc(cache_t* cache)
 
         if (!slab_init(slab, cache->object_size))
         {
-            free_slab_struct(slab, &cache->slab_metadata_count);
+            free_slab_struct(cache, slab);
             break;
         }
 
@@ -230,19 +235,11 @@ static void cache_init(cache_t* cache, size_t object_size)
     cache->full_slabs    = NULL;
     cache->empty_slabs   = NULL;
 
-    cache->slab_metadata = pmm_alloc(MAX_SLABS_PER_CACHE * sizeof(slab_t));
-    if (cache->slab_metadata == NULL)
-    {
-        kprintf("Arx kernel: failed to allocate cache slab metadata\n");
-        panic();
-    }
-
-    memset(cache->slab_metadata, 0, MAX_SLABS_PER_CACHE * sizeof(slab_t));
-    cache->slab_metadata_count = MAX_SLABS_PER_CACHE;
+    metadata_pool_init(&cache->slab_metadata_pool, sizeof(slab_t), metadata_default_elements_per_chunk(sizeof(slab_t)));
 
     for (size_t i = 0; i < INITIAL_SLABS_PER_CACHE; i++)
     {
-        slab_t* slab = alloc_slab_struct(cache->slab_metadata, &cache->slab_metadata_count);
+        slab_t* slab = alloc_slab_struct(cache);
         if (slab == NULL)
         {
             kprintf("Arx kernel: failed to allocate slab metadata for cache\n");

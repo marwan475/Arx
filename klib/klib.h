@@ -3,7 +3,6 @@
 
 #include <arch/arch.h>
 #include <boot/boot.h>
-#include <kernel/cpu/cpu.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,10 +12,7 @@
 
 #define _force_inline inline __attribute__((always_inline))
 
-#ifndef SPINLOCK_T_DEFINED
-#define SPINLOCK_T_DEFINED
 typedef _Atomic uint8_t spinlock_t;
-#endif
 
 typedef enum arch_type
 {
@@ -24,13 +20,14 @@ typedef enum arch_type
     ARCH_AARCH64,
 } arch_type_t;
 
+typedef struct cpu_info        cpu_info_t;
 typedef struct zone            zone_t;
 typedef struct virt_addr_space virt_addr_space_t;
 struct flanterm_context;
 
 typedef struct dispatcher
 {
-    cpu_info_t               cpus[BOOT_SMP_MAX_CPUS];
+    cpu_info_t*              cpus;
     size_t                   cpu_count;
     uint8_t                  cpus_initialized;
     kernel_framebuffer_t     framebuffer;
@@ -105,5 +102,7 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
 // Allocate large contiguous blocks of virtual memory (slow)
 void* vmalloc(size_t size);
 void  vfree(void* ptr);
+
+#include <cpu/cpu.h>
 
 #endif

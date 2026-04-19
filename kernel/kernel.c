@@ -70,6 +70,7 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_validate_boot(boot_info, cpu_count);
 
+    // Can access per cpu structs from dispatcher after this function
     KDEBUG("-> cpus_init(%llu)\n", (unsigned long long) cpu_count);
     cpus_init(cpu_count);
     KDEBUG("<- cpus_init done dispatcher.cpu_count=%llu\n", (unsigned long long) dispatcher.cpu_count);

@@ -1,17 +1,13 @@
 #ifndef CPU_H
 #define CPU_H
 
+#include <klib/klib.h>
 #include <arch/arch.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CPU_KERNEL_STACK_SIZE (16 * PAGE_SIZE)
-
-#ifndef SPINLOCK_T_DEFINED
-#define SPINLOCK_T_DEFINED
-typedef _Atomic uint8_t spinlock_t;
-#endif
+#define CPU_KERNEL_STACK_SIZE (16 * PAGE_SIZE) //64 kb
 
 typedef struct numa_node       numa_node_t;
 typedef struct virt_addr_space virt_addr_space_t;

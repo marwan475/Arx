@@ -5,6 +5,7 @@
 
 // doubly linked intrusive list macros
 // work on structs next and prev pointers
+// no allocations
 
 // Initialize a detached intrusive node by clearing link pointers.
 #define ILIST_NODE_INIT(node)        \

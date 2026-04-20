@@ -15,7 +15,7 @@ IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 KERNEL_SRC ?= kernel/kernel.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
-KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c
+KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
 KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
@@ -59,7 +59,7 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/metadata.c kernel/memory/vmm.c kernel/memory/heap.c kernel/terminal/terminal.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/metadata.c kernel/memory/vmm.c kernel/memory/heap.c kernel/terminal/terminal.c kernel/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
@@ -188,18 +188,21 @@ QEMU_X86_64 ?= qemu-system-x86_64
 QEMU_AARCH64 ?= qemu-system-aarch64
 QEMU_SMP ?= 4
 QEMU_COMMON ?= -m 1024 -smp $(QEMU_SMP) -serial stdio
-QEMU_X86_64_COMMON ?= -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)"
+QEMU_X86_64_COMMON ?= -machine q35 -display gtk,grab-on-hover=on -drive if=pflash,format=raw,readonly=on,file="$(X86_64_UEFI)"
+QEMU_X86_64_CPU ?= max
+QEMU_X86_64_CPU_KVM ?= host
 QEMU_DEBUG_COMMON ?= -m 1024 -smp $(QEMU_SMP)
+QEMU_X86_64_DEBUG_COMMON ?= $(QEMU_DEBUG_COMMON) -machine q35 -cpu $(QEMU_X86_64_CPU)
 GDB_X86_64 ?= gdb
 GDB_AARCH64 ?= $(shell command -v gdb-multiarch >/dev/null 2>&1 && echo gdb-multiarch || echo gdb)
 QEMU_GDB_PORT_X86_64 ?= 1234
 QEMU_GDB_PORT_AARCH64 ?= 1235
 
 qemu-x86_64: 
-	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
+	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -cpu $(QEMU_X86_64_CPU) $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
 
 qemu-kvm:
-	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -enable-kvm -cpu host $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
+	GDK_BACKEND=x11 $(QEMU_X86_64) $(QEMU_COMMON) -enable-kvm -cpu $(QEMU_X86_64_CPU_KVM) $(QEMU_X86_64_COMMON) -drive file="$(or $(IMG),$(IMG_X86_64))",format=raw
 
 qemu-aarch64: 
 	GDK_BACKEND=x11 $(QEMU_AARCH64) -machine virt -cpu cortex-a72 $(QEMU_COMMON) -display gtk,grab-on-hover=on -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet -bios "$(AARCH64_UEFI)" -drive if=none,id=osdisk,file="$(or $(IMG),$(IMG_AARCH64))",format=raw -device virtio-blk-pci,drive=osdisk,bootindex=0
@@ -212,7 +215,7 @@ x86_64-debug:
 	QEMU_BIN="$(QEMU_X86_64)" \
 	GDB_BIN="$(GDB_X86_64)" \
 	QEMU_GDB_PORT="$(QEMU_GDB_PORT_X86_64)" \
-	QEMU_COMMON="$(QEMU_DEBUG_COMMON)" \
+	QEMU_COMMON="$(QEMU_X86_64_DEBUG_COMMON)" \
 	X86_64_UEFI="$(X86_64_UEFI)" \
 	bash $(SCRIPTS_DIR)/debug-kernel.sh
 

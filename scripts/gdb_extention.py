@@ -431,6 +431,69 @@ class ArxCpusCommand(gdb.Command):
 ArxCpusCommand()
 
 
+class ArxPciCommand(gdb.Command):
+    """Print Arx PCI devices discovered in dispatcher.pci_devices."""
+
+    def __init__(self):
+        super().__init__("arx-pci", gdb.COMMAND_STATUS)
+
+    def invoke(self, arg, from_tty):
+        del arg
+        del from_tty
+
+        try:
+            dispatcher = gdb.parse_and_eval("dispatcher")
+        except gdb.error as err:
+            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+
+        arch = int(dispatcher["arch"])
+        device_count = int(dispatcher["pci_device_count"])
+        devices_ptr = dispatcher["pci_devices"]
+        devices_ptr_int = int(devices_ptr)
+
+        print("Arx PCI devices")
+        print("===============")
+        print("arch:      {}".format("x86_64" if arch == 0 else "aarch64" if arch == 1 else "unknown({})".format(arch)))
+        print("count:     {}".format(device_count))
+        print("array_ptr: 0x{:016x}".format(devices_ptr_int))
+        print("")
+
+        if arch != 0:
+            print("PCI device enumeration output is currently expected on x86_64.")
+            return
+
+        if device_count <= 0:
+            print("(no PCI devices discovered)")
+            return
+
+        if devices_ptr_int == 0:
+            print("(pci_device_count is non-zero but pci_devices is NULL)")
+            return
+
+        # Guard against invalid/corrupt values in a halted debug session.
+        if device_count > 4096:
+            raise gdb.GdbError("refusing to print {} PCI entries (sanity limit 4096)".format(device_count))
+
+        print("idx  bdf      vendor  device")
+        print("---  -------  ------  ------")
+        for i in range(device_count):
+            dev = devices_ptr[i]
+            bus = int(dev["bus"])
+            device = int(dev["device"])
+            function = int(dev["function"])
+            vendor_id = int(dev["vendor_id"])
+            device_id = int(dev["device_id"])
+
+            print(
+                "{:3d}  {:02x}:{:02x}.{}  {:04x}    {:04x}".format(
+                    i, bus, device, function, vendor_id, device_id
+                )
+            )
+
+
+ArxPciCommand()
+
+
 class ArxHeapCommand(gdb.Command):
     """Print Arx heap cache/slab state from dispatcher CPU context."""
 

@@ -2,6 +2,7 @@
 #define CPU_H
 
 #include <arch/arch.h>
+#include <device/device.h>
 #include <klib/spinlock.h>
 #include <memory/pmm.h>
 #include <memory/heap.h>
@@ -75,6 +76,8 @@ typedef struct dispatcher
     struct flanterm_context* terminal_context;
     spinlock_t               terminal_lock;
     arch_type_t              arch;
+    pci_device_t*            pci_devices;
+    size_t                   pci_device_count;
     arch_dispatcher_info_t   arch_info;
 } dispatcher_t;
 

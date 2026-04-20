@@ -78,11 +78,29 @@ uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
     return UACPI_STATUS_OK;
 }
 
+uacpi_status acpi_get_mcfg(struct acpi_mcfg** out_mcfg, uacpi_table* out_table)
+{
+    uacpi_status status;
+
+    if (out_mcfg == NULL || out_table == NULL)
+    {
+        return UACPI_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = uacpi_table_find_by_signature(ACPI_MCFG_SIGNATURE, out_table);
+    if (status != UACPI_STATUS_OK)
+    {
+        *out_mcfg = NULL;
+        return status;
+    }
+
+    *out_mcfg = (struct acpi_mcfg*) out_table->hdr;
+    return UACPI_STATUS_OK;
+}
+
 void acpi_init(phys_addr_t rsdp_address)
 {
-    uacpi_status      status;
-    struct acpi_madt* madt;
-    uacpi_table       madt_table;
+    uacpi_status status;
 
     if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
     {
@@ -101,23 +119,4 @@ void acpi_init(phys_addr_t rsdp_address)
     }
 
     kprintf("ACPI: uACPI barebones early table access initialized\n");
-
-    status = acpi_get_madt(&madt, &madt_table);
-    if (status != UACPI_STATUS_OK)
-    {
-        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        panic();
-    }
-
-    status = arch_acpi_init(madt);
-    if (status != UACPI_STATUS_OK)
-    {
-        uacpi_table_unref(&madt_table);
-        kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
-        panic();
-    }
-
-    uacpi_table_unref(&madt_table);
-
-    kprintf("ACPI: arch MADT init complete\n");
 }

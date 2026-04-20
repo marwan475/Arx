@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <acpi/acpi.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -162,12 +163,52 @@ static void init_interrupts()
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
+static bool init_arch_acpi()
+{
+    uacpi_status      status;
+    struct acpi_madt* madt;
+    uacpi_table       madt_table;
+
+    status = acpi_get_madt(&madt, &madt_table);
+    if (status != UACPI_STATUS_OK)
+    {
+        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return false;
+    }
+
+    status = arch_acpi_init(madt);
+    if (status != UACPI_STATUS_OK)
+    {
+        uacpi_table_unref(&madt_table);
+        kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        return false;
+    }
+
+    uacpi_table_unref(&madt_table);
+
+    kprintf("ACPI: arch MADT init complete\n");
+    return true;
+}
+
 bool arch_init(void)
 {
+    if (arch_cpu_id() == 0)
+    {
+        if (!init_arch_acpi())
+        {
+            return false;
+        }
+    }
+
     gdt_init();
     init_interrupts();
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());
 
     return true;
+}
+
+bool arch_device_init(void)
+{
+	return pci_init();
 }

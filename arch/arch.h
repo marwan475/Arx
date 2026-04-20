@@ -9,6 +9,7 @@
 #error Unsupported architecture
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <uacpi/status.h>
 
@@ -83,6 +84,7 @@ __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_
 
 void arch_enable_interrupts();
 void arch_disable_interrupts();
+bool arch_device_init(void);
 
 uacpi_status arch_acpi_init(struct acpi_madt* madt);
 

@@ -22,3 +22,8 @@ bool arch_init(void)
 {
     return false;
 }
+
+bool arch_device_init(void)
+{
+    return false;
+}

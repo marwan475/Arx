@@ -1,6 +1,8 @@
 #ifndef X86_64_H
 #define X86_64_H
 
+#include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #define NUM_IDT_ENTRIES 256
@@ -214,6 +216,16 @@ typedef struct arch_info
     idt_entry_t           idt[NUM_IDT_ENTRIES];
 } arch_info_t;
 
+typedef struct pci_ecam_region
+{
+    uint64_t base_address;
+    uint16_t segment;
+    uint8_t  start_bus;
+    uint8_t  end_bus;
+    void*    mapped_base;
+    uint64_t mapped_size;
+} pci_ecam_region_t;
+
 typedef struct arch_dispatcher_info
 {
     struct
@@ -231,6 +243,8 @@ typedef struct arch_dispatcher_info
     uint32_t ioapic_max_redir;
     uint32_t ioapic_redir_count;
     uint64_t acpi_ioapic_base_addr;
+    pci_ecam_region_t* pci_regions;
+    size_t             pci_region_count;
 } arch_dispatcher_info_t;
 
 void     lapic_init(void);
@@ -243,6 +257,9 @@ void     ioapic_init(void);
 void     ioapic_mask_vector(uint8_t vector);
 void     ioapic_unmask_vector(uint8_t vector);
 uint32_t ioapic_register_device(uint32_t gsi);
+bool pci_get_mcfg_region_count(size_t* out_region_count);
+bool pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entries, size_t* out_entry_count);
+bool pci_init(void);
 
 #define DECL_ISR(n) void ISR##n();
 DECL_ISR(0)

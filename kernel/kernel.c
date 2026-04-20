@@ -93,14 +93,18 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     status = arch_init();
     KDEBUG("<- arch_init done\n");
 
-    dispatcher.cpus[arch_cpu_id()].initialized = true;
-
     if (!status)
     {
         kprintf("Arx kernel: architecture initialization failed\n");
         kterm_printf("Arx kernel: architecture initialization failed\n");
         panic();
     }
+
+    KDEBUG("-> enumerate_devices\n");
+    enumerate_devices();
+    KDEBUG("<- enumerate_devices done\n");
+
+    dispatcher.cpus[arch_cpu_id()].initialized = true;
 
     arch_smp_init(boot_info);
 

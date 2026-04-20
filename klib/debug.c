@@ -40,3 +40,21 @@ void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
         }
     }
 }
+
+void debug_pci_devices(void)
+{
+    KDEBUG("PCI devices count=%llu ptr=0x%llx\n", (unsigned long long) dispatcher.pci_device_count, (unsigned long long) (uintptr_t) dispatcher.pci_devices);
+
+    if (dispatcher.pci_devices == NULL || dispatcher.pci_device_count == 0)
+    {
+        KDEBUG("PCI devices: none\n");
+        return;
+    }
+
+    for (size_t i = 0; i < dispatcher.pci_device_count; i++)
+    {
+        const pci_device_t* dev = &dispatcher.pci_devices[i];
+
+        KDEBUG("PCI[%llu] %02x:%02x.%u vendor=%04x device=%04x\n", (unsigned long long) i, (unsigned) dev->bus, (unsigned) dev->device, (unsigned) dev->function, (unsigned) dev->vendor_id, (unsigned) dev->device_id);
+    }
+}

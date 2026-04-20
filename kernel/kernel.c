@@ -104,6 +104,8 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     enumerate_devices();
     KDEBUG("<- enumerate_devices done\n");
 
+    debug_pci_devices();
+
     dispatcher.cpus[arch_cpu_id()].initialized = true;
 
     arch_smp_init(boot_info);

@@ -17,5 +17,6 @@ int kterm_printf(const char* format, ...);
 #endif
 
 void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count);
+void debug_pci_devices(void);
 
 #endif

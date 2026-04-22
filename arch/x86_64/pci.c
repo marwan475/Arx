@@ -6,7 +6,16 @@
 
 #define PCI_CONFIG_SPACE_FUNCTION_SIZE 4096
 #define PCI_VENDOR_DEVICE_ID_OFFSET 0x00
+#define PCI_COMMAND_STATUS_OFFSET 0x04
+#define PCI_CLASS_REVISION_OFFSET 0x08
+#define PCI_HEADER_TYPE_OFFSET_32 0x0C
 #define PCI_HEADER_TYPE_OFFSET 0x0E
+#define PCI_CAPABILITIES_POINTER_OFFSET 0x34
+#define PCI_SUBSYSTEM_IDS_OFFSET 0x2C
+#define PCI_INTERRUPT_OFFSET 0x3C
+#define PCI_BAR0_OFFSET 0x10
+
+#define PCI_STATUS_CAPABILITIES_LIST (1u << 4)
 
 static bool pci_ecam_read8(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t* out_value)
 {
@@ -93,6 +102,58 @@ static bool pci_ecam_read32(const pci_ecam_region_t* region, uint8_t bus, uint8_
 	return true;
 }
 
+static void pci_fill_bars(
+		const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function,
+		uint8_t header_type, pci_device_t* out_device)
+{
+	uint8_t bar_regs;
+	uint8_t bar;
+
+	bar_regs = ((header_type & 0x7Fu) == 0x01u) ? 2 : 6;
+	out_device->bar_count = bar_regs;
+
+	for (bar = 0; bar < bar_regs; bar++)
+	{
+		uint16_t offset;
+		uint32_t raw_low;
+
+		offset = (uint16_t) (PCI_BAR0_OFFSET + (bar * sizeof(uint32_t)));
+		if (!pci_ecam_read32(region, bus, device, function, offset, &raw_low))
+		{
+			continue;
+		}
+
+		out_device->bars[bar].raw_low = raw_low;
+		out_device->bars[bar].present = (raw_low != 0u && raw_low != 0xFFFFFFFFu) ? 1u : 0u;
+
+		if ((raw_low & 0x1u) != 0)
+		{
+			out_device->bars[bar].is_io  = 1u;
+			out_device->bars[bar].base   = (uint64_t) (raw_low & ~0x3u);
+			out_device->bars[bar].is_64bit = 0u;
+			continue;
+		}
+
+		out_device->bars[bar].is_io        = 0u;
+		out_device->bars[bar].prefetchable = (uint8_t) ((raw_low >> 3) & 0x1u);
+		out_device->bars[bar].base         = (uint64_t) (raw_low & ~0xFu);
+
+		if (((raw_low >> 1) & 0x3u) == 0x2u && (bar + 1u) < bar_regs)
+		{
+			uint32_t raw_high;
+
+			if (pci_ecam_read32(region, bus, device, function, (uint16_t) (offset + sizeof(uint32_t)), &raw_high))
+			{
+				out_device->bars[bar].raw_high = raw_high;
+				out_device->bars[bar].base |= ((uint64_t) raw_high << 32);
+				out_device->bars[bar].is_64bit = 1u;
+			}
+
+			bar++;
+		}
+	}
+}
+
 static void pci_unmap_regions(void)
 {
 	for (size_t i = 0; i < dispatcher.arch_info.pci_region_count; i++)
@@ -137,7 +198,146 @@ static bool pci_map_regions(void)
 	return true;
 }
 
-static bool pci_store_devices_from_regions(void)
+static bool pci_scan_function(
+		const pci_ecam_region_t* region, uint8_t bus, uint8_t dev, uint8_t fn,
+		pci_device_t* devices, size_t* inout_device_count)
+{
+	pci_device_t* dev_entry;
+	uint32_t vendor_device;
+	uint32_t command_status;
+	uint32_t class_revision;
+	uint32_t header_type_raw;
+	uint32_t interrupt_raw;
+	uint16_t vendor_id;
+	uint16_t device_id;
+
+	if (!pci_ecam_read32(region, bus, dev, fn, PCI_VENDOR_DEVICE_ID_OFFSET, &vendor_device))
+	{
+		return true;
+	}
+
+	vendor_id = (uint16_t) (vendor_device & 0xFFFFu);
+	if (vendor_id == 0xFFFFu)
+	{
+		return true;
+	}
+
+	device_id = (uint16_t) ((vendor_device >> 16) & 0xFFFFu);
+
+	if (*inout_device_count >= MAX_PCI_DEVICES)
+	{
+		kprintf("PCI: device table full (%u), stopping enumeration\n", (unsigned) MAX_PCI_DEVICES);
+		return false;
+	}
+
+	dev_entry = &devices[*inout_device_count];
+	memset(dev_entry, 0, sizeof(*dev_entry));
+
+	dev_entry->segment   = region->segment;
+	dev_entry->vendor_id = vendor_id;
+	dev_entry->device_id = device_id;
+	dev_entry->bus       = bus;
+	dev_entry->device    = dev;
+	dev_entry->function  = fn;
+
+	if (pci_ecam_read32(region, bus, dev, fn, PCI_COMMAND_STATUS_OFFSET, &command_status))
+	{
+		dev_entry->command = (uint16_t) (command_status & 0xFFFFu);
+		dev_entry->status  = (uint16_t) ((command_status >> 16) & 0xFFFFu);
+	}
+
+	if (pci_ecam_read32(region, bus, dev, fn, PCI_CLASS_REVISION_OFFSET, &class_revision))
+	{
+		dev_entry->revision_id = (uint8_t) (class_revision & 0xFFu);
+		dev_entry->prog_if     = (uint8_t) ((class_revision >> 8) & 0xFFu);
+		dev_entry->subclass    = (uint8_t) ((class_revision >> 16) & 0xFFu);
+		dev_entry->class_code  = (uint8_t) ((class_revision >> 24) & 0xFFu);
+	}
+
+	if (pci_ecam_read32(region, bus, dev, fn, PCI_HEADER_TYPE_OFFSET_32, &header_type_raw))
+	{
+		dev_entry->header_type   = (uint8_t) ((header_type_raw >> 16) & 0x7Fu);
+		dev_entry->multifunction = (uint8_t) (((header_type_raw >> 23) & 0x1u) != 0u);
+	}
+
+	if ((dev_entry->status & PCI_STATUS_CAPABILITIES_LIST) != 0u)
+	{
+		(void) pci_ecam_read8(region, bus, dev, fn, PCI_CAPABILITIES_POINTER_OFFSET, &dev_entry->capabilities_pointer);
+	}
+
+	if ((dev_entry->header_type & 0x7Fu) == 0x00u)
+	{
+		uint32_t subsystem_ids;
+
+		if (pci_ecam_read32(region, bus, dev, fn, PCI_SUBSYSTEM_IDS_OFFSET, &subsystem_ids))
+		{
+			dev_entry->subsystem_vendor_id = (uint16_t) (subsystem_ids & 0xFFFFu);
+			dev_entry->subsystem_id        = (uint16_t) ((subsystem_ids >> 16) & 0xFFFFu);
+		}
+	}
+
+	if (pci_ecam_read32(region, bus, dev, fn, PCI_INTERRUPT_OFFSET, &interrupt_raw))
+	{
+		dev_entry->interrupt_line = (uint8_t) (interrupt_raw & 0xFFu);
+		dev_entry->interrupt_pin  = (uint8_t) ((interrupt_raw >> 8) & 0xFFu);
+	}
+
+	pci_fill_bars(region, bus, dev, fn, dev_entry->header_type, dev_entry);
+	(*inout_device_count)++;
+
+	return true;
+}
+
+static bool pci_scan_device(const pci_ecam_region_t* region, uint8_t bus, uint8_t dev, pci_device_t* devices, size_t* inout_device_count)
+{
+	uint8_t header_type;
+	uint8_t max_functions;
+
+	if (!pci_ecam_read8(region, bus, dev, 0, PCI_HEADER_TYPE_OFFSET, &header_type))
+	{
+		return true;
+	}
+
+	max_functions = (header_type & 0x80u) ? 8 : 1;
+
+	for (uint8_t fn = 0; fn < max_functions; fn++)
+	{
+		if (!pci_scan_function(region, bus, dev, fn, devices, inout_device_count))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool pci_scan_bus(const pci_ecam_region_t* region, uint8_t bus, pci_device_t* devices, size_t* inout_device_count)
+{
+	for (uint8_t dev = 0; dev < 32; dev++)
+	{
+		if (!pci_scan_device(region, bus, dev, devices, inout_device_count))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool pci_scan_region(const pci_ecam_region_t* region, pci_device_t* devices, size_t* inout_device_count)
+{
+	for (uint16_t bus = region->start_bus; bus <= region->end_bus; bus++)
+	{
+		if (!pci_scan_bus(region, (uint8_t) bus, devices, inout_device_count))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool pci_get_device_info(void)
 {
 	pci_device_t* devices;
 	size_t        device_count;
@@ -155,55 +355,11 @@ static bool pci_store_devices_from_regions(void)
 	{
 		const pci_ecam_region_t* region = &dispatcher.arch_info.pci_regions[region_index];
 
-		for (uint16_t bus = region->start_bus; bus <= region->end_bus; bus++)
+		if (!pci_scan_region(region, devices, &device_count))
 		{
-			for (uint8_t dev = 0; dev < 32; dev++)
-			{
-				uint8_t header_type;
-				uint8_t max_functions;
-
-				if (!pci_ecam_read8(region, (uint8_t) bus, dev, 0, PCI_HEADER_TYPE_OFFSET, &header_type))
-				{
-					continue;
-				}
-
-				max_functions = (header_type & 0x80u) ? 8 : 1;
-
-				for (uint8_t fn = 0; fn < max_functions; fn++)
-				{
-					uint32_t vendor_device;
-					uint16_t vendor_id;
-					uint16_t device_id;
-
-					if (!pci_ecam_read32(region, (uint8_t) bus, dev, fn, PCI_VENDOR_DEVICE_ID_OFFSET, &vendor_device))
-					{
-						continue;
-					}
-
-					vendor_id = (uint16_t) (vendor_device & 0xFFFFu);
-					if (vendor_id == 0xFFFFu)
-					{
-						continue;
-					}
-
-					device_id = (uint16_t) ((vendor_device >> 16) & 0xFFFFu);
-
-					if (device_count >= MAX_PCI_DEVICES)
-					{
-						kprintf("PCI: device table full (%u), stopping enumeration\n", (unsigned) MAX_PCI_DEVICES);
-						dispatcher.pci_devices      = devices;
-						dispatcher.pci_device_count = device_count;
-						return true;
-					}
-
-					devices[device_count].vendor_id = vendor_id;
-					devices[device_count].device_id = device_id;
-					devices[device_count].bus       = (uint8_t) bus;
-					devices[device_count].device    = dev;
-					devices[device_count].function  = fn;
-					device_count++;
-				}
-			}
+			dispatcher.pci_devices      = devices;
+			dispatcher.pci_device_count = device_count;
+			return true;
 		}
 	}
 
@@ -362,7 +518,7 @@ bool pci_init(void)
 		return false;
 	}
 
-	if (!pci_store_devices_from_regions())
+	if (!pci_get_device_info())
 	{
 		pci_unmap_regions();
 		kfree(dispatcher.arch_info.pci_regions);

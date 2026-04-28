@@ -1,6 +1,8 @@
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::ptr::NonNull;
 
+pub const DEBUG: bool = cfg!(debug_assertions);
+
 unsafe extern "C" {
     #[link_name = "kprintf"]
     fn kprintf_raw(fmt: *const c_char, ...);
@@ -50,6 +52,36 @@ pub fn kterm_write(msg: &CStr) {
 
 pub fn kterm_printf(fmt: &CStr, value: u64) -> c_int {
     unsafe { kterm_printf_raw(fmt.as_ptr(), value) }
+}
+
+pub fn kdebug_write(msg: &CStr) {
+    if DEBUG {
+        unsafe {
+            kterm_printf_raw(c"\x1b[32m[debug]\x1b[0m ".as_ptr());
+            kterm_write_raw(msg.as_ptr());
+        }
+    }
+}
+
+pub fn kdebug_printf(fmt: &CStr, value: u64) -> c_int {
+    if DEBUG {
+        unsafe {
+            kterm_printf_raw(c"\x1b[32m[debug]\x1b[0m ".as_ptr());
+            return kterm_printf_raw(fmt.as_ptr(), value);
+        }
+    }
+
+    0
+}
+
+#[macro_export]
+macro_rules! KDEBUG {
+    ($msg:expr) => {{
+        $crate::resource::kdebug_write($msg);
+    }};
+    ($fmt:expr, $value:expr) => {{
+        $crate::resource::kdebug_printf($fmt, $value as u64);
+    }};
 }
 
 pub fn memset_bytes(dest: &mut [u8], value: u8) {

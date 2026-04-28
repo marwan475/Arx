@@ -32,6 +32,8 @@ pub extern "C" fn rust_entry(cpu_id: u64, _arg: *mut c_void) -> ! {
     ids.push(cpu_id + 1);
     resource::kprintf(c"Arx rust: Vec online, len=%llu\n", ids.len() as u64);
 
+    KDEBUG!(c"Arx rust: KDDEBUG online, cpu_id %llu\n", cpu_id);
+
     loop {
         core::hint::spin_loop();
     }

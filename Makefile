@@ -27,7 +27,7 @@ X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_AS ?= nasm
 CARGO ?= $(if $(wildcard $(HOME)/.cargo/bin/cargo),$(HOME)/.cargo/bin/cargo,cargo)
-INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/terminal/flanterm -Ikernel/terminal/flanterm/flanterm_backends
+INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/resource -Ikernel/resource/terminal/flanterm -Ikernel/resource/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
 
 RUST_DIR ?= rust
@@ -40,10 +40,10 @@ RUST_X86_64_LIB := $(RUST_TARGET_DIR)/$(RUST_TARGET_X86_64)/$(RUST_PROFILE_DIR)/
 RUST_AARCH64_LIB := $(RUST_TARGET_DIR)/$(RUST_TARGET_AARCH64)/$(RUST_PROFILE_DIR)/libarx_rust.a
 RUST_SRCS := $(shell find $(RUST_DIR) -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \) -print 2>/dev/null)
 
-UACPI_DIR ?= kernel/acpi/uACPI
+UACPI_DIR ?= kernel/resource/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
 UACPI_DEFINES := -DUACPI_BAREBONES_MODE
-UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/acpi/acpi.c
+UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/resource/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
 CFLAGS_COMMON += -DDEBUG=$(DEBUG)
@@ -70,11 +70,11 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/cpu/cpu.c kernel/memory/pmm.c kernel/memory/metadata.c kernel/memory/vmm.c kernel/memory/heap.c kernel/terminal/terminal.c kernel/device/device.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/resource/cpu/cpu.c kernel/resource/memory/pmm.c kernel/resource/memory/metadata.c kernel/resource/memory/vmm.c kernel/resource/memory/heap.c kernel/resource/terminal/terminal.c kernel/resource/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
-FLANTERM_SRCS := kernel/terminal/flanterm/flanterm.c kernel/terminal/flanterm/flanterm_backends/fb.c
+FLANTERM_SRCS := kernel/resource/terminal/flanterm/flanterm.c kernel/resource/terminal/flanterm/flanterm_backends/fb.c
 
 CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
 KERNEL_X86_64_SRCS += $(UACPI_SRCS)

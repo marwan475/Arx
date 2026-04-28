@@ -8,6 +8,7 @@
 
 void run_selftests(void);
 void kmain_post_init(void* arg);
+__attribute__((noreturn)) void rust_kmain_post_init(uint64_t cpu_id, void* arg);
 
 // From bootloader we need
 // - memory map
@@ -156,12 +157,12 @@ void kmain_post_init(void* arg)
         arch_pause();
     }
 
-    (void) arg;
     kprintf("Arx kernel: cpu %d kmain_post_init entered\n", arch_cpu_id());
     KDEBUG("cpu %d kmain_post_init entered\n", arch_cpu_id());
-    
-    for (;;)
-    {
-    }
+
+    rust_kmain_post_init((uint64_t) arch_cpu_id(), arg);
+
+    // Rust entry is expected to be noreturn.
+    panic();
 }
 

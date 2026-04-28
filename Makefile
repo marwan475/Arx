@@ -26,8 +26,19 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_AS ?= nasm
+CARGO ?= $(if $(wildcard $(HOME)/.cargo/bin/cargo),$(HOME)/.cargo/bin/cargo,cargo)
 INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/terminal/flanterm -Ikernel/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
+
+RUST_DIR ?= rust
+RUST_TARGET_DIR ?= $(BUILD_DIR)/rust-target
+RUST_TARGET_X86_64 ?= x86_64-unknown-none
+RUST_TARGET_AARCH64 ?= aarch64-unknown-none
+RUST_PROFILE_DIR := $(if $(filter 1,$(DEBUG)),debug,release)
+RUST_CARGO_PROFILE_FLAG := $(if $(filter 1,$(DEBUG)),,--release)
+RUST_X86_64_LIB := $(RUST_TARGET_DIR)/$(RUST_TARGET_X86_64)/$(RUST_PROFILE_DIR)/libarx_rust.a
+RUST_AARCH64_LIB := $(RUST_TARGET_DIR)/$(RUST_TARGET_AARCH64)/$(RUST_PROFILE_DIR)/libarx_rust.a
+RUST_SRCS := $(shell find $(RUST_DIR) -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \) -print 2>/dev/null)
 
 UACPI_DIR ?= kernel/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
@@ -105,14 +116,24 @@ $(BUILD_DIR)/aarch64/%.o: %.c
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
 	$(AARCH64_CC) $(CFLAGS_COMMON) $(CFLAGS_AARCH64) -c -o $@ $<
 
-$(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD)
+$(RUST_X86_64_LIB): $(RUST_SRCS)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
-	$(X86_64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_X86_64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-x86_64.map -o $@ $(KERNEL_X86_64_OBJS)
+	@command -v $(CARGO) >/dev/null 2>&1 || { echo "Error: $(CARGO) not found. Install Rust toolchain or set CARGO=<cargo>." >&2; exit 1; }
+	$(CARGO) build --manifest-path $(RUST_DIR)/Cargo.toml --target $(RUST_TARGET_X86_64) --target-dir $(RUST_TARGET_DIR) $(RUST_CARGO_PROFILE_FLAG)
 
-$(KERNEL_AARCH64): $(KERNEL_AARCH64_OBJS) $(KERNEL_AARCH64_LD)
+$(RUST_AARCH64_LIB): $(RUST_SRCS)
+	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+	@command -v $(CARGO) >/dev/null 2>&1 || { echo "Error: $(CARGO) not found. Install Rust toolchain or set CARGO=<cargo>." >&2; exit 1; }
+	$(CARGO) build --manifest-path $(RUST_DIR)/Cargo.toml --target $(RUST_TARGET_AARCH64) --target-dir $(RUST_TARGET_DIR) $(RUST_CARGO_PROFILE_FLAG)
+
+$(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD) $(RUST_X86_64_LIB)
+	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
+	$(X86_64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_X86_64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-x86_64.map -o $@ $(KERNEL_X86_64_OBJS) $(RUST_X86_64_LIB)
+
+$(KERNEL_AARCH64): $(KERNEL_AARCH64_OBJS) $(KERNEL_AARCH64_LD) $(RUST_AARCH64_LIB)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
-	$(AARCH64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_AARCH64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-aarch64.map -o $@ $(KERNEL_AARCH64_OBJS)
+	$(AARCH64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_AARCH64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-aarch64.map -o $@ $(KERNEL_AARCH64_OBJS) $(RUST_AARCH64_LIB)
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)

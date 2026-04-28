@@ -643,7 +643,7 @@ ArxHeapCommand()
 
 
 class ArxRustCommand(gdb.Command):
-    """Enable Rust-friendly output and show rust_kmain_post_init symbol status."""
+    """Enable Rust-friendly output and show rust_entry symbol status."""
 
     def __init__(self):
         super().__init__("arx-rust", gdb.COMMAND_STATUS)
@@ -662,16 +662,16 @@ class ArxRustCommand(gdb.Command):
 
         print("Rust debug settings enabled")
 
-        rust_symbol = gdb.lookup_global_symbol("rust_kmain_post_init")
+        rust_symbol = gdb.lookup_global_symbol("rust_entry")
         if rust_symbol is None:
-            print("rust_kmain_post_init: not found in loaded symbols")
+            print("rust_entry: not found in loaded symbols")
             return
 
-        print("rust_kmain_post_init: found")
+        print("rust_entry: found")
 
         if (arg or "").strip() == "break":
-            gdb.execute("hbreak rust_kmain_post_init")
-            print("hardware breakpoint set at rust_kmain_post_init")
+            gdb.execute("hbreak rust_entry")
+            print("hardware breakpoint set at rust_entry")
 
 
 ArxRustCommand()

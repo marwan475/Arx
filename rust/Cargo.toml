@@ -1,0 +1,15 @@
+[package]
+name = "arx_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "arx_rust"
+crate-type = ["staticlib"]
+path = "entry.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

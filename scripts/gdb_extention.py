@@ -640,3 +640,38 @@ class ArxHeapCommand(gdb.Command):
 
 
 ArxHeapCommand()
+
+
+class ArxRustCommand(gdb.Command):
+    """Enable Rust-friendly output and show rust_entry symbol status."""
+
+    def __init__(self):
+        super().__init__("arx-rust", gdb.COMMAND_STATUS)
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        gdb.execute("set print demangle on", to_string=True)
+        gdb.execute("set print asm-demangle on", to_string=True)
+
+        # Some GDB builds support explicit Rust demangle style; keep this optional.
+        try:
+            gdb.execute("set demangle-style rust", to_string=True)
+        except gdb.error:
+            pass
+
+        print("Rust debug settings enabled")
+
+        rust_symbol = gdb.lookup_global_symbol("rust_entry")
+        if rust_symbol is None:
+            print("rust_entry: not found in loaded symbols")
+            return
+
+        print("rust_entry: found")
+
+        if (arg or "").strip() == "break":
+            gdb.execute("hbreak rust_entry")
+            print("hardware breakpoint set at rust_entry")
+
+
+ArxRustCommand()

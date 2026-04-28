@@ -14,6 +14,7 @@ x86_64_uefi="${X86_64_UEFI:-}"
 aarch64_uefi="${AARCH64_UEFI:-}"
 serial_log="${SERIAL_LOG:-${repo_root}/build/qemu-debug-serial.log}"
 gdb_extension="${GDB_EXTENSION:-${repo_root}/scripts/gdb_extention.py}"
+rust_src_dir="${RUST_SRC_DIR:-${repo_root}/rust/src}"
 qemu_pid=""
 
 cleanup() {
@@ -80,7 +81,11 @@ if [[ "${arch}" == "x86_64" ]]; then
     "${gdb_bin}" -tui "${kernel_elf}" \
         -ex "set architecture i386:x86-64" \
         -ex "set breakpoint pending on" \
+        -ex "set print demangle on" \
+        -ex "set print asm-demangle on" \
+        -ex "directory ${rust_src_dir}" \
         -ex "source ${gdb_extension}" \
+        -ex "arx-rust" \
         -ex "layout src" \
         -ex "target remote localhost:${gdb_port}" \
         -ex "hbreak _start" \
@@ -105,7 +110,11 @@ elif [[ "${arch}" == "aarch64" ]]; then
     "${gdb_bin}" -tui "${kernel_elf}" \
         -ex "set architecture aarch64" \
         -ex "set breakpoint pending on" \
+        -ex "set print demangle on" \
+        -ex "set print asm-demangle on" \
+        -ex "directory ${rust_src_dir}" \
         -ex "source ${gdb_extension}" \
+        -ex "arx-rust" \
         -ex "layout src" \
         -ex "target remote localhost:${gdb_port}" \
         -ex "hbreak _start" \

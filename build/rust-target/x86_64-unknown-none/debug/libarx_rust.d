@@ -1,0 +1,1 @@
+/home/twisted/develop/Arx/build/rust-target/x86_64-unknown-none/debug/libarx_rust.a: /home/twisted/develop/Arx/rust/allocator.rs /home/twisted/develop/Arx/rust/entry.rs /home/twisted/develop/Arx/rust/resource.rs

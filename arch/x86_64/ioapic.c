@@ -166,7 +166,7 @@ void ioapic_init(void)
 {
     cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
-    if (arch_cpu_id() != 0)
+    if ((uint64_t) arch_cpu_id() != platform.bsp_id)
     {
         return;
     }

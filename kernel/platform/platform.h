@@ -23,6 +23,7 @@ typedef struct platform
     cpu_info_t*              cpus;
     size_t                   cpu_count;
     uint8_t                  cpus_initialized;
+    uint64_t                 bsp_id;
     numa_node_t              numa_nodes[MAX_NUMA_NODES];
     size_t                   numa_node_count;
     kernel_framebuffer_t     framebuffer;

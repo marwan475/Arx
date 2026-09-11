@@ -365,7 +365,7 @@ void _start(void)
         cpu_count = boot_info.smp.cpu_count;
     }
 
-    kernel_bootstrap(&boot_info, cpu_count);
+    platform_init(&boot_info, cpu_count);
 
     for (;;)
     {

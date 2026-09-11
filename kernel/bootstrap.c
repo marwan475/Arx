@@ -7,7 +7,7 @@
 #include <terminal/terminal.h>
 
 void run_selftests(void);
-void kernel_bootstrap_complete(void* arg);
+void platform_init_complete(void* arg);
 
 // From bootloader we need
 // - memory map
@@ -17,14 +17,14 @@ void kernel_bootstrap_complete(void* arg);
 // - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
 // - paging with no user access and RWX on direct map
 // - acpi rsdp address
-void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
+void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 {
 
     // Start platform initialization 
 
     bool status = true;
 
-    kprintf("Arx kernel: kernel_bootstrap entered\n");
+    kprintf("Arx kernel: platform_init entered\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
     {
@@ -75,6 +75,15 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("-> cpus_init(%llu)\n", (unsigned long long) cpu_count);
     cpus_init(cpu_count);
     KDEBUG("<- cpus_init done platform.cpu_count=%llu\n", (unsigned long long) platform.cpu_count);
+
+    if (boot_info->smp.cpu_count > 0 && boot_info->smp.cpus != 0)
+    {
+        platform.bsp_id = boot_info->smp.bsp_id;
+    }
+    else
+    {
+        platform.bsp_id = (uint64_t) arch_cpu_id();
+    }
 
     KDEBUG("-> pmm_init\n");
     pmm_init(boot_info);
@@ -134,7 +143,7 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
 
     kterm_printf("Arx kernel: kernel bootstrap done\n");
 
-    cpu_init_stack(kernel_bootstrap_complete, 0);
+    cpu_init_stack(platform_init_complete, 0);
 }
 
 void smp_kmain(void)
@@ -147,10 +156,10 @@ void smp_kmain(void)
 
     platform.cpus[arch_cpu_id()].initialized = true;
 
-    cpu_init_stack(kernel_bootstrap_complete, 0);
+    cpu_init_stack(platform_init_complete, 0);
 }
 
-void kernel_bootstrap_complete(void* arg)
+void platform_init_complete(void* arg)
 {
 
     // Platform initialization complete
@@ -161,8 +170,8 @@ void kernel_bootstrap_complete(void* arg)
         arch_pause();
     }
 
-    kprintf("Arx kernel: cpu %d kernel_bootstrap_complete entered\n", arch_cpu_id());
-    KDEBUG("cpu %d kernel_bootstrap_complete entered\n", arch_cpu_id());
+    kprintf("Arx kernel: cpu %d platform_init_complete entered\n", arch_cpu_id());
+    KDEBUG("cpu %d platform_init_complete entered\n", arch_cpu_id());
 
     (void) arg;
     for (;;)

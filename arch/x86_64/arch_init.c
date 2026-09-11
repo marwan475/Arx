@@ -192,7 +192,7 @@ static bool init_arch_acpi()
 
 bool arch_init(void)
 {
-    if (arch_cpu_id() == 0)
+    if ((uint64_t) arch_cpu_id() == platform.bsp_id)
     {
         if (!init_arch_acpi())
         {

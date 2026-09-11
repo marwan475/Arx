@@ -8,9 +8,9 @@ Targets:
 ## Design
 Design in order of initialization
 
-### Setup
+### Platform Setup
 - Limine Bootloader loads kernel and sets entry point to _start in arch_entry.c
-- arch_entry processes Limine requests, formats it to fit Arx boot protocol in boot.h then passes it to kmain in kernel.c
+- arch_entry processes Limine requests, formats it to fit Arx boot protocol in boot.h then passes it to kernel_bootstrap in bootstrap.c
 - Arx boot protocol needs 
     - Memory map
     - Framebuffer 
@@ -18,12 +18,13 @@ Design in order of initialization
     - Paging with no user access and RWX 
     - ACPI rsdp address
     - SMP setup 
-- kmain will initialize kernel subsystems
+- kernel_bootstrap will initialize kernel subsystems
 
-### Dispatcher
+### Platform Dispatcher
 
 ![Dispatcher Access Flow](docs/dispatcher-2026-04-15-070216.svg)
-- Global dispatcher variable which stores important global and per cpu data structures
+- Global dispatcher variable which stores important global and per cpu platform data structures
+- Type is `platform_dispatcher_t` defined in `kernel/platform/platform_dispatcher.h`
 - index by arch cpu id
 
 ### Memory Management
@@ -93,7 +94,7 @@ Klib allocations
 
 ### SMP init
 - Limine provides SMP cpu list and bsp id through the boot info
-- BSP runs arch_smp_init(boot_info) after base kernel init in kmain
+- BSP runs arch_smp_init(boot_info) after base kernel init in kernel_bootstrap
 - arch_smp_init walks all cpus and skips the BSP
 - each AP gets goto_address = smp_entry set from its Limine SMP record
 - AP enters smp_entry and then calls smp_kmain
@@ -114,10 +115,15 @@ ran on each smp core
     - route legacy irqs to bsp lapic
     - expose api to mask/unmask vectors, register new vectors, and route vectors
 - General
-    - set cpu stack and jump to kmain_post_init
+    - set cpu stack and jump to kernel_bootstrap_complete
 
-### Post Init
+### Post Platform Init
 currently all cores wait for the rest of the cores to enter post init then continue.
+
+## Kernel Software Stack
+- Resource
+- Logic
+- Request
 
 ## Third Party
 - [Limine](https://github.com/limine-bootloader/limine) - Bootloader/protocol used to load the kernel and provide boot info.

@@ -12,7 +12,7 @@ ESP_SIZE_MB ?= 64
 ESP_SECTORS = $(shell echo $$(( $(ESP_SIZE_MB) * 2048 )))
 IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 
-KERNEL_SRC ?= kernel/kernel.c
+KERNEL_SRC ?= kernel/bootstrap.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
 KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
@@ -26,13 +26,13 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_AS ?= nasm
-INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/resource -Ikernel/resource/terminal/flanterm -Ikernel/resource/terminal/flanterm/flanterm_backends
+INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
 
-UACPI_DIR ?= kernel/resource/acpi/uACPI
+UACPI_DIR ?= kernel/platform/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
 UACPI_DEFINES := -DUACPI_BAREBONES_MODE
-UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/resource/acpi/acpi.c
+UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/platform/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
 CFLAGS_COMMON += -DDEBUG=$(DEBUG)
@@ -59,11 +59,11 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/resource/cpu/cpu.c kernel/resource/memory/pmm.c kernel/resource/memory/metadata.c kernel/resource/memory/vmm.c kernel/resource/memory/heap.c kernel/resource/terminal/terminal.c kernel/resource/device/device.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
-FLANTERM_SRCS := kernel/resource/terminal/flanterm/flanterm.c kernel/resource/terminal/flanterm/flanterm_backends/fb.c
+FLANTERM_SRCS := kernel/platform/terminal/flanterm/flanterm.c kernel/platform/terminal/flanterm/flanterm_backends/fb.c
 
 CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
 KERNEL_X86_64_SRCS += $(UACPI_SRCS)

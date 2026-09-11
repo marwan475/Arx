@@ -1,7 +1,7 @@
 #include <cpu/cpu.h>
 #include <klib/klib.h>
 
-dispatcher_t dispatcher;
+platform_dispatcher_t dispatcher;
 
 static cpu_info_t dispatcher_cpus[BOOT_SMP_MAX_CPUS];
 

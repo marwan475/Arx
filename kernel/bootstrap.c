@@ -7,7 +7,7 @@
 #include <terminal/terminal.h>
 
 void run_selftests(void);
-void kmain_post_init(void* arg);
+void kernel_bootstrap_complete(void* arg);
 
 // From bootloader we need
 // - memory map
@@ -17,11 +17,14 @@ void kmain_post_init(void* arg);
 // - higher half direct map instead of identity mapping so user address space is separate from physical memory addresses
 // - paging with no user access and RWX on direct map
 // - acpi rsdp address
-void kmain(struct boot_info* boot_info, uint64_t cpu_count)
+void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
 {
+
+    // Start platform initialization 
+
     bool status = true;
 
-    kprintf("Arx kernel: kmain entered\n");
+    kprintf("Arx kernel: kernel_bootstrap entered\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
     {
@@ -129,9 +132,9 @@ void kmain(struct boot_info* boot_info, uint64_t cpu_count)
     run_selftests();
     KDEBUG("<- run_selftests done\n");
 
-    kterm_printf("Arx kernel: initialization complete\n");
+    kterm_printf("Arx kernel: kernel bootstrap done\n");
 
-    cpu_init_stack(kmain_post_init, 0);
+    cpu_init_stack(kernel_bootstrap_complete, 0);
 }
 
 void smp_kmain(void)
@@ -144,11 +147,13 @@ void smp_kmain(void)
 
     dispatcher.cpus[arch_cpu_id()].initialized = true;
 
-    cpu_init_stack(kmain_post_init, 0);
+    cpu_init_stack(kernel_bootstrap_complete, 0);
 }
 
-void kmain_post_init(void* arg)
+void kernel_bootstrap_complete(void* arg)
 {
+
+    // Platform initialization complete
 
     dispatcher.cpus_initialized++;
     while(dispatcher.cpus_initialized < dispatcher.cpu_count)
@@ -156,8 +161,8 @@ void kmain_post_init(void* arg)
         arch_pause();
     }
 
-    kprintf("Arx kernel: cpu %d kmain_post_init entered\n", arch_cpu_id());
-    KDEBUG("cpu %d kmain_post_init entered\n", arch_cpu_id());
+    kprintf("Arx kernel: cpu %d kernel_bootstrap_complete entered\n", arch_cpu_id());
+    KDEBUG("cpu %d kernel_bootstrap_complete entered\n", arch_cpu_id());
 
     (void) arg;
     for (;;)

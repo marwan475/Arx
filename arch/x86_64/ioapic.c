@@ -6,14 +6,14 @@
 
 static volatile uint8_t* ioapic_get_base(void)
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
-    if (!dispatcher.arch_info.ioapic_initialized || !dispatcher.arch_info.acpi_has_ioapic || dispatcher.arch_info.acpi_ioapic_base_addr == 0)
+    if (!platform.arch_info.ioapic_initialized || !platform.arch_info.acpi_has_ioapic || platform.arch_info.acpi_ioapic_base_addr == 0)
     {
         return NULL;
     }
 
-    virt_addr_t ioapic_va = pa_to_hhdm(dispatcher.arch_info.acpi_ioapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
+    virt_addr_t ioapic_va = pa_to_hhdm(platform.arch_info.acpi_ioapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
     return (volatile uint8_t*) (uintptr_t) ioapic_va;
 }
 
@@ -46,7 +46,7 @@ static void route_irq(volatile uint8_t* ioapic_base, uint32_t pin, uint32_t vect
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = low;
 
-    dispatcher.arch_info.ioapic_redir_count++;
+    platform.arch_info.ioapic_redir_count++;
 }
 
 static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
@@ -105,29 +105,29 @@ uint32_t ioapic_register_device(uint32_t gsi)
         return 0;
     }
 
-    uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
+    uint32_t ioapic_gsi_base = platform.arch_info.acpi_ioapic_gsi_base;
     if (gsi < ioapic_gsi_base)
     {
         return 0;
     }
 
     uint32_t pin = gsi - ioapic_gsi_base;
-    if (pin > dispatcher.arch_info.ioapic_max_redir)
+    if (pin > platform.arch_info.ioapic_max_redir)
     {
         return 0;
     }
 
-    uint32_t vector = dispatcher.vector_base;
+    uint32_t vector = platform.vector_base;
     if (vector >= 0xFF)
     {
         return 0;
     }
 
     uint16_t flags        = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
-    uint8_t  bsp_lapic_id = dispatcher.cpus[0].arch_info.acpi_lapic_id;
+    uint8_t  bsp_lapic_id = platform.cpus[0].arch_info.acpi_lapic_id;
 
     route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 0);
-    dispatcher.vector_base++;
+    platform.vector_base++;
 
     return vector;
 }
@@ -140,10 +140,10 @@ static void route_legacy_irqs(volatile uint8_t* ioapic_base, uint32_t max_redir,
         uint32_t gsi   = ioapic_gsi_base + irq;
         uint16_t flags = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
 
-        if (dispatcher.arch_info.acpi_iso_overrides[irq].present)
+        if (platform.arch_info.acpi_iso_overrides[irq].present)
         {
-            gsi   = dispatcher.arch_info.acpi_iso_overrides[irq].gsi;
-            flags = dispatcher.arch_info.acpi_iso_overrides[irq].flags;
+            gsi   = platform.arch_info.acpi_iso_overrides[irq].gsi;
+            flags = platform.arch_info.acpi_iso_overrides[irq].flags;
         }
 
         if (gsi < ioapic_gsi_base)
@@ -164,25 +164,25 @@ static void route_legacy_irqs(volatile uint8_t* ioapic_base, uint32_t max_redir,
 
 void ioapic_init(void)
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     if (arch_cpu_id() != 0)
     {
         return;
     }
 
-    if (dispatcher.arch_info.ioapic_initialized)
+    if (platform.arch_info.ioapic_initialized)
     {
         return;
     }
 
-    if (!dispatcher.arch_info.acpi_has_ioapic || dispatcher.arch_info.acpi_ioapic_base_addr == 0)
+    if (!platform.arch_info.acpi_has_ioapic || platform.arch_info.acpi_ioapic_base_addr == 0)
     {
         kprintf("Arx kernel: missing IOAPIC info\n");
         panic();
     }
 
-    phys_addr_t ioapic_pa = align_down(dispatcher.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
+    phys_addr_t ioapic_pa = align_down(platform.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
     virt_addr_t ioapic_va = pa_to_hhdm(ioapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
 
     if (vmm_virt_to_phys(ioapic_va, cpu_info->address_space) == 0)
@@ -205,16 +205,16 @@ void ioapic_init(void)
 
     if (ioapic_ver == 0 || ioapic_ver == 0xFFFFFFFF)
     {
-        kprintf("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr);
+        kprintf("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr);
         panic();
     }
 
-    dispatcher.arch_info.ioapic_max_redir   = max_redir;
-    dispatcher.arch_info.ioapic_redir_count = 0;
-    dispatcher.vector_base                  = VECTOR_DEVICE_BASE;
+    platform.arch_info.ioapic_max_redir   = max_redir;
+    platform.arch_info.ioapic_redir_count = 0;
+    platform.vector_base                  = VECTOR_DEVICE_BASE;
 
-    uint32_t ioapic_gsi_base = dispatcher.arch_info.acpi_ioapic_gsi_base;
-    uint8_t  bsp_lapic_id    = dispatcher.cpus[0].arch_info.acpi_lapic_id;
+    uint32_t ioapic_gsi_base = platform.arch_info.acpi_ioapic_gsi_base;
+    uint8_t  bsp_lapic_id    = platform.cpus[0].arch_info.acpi_lapic_id;
 
     // mask all entries
     for (uint32_t i = 0; i <= max_redir; i++)
@@ -231,7 +231,7 @@ void ioapic_init(void)
 
     route_legacy_irqs(ioapic_base, max_redir, ioapic_gsi_base, bsp_lapic_id);
 
-    dispatcher.arch_info.ioapic_initialized = 1;
+    platform.arch_info.ioapic_initialized = 1;
 
-    kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) dispatcher.arch_info.acpi_ioapic_id, (unsigned long long) dispatcher.arch_info.acpi_ioapic_base_addr, (unsigned) dispatcher.arch_info.acpi_ioapic_gsi_base, (unsigned) max_redir);
+    kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) platform.arch_info.acpi_ioapic_id, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr, (unsigned) platform.arch_info.acpi_ioapic_gsi_base, (unsigned) max_redir);
 }

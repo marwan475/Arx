@@ -130,9 +130,9 @@ static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t
     request_data.tlb_invalidation.requires_page_flush   = requires_page_flush;
     request_data.tlb_invalidation.tlb_invalidation_type = size == PAGE_SIZE ? IPI_TLB_INVALIDATE_SINGLE_PAGE : IPI_TLB_INVALIDATE_RANGE;
 
-    for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; ++cpu_id)
+    for (uint8_t cpu_id = 0; cpu_id < platform.cpu_count; ++cpu_id)
     {
-        cpu_info_t* cpu_info = &dispatcher.cpus[cpu_id];
+        cpu_info_t* cpu_info = &platform.cpus[cpu_id];
 
         if (cpu_id == self_cpu_id || !cpu_info->initialized)
         {
@@ -361,7 +361,7 @@ static uint64_t x86_64_chunk_size(virt_addr_t va, uint64_t remaining, uint64_t l
 
 static uint64_t* x86_64_table_from_pa(phys_addr_t pa)
 {
-    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
+    virt_addr_t table_va = pa_to_hhdm((uintptr_t) pa, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
     return (uint64_t*) table_va;
 }
 
@@ -402,7 +402,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     }
 
     memset(new_table, 0, PAGE_SIZE);
-    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
+    const phys_addr_t new_table_pa = hhdm_to_pa((uintptr_t) new_table, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
 
     if (!x86_64_is_pa_encodable(new_table_pa))
     {

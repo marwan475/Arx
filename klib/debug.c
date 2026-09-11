@@ -43,17 +43,17 @@ void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
 
 void debug_pci_devices(void)
 {
-    KDEBUG("PCI devices count=%llu ptr=0x%llx\n", (unsigned long long) dispatcher.pci_device_count, (unsigned long long) (uintptr_t) dispatcher.pci_devices);
+    KDEBUG("PCI devices count=%llu ptr=0x%llx\n", (unsigned long long) platform.pci_device_count, (unsigned long long) (uintptr_t) platform.pci_devices);
 
-    if (dispatcher.pci_devices == NULL || dispatcher.pci_device_count == 0)
+    if (platform.pci_devices == NULL || platform.pci_device_count == 0)
     {
         KDEBUG("PCI devices: none\n");
         return;
     }
 
-    for (size_t i = 0; i < dispatcher.pci_device_count; i++)
+    for (size_t i = 0; i < platform.pci_device_count; i++)
     {
-        const pci_device_t* dev = &dispatcher.pci_devices[i];
+        const pci_device_t* dev = &platform.pci_devices[i];
 
         KDEBUG("PCI[%llu] seg=%u %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x hdr=%02x cmd=%04x sts=%04x\n", (unsigned long long) i, (unsigned) dev->segment, (unsigned) dev->bus, (unsigned) dev->device, (unsigned) dev->function, (unsigned) dev->vendor_id, (unsigned) dev->device_id, (unsigned) dev->class_code, (unsigned) dev->subclass, (unsigned) dev->prog_if, (unsigned) dev->header_type, (unsigned) dev->command, (unsigned) dev->status);
     }

@@ -120,9 +120,9 @@ static void buddy_allocator_init(zone_t* zone)
 void pmm_init(struct boot_info* boot_info)
 {
     // single numa node for now
-    memset(&dispatcher.numa_nodes, 0, sizeof(dispatcher.numa_nodes));
-    dispatcher.numa_node_count = 1;
-    zone_t* zone               = &dispatcher.numa_nodes[0].zone;
+    memset(&platform.numa_nodes, 0, sizeof(platform.numa_nodes));
+    platform.numa_node_count = 1;
+    zone_t* zone               = &platform.numa_nodes[0].zone;
 
     struct boot_memmap_entry* memmap             = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
     size_t                    memmap_entry_count = boot_info->memmap_entry_count;
@@ -196,10 +196,10 @@ void pmm_init(struct boot_info* boot_info)
     kprintf("Arx kernel: buddy allocator initialized\n");
 
     uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
-    dispatcher.numa_nodes[0].cpu_count = num_cpus;
+    platform.numa_nodes[0].cpu_count = num_cpus;
     for (uint8_t i = 0; i < num_cpus; i++)
     {
-        dispatcher.cpus[i].numa_node = &dispatcher.numa_nodes[0];
+        platform.cpus[i].numa_node = &platform.numa_nodes[0];
     }
 }
 
@@ -321,7 +321,7 @@ static void buddy_free(zone_t* zone, uint64_t pfn)
 
 void* pmm_alloc(size_t size)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
         return NULL;
@@ -370,7 +370,7 @@ void* pmm_alloc(size_t size)
 
 void pmm_free(void* addr)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
         return;

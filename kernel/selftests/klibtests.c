@@ -35,7 +35,7 @@ static void vmalloc_test(size_t* passes, size_t* failures)
         (*passes)++;
     }
 
-    virt_region_t* region = vmm_find_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr);
+    virt_region_t* region = vmm_find_region(platform.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr);
     if (region == NULL)
     {
         klib_test_log_fail("allocated vmalloc region not found in VMM used regions", failures);
@@ -49,7 +49,7 @@ static void vmalloc_test(size_t* passes, size_t* failures)
         (*passes)++;
     }
 
-    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, dispatcher.cpus[arch_cpu_id()].address_space) == 0)
+    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, platform.cpus[arch_cpu_id()].address_space) == 0)
     {
         klib_test_log_fail("allocated vmalloc address is not mapped", failures);
     }
@@ -60,7 +60,7 @@ static void vmalloc_test(size_t* passes, size_t* failures)
 
     vfree(ptr);
 
-    if (vmm_find_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
+    if (vmm_find_region(platform.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr) != NULL)
     {
         klib_test_log_fail("vmalloc region still present after vfree", failures);
     }
@@ -69,7 +69,7 @@ static void vmalloc_test(size_t* passes, size_t* failures)
         (*passes)++;
     }
 
-    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, dispatcher.cpus[arch_cpu_id()].address_space) != 0)
+    if (vmm_virt_to_phys((virt_addr_t) (uintptr_t) ptr, platform.cpus[arch_cpu_id()].address_space) != 0)
     {
         klib_test_log_fail("vmalloc mapping still present after vfree", failures);
     }

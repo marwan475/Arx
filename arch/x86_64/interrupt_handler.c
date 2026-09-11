@@ -3,7 +3,7 @@
 
 static void blue_screen(void)
 {
-    const kernel_framebuffer_t* fb = &dispatcher.framebuffer;
+    const kernel_framebuffer_t* fb = &platform.framebuffer;
 
     if (fb->address == NULL || fb->width == 0 || fb->height == 0 || fb->pitch == 0)
     {
@@ -94,14 +94,14 @@ static void ipi_broadcast_exception(void)
 {
     const uint8_t source_cpu_id = arch_cpu_id();
 
-    for (uint8_t cpu_id = 0; cpu_id < dispatcher.cpu_count; cpu_id++)
+    for (uint8_t cpu_id = 0; cpu_id < platform.cpu_count; cpu_id++)
     {
         if (cpu_id == source_cpu_id)
         {
             continue;
         }
 
-        cpu_info_t* target_cpu_info = &dispatcher.cpus[cpu_id];
+        cpu_info_t* target_cpu_info = &platform.cpus[cpu_id];
         if (!target_cpu_info->initialized || !target_cpu_info->arch_info.acpi_has_lapic)
         {
             continue;
@@ -114,7 +114,7 @@ static void ipi_broadcast_exception(void)
 // cpus ipi is locked when this is called. so handler needs to unlock it
 static void handle_ipi(registers_t* reg)
 {
-    cpu_info_t*        cpu_info     = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t*        cpu_info     = &platform.cpus[arch_cpu_id()];
     ipi_request_type_t request_type = IPI_REQUEST_NONE;
 
     if (!cpu_info->arch_info.acpi_has_lapic)

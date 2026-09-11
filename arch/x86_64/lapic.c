@@ -22,7 +22,7 @@ static inline void wrmsr(uint32_t msr, uint64_t value)
 
 void lapic_init(void)
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
@@ -62,7 +62,7 @@ void lapic_init(void)
 
 void lapic_timer_init(void)
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
@@ -79,7 +79,7 @@ void lapic_timer_init(void)
 
 void lapic_eoi(void)
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     if (!cpu_info->arch_info.acpi_has_lapic || cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
@@ -95,20 +95,20 @@ void lapic_eoi(void)
 // we lock target ipi lock but handler needs to unclock it
 void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_data)
 {
-    cpu_info_t* source_cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* source_cpu_info = &platform.cpus[arch_cpu_id()];
 
     if (!source_cpu_info->arch_info.acpi_has_lapic || source_cpu_info->arch_info.acpi_lapic_base_addr == 0)
     {
         return;
     }
 
-    if (target_cpu_id >= dispatcher.cpu_count)
+    if (target_cpu_id >= platform.cpu_count)
     {
         kprintf("Arx kernel: send_ipi rejected invalid target cpu id %u\n", (unsigned) target_cpu_id);
         return;
     }
 
-    cpu_info_t* target_cpu_info = &dispatcher.cpus[target_cpu_id];
+    cpu_info_t* target_cpu_info = &platform.cpus[target_cpu_id];
     if (!target_cpu_info->arch_info.acpi_has_lapic)
     {
         kprintf("Arx kernel: send_ipi rejected target cpu %u without LAPIC\n", (unsigned) target_cpu_id);

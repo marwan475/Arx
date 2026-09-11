@@ -28,7 +28,7 @@ void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
     uint64_t offset      = (uint64_t) addr - aligned_pa;
     uint64_t aligned_len = align_up((uint64_t) len + offset, PAGE_SIZE);
 
-    virt_addr_t va = vmm_reserve_region(dispatcher.cpus[arch_cpu_id()].address_space, aligned_len, VIRT_ADDR_KERNEL);
+    virt_addr_t va = vmm_reserve_region(platform.cpus[arch_cpu_id()].address_space, aligned_len, VIRT_ADDR_KERNEL);
     if (va == 0)
     {
         return NULL;
@@ -39,7 +39,7 @@ void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
     ARCH_PAGE_FLAG_SET_READ(map_flags);
     ARCH_PAGE_FLAG_SET_WRITE(map_flags);
 
-    vmm_map_range(va, aligned_pa, aligned_len, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
+    vmm_map_range(va, aligned_pa, aligned_len, map_flags, platform.cpus[arch_cpu_id()].address_space);
     return (void*) (va + offset);
 }
 
@@ -49,8 +49,8 @@ void uacpi_kernel_unmap(void* addr, uacpi_size len)
     uint64_t offset      = (uint64_t) addr - aligned_va;
     uint64_t aligned_len = align_up((uint64_t) len + offset, PAGE_SIZE);
 
-    vmm_unmap_range((virt_addr_t) aligned_va, aligned_len, dispatcher.cpus[arch_cpu_id()].address_space);
-    vmm_free_region(dispatcher.cpus[arch_cpu_id()].address_space, (virt_addr_t) aligned_va);
+    vmm_unmap_range((virt_addr_t) aligned_va, aligned_len, platform.cpus[arch_cpu_id()].address_space);
+    vmm_free_region(platform.cpus[arch_cpu_id()].address_space, (virt_addr_t) aligned_va);
 }
 
 void uacpi_kernel_log(uacpi_log_level level, const uacpi_char* text)
@@ -102,9 +102,9 @@ void acpi_init(phys_addr_t rsdp_address)
 {
     uacpi_status status;
 
-    if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
+    if (platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present && rsdp_address >= platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset)
     {
-        rsdp_address = hhdm_to_pa(rsdp_address, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
+        rsdp_address = hhdm_to_pa(rsdp_address, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
     }
 
     uacpi_rsdp_address = (uacpi_phys_addr) rsdp_address;

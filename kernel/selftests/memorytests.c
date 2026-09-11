@@ -65,7 +65,7 @@ static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
     for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++)
     {
         virt_addr_t va = align_down(candidates[i], PAGE_SIZE);
-        if (vmm_virt_to_phys(va, dispatcher.cpus[arch_cpu_id()].address_space) == 0 && vmm_virt_to_phys(va + PAGE_SIZE, dispatcher.cpus[arch_cpu_id()].address_space) == 0)
+        if (vmm_virt_to_phys(va, platform.cpus[arch_cpu_id()].address_space) == 0 && vmm_virt_to_phys(va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) == 0)
         {
             *va_out = va;
             return true;
@@ -102,8 +102,8 @@ static void vmm_test(void)
     size_t failures = 0;
     size_t passes   = 0;
 
-    const size_t kernel_used_before = vmm_test_count_regions(dispatcher.cpus[arch_cpu_id()].address_space->kernel_used_regions);
-    const size_t kernel_free_before = vmm_test_count_regions(dispatcher.cpus[arch_cpu_id()].address_space->kernel_free_regions);
+    const size_t kernel_used_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
+    const size_t kernel_free_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions);
 
     kprintf("Arx kernel: vmm_test start\n");
 
@@ -119,7 +119,7 @@ static void vmm_test(void)
     void* page_a_va = range_block_va;
     void* page_b_va = (void*) ((uintptr_t) range_block_va + PAGE_SIZE);
 
-    phys_addr_t page_a_pa = hhdm_to_pa((uintptr_t) page_a_va, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
+    phys_addr_t page_a_pa = hhdm_to_pa((uintptr_t) page_a_va, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
     phys_addr_t page_b_pa = page_a_pa + PAGE_SIZE;
 
     virt_addr_t test_va = 0;
@@ -138,8 +138,8 @@ static void vmm_test(void)
     ARCH_PAGE_FLAG_SET_READ(map_flags);
     ARCH_PAGE_FLAG_SET_WRITE(map_flags);
 
-    vmm_map_page(test_va, page_a_pa, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != page_a_pa)
+    vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa)
     {
         vmm_test_log_fail("map_page translation mismatch", &failures);
     }
@@ -148,8 +148,8 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_protect_page(test_va, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != page_a_pa)
+    vmm_protect_page(test_va, map_flags, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa)
     {
         vmm_test_log_fail("protect_page changed physical mapping", &failures);
     }
@@ -158,8 +158,8 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_map_range(test_va, page_a_pa, PAGE_SIZE * 2ULL, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, dispatcher.cpus[arch_cpu_id()].address_space) != page_b_pa)
+    vmm_map_range(test_va, page_a_pa, PAGE_SIZE * 2ULL, map_flags, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != page_b_pa)
     {
         vmm_test_log_fail("map_range translation mismatch", &failures);
     }
@@ -168,8 +168,8 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_protect_range(test_va, PAGE_SIZE * 2ULL, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, dispatcher.cpus[arch_cpu_id()].address_space) != page_b_pa)
+    vmm_protect_range(test_va, PAGE_SIZE * 2ULL, map_flags, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != page_b_pa)
     {
         vmm_test_log_fail("protect_range changed physical mapping", &failures);
     }
@@ -178,8 +178,8 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_unmap_page(test_va, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != 0)
+    vmm_unmap_page(test_va, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != 0)
     {
         vmm_test_log_fail("unmap_page did not clear mapping", &failures);
     }
@@ -188,10 +188,10 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_map_page(test_va, page_a_pa, map_flags, dispatcher.cpus[arch_cpu_id()].address_space);
+    vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);
 
-    vmm_unmap_range(test_va, PAGE_SIZE * 2ULL, dispatcher.cpus[arch_cpu_id()].address_space);
-    if (vmm_virt_to_phys(test_va, dispatcher.cpus[arch_cpu_id()].address_space) != 0 || vmm_virt_to_phys(test_va + PAGE_SIZE, dispatcher.cpus[arch_cpu_id()].address_space) != 0)
+    vmm_unmap_range(test_va, PAGE_SIZE * 2ULL, platform.cpus[arch_cpu_id()].address_space);
+    if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != 0 || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != 0)
     {
         vmm_test_log_fail("unmap_range did not clear mappings", &failures);
     }
@@ -200,13 +200,13 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_switch_addr_space(dispatcher.cpus[arch_cpu_id()].address_space);
+    vmm_switch_addr_space(platform.cpus[arch_cpu_id()].address_space);
     passes++;
 
     const size_t reserve_size         = PAGE_SIZE + 123;
     const size_t reserve_size_aligned = align_up(reserve_size, PAGE_SIZE);
 
-    virt_addr_t reserved = vmm_reserve_region(dispatcher.cpus[arch_cpu_id()].address_space, reserve_size, VIRT_ADDR_KERNEL);
+    virt_addr_t reserved = vmm_reserve_region(platform.cpus[arch_cpu_id()].address_space, reserve_size, VIRT_ADDR_KERNEL);
     if (reserved == 0)
     {
         vmm_test_log_fail("reserve_region returned 0 for kernel allocation", &failures);
@@ -225,7 +225,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    virt_region_t* used_reserved = vmm_test_find_region_by_start(dispatcher.cpus[arch_cpu_id()].address_space->kernel_used_regions, reserved);
+    virt_region_t* used_reserved = vmm_test_find_region_by_start(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions, reserved);
     if (used_reserved == NULL)
     {
         vmm_test_log_fail("reserved region not found in kernel used list", &failures);
@@ -239,7 +239,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    if (vmm_test_find_region_by_start(dispatcher.cpus[arch_cpu_id()].address_space->kernel_free_regions, reserved) != NULL)
+    if (vmm_test_find_region_by_start(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions, reserved) != NULL)
     {
         vmm_test_log_fail("reserved region incorrectly present in kernel free list", &failures);
     }
@@ -248,7 +248,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    const size_t kernel_used_after_reserve = vmm_test_count_regions(dispatcher.cpus[arch_cpu_id()].address_space->kernel_used_regions);
+    const size_t kernel_used_after_reserve = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
     if (kernel_used_after_reserve != (kernel_used_before + 1))
     {
         vmm_test_log_fail("kernel used list count did not increase after reserve", &failures);
@@ -258,9 +258,9 @@ static void vmm_test(void)
         passes++;
     }
 
-    vmm_free_region(dispatcher.cpus[arch_cpu_id()].address_space, reserved);
+    vmm_free_region(platform.cpus[arch_cpu_id()].address_space, reserved);
 
-    if (vmm_test_find_region_by_start(dispatcher.cpus[arch_cpu_id()].address_space->kernel_used_regions, reserved) != NULL)
+    if (vmm_test_find_region_by_start(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions, reserved) != NULL)
     {
         vmm_test_log_fail("freed region still present in kernel used list", &failures);
     }
@@ -269,7 +269,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    if (vmm_test_find_region_by_start(dispatcher.cpus[arch_cpu_id()].address_space->kernel_free_regions, reserved) == NULL)
+    if (vmm_test_find_region_by_start(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions, reserved) == NULL)
     {
         vmm_test_log_fail("freed region not found in kernel free list", &failures);
     }
@@ -278,7 +278,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    const size_t kernel_used_after_free = vmm_test_count_regions(dispatcher.cpus[arch_cpu_id()].address_space->kernel_used_regions);
+    const size_t kernel_used_after_free = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
     if (kernel_used_after_free != kernel_used_before)
     {
         vmm_test_log_fail("kernel used list count did not restore after free", &failures);
@@ -288,7 +288,7 @@ static void vmm_test(void)
         passes++;
     }
 
-    const size_t kernel_free_after_free = vmm_test_count_regions(dispatcher.cpus[arch_cpu_id()].address_space->kernel_free_regions);
+    const size_t kernel_free_after_free = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions);
     if (kernel_free_after_free != kernel_free_before)
     {
         vmm_test_log_fail("kernel free list count did not restore after free", &failures);
@@ -330,14 +330,14 @@ static void pmm_test(void)
 
     kprintf("Arx kernel: pmm_test start\n");
 
-    if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.buddy_metadata == NULL)
+    if (platform.cpus[arch_cpu_id()].numa_node->zone.buddy_metadata == NULL)
     {
         pmm_test_log_fail("zone metadata is null (did pmm_init run?)", &failures);
         kprintf("Arx kernel: pmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
-    if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.total_pages == 0)
+    if (platform.cpus[arch_cpu_id()].numa_node->zone.total_pages == 0)
     {
         pmm_test_log_fail("zone total_pages is zero", &failures);
     }
@@ -346,7 +346,7 @@ static void pmm_test(void)
         passes++;
     }
 
-    if (!pmm_test_check_zone_accounting(&dispatcher.cpus[arch_cpu_id()].numa_node->zone))
+    if (!pmm_test_check_zone_accounting(&platform.cpus[arch_cpu_id()].numa_node->zone))
     {
         pmm_test_log_fail("zone accounting invariant failed at start (free+used!=total)", &failures);
     }
@@ -355,8 +355,8 @@ static void pmm_test(void)
         passes++;
     }
 
-    baseline_free_pages = dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages;
-    baseline_used_pages = dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages;
+    baseline_free_pages = platform.cpus[arch_cpu_id()].numa_node->zone.free_pages;
+    baseline_used_pages = platform.cpus[arch_cpu_id()].numa_node->zone.used_pages;
 
     if (pmm_alloc(0) != NULL)
     {
@@ -399,7 +399,7 @@ static void pmm_test(void)
             passes++;
         }
 
-        uintptr_t pa = hhdm_to_pa((uintptr_t) ptr, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, dispatcher.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
+        uintptr_t pa = hhdm_to_pa((uintptr_t) ptr, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_present, platform.cpus[arch_cpu_id()].numa_node->zone.hhdm_offset);
 
         allocs[i].ptr       = ptr;
         allocs[i].requested = req;
@@ -412,15 +412,15 @@ static void pmm_test(void)
         ((volatile uint8_t*) ptr)[actual - 1] = (uint8_t) (0x5A + i);
     }
 
-    if (!pmm_test_check_zone_accounting(&dispatcher.cpus[arch_cpu_id()].numa_node->zone))
+    if (!pmm_test_check_zone_accounting(&platform.cpus[arch_cpu_id()].numa_node->zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after scenario allocations", &failures);
     }
-    else if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages < baseline_used_pages + scenario_expected_pages)
+    else if (platform.cpus[arch_cpu_id()].numa_node->zone.used_pages < baseline_used_pages + scenario_expected_pages)
     {
         pmm_test_log_fail("zone used_pages smaller than expected after scenario allocations", &failures);
     }
-    else if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages > baseline_free_pages)
+    else if (platform.cpus[arch_cpu_id()].numa_node->zone.free_pages > baseline_free_pages)
     {
         pmm_test_log_fail("zone free_pages unexpectedly increased after scenario allocations", &failures);
     }
@@ -461,11 +461,11 @@ static void pmm_test(void)
         }
     }
 
-    if (!pmm_test_check_zone_accounting(&dispatcher.cpus[arch_cpu_id()].numa_node->zone))
+    if (!pmm_test_check_zone_accounting(&platform.cpus[arch_cpu_id()].numa_node->zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after scenario frees", &failures);
     }
-    else if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
+    else if (platform.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || platform.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
     {
         pmm_test_log_fail("zone free/used pages did not return to baseline after scenario frees", &failures);
     }
@@ -501,13 +501,13 @@ static void pmm_test(void)
             exhaust_ptrs[i] = NULL;
         }
 
-        if (!pmm_test_check_zone_accounting(&dispatcher.cpus[arch_cpu_id()].numa_node->zone))
+        if (!pmm_test_check_zone_accounting(&platform.cpus[arch_cpu_id()].numa_node->zone))
         {
             pmm_test_log_fail("zone accounting invariant failed during stress round", &failures);
             break;
         }
 
-        if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
+        if (platform.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || platform.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
         {
             pmm_test_log_fail("zone free/used pages drifted during stress round", &failures);
             break;
@@ -541,11 +541,11 @@ static void pmm_test(void)
         exhaust_ptrs[i] = NULL;
     }
 
-    if (!pmm_test_check_zone_accounting(&dispatcher.cpus[arch_cpu_id()].numa_node->zone))
+    if (!pmm_test_check_zone_accounting(&platform.cpus[arch_cpu_id()].numa_node->zone))
     {
         pmm_test_log_fail("zone accounting invariant failed after exhaustion cleanup", &failures);
     }
-    else if (dispatcher.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || dispatcher.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
+    else if (platform.cpus[arch_cpu_id()].numa_node->zone.free_pages != baseline_free_pages || platform.cpus[arch_cpu_id()].numa_node->zone.used_pages != baseline_used_pages)
     {
         pmm_test_log_fail("zone free/used pages not restored after exhaustion cleanup", &failures);
     }
@@ -580,7 +580,7 @@ static void heap_test(void)
     size_t failures = 0;
     size_t passes   = 0;
 
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
         heap_test_log_fail("cpu numa_node is NULL", &failures);

@@ -1,5 +1,5 @@
-#ifndef PLATFORM_DISPATCHER_H
-#define PLATFORM_DISPATCHER_H
+#ifndef PLATFORM_H
+#define PLATFORM_H
 
 #include <arch/arch.h>
 #include <device/device.h>
@@ -18,7 +18,7 @@ typedef enum arch_type
     ARCH_AARCH64,
 } arch_type_t;
 
-typedef struct platform_dispatcher
+typedef struct platform
 {
     cpu_info_t*              cpus;
     size_t                   cpu_count;
@@ -32,9 +32,9 @@ typedef struct platform_dispatcher
     arch_type_t              arch;
     pci_device_t*            pci_devices;
     size_t                   pci_device_count;
-    arch_dispatcher_info_t   arch_info;
-} platform_dispatcher_t;
+    arch_platform_info_t     arch_info;
+} platform_t;
 
-extern platform_dispatcher_t dispatcher;
+extern platform_t platform;
 
 #endif

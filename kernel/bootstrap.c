@@ -50,18 +50,18 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    dispatcher.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
-    dispatcher.framebuffer.width            = (size_t) boot_info->framebuffer_width;
-    dispatcher.framebuffer.height           = (size_t) boot_info->framebuffer_height;
-    dispatcher.framebuffer.pitch            = (size_t) boot_info->framebuffer_pitch;
-    dispatcher.framebuffer.red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size;
-    dispatcher.framebuffer.red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift;
-    dispatcher.framebuffer.green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size;
-    dispatcher.framebuffer.green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift;
-    dispatcher.framebuffer.blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size;
-    dispatcher.framebuffer.blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift;
+    platform.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
+    platform.framebuffer.width            = (size_t) boot_info->framebuffer_width;
+    platform.framebuffer.height           = (size_t) boot_info->framebuffer_height;
+    platform.framebuffer.pitch            = (size_t) boot_info->framebuffer_pitch;
+    platform.framebuffer.red_mask_size    = (uint8_t) boot_info->framebuffer_red_mask_size;
+    platform.framebuffer.red_mask_shift   = (uint8_t) boot_info->framebuffer_red_mask_shift;
+    platform.framebuffer.green_mask_size  = (uint8_t) boot_info->framebuffer_green_mask_size;
+    platform.framebuffer.green_mask_shift = (uint8_t) boot_info->framebuffer_green_mask_shift;
+    platform.framebuffer.blue_mask_size   = (uint8_t) boot_info->framebuffer_blue_mask_size;
+    platform.framebuffer.blue_mask_shift  = (uint8_t) boot_info->framebuffer_blue_mask_shift;
 
-    if (!terminal_init(&dispatcher.framebuffer))
+    if (!terminal_init(&platform.framebuffer))
     {
         kprintf("Arx kernel: failed to initialize terminal\n");
         panic();
@@ -71,10 +71,10 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_validate_boot(boot_info, cpu_count);
 
-    // Can access per cpu structs from dispatcher after this function
+    // Can access per cpu structs from platform after this function
     KDEBUG("-> cpus_init(%llu)\n", (unsigned long long) cpu_count);
     cpus_init(cpu_count);
-    KDEBUG("<- cpus_init done dispatcher.cpu_count=%llu\n", (unsigned long long) dispatcher.cpu_count);
+    KDEBUG("<- cpus_init done platform.cpu_count=%llu\n", (unsigned long long) platform.cpu_count);
 
     KDEBUG("-> pmm_init\n");
     pmm_init(boot_info);
@@ -109,7 +109,7 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_pci_devices();
 
-    dispatcher.cpus[arch_cpu_id()].initialized = true;
+    platform.cpus[arch_cpu_id()].initialized = true;
 
     arch_smp_init(boot_info);
 
@@ -117,9 +117,9 @@ void kernel_bootstrap(struct boot_info* boot_info, uint64_t cpu_count)
 
     while (waiting_for_other_cpus)
     {
-        for (size_t i = 0; i < dispatcher.cpu_count; i++)
+        for (size_t i = 0; i < platform.cpu_count; i++)
         {
-            if (!dispatcher.cpus[i].initialized)
+            if (!platform.cpus[i].initialized)
             {
                 waiting_for_other_cpus = true;
                 break;
@@ -145,7 +145,7 @@ void smp_kmain(void)
 
     kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
 
-    dispatcher.cpus[arch_cpu_id()].initialized = true;
+    platform.cpus[arch_cpu_id()].initialized = true;
 
     cpu_init_stack(kernel_bootstrap_complete, 0);
 }
@@ -155,8 +155,8 @@ void kernel_bootstrap_complete(void* arg)
 
     // Platform initialization complete
 
-    dispatcher.cpus_initialized++;
-    while(dispatcher.cpus_initialized < dispatcher.cpu_count)
+    platform.cpus_initialized++;
+    while(platform.cpus_initialized < platform.cpu_count)
     {
         arch_pause();
     }

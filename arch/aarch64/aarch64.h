@@ -7,8 +7,8 @@ typedef struct arch_info
 {
 } arch_info_t;
 
-typedef struct arch_dispatcher_info
+typedef struct arch_platform_info
 {
-} arch_dispatcher_info_t;
+} arch_platform_info_t;
 
 #endif

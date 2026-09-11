@@ -156,43 +156,43 @@ static void pci_fill_bars(
 
 static void pci_unmap_regions(void)
 {
-	for (size_t i = 0; i < dispatcher.arch_info.pci_region_count; i++)
+	for (size_t i = 0; i < platform.arch_info.pci_region_count; i++)
 	{
-		if (dispatcher.arch_info.pci_regions[i].mapped_base != NULL && dispatcher.arch_info.pci_regions[i].mapped_size != 0)
+		if (platform.arch_info.pci_regions[i].mapped_base != NULL && platform.arch_info.pci_regions[i].mapped_size != 0)
 		{
-			uacpi_kernel_unmap(dispatcher.arch_info.pci_regions[i].mapped_base, dispatcher.arch_info.pci_regions[i].mapped_size);
-			dispatcher.arch_info.pci_regions[i].mapped_base = NULL;
-			dispatcher.arch_info.pci_regions[i].mapped_size = 0;
+			uacpi_kernel_unmap(platform.arch_info.pci_regions[i].mapped_base, platform.arch_info.pci_regions[i].mapped_size);
+			platform.arch_info.pci_regions[i].mapped_base = NULL;
+			platform.arch_info.pci_regions[i].mapped_size = 0;
 		}
 	}
 }
 
 static bool pci_map_regions(void)
 {
-	for (size_t i = 0; i < dispatcher.arch_info.pci_region_count; i++)
+	for (size_t i = 0; i < platform.arch_info.pci_region_count; i++)
 	{
 		uint64_t bus_count;
 		uint64_t map_size;
 		void*    mapped;
 
-		if (dispatcher.arch_info.pci_regions[i].end_bus < dispatcher.arch_info.pci_regions[i].start_bus)
+		if (platform.arch_info.pci_regions[i].end_bus < platform.arch_info.pci_regions[i].start_bus)
 		{
-			kprintf("PCI: invalid ECAM bus range for segment %u\n", dispatcher.arch_info.pci_regions[i].segment);
+			kprintf("PCI: invalid ECAM bus range for segment %u\n", platform.arch_info.pci_regions[i].segment);
 			return false;
 		}
 
-		bus_count = (uint64_t) (dispatcher.arch_info.pci_regions[i].end_bus - dispatcher.arch_info.pci_regions[i].start_bus) + 1;
+		bus_count = (uint64_t) (platform.arch_info.pci_regions[i].end_bus - platform.arch_info.pci_regions[i].start_bus) + 1;
 		map_size  = bus_count << 20;
 
-		mapped = uacpi_kernel_map((uacpi_phys_addr) dispatcher.arch_info.pci_regions[i].base_address, map_size);
+		mapped = uacpi_kernel_map((uacpi_phys_addr) platform.arch_info.pci_regions[i].base_address, map_size);
 		if (mapped == NULL)
 		{
 			kprintf("PCI: failed to map ECAM region %u\n", (unsigned) i);
 			return false;
 		}
 
-		dispatcher.arch_info.pci_regions[i].mapped_base = mapped;
-		dispatcher.arch_info.pci_regions[i].mapped_size = map_size;
+		platform.arch_info.pci_regions[i].mapped_base = mapped;
+		platform.arch_info.pci_regions[i].mapped_size = map_size;
 	}
 
 	return true;
@@ -351,20 +351,20 @@ static bool pci_get_device_info(void)
 
 	device_count = 0;
 
-	for (size_t region_index = 0; region_index < dispatcher.arch_info.pci_region_count; region_index++)
+	for (size_t region_index = 0; region_index < platform.arch_info.pci_region_count; region_index++)
 	{
-		const pci_ecam_region_t* region = &dispatcher.arch_info.pci_regions[region_index];
+		const pci_ecam_region_t* region = &platform.arch_info.pci_regions[region_index];
 
 		if (!pci_scan_region(region, devices, &device_count))
 		{
-			dispatcher.pci_devices      = devices;
-			dispatcher.pci_device_count = device_count;
+			platform.pci_devices      = devices;
+			platform.pci_device_count = device_count;
 			return true;
 		}
 	}
 
-	dispatcher.pci_devices      = devices;
-	dispatcher.pci_device_count = device_count;
+	platform.pci_devices      = devices;
+	platform.pci_device_count = device_count;
 
 	kprintf("PCI: discovered %u device(s)\n", (unsigned) device_count);
 	return true;
@@ -472,8 +472,8 @@ bool pci_init(void)
 	size_t            extracted_count;
 	pci_ecam_region_t* regions;
 
-	dispatcher.pci_devices      = NULL;
-	dispatcher.pci_device_count = 0;
+	platform.pci_devices      = NULL;
+	platform.pci_device_count = 0;
 
 	region_count = 0;
 	if (!pci_get_mcfg_region_count(&region_count))
@@ -484,8 +484,8 @@ bool pci_init(void)
 
 	if (region_count == 0)
 	{
-		dispatcher.arch_info.pci_regions      = NULL;
-		dispatcher.arch_info.pci_region_count = 0;
+		platform.arch_info.pci_regions      = NULL;
+		platform.arch_info.pci_region_count = 0;
 		kprintf("PCI: no ECAM regions present\n");
 		return true;
 	}
@@ -505,25 +505,25 @@ bool pci_init(void)
 		return false;
 	}
 
-	dispatcher.arch_info.pci_regions      = regions;
-	dispatcher.arch_info.pci_region_count = extracted_count;
+	platform.arch_info.pci_regions      = regions;
+	platform.arch_info.pci_region_count = extracted_count;
 
     KDEBUG("PCI: extracted %u ECAM region(s) from MCFG\n", (unsigned) extracted_count);
 
 	if (!pci_map_regions())
 	{
-		kfree(dispatcher.arch_info.pci_regions);
-		dispatcher.arch_info.pci_regions      = NULL;
-		dispatcher.arch_info.pci_region_count = 0;
+		kfree(platform.arch_info.pci_regions);
+		platform.arch_info.pci_regions      = NULL;
+		platform.arch_info.pci_region_count = 0;
 		return false;
 	}
 
 	if (!pci_get_device_info())
 	{
 		pci_unmap_regions();
-		kfree(dispatcher.arch_info.pci_regions);
-		dispatcher.arch_info.pci_regions      = NULL;
-		dispatcher.arch_info.pci_region_count = 0;
+		kfree(platform.arch_info.pci_regions);
+		platform.arch_info.pci_regions      = NULL;
+		platform.arch_info.pci_region_count = 0;
 		return false;
 	}
 

@@ -58,7 +58,7 @@ static void build_gdt(gdt_t* gdt, const tss_discriptor_t* tss_descriptor)
 
 static void gdt_init()
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     build_tss_descriptor(&cpu_info->arch_info.tss, &cpu_info->arch_info.tss_descriptor);
     build_gdt(&cpu_info->arch_info.gdt, &cpu_info->arch_info.tss_descriptor);
@@ -133,7 +133,7 @@ static void isr_init(idt_entry_t* idt)
 
 static void idt_init()
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     cpu_info->arch_info.idt_desc = (idt_description_t){sizeof(cpu_info->arch_info.idt) - 1, cpu_info->arch_info.idt};
 
@@ -148,7 +148,7 @@ static void disable_pic()
 
 static void init_interrupts()
 {
-    cpu_info_t* cpu_info = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     idt_init();
     disable_pic();

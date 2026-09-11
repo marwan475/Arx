@@ -58,7 +58,7 @@ typedef struct cpu_info
     size_t             kernel_stack_size;
 } cpu_info_t;
 
-#include <platform_dispatcher.h>
+#include <platform.h>
 
 void cpus_init(size_t cpu_count);
 __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);

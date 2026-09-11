@@ -226,7 +226,7 @@ void vmm_init(struct boot_info* boot_info)
     uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
     for (uint8_t i = 0; i < num_cpus; i++)
     {
-        dispatcher.cpus[i].address_space = &init_kernel_address_space;
+        platform.cpus[i].address_space = &init_kernel_address_space;
     }
 }
 

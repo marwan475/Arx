@@ -33,9 +33,9 @@ void kterm_write(const char* msg)
         return;
     }
 
-    spinlock_acquire(&dispatcher.terminal_lock);
+    spinlock_acquire(&platform.terminal_lock);
 
-    if (dispatcher.terminal_context != NULL)
+    if (platform.terminal_context != NULL)
     {
         char previous = '\0';
         for (size_t i = 0; i < len; i++)
@@ -56,7 +56,7 @@ void kterm_write(const char* msg)
         }
     }
 
-    spinlock_release(&dispatcher.terminal_lock);
+    spinlock_release(&platform.terminal_lock);
 }
 
 int kterm_printf(const char* format, ...)
@@ -215,7 +215,7 @@ static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, vir
 
 void* vmalloc(size_t size)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL || cpu->address_space == NULL)
     {
         return NULL;
@@ -290,7 +290,7 @@ void* vmalloc(size_t size)
 
 void vfree(void* ptr)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL || cpu->address_space == NULL)
     {
         return;
@@ -356,7 +356,7 @@ void vfree(void* ptr)
 
 void* kmalloc(size_t size)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
         return NULL;
@@ -390,7 +390,7 @@ void* kzalloc(size_t size)
 
 void kfree(void* ptr)
 {
-    cpu_info_t* cpu = &dispatcher.cpus[arch_cpu_id()];
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
         return;

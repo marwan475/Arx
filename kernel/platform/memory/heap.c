@@ -257,13 +257,13 @@ static void cache_init(cache_t* cache, size_t object_size)
 
 void heap_init(void)
 {
-    for (size_t i = 0; i < dispatcher.numa_node_count; i++)
+    for (size_t i = 0; i < platform.numa_node_count; i++)
     {
-        dispatcher.numa_nodes[i].heap.lock = 0;
+        platform.numa_nodes[i].heap.lock = 0;
 
         for (size_t j = 0; j < OBJECT_SIZE_CLASS_COUNT; j++)
         {
-            cache_init(&dispatcher.numa_nodes[i].heap.caches[j], heap_object_sizes[j]);
+            cache_init(&platform.numa_nodes[i].heap.caches[j], heap_object_sizes[j]);
         }
     }
 

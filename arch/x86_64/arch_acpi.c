@@ -74,11 +74,11 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
-        dispatcher.cpus[i].arch_info.acpi_has_lapic       = 0;
-        dispatcher.cpus[i].arch_info.acpi_lapic_base_addr = 0;
-        dispatcher.cpus[i].arch_info.acpi_processor_uid   = 0;
-        dispatcher.cpus[i].arch_info.acpi_lapic_id        = 0;
-        dispatcher.cpus[i].arch_info.acpi_lapic_flags     = 0;
+        platform.cpus[i].arch_info.acpi_has_lapic       = 0;
+        platform.cpus[i].arch_info.acpi_lapic_base_addr = 0;
+        platform.cpus[i].arch_info.acpi_processor_uid   = 0;
+        platform.cpus[i].arch_info.acpi_lapic_id        = 0;
+        platform.cpus[i].arch_info.acpi_lapic_flags     = 0;
     }
 
     entry              = madt->entries;
@@ -111,11 +111,11 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 
             if (lapic_stored_count < BOOT_SMP_MAX_CPUS)
             {
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_has_lapic       = 1;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_processor_uid   = lapic->uid;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_id        = lapic->id;
-                dispatcher.cpus[lapic_stored_count].arch_info.acpi_lapic_flags     = lapic->flags;
+                platform.cpus[lapic_stored_count].arch_info.acpi_has_lapic       = 1;
+                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
+                platform.cpus[lapic_stored_count].arch_info.acpi_processor_uid   = lapic->uid;
+                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_id        = lapic->id;
+                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_flags     = lapic->flags;
                 lapic_stored_count++;
             }
 
@@ -200,14 +200,14 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
         return UACPI_STATUS_INVALID_TABLE_LENGTH;
     }
 
-    dispatcher.arch_info.acpi_iso_override_count = 0;
+    platform.arch_info.acpi_iso_override_count = 0;
 
     for (size_t i = 0; i < 16; i++)
     {
-        dispatcher.arch_info.acpi_iso_overrides[i].present = 0;
-        dispatcher.arch_info.acpi_iso_overrides[i].source  = 0;
-        dispatcher.arch_info.acpi_iso_overrides[i].flags   = 0;
-        dispatcher.arch_info.acpi_iso_overrides[i].gsi     = 0;
+        platform.arch_info.acpi_iso_overrides[i].present = 0;
+        platform.arch_info.acpi_iso_overrides[i].source  = 0;
+        platform.arch_info.acpi_iso_overrides[i].flags   = 0;
+        platform.arch_info.acpi_iso_overrides[i].gsi     = 0;
     }
 
     entry     = madt->entries;
@@ -240,15 +240,15 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
             {
                 uint8_t source = iso->source;
 
-                if (!dispatcher.arch_info.acpi_iso_overrides[source].present)
+                if (!platform.arch_info.acpi_iso_overrides[source].present)
                 {
-                    dispatcher.arch_info.acpi_iso_override_count++;
+                    platform.arch_info.acpi_iso_override_count++;
                 }
 
-                dispatcher.arch_info.acpi_iso_overrides[source].present = 1;
-                dispatcher.arch_info.acpi_iso_overrides[source].source  = source;
-                dispatcher.arch_info.acpi_iso_overrides[source].flags   = iso->flags;
-                dispatcher.arch_info.acpi_iso_overrides[source].gsi     = iso->gsi;
+                platform.arch_info.acpi_iso_overrides[source].present = 1;
+                platform.arch_info.acpi_iso_overrides[source].source  = source;
+                platform.arch_info.acpi_iso_overrides[source].flags   = iso->flags;
+                platform.arch_info.acpi_iso_overrides[source].gsi     = iso->gsi;
             }
         }
 
@@ -281,10 +281,10 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt)
         return status;
     }
 
-    dispatcher.arch_info.acpi_has_ioapic       = 1;
-    dispatcher.arch_info.acpi_ioapic_id        = ioapic->id;
-    dispatcher.arch_info.acpi_ioapic_gsi_base  = ioapic->gsi_base;
-    dispatcher.arch_info.acpi_ioapic_base_addr = ioapic->address;
+    platform.arch_info.acpi_has_ioapic       = 1;
+    platform.arch_info.acpi_ioapic_id        = ioapic->id;
+    platform.arch_info.acpi_ioapic_gsi_base  = ioapic->gsi_base;
+    platform.arch_info.acpi_ioapic_base_addr = ioapic->address;
 
     return UACPI_STATUS_OK;
 }

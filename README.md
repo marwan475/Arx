@@ -20,12 +20,13 @@ Design in order of initialization
     - SMP setup 
 - kernel_bootstrap will initialize kernel subsystems
 
-### Platform Dispatcher
+### Platform
 
-![Dispatcher Access Flow](docs/dispatcher-2026-04-15-070216.svg)
-- Global dispatcher variable which stores important global and per cpu platform data structures
-- Type is `platform_dispatcher_t` defined in `kernel/platform/platform_dispatcher.h`
+![Platform Access Flow](docs/dispatcher-2026-04-15-070216.svg)
+- Global platform variable which stores important global and per cpu platform data structures
+- Type is `platform_t` defined in `kernel/platform/platform.h`
 - index by arch cpu id
+- NOTE: In diagrams platform is named as Dispatcher
 
 ### Memory Management
 

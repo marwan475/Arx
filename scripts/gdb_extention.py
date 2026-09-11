@@ -5,7 +5,7 @@ PAGE_SIZE = 4096
 
 
 class ArxPmmCommand(gdb.Command):
-    """Print Arx buddy allocator state from dispatcher CPU context."""
+    """Print Arx buddy allocator state from platform CPU context."""
 
     def __init__(self):
         super().__init__("arx-pmm", gdb.COMMAND_STATUS)
@@ -85,12 +85,12 @@ class ArxPmmCommand(gdb.Command):
         del from_tty
 
         try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
+            platform = gdb.parse_and_eval("platform")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
 
-        cpu_count = int(dispatcher["cpu_count"])
-        cpu_slots = self._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        cpu_count = int(platform["cpu_count"])
+        cpu_slots = self._array_len(platform["cpus"], fallback=max(cpu_count, 1))
         requested_cpu = self._parse_cpu_index(arg)
 
         print("Arx PMM state")
@@ -106,7 +106,7 @@ class ArxPmmCommand(gdb.Command):
 
             # Prefer matching logical cpu.id first, then fall back to slot index.
             for i in range(cpu_count):
-                cpu = dispatcher["cpus"][i]
+                cpu = platform["cpus"][i]
                 if int(cpu["id"]) == requested_cpu:
                     cpu_indices = [i]
                     break
@@ -124,7 +124,7 @@ class ArxPmmCommand(gdb.Command):
 
         printed = 0
         for cpu_index in cpu_indices:
-            cpu = dispatcher["cpus"][cpu_index]
+            cpu = platform["cpus"][cpu_index]
             numa_node = cpu["numa_node"]
             if int(numa_node) == 0:
                 if requested_cpu is not None:
@@ -144,7 +144,7 @@ ArxPmmCommand()
 
 
 class ArxVmmCommand(gdb.Command):
-    """Print Arx VMM address_space state from dispatcher CPU context."""
+    """Print Arx VMM address_space state from platform CPU context."""
 
     def __init__(self):
         super().__init__("arx-vmm", gdb.COMMAND_STATUS)
@@ -234,12 +234,12 @@ class ArxVmmCommand(gdb.Command):
         del from_tty
 
         try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
+            platform = gdb.parse_and_eval("platform")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
 
-        cpu_count = int(dispatcher["cpu_count"])
-        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        cpu_count = int(platform["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
         requested_cpu = self._parse_cpu_index(arg)
 
         cpu_indices = []
@@ -249,7 +249,7 @@ class ArxVmmCommand(gdb.Command):
 
             # Prefer matching logical cpu.id first, then fall back to slot index.
             for i in range(cpu_count):
-                cpu = dispatcher["cpus"][i]
+                cpu = platform["cpus"][i]
                 if int(cpu["id"]) == requested_cpu:
                     cpu_indices = [i]
                     break
@@ -273,7 +273,7 @@ class ArxVmmCommand(gdb.Command):
 
         printed = 0
         for cpu_index in cpu_indices:
-            cpu = dispatcher["cpus"][cpu_index]
+            cpu = platform["cpus"][cpu_index]
             self._print_space(cpu_index, cpu)
             printed += 1
 
@@ -285,7 +285,7 @@ ArxVmmCommand()
 
 
 class ArxCpusCommand(gdb.Command):
-    """Print Arx dispatcher CPU info for all CPU slots."""
+    """Print Arx platform CPU info for all CPU slots."""
 
     def __init__(self):
         super().__init__("arx-cpus", gdb.COMMAND_STATUS)
@@ -332,12 +332,12 @@ class ArxCpusCommand(gdb.Command):
         del from_tty
 
         try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
+            platform = gdb.parse_and_eval("platform")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
 
-        cpu_count = int(dispatcher["cpu_count"])
-        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        cpu_count = int(platform["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
         requested_cpu = self._parse_cpu_index(arg)
         cpu_indices = []
 
@@ -347,7 +347,7 @@ class ArxCpusCommand(gdb.Command):
 
             # Prefer matching logical cpu.id first, then fall back to slot index.
             for i in range(cpu_count):
-                cpu = dispatcher["cpus"][i]
+                cpu = platform["cpus"][i]
                 if int(cpu["id"]) == requested_cpu:
                     cpu_indices = [i]
                     break
@@ -363,8 +363,8 @@ class ArxCpusCommand(gdb.Command):
         else:
             cpu_indices = list(range(cpu_slots))
 
-        dispatcher_arch = self._read_int_field(dispatcher, "arch", default=-1)
-        dispatcher_arch_info = dispatcher["arch_info"]
+        dispatcher_arch = self._read_int_field(platform, "arch", default=-1)
+        dispatcher_arch_info = platform["arch_info"]
 
         print("Arx CPU state")
         print("=============")
@@ -373,7 +373,7 @@ class ArxCpusCommand(gdb.Command):
         print("arch:      {}".format(self._arch_name(dispatcher_arch)))
         print("")
 
-        print("Dispatcher")
+        print("Platform")
         print("----------")
         if dispatcher_arch == 0:
             ioapic_present = self._read_int_field(dispatcher_arch_info, "acpi_has_ioapic", default=None)
@@ -393,7 +393,7 @@ class ArxCpusCommand(gdb.Command):
         print("")
 
         for i in cpu_indices:
-            cpu = dispatcher["cpus"][i]
+            cpu = platform["cpus"][i]
 
             cpu_id = self._read_int_field(cpu, "id", default=0)
             acpi_has_lapic = self._read_nested_int_field(cpu, ["arch_info", "acpi_has_lapic"], default=None)
@@ -432,7 +432,7 @@ ArxCpusCommand()
 
 
 class ArxPciCommand(gdb.Command):
-    """Print Arx PCI devices discovered in dispatcher.pci_devices."""
+    """Print Arx PCI devices discovered in platform.pci_devices."""
 
     def __init__(self):
         super().__init__("arx-pci", gdb.COMMAND_STATUS)
@@ -442,13 +442,13 @@ class ArxPciCommand(gdb.Command):
         del from_tty
 
         try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
+            platform = gdb.parse_and_eval("platform")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
 
-        arch = int(dispatcher["arch"])
-        device_count = int(dispatcher["pci_device_count"])
-        devices_ptr = dispatcher["pci_devices"]
+        arch = int(platform["arch"])
+        device_count = int(platform["pci_device_count"])
+        devices_ptr = platform["pci_devices"]
         devices_ptr_int = int(devices_ptr)
 
         print("Arx PCI devices")
@@ -495,7 +495,7 @@ ArxPciCommand()
 
 
 class ArxHeapCommand(gdb.Command):
-    """Print Arx heap cache/slab state from dispatcher CPU context."""
+    """Print Arx heap cache/slab state from platform CPU context."""
 
     def __init__(self):
         super().__init__("arx-heap", gdb.COMMAND_STATUS)
@@ -575,12 +575,12 @@ class ArxHeapCommand(gdb.Command):
         del from_tty
 
         try:
-            dispatcher = gdb.parse_and_eval("dispatcher")
+            platform = gdb.parse_and_eval("platform")
         except gdb.error as err:
-            raise gdb.GdbError("Failed to read dispatcher symbol: {}".format(err))
+            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
 
-        cpu_count = int(dispatcher["cpu_count"])
-        cpu_slots = ArxPmmCommand._array_len(dispatcher["cpus"], fallback=max(cpu_count, 1))
+        cpu_count = int(platform["cpu_count"])
+        cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
         requested_cpu = self._parse_cpu_index(arg)
 
         cpu_indices = []
@@ -590,7 +590,7 @@ class ArxHeapCommand(gdb.Command):
 
             # Prefer matching logical cpu.id first, then fall back to slot index.
             for i in range(cpu_count):
-                cpu = dispatcher["cpus"][i]
+                cpu = platform["cpus"][i]
                 if int(cpu["id"]) == requested_cpu:
                     cpu_indices = [i]
                     break
@@ -614,7 +614,7 @@ class ArxHeapCommand(gdb.Command):
 
         printed = 0
         for cpu_index in cpu_indices:
-            cpu = dispatcher["cpus"][cpu_index]
+            cpu = platform["cpus"][cpu_index]
             numa_node = cpu["numa_node"]
 
             if int(numa_node) == 0:

@@ -226,7 +226,7 @@ typedef struct pci_ecam_region
     uint64_t mapped_size;
 } pci_ecam_region_t;
 
-typedef struct arch_dispatcher_info
+typedef struct arch_platform_info
 {
     struct
     {
@@ -245,7 +245,7 @@ typedef struct arch_dispatcher_info
     uint64_t acpi_ioapic_base_addr;
     pci_ecam_region_t* pci_regions;
     size_t             pci_region_count;
-} arch_dispatcher_info_t;
+} arch_platform_info_t;
 
 void     lapic_init(void);
 void     lapic_timer_init(void);

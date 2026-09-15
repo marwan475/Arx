@@ -11,6 +11,34 @@ Targets:
 
 Design in order of initialization
 
+Platform
+- Architecture specific initiliztion
+- Sets up klib
+- only part that accesses hardware directly
+
+klib
+- contains kernel stdlib
+- only access platform for memory allocation functions (kmalloc/vmalloc)
+
+Layer stack
+- layers can only access the layer right bellow them using the layers import caps
+- lower layers cannot access layers above
+- protected by the fact the layers will only have caps struct of layers bellow them
+
+Resource
+- Kernel resource manager
+- Accesses hardware via platform
+
+Logic
+- main logic of kernel
+
+Requests
+- interface for kernel request from syscalls or interrupts
+
+Dispatcher
+- *not imaged
+- how platform will access layer stack
+
 ### Platform Setup
 - Limine Bootloader loads kernel and sets entry point to _start in arch_entry.c
 - arch_entry processes Limine requests, formats it to fit Arx boot protocol in boot.h then passes it to kernel_bootstrap in bootstrap.c

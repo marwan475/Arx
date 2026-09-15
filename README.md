@@ -7,7 +7,7 @@ Targets:
 
 ## Design
 
-![Arx](doc/Arx_Arch.png)
+![Arx](docs/Arx_Arch.png)
 
 Design in order of initialization
 

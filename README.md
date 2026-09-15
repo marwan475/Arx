@@ -6,6 +6,9 @@ Targets:
 - aarch64
 
 ## Design
+
+![Arx](doc/Arx_Arch.png)
+
 Design in order of initialization
 
 ### Platform Setup

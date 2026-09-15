@@ -11,31 +11,31 @@ Targets:
 
 Design in order of initialization
 
-Platform
+### Platform
 - Architecture specific initiliztion
 - Sets up klib
 - only part that accesses hardware directly
 
-klib
+### klib
 - contains kernel stdlib
 - only access platform for memory allocation functions (kmalloc/vmalloc)
 
-Layer stack
+### Layer stack
 - layers can only access the layer right bellow them using the layers import caps
 - lower layers cannot access layers above
 - protected by the fact the layers will only have caps struct of layers bellow them
 
-Resource
+### Resource
 - Kernel resource manager
 - Accesses hardware via platform
 
-Logic
+### Logic
 - main logic of kernel
 
-Requests
+### Request
 - interface for kernel request from syscalls or interrupts
 
-Dispatcher
+### Dispatcher
 - *not imaged
 - how platform will access layer stack
 

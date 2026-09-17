@@ -1,4 +1,6 @@
 
+override MAKEFILES :=
+
 BOOT_DIR ?= boot
 BOOT_CFG ?= $(BOOT_DIR)/limine.conf
 SCRIPTS_DIR ?= scripts
@@ -25,6 +27,8 @@ KERNEL_AARCH64_LD ?= $(ARCH_DIR)/aarch64/linker.ld
 
 X86_64_CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
+X86_64_CXX ?= g++
+AARCH64_CXX ?= aarch64-linux-gnu-g++
 X86_64_AS ?= nasm
 INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
@@ -45,6 +49,9 @@ endif
 
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
+CXXFLAGS_COMMON := $(CFLAGS_COMMON) -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit
+CXXFLAGS_X86_64 := $(CFLAGS_X86_64)
+CXXFLAGS_AARCH64 := $(CFLAGS_AARCH64)
 ASFLAGS_X86_64 := -f elf64
 LDFLAGS_COMMON := -nostdlib -no-pie
 
@@ -59,23 +66,28 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 .PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) klib/debug.c kernel/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp klib/debug.c kernel/selftests/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
 FLANTERM_SRCS := kernel/platform/terminal/flanterm/flanterm.c kernel/platform/terminal/flanterm/flanterm_backends/fb.c
 
 CFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
+CXXFLAGS_COMMON += $(UACPI_INCLUDE_DIRS) $(UACPI_DEFINES)
 KERNEL_X86_64_SRCS += $(UACPI_SRCS)
 KERNEL_AARCH64_SRCS += $(UACPI_SRCS)
 KERNEL_X86_64_SRCS += $(FLANTERM_SRCS)
 KERNEL_AARCH64_SRCS += $(FLANTERM_SRCS)
 
-KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_SRCS))
+KERNEL_X86_64_OBJS := $(patsubst %.c,$(BUILD_DIR)/x86_64/%.o,$(filter %.c,$(KERNEL_X86_64_SRCS)))
+KERNEL_X86_64_OBJS += $(patsubst %.cpp,$(BUILD_DIR)/x86_64/%.o,$(filter %.cpp,$(KERNEL_X86_64_SRCS)))
 KERNEL_X86_64_OBJS += $(patsubst %.asm,$(BUILD_DIR)/x86_64/%.o,$(KERNEL_X86_64_ASM_SRCS))
-KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(KERNEL_AARCH64_SRCS))
+KERNEL_AARCH64_OBJS := $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(filter %.c,$(KERNEL_AARCH64_SRCS)))
+KERNEL_AARCH64_OBJS += $(patsubst %.cpp,$(BUILD_DIR)/aarch64/%.o,$(filter %.cpp,$(KERNEL_AARCH64_SRCS)))
 
--include $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
+DEP_FILES := $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
+
+-include $(filter %.d,$(DEP_FILES))
 
 all: x86_64 aarch64
 
@@ -95,6 +107,10 @@ $(BUILD_DIR)/x86_64/%.o: %.c
 	@mkdir -p $(dir $@) $(BIN_DIR)
 	$(X86_64_CC) $(CFLAGS_COMMON) $(CFLAGS_X86_64) -c -o $@ $<
 
+$(BUILD_DIR)/x86_64/%.o: %.cpp
+	@mkdir -p $(dir $@) $(BIN_DIR)
+	$(X86_64_CXX) $(CXXFLAGS_COMMON) $(CXXFLAGS_X86_64) -c -o $@ $<
+
 $(BUILD_DIR)/x86_64/%.o: %.asm
 	@mkdir -p $(dir $@) $(BIN_DIR)
 	@command -v $(X86_64_AS) >/dev/null 2>&1 || { echo "Error: $(X86_64_AS) not found. Install nasm or set X86_64_AS=<assembler>." >&2; exit 1; }
@@ -104,6 +120,11 @@ $(BUILD_DIR)/aarch64/%.o: %.c
 	@mkdir -p $(dir $@) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
 	$(AARCH64_CC) $(CFLAGS_COMMON) $(CFLAGS_AARCH64) -c -o $@ $<
+
+$(BUILD_DIR)/aarch64/%.o: %.cpp
+	@mkdir -p $(dir $@) $(BIN_DIR)
+	@command -v $(AARCH64_CXX) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CXX) not found. Set AARCH64_CXX=<compiler>." >&2; exit 1; }
+	$(AARCH64_CXX) $(CXXFLAGS_COMMON) $(CXXFLAGS_AARCH64) -c -o $@ $<
 
 $(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)

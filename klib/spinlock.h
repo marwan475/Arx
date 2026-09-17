@@ -4,7 +4,7 @@
 #include <arch/arch.h>
 #include <stdint.h>
 
-typedef _Atomic uint8_t spinlock_t;
+typedef uint8_t spinlock_t;
 
 static inline void spinlock_acquire(spinlock_t* lock)
 {

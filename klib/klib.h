@@ -13,6 +13,10 @@
 #include <cpu/cpu.h>
 #include "debug.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // panic
 static inline void panic(void)
 {
@@ -58,5 +62,9 @@ void  vfree(void* ptr);
 void* kmalloc(size_t size);
 void* kzalloc(size_t size);
 void  kfree(void* ptr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

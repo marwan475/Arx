@@ -4,6 +4,10 @@
 #include <boot/boot.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int kterm_printf(const char* format, ...);
 
 #ifndef DEBUG
@@ -18,5 +22,9 @@ int kterm_printf(const char* format, ...);
 
 void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count);
 void debug_pci_devices(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

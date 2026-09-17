@@ -31,6 +31,7 @@ Resource
 
 Logic
 - main logic of kernel
+- gets hardware resources from resource layer
 
 Request
 - interface for kernel request from syscalls or interrupts

@@ -29,6 +29,10 @@ typedef uint64_t virt_addr_t;
 #define REG(type, x) (*((volatile type*) (uintptr_t) (x)))
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if defined(__x86_64__)
 #define ARCH_PAGE_FLAGS_INIT(flags) ((flags) = (1ULL << 63))
 
@@ -89,5 +93,9 @@ bool arch_device_init(void);
 uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
 bool arch_init(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

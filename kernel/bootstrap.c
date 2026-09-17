@@ -8,6 +8,7 @@
 
 void run_selftests(void);
 void platform_init_complete(void* arg);
+void kmain(void);
 
 // From bootloader we need
 // - memory map
@@ -174,8 +175,15 @@ void platform_init_complete(void* arg)
     KDEBUG("cpu %d platform_init_complete entered\n", arch_cpu_id());
 
     (void) arg;
+
+    if ((uint64_t) arch_cpu_id() == platform.bsp_id)
+    {
+        kmain();
+    }
+
     for (;;)
     {
+        arch_pause();
     }
 }
 

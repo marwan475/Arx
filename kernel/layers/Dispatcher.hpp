@@ -2,4 +2,9 @@
 
 class Dispatcher
 {
+    public:
+        Dispatcher();
+
+    private:
+
 };

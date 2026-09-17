@@ -27,11 +27,13 @@ Layer stack
 
 Resource
 - Kernel resource manager
+- Manages any resources/objects that the kernel owns
 - Accesses hardware via platform
 
 Logic
 - main logic of kernel
-- gets hardware resources from resource layer
+- gets hardware/kernel resources from resource layer
+- decides what to do with resources
 
 Request
 - interface for kernel request from syscalls or interrupts

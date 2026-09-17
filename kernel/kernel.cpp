@@ -11,6 +11,10 @@ extern "C" void kmain(void)
 
     kterm_printf("Arx kernel: kmain entered on BSP\n");
 
+    dispatcher->StartKernel();
+
+    kterm_printf("Arx kernel: StartKernel completed on BSP\n");
+
     for (;;)
     {
         arch_pause();

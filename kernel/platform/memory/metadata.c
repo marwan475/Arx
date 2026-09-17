@@ -1,6 +1,6 @@
+#include <klib/klib.h>
 #include <memory/metadata.h>
 #include <memory/pmm.h>
-#include <klib/klib.h>
 
 size_t metadata_default_elements_per_chunk(size_t element_size)
 {
@@ -27,7 +27,7 @@ static bool metadata_pool_grow(metadata_pool_t* pool)
     }
 
     size_t chunk_bytes = pool->element_size * pool->elements_per_chunk;
-    chunk->data = pmm_alloc(chunk_bytes);
+    chunk->data        = pmm_alloc(chunk_bytes);
     if (chunk->data == NULL)
     {
         return false;
@@ -48,9 +48,9 @@ static bool metadata_pool_grow(metadata_pool_t* pool)
 
     for (size_t i = 0; i < pool->elements_per_chunk; i++)
     {
-        void* element = (void*) ((uintptr_t) chunk->data + i * pool->element_size);
+        void* element     = (void*) ((uintptr_t) chunk->data + i * pool->element_size);
         *(void**) element = pool->free_list;
-        pool->free_list = element;
+        pool->free_list   = element;
     }
 
     return true;
@@ -63,9 +63,9 @@ void metadata_pool_init(metadata_pool_t* pool, size_t element_size, size_t eleme
         return;
     }
 
-    pool->chunks = NULL;
-    pool->free_list = NULL;
-    pool->element_size = element_size;
+    pool->chunks             = NULL;
+    pool->free_list          = NULL;
+    pool->element_size       = element_size;
     pool->elements_per_chunk = elements_per_chunk;
 }
 
@@ -84,7 +84,7 @@ void* metadata_pool_alloc(metadata_pool_t* pool)
         }
     }
 
-    void* element = pool->free_list;
+    void* element   = pool->free_list;
     pool->free_list = *(void**) element;
     memset(element, 0, pool->element_size);
     return element;
@@ -98,5 +98,5 @@ void metadata_pool_free(metadata_pool_t* pool, void* element)
     }
 
     *(void**) element = pool->free_list;
-    pool->free_list = element;
+    pool->free_list   = element;
 }

@@ -201,9 +201,9 @@ static void ilist_test(void)
         passes++;
     }
 
-    ILIST_PUSH_FRONT(head, &n1); // [1]
-    ILIST_PUSH_FRONT(head, &n2); // [2,1]
-    ILIST_APPEND(head, &n3);     // [2,1,3]
+    ILIST_PUSH_FRONT(head, &n1);         // [1]
+    ILIST_PUSH_FRONT(head, &n2);         // [2,1]
+    ILIST_APPEND(head, &n3);             // [2,1,3]
     ILIST_INSERT_BEFORE(head, &n3, &n4); // [2,1,4,3]
 
     if (head != &n2 || n2.next != &n1 || n1.prev != &n2 || n1.next != &n4 || n4.prev != &n1 || n4.next != &n3 || n3.prev != &n4 || n3.next != NULL)

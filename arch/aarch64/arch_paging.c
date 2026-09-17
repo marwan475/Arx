@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 
 #define AARCH64_PT_LEVEL_BITS 9ULL
 #define AARCH64_PT_ENTRIES (1ULL << AARCH64_PT_LEVEL_BITS)

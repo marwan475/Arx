@@ -3,6 +3,7 @@
 
 #include <klib/klib.h>
 #include <memory/vmm.h>
+#include <platform.h>
 #include <selftests/selftests.h>
 
 static void klib_test_log_fail(const char* message, size_t* failures)

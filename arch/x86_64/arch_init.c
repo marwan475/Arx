@@ -1,8 +1,9 @@
-#include <arch/arch.h>
 #include <acpi/acpi.h>
+#include <arch/arch.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 #include <uacpi/acpi.h>
 
 static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
@@ -210,5 +211,5 @@ bool arch_init(void)
 
 bool arch_device_init(void)
 {
-	return pci_init();
+    return pci_init();
 }

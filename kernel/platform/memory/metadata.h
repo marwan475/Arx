@@ -26,8 +26,8 @@ typedef struct metadata_pool
 } metadata_pool_t;
 
 size_t metadata_default_elements_per_chunk(size_t element_size);
-void  metadata_pool_init(metadata_pool_t* pool, size_t element_size, size_t elements_per_chunk);
-void* metadata_pool_alloc(metadata_pool_t* pool);
-void  metadata_pool_free(metadata_pool_t* pool, void* element);
+void   metadata_pool_init(metadata_pool_t* pool, size_t element_size, size_t elements_per_chunk);
+void*  metadata_pool_alloc(metadata_pool_t* pool);
+void   metadata_pool_free(metadata_pool_t* pool, void* element);
 
 #endif

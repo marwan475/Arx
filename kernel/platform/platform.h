@@ -5,9 +5,9 @@
 #include <device/device.h>
 #include <klib/spinlock.h>
 #include <memory/pmm.h>
-#include <terminal/terminal.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <terminal/terminal.h>
 
 typedef struct cpu_info cpu_info_t;
 struct flanterm_context;
@@ -30,6 +30,7 @@ typedef struct platform
     uint32_t                 vector_base;
     struct flanterm_context* terminal_context;
     spinlock_t               terminal_lock;
+    void*                    dispacher;
     arch_type_t              arch;
     pci_device_t*            pci_devices;
     size_t                   pci_device_count;

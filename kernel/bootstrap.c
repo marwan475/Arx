@@ -3,6 +3,7 @@
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 #include <stdint.h>
 #include <terminal/terminal.h>
 
@@ -20,8 +21,7 @@ void kmain(void);
 // - acpi rsdp address
 void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 {
-
-    // Start platform initialization 
+    // Start platform initialization
 
     bool status = true;
 
@@ -162,11 +162,10 @@ void smp_kmain(void)
 
 void platform_init_complete(void* arg)
 {
-
     // Platform initialization complete
 
     platform.cpus_initialized++;
-    while(platform.cpus_initialized < platform.cpu_count)
+    while (platform.cpus_initialized < platform.cpu_count)
     {
         arch_pause();
     }
@@ -186,4 +185,3 @@ void platform_init_complete(void* arg)
         arch_pause();
     }
 }
-

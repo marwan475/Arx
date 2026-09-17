@@ -30,7 +30,8 @@ typedef uint64_t virt_addr_t;
 #endif
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #if defined(__x86_64__)
@@ -59,40 +60,40 @@ extern "C" {
 #error Unsupported architecture
 #endif
 
-void arch_halt(void);
-void arch_pause(void);
+    void arch_halt(void);
+    void arch_pause(void);
 
-uint8_t arch_cpu_id(void);
+    uint8_t arch_cpu_id(void);
 
-// Page table should be raw physical address
-void arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
-void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);
+    // Page table should be raw physical address
+    void arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
+    void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);
 
-// returns/takes physical address of page table
-phys_addr_t arch_get_pt(void);
-void        arch_set_pt(phys_addr_t pt);
+    // returns/takes physical address of page table
+    phys_addr_t arch_get_pt(void);
+    void        arch_set_pt(phys_addr_t pt);
 
-// Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears
-void arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
-void arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table);
+    // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears
+    void arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
+    void arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table);
 
-// Update page flags
-void arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table);
-void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
+    // Update page flags
+    void arch_protect(virt_addr_t va, uint64_t flags, phys_addr_t page_table);
+    void arch_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
 
-// Returns physical address for a mapped virtual address, or 0 if unmapped.
-phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
+    // Returns physical address for a mapped virtual address, or 0 if unmapped.
+    phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
 
-typedef void (*arch_stack_entry_t)(void* arg);
-__attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
+    typedef void (*arch_stack_entry_t)(void* arg);
+    __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
 
-void arch_enable_interrupts();
-void arch_disable_interrupts();
-bool arch_device_init(void);
+    void arch_enable_interrupts();
+    void arch_disable_interrupts();
+    bool arch_device_init(void);
 
-uacpi_status arch_acpi_init(struct acpi_madt* madt);
+    uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
-bool arch_init(void);
+    bool arch_init(void);
 
 #ifdef __cplusplus
 }

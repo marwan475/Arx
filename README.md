@@ -57,7 +57,7 @@ Dispatcher
 ### Platform
 
 ![Platform Access Flow](docs/dispatcher-2026-04-15-070216.svg)
-- Global platform variable which stores important global and per cpu platform data structures
+- platform variable which stores important global and per cpu platform data structures
 - Type is `platform_t` defined in `kernel/platform/platform.h`
 - index by arch cpu id
 - NOTE: In diagrams platform is named as Dispatcher

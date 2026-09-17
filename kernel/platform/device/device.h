@@ -28,19 +28,19 @@ typedef struct pci_device
     uint16_t subsystem_vendor_id;
     uint16_t subsystem_id;
 
-    uint8_t  bus;
-    uint8_t  device;
-    uint8_t  function;
-    uint8_t  revision_id;
-    uint8_t  prog_if;
-    uint8_t  subclass;
-    uint8_t  class_code;
-    uint8_t  header_type;
-    uint8_t  multifunction;
-    uint8_t  capabilities_pointer;
-    uint8_t  interrupt_line;
-    uint8_t  interrupt_pin;
-    uint8_t  bar_count;
+    uint8_t bus;
+    uint8_t device;
+    uint8_t function;
+    uint8_t revision_id;
+    uint8_t prog_if;
+    uint8_t subclass;
+    uint8_t class_code;
+    uint8_t header_type;
+    uint8_t multifunction;
+    uint8_t capabilities_pointer;
+    uint8_t interrupt_line;
+    uint8_t interrupt_pin;
+    uint8_t bar_count;
 
     pci_bar_t bars[MAX_PCI_BARS];
 } pci_device_t;

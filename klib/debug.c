@@ -1,4 +1,5 @@
 #include <klib/klib.h>
+#include <platform.h>
 
 void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
 {
@@ -55,6 +56,7 @@ void debug_pci_devices(void)
     {
         const pci_device_t* dev = &platform.pci_devices[i];
 
-        KDEBUG("PCI[%llu] seg=%u %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x hdr=%02x cmd=%04x sts=%04x\n", (unsigned long long) i, (unsigned) dev->segment, (unsigned) dev->bus, (unsigned) dev->device, (unsigned) dev->function, (unsigned) dev->vendor_id, (unsigned) dev->device_id, (unsigned) dev->class_code, (unsigned) dev->subclass, (unsigned) dev->prog_if, (unsigned) dev->header_type, (unsigned) dev->command, (unsigned) dev->status);
+        KDEBUG("PCI[%llu] seg=%u %02x:%02x.%u vendor=%04x device=%04x class=%02x:%02x:%02x hdr=%02x cmd=%04x sts=%04x\n", (unsigned long long) i, (unsigned) dev->segment, (unsigned) dev->bus, (unsigned) dev->device, (unsigned) dev->function, (unsigned) dev->vendor_id, (unsigned) dev->device_id,
+               (unsigned) dev->class_code, (unsigned) dev->subclass, (unsigned) dev->prog_if, (unsigned) dev->header_type, (unsigned) dev->command, (unsigned) dev->status);
     }
 }

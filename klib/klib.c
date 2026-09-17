@@ -2,6 +2,7 @@
 #include <klib/printf/printf.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 
 spinlock_t kprintf_lock = 0;
 
@@ -407,4 +408,3 @@ void kfree(void* ptr)
     heap_free(heap, ptr);
     spinlock_release(&heap->lock);
 }
-    

@@ -4,14 +4,14 @@
 #include <arch/arch.h>
 #include <device/device.h>
 #include <klib/spinlock.h>
-#include <memory/pmm.h>
 #include <memory/heap.h>
-#include <terminal/terminal.h>
+#include <memory/pmm.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <terminal/terminal.h>
 
-#define CPU_KERNEL_STACK_SIZE (16 * PAGE_SIZE) //64 kb
+#define CPU_KERNEL_STACK_SIZE (16 * PAGE_SIZE) // 64 kb
 
 typedef struct numa_node       numa_node_t;
 typedef struct virt_addr_space virt_addr_space_t;
@@ -58,9 +58,7 @@ typedef struct cpu_info
     size_t             kernel_stack_size;
 } cpu_info_t;
 
-#include <platform.h>
-
-void cpus_init(size_t cpu_count);
+void                           cpus_init(size_t cpu_count);
 __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
 
 #endif

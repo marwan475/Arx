@@ -1,11 +1,13 @@
+#include "layers/Dispatcher.hpp"
+
 #include <arch/arch.h>
 #include <klib/klib.h>
-#include "layers/Dispatcher.hpp"
+#include <platform.h>
 
 extern "C" void kmain(void)
 {
     Dispatcher* dispatcher = new Dispatcher();
-    (void) dispatcher;
+    platform.dispacher     = dispatcher;
 
     kterm_printf("Arx kernel: kmain entered on BSP\n");
 

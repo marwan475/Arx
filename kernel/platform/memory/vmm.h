@@ -35,17 +35,17 @@ typedef struct virt_region
 
 typedef struct virt_addr_space
 {
-    virt_type_t    type;
-    phys_addr_t    pt;
-    spinlock_t     lock;
-    virt_region_t* kernel_free_regions;
-    virt_region_t* kernel_used_regions;
+    virt_type_t     type;
+    phys_addr_t     pt;
+    spinlock_t      lock;
+    virt_region_t*  kernel_free_regions;
+    virt_region_t*  kernel_used_regions;
     metadata_pool_t kernel_region_metadata_pool;
-    size_t         kernel_regions_count;
-    virt_region_t* user_free_regions;
-    virt_region_t* user_used_regions;
+    size_t          kernel_regions_count;
+    virt_region_t*  user_free_regions;
+    virt_region_t*  user_used_regions;
     metadata_pool_t user_region_metadata_pool;
-    size_t         user_regions_count;
+    size_t          user_regions_count;
 } virt_addr_space_t;
 
 void vmm_init(struct boot_info* boot_info);

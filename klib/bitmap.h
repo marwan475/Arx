@@ -12,7 +12,7 @@
 #define BITMAP_BYTE_INDEX(bit_index) ((bit_index) / 8u)
 
 // Return the bit mask inside a byte for a bit.
-#define BITMAP_BIT_MASK(bit_index) ((uint8_t)(1u << ((bit_index) & 7u)))
+#define BITMAP_BIT_MASK(bit_index) ((uint8_t) (1u << ((bit_index) & 7u)))
 
 static inline void bitmap_init(uint8_t* bitmap, size_t bit_count)
 {
@@ -31,7 +31,7 @@ static inline void bitmap_set(uint8_t* bitmap, size_t bit_index)
 
 static inline void bitmap_clear(uint8_t* bitmap, size_t bit_index)
 {
-    bitmap[BITMAP_BYTE_INDEX(bit_index)] &= (uint8_t)~BITMAP_BIT_MASK(bit_index);
+    bitmap[BITMAP_BYTE_INDEX(bit_index)] &= (uint8_t) ~BITMAP_BIT_MASK(bit_index);
 }
 
 static inline bool bitmap_test(const uint8_t* bitmap, size_t bit_index)

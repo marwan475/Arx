@@ -2,9 +2,9 @@
 
 class Dispatcher
 {
-    public:
-        Dispatcher();
+public:
+    Dispatcher();
+    void StartKernel();
 
-    private:
-
+private:
 };

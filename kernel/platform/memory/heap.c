@@ -1,9 +1,10 @@
-#include <memory/heap.h>
-#include <klib/klib.h>
+#include <klib/bitmap.h>
 #include <klib/intrusive_list.h>
-#include <klib/bitmap.h>   
+#include <klib/klib.h>
+#include <memory/heap.h>
 #include <memory/metadata.h>
 #include <memory/pmm.h>
+#include <platform.h>
 
 const size_t heap_object_sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072};
 
@@ -24,7 +25,6 @@ static void* slab_alloc(slab_t* slab)
     slab->free_objects--;
 
     return (void*) ((uintptr_t) slab->objects_array + index * slab->object_size);
-
 }
 
 static void slab_free(slab_t* slab, void* ptr)
@@ -56,10 +56,10 @@ static bool slab_init(slab_t* slab, size_t object_size)
         return false;
     }
 
-    slab->object_size  = object_size;
+    slab->object_size   = object_size;
     slab->total_objects = SLAB_SIZE / object_size;
     slab->free_objects  = slab->total_objects;
-    slab->objects_array     = NULL;
+    slab->objects_array = NULL;
     slab->next          = NULL;
     slab->prev          = NULL;
 
@@ -181,7 +181,6 @@ static void* cache_alloc(cache_t* cache)
     }
 
     return NULL;
-
 }
 
 static void cache_free(cache_t* cache, void* ptr)
@@ -286,7 +285,7 @@ void* heap_alloc(kernel_heap_t* heap, size_t size)
     }
 
     return NULL;
-}  
+}
 
 void heap_free(kernel_heap_t* heap, void* ptr)
 {

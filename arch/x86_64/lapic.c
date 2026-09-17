@@ -2,6 +2,7 @@
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 
 static inline uint64_t rdmsr(uint32_t msr)
 {

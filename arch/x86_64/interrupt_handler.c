@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
+#include <platform.h>
 
 static void blue_screen(void)
 {

@@ -2,6 +2,7 @@
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 #include <uacpi/acpi.h>
 
 static volatile uint8_t* ioapic_get_base(void)

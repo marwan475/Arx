@@ -1,4 +1,5 @@
 #include <acpi/acpi.h>
+#include <platform.h>
 #include <uacpi/kernel_api.h>
 #include <uacpi/log.h>
 #include <uacpi/status.h>

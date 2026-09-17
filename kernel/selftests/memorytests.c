@@ -1,9 +1,10 @@
 // Ai generated testing
 // Not thread safe
 
+#include <memory/heap.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
-#include <memory/heap.h>
+#include <platform.h>
 #include <selftests/selftests.h>
 
 #define PMM_TEST_MAX_PTRS 2048
@@ -708,7 +709,7 @@ static void heap_test(void)
         }
     }
 
-    void* stress_ptrs[300];
+    void*  stress_ptrs[300];
     size_t stress_count = 0;
 
     for (size_t i = 0; i < 300; i++)

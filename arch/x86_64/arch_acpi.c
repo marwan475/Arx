@@ -1,4 +1,5 @@
 #include <acpi/acpi.h>
+#include <platform.h>
 
 static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_lapic_base_addr)
 {

@@ -1,8 +1,8 @@
 #ifndef X86_64_H
 #define X86_64_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define NUM_IDT_ENTRIES 256
@@ -235,14 +235,14 @@ typedef struct arch_platform_info
         uint16_t flags;
         uint32_t gsi;
     } acpi_iso_overrides[LEGACY_PIC_MAX_IRQS];
-    uint8_t  acpi_has_ioapic;
-    uint8_t  ioapic_initialized;
-    uint8_t  acpi_iso_override_count;
-    uint8_t  acpi_ioapic_id;
-    uint32_t acpi_ioapic_gsi_base;
-    uint32_t ioapic_max_redir;
-    uint32_t ioapic_redir_count;
-    uint64_t acpi_ioapic_base_addr;
+    uint8_t            acpi_has_ioapic;
+    uint8_t            ioapic_initialized;
+    uint8_t            acpi_iso_override_count;
+    uint8_t            acpi_ioapic_id;
+    uint32_t           acpi_ioapic_gsi_base;
+    uint32_t           ioapic_max_redir;
+    uint32_t           ioapic_redir_count;
+    uint64_t           acpi_ioapic_base_addr;
     pci_ecam_region_t* pci_regions;
     size_t             pci_region_count;
 } arch_platform_info_t;
@@ -257,9 +257,9 @@ void     ioapic_init(void);
 void     ioapic_mask_vector(uint8_t vector);
 void     ioapic_unmask_vector(uint8_t vector);
 uint32_t ioapic_register_device(uint32_t gsi);
-bool pci_get_mcfg_region_count(size_t* out_region_count);
-bool pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entries, size_t* out_entry_count);
-bool pci_init(void);
+bool     pci_get_mcfg_region_count(size_t* out_region_count);
+bool     pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entries, size_t* out_entry_count);
+bool     pci_init(void);
 
 #define DECL_ISR(n) void ISR##n();
 DECL_ISR(0)

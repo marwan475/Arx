@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
+#include <platform.h>
 
 #define X86_64_PT_LEVEL_BITS 9ULL
 #define X86_64_PT_ENTRIES (1ULL << X86_64_PT_LEVEL_BITS)
@@ -517,16 +518,16 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
 
 static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
 {
-    const virt_addr_t va_start = request->va_start;
-    const uint64_t    size     = request->size;
-    const phys_addr_t page_table = request->page_table;
-    const bool        allocate_tables = request->allocate_tables;
-    const uint64_t    inherited_table_flags = request->inherited_table_flags;
-    const char*       failure_context = request->failure_context;
-    const x86_64_leaf_callback_t leaf_callback = request->leaf_callback;
-    void*             leaf_context = request->leaf_context;
-    bool*             any_changed = request->any_changed;
-    bool*             requires_page_flush = request->requires_page_flush;
+    const virt_addr_t            va_start              = request->va_start;
+    const uint64_t               size                  = request->size;
+    const phys_addr_t            page_table            = request->page_table;
+    const bool                   allocate_tables       = request->allocate_tables;
+    const uint64_t               inherited_table_flags = request->inherited_table_flags;
+    const char*                  failure_context       = request->failure_context;
+    const x86_64_leaf_callback_t leaf_callback         = request->leaf_callback;
+    void*                        leaf_context          = request->leaf_context;
+    bool*                        any_changed           = request->any_changed;
+    bool*                        requires_page_flush   = request->requires_page_flush;
 
     const uint64_t range_end = va_start + size;
     uint64_t*      pml4      = x86_64_table_from_pa((uint64_t) page_table);
@@ -536,16 +537,16 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
     while (va < range_end)
     {
         x86_64_walk_next_level_request_t pml4_request = {
-            .current_table          = pml4,
-            .va                     = va,
-            .parent_end             = range_end,
-            .level_shift            = X86_64_PT_SHIFT_PML4,
-            .allocate_tables        = allocate_tables,
-            .inherited_table_flags  = inherited_table_flags,
-            .failure_context        = failure_context,
-            .level_name             = "PML4",
-            .next_end               = 0,
-            .next_table             = NULL,
+                .current_table         = pml4,
+                .va                    = va,
+                .parent_end            = range_end,
+                .level_shift           = X86_64_PT_SHIFT_PML4,
+                .allocate_tables       = allocate_tables,
+                .inherited_table_flags = inherited_table_flags,
+                .failure_context       = failure_context,
+                .level_name            = "PML4",
+                .next_end              = 0,
+                .next_table            = NULL,
         };
         const x86_64_walk_level_result_t pml4_result = x86_64_walk_next_level(&pml4_request);
         if (pml4_result == X86_64_WALK_LEVEL_ERROR)
@@ -563,16 +564,16 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
         while (va < pml4_end)
         {
             x86_64_walk_next_level_request_t pdpt_request = {
-                .current_table          = pdpt,
-                .va                     = va,
-                .parent_end             = pml4_end,
-                .level_shift            = X86_64_PT_SHIFT_PDPT,
-                .allocate_tables        = allocate_tables,
-                .inherited_table_flags  = inherited_table_flags,
-                .failure_context        = failure_context,
-                .level_name             = "PDPT",
-                .next_end               = 0,
-                .next_table             = NULL,
+                    .current_table         = pdpt,
+                    .va                    = va,
+                    .parent_end            = pml4_end,
+                    .level_shift           = X86_64_PT_SHIFT_PDPT,
+                    .allocate_tables       = allocate_tables,
+                    .inherited_table_flags = inherited_table_flags,
+                    .failure_context       = failure_context,
+                    .level_name            = "PDPT",
+                    .next_end              = 0,
+                    .next_table            = NULL,
             };
             const x86_64_walk_level_result_t pdpt_result = x86_64_walk_next_level(&pdpt_request);
             if (pdpt_result == X86_64_WALK_LEVEL_ERROR)
@@ -590,16 +591,16 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
             while (va < pdpt_end)
             {
                 x86_64_walk_next_level_request_t pd_request = {
-                    .current_table          = pd,
-                    .va                     = va,
-                    .parent_end             = pdpt_end,
-                    .level_shift            = X86_64_PT_SHIFT_PD,
-                    .allocate_tables        = allocate_tables,
-                    .inherited_table_flags  = inherited_table_flags,
-                    .failure_context        = failure_context,
-                    .level_name             = "PD",
-                    .next_end               = 0,
-                    .next_table             = NULL,
+                        .current_table         = pd,
+                        .va                    = va,
+                        .parent_end            = pdpt_end,
+                        .level_shift           = X86_64_PT_SHIFT_PD,
+                        .allocate_tables       = allocate_tables,
+                        .inherited_table_flags = inherited_table_flags,
+                        .failure_context       = failure_context,
+                        .level_name            = "PD",
+                        .next_end              = 0,
+                        .next_table            = NULL,
                 };
                 const x86_64_walk_level_result_t pd_result = x86_64_walk_next_level(&pd_request);
                 if (pd_result == X86_64_WALK_LEVEL_ERROR)
@@ -611,8 +612,8 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                     va = pd_request.next_end;
                     continue;
                 }
-                const uint64_t pt_end = pd_request.next_end;
-                uint64_t*      pt     = pd_request.next_table;
+                const uint64_t pt_end      = pd_request.next_end;
+                uint64_t*      pt          = pd_request.next_table;
                 const uint64_t pt_index    = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
                 const uint64_t entry_count = (pt_end - va) >> PAGE_SHIFT;
 
@@ -648,21 +649,21 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
         return;
     }
 
-    const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
-    bool           any_changed     = false;
-    bool           requires_flush  = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va,
-        .size                 = PAGE_SIZE,
-        .page_table           = page_table,
-        .allocate_tables      = true,
-        .inherited_table_flags = sanitized_flags,
-        .failure_context      = "arch_map_page",
-        .leaf_callback        = x86_64_map_leaf_callback,
-        .leaf_context         = (void*) &sanitized_flags,
-        .pa_start             = pa,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_flush,
+    const uint64_t        sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
+    bool                  any_changed     = false;
+    bool                  requires_flush  = false;
+    x86_64_walk_request_t walk_request    = {
+            .va_start              = va,
+            .size                  = PAGE_SIZE,
+            .page_table            = page_table,
+            .allocate_tables       = true,
+            .inherited_table_flags = sanitized_flags,
+            .failure_context       = "arch_map_page",
+            .leaf_callback         = x86_64_map_leaf_callback,
+            .leaf_context          = (void*) &sanitized_flags,
+            .pa_start              = pa,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);
@@ -679,20 +680,20 @@ void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_tabl
         return;
     }
 
-    bool any_changed    = false;
-    bool requires_flush = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va,
-        .size                 = PAGE_SIZE,
-        .page_table           = page_table,
-        .allocate_tables      = false,
-        .inherited_table_flags = 0,
-        .failure_context      = NULL,
-        .leaf_callback        = x86_64_unmap_leaf_callback,
-        .leaf_context         = NULL,
-        .pa_start             = 0,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_flush,
+    bool                  any_changed    = false;
+    bool                  requires_flush = false;
+    x86_64_walk_request_t walk_request   = {
+            .va_start              = va,
+            .size                  = PAGE_SIZE,
+            .page_table            = page_table,
+            .allocate_tables       = false,
+            .inherited_table_flags = 0,
+            .failure_context       = NULL,
+            .leaf_callback         = x86_64_unmap_leaf_callback,
+            .leaf_context          = NULL,
+            .pa_start              = 0,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);
@@ -714,20 +715,20 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
     const bool     active_pt       = page_table == arch_get_pt();
 
-    bool any_changed         = false;
-    bool requires_page_flush = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va_start,
-        .size                 = size,
-        .page_table           = page_table,
-        .allocate_tables      = true,
-        .inherited_table_flags = sanitized_flags,
-        .failure_context      = "arch_map_range",
-        .leaf_callback        = x86_64_map_leaf_callback,
-        .leaf_context         = (void*) &sanitized_flags,
-        .pa_start             = pa_start,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_page_flush,
+    bool                  any_changed         = false;
+    bool                  requires_page_flush = false;
+    x86_64_walk_request_t walk_request        = {
+            .va_start              = va_start,
+            .size                  = size,
+            .page_table            = page_table,
+            .allocate_tables       = true,
+            .inherited_table_flags = sanitized_flags,
+            .failure_context       = "arch_map_range",
+            .leaf_callback         = x86_64_map_leaf_callback,
+            .leaf_context          = (void*) &sanitized_flags,
+            .pa_start              = pa_start,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_page_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);
@@ -742,22 +743,22 @@ void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size,
         return;
     }
 
-    const bool     active_pt           = page_table == arch_get_pt();
-    const uint64_t range_end           = va_start + size;
-    bool           any_changed         = false;
-    bool           requires_page_flush = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va_start,
-        .size                 = size,
-        .page_table           = page_table,
-        .allocate_tables      = false,
-        .inherited_table_flags = 0,
-        .failure_context      = NULL,
-        .leaf_callback        = x86_64_unmap_leaf_callback,
-        .leaf_context         = NULL,
-        .pa_start             = 0,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_page_flush,
+    const bool            active_pt           = page_table == arch_get_pt();
+    const uint64_t        range_end           = va_start + size;
+    bool                  any_changed         = false;
+    bool                  requires_page_flush = false;
+    x86_64_walk_request_t walk_request        = {
+            .va_start              = va_start,
+            .size                  = size,
+            .page_table            = page_table,
+            .allocate_tables       = false,
+            .inherited_table_flags = 0,
+            .failure_context       = NULL,
+            .leaf_callback         = x86_64_unmap_leaf_callback,
+            .leaf_context          = NULL,
+            .pa_start              = 0,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_page_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);
@@ -772,21 +773,21 @@ void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_add
         return;
     }
 
-    const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
-    bool           any_changed     = false;
-    bool           requires_flush  = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va,
-        .size                 = PAGE_SIZE,
-        .page_table           = page_table,
-        .allocate_tables      = false,
-        .inherited_table_flags = 0,
-        .failure_context      = NULL,
-        .leaf_callback        = x86_64_protect_leaf_callback,
-        .leaf_context         = (void*) &sanitized_flags,
-        .pa_start             = 0,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_flush,
+    const uint64_t        sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
+    bool                  any_changed     = false;
+    bool                  requires_flush  = false;
+    x86_64_walk_request_t walk_request    = {
+            .va_start              = va,
+            .size                  = PAGE_SIZE,
+            .page_table            = page_table,
+            .allocate_tables       = false,
+            .inherited_table_flags = 0,
+            .failure_context       = NULL,
+            .leaf_callback         = x86_64_protect_leaf_callback,
+            .leaf_context          = (void*) &sanitized_flags,
+            .pa_start              = 0,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);
@@ -807,20 +808,20 @@ void __attribute__((weak)) arch_protect_range(virt_addr_t va_start, uint64_t siz
     const bool     active_pt       = page_table == arch_get_pt();
     const uint64_t range_end       = va_start + size;
 
-    bool any_changed         = false;
-    bool requires_page_flush = false;
-    x86_64_walk_request_t walk_request = {
-        .va_start             = va_start,
-        .size                 = size,
-        .page_table           = page_table,
-        .allocate_tables      = false,
-        .inherited_table_flags = 0,
-        .failure_context      = NULL,
-        .leaf_callback        = x86_64_protect_leaf_callback,
-        .leaf_context         = (void*) &sanitized_flags,
-        .pa_start             = 0,
-        .any_changed          = &any_changed,
-        .requires_page_flush  = &requires_page_flush,
+    bool                  any_changed         = false;
+    bool                  requires_page_flush = false;
+    x86_64_walk_request_t walk_request        = {
+            .va_start              = va_start,
+            .size                  = size,
+            .page_table            = page_table,
+            .allocate_tables       = false,
+            .inherited_table_flags = 0,
+            .failure_context       = NULL,
+            .leaf_callback         = x86_64_protect_leaf_callback,
+            .leaf_context          = (void*) &sanitized_flags,
+            .pa_start              = 0,
+            .any_changed           = &any_changed,
+            .requires_page_flush   = &requires_page_flush,
     };
 
     (void) x86_64_walk_page_table(&walk_request);

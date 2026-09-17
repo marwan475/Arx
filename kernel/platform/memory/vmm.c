@@ -1,5 +1,6 @@
-#include <memory/vmm.h>
 #include <klib/intrusive_list.h>
+#include <memory/vmm.h>
+#include <platform.h>
 
 virt_addr_t KERNEL_VIRTUAL_BASE;
 virt_addr_t KERNEL_VIRTUAL_END;
@@ -169,13 +170,13 @@ void vmm_init(struct boot_info* boot_info)
     init_kernel_address_space.pt   = arch_get_pt();
     init_kernel_address_space.lock = 0;
 
-    init_kernel_address_space.kernel_free_regions    = NULL;
-    init_kernel_address_space.kernel_used_regions    = NULL;
+    init_kernel_address_space.kernel_free_regions = NULL;
+    init_kernel_address_space.kernel_used_regions = NULL;
     metadata_pool_init(&init_kernel_address_space.kernel_region_metadata_pool, sizeof(virt_region_t), metadata_default_elements_per_chunk(sizeof(virt_region_t)));
     init_kernel_address_space.kernel_regions_count = 0;
 
-    init_kernel_address_space.user_free_regions    = NULL;
-    init_kernel_address_space.user_used_regions    = NULL;
+    init_kernel_address_space.user_free_regions = NULL;
+    init_kernel_address_space.user_used_regions = NULL;
     metadata_pool_init(&init_kernel_address_space.user_region_metadata_pool, sizeof(virt_region_t), metadata_default_elements_per_chunk(sizeof(virt_region_t)));
     init_kernel_address_space.user_regions_count = 0;
 
@@ -300,10 +301,10 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
         return 0;
     }
 
-    virt_region_t** free_regions   = NULL;
-    virt_region_t** used_regions   = NULL;
-    metadata_pool_t* metadata_pool = NULL;
-    size_t*         metadata_count = NULL;
+    virt_region_t**  free_regions   = NULL;
+    virt_region_t**  used_regions   = NULL;
+    metadata_pool_t* metadata_pool  = NULL;
+    size_t*          metadata_count = NULL;
 
     if (type == VIRT_ADDR_KERNEL)
     {
@@ -379,11 +380,11 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 
     spinlock_acquire(&space->lock);
 
-    virt_region_t*  region         = NULL;
-    virt_region_t** used_regions   = NULL;
-    virt_region_t** free_regions   = NULL;
-    metadata_pool_t* metadata_pool = NULL;
-    size_t*         metadata_count = NULL;
+    virt_region_t*   region         = NULL;
+    virt_region_t**  used_regions   = NULL;
+    virt_region_t**  free_regions   = NULL;
+    metadata_pool_t* metadata_pool  = NULL;
+    size_t*          metadata_count = NULL;
 
     ILIST_FOR_EACH(it, space->kernel_used_regions)
     {

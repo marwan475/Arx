@@ -2,11 +2,13 @@
 
 class PhysicalMemoryManager;
 class VirtualMemoryManager;
+class TaskManager;
 
 struct ResourceLayerCaps
 {
     PhysicalMemoryManager* physicalMemoryManager;
     VirtualMemoryManager*  virtualMemoryManager;
+    TaskManager*           taskManager;
 };
 
 class ResourceLayerFactory

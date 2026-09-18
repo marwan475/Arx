@@ -1,6 +1,7 @@
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 #include "layers/Resource/PhysicalMemoryManager.hpp"
+#include "layers/Resource/TaskManager.hpp"
 #include "layers/Resource/VirtualMemoryManager.hpp"
 
 ResourceLayerFactory::ResourceLayerFactory()
@@ -13,6 +14,7 @@ ResourceLayerFactory::~ResourceLayerFactory()
 	if (ResourceLayerExportCaps != nullptr)
 	{
 		delete ResourceLayerExportCaps->physicalMemoryManager;
+		delete ResourceLayerExportCaps->taskManager;
 		delete ResourceLayerExportCaps->virtualMemoryManager;
 		delete ResourceLayerExportCaps;
 		ResourceLayerExportCaps = nullptr;
@@ -28,6 +30,7 @@ ResourceLayerCaps* ResourceLayerFactory::Create()
 
 	ResourceLayerExportCaps                        = new ResourceLayerCaps();
 	ResourceLayerExportCaps->physicalMemoryManager = new PhysicalMemoryManager();
+	ResourceLayerExportCaps->taskManager           = new TaskManager();
 	ResourceLayerExportCaps->virtualMemoryManager  = new VirtualMemoryManager();
 
 	return ResourceLayerExportCaps;

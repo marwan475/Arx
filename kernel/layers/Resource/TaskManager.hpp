@@ -23,9 +23,11 @@ public:
     task_t* AllocateTask();
     task_t* CreateKernelTask(arch_task_entry_t entry, void* arg);
     bool    FreeTask(task_t* task);
+    bool    ExecuteTask(task_t* task);
 
     task_t* GetRunningTask(uint8_t cpuId) const;
     bool    SetRunningTask(uint8_t cpuId, task_t* task);
+    task_t* GetCurrentTask() const;
 
     task_t*       GetTasks();
     const task_t* GetTasks() const;

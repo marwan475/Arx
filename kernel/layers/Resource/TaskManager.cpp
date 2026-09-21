@@ -109,6 +109,48 @@ bool TaskManager::FreeTask(task_t* task)
     return true;
 }
 
+bool TaskManager::ExecuteTask(task_t* task)
+{
+    if (task == nullptr)
+    {
+        return false;
+    }
+
+    if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
+    {
+        return false;
+    }
+
+    if (!task->allocated)
+    {
+        return false;
+    }
+
+    uint8_t cpuId = arch_cpu_id();
+    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
+        return false;
+    }
+
+    task_t* current = RunningTasks[cpuId];
+    if (current == nullptr)
+    {
+        return false;
+    }
+
+    if (current == task)
+    {
+        return true;
+    }
+
+    RunningTasks[cpuId] = task;
+    arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
+
+    // We only reach here after another switch restores this task.
+    RunningTasks[cpuId] = current;
+    return true;
+}
+
 task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
 {
     if (cpuId >= BOOT_SMP_MAX_CPUS)
@@ -117,6 +159,11 @@ task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
     }
 
     return RunningTasks[cpuId];
+}
+
+task_t* TaskManager::GetCurrentTask() const
+{
+    return GetRunningTask(arch_cpu_id());
 }
 
 bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)

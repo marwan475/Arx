@@ -85,7 +85,10 @@ extern "C"
     phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
 
     typedef void (*arch_stack_entry_t)(void* arg);
+    typedef void (*arch_task_entry_t)(void* arg);
     __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
+    void arch_init_context(struct arch_task_context* context, void* stack_top, arch_task_entry_t entry, void* arg);
+    void arch_save_switch_and_execute_context(struct arch_task_context* out_current_context, const struct arch_task_context* new_context);
 
     void arch_enable_interrupts();
     void arch_disable_interrupts();

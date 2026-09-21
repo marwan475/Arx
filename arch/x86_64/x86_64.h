@@ -171,6 +171,7 @@ typedef enum IDT_FLAGS
     IDT_FLAG_PRESENT = 0x80,
 } IDT_FLAGS_T;
 
+// for interrupts
 typedef struct registers
 {
     uint64_t rax;
@@ -200,6 +201,19 @@ typedef struct registers
     uint64_t ss;
 
 } __attribute__((packed)) registers_t;
+
+struct arch_task_context
+{
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
+
+    uint64_t rip;
+    uint64_t rsp;
+};
 
 typedef struct arch_info
 {

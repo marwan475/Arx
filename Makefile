@@ -68,7 +68,7 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp klib/cpp_alloc.cpp klib/debug.c kernel/selftests/selftest.c kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
-KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm
+KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
 FLANTERM_SRCS := kernel/platform/terminal/flanterm/flanterm.c kernel/platform/terminal/flanterm/flanterm_backends/fb.c
 

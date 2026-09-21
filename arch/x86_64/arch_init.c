@@ -13,6 +13,14 @@ static inline void outb(uint16_t port, uint8_t value)
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+__attribute__((weak, noreturn)) void task_exit(void)
+{
+    for (;;)
+    {
+        arch_halt();
+    }
+}
+
 __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg)
 {
     __asm__ volatile("mov %0, %%rsp\n"

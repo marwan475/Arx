@@ -18,6 +18,20 @@ __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_
     }
 }
 
+void arch_init_context(struct arch_task_context* context, void* stack_top, arch_task_entry_t entry, void* arg)
+{
+    (void) context;
+    (void) stack_top;
+    (void) entry;
+    (void) arg;
+}
+
+void arch_save_switch_and_execute_context(struct arch_task_context* out_current_context, const struct arch_task_context* new_context)
+{
+    (void) out_current_context;
+    (void) new_context;
+}
+
 bool arch_init(void)
 {
     return false;

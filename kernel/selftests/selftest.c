@@ -3,7 +3,12 @@
 
 #include <selftests/selftests.h>
 
-void run_selftests(void)
+void resourcelayer_selftests(void* resourceLayerCaps)
+{
+    run_task_selftests(resourceLayerCaps);
+}
+
+void platform_selftests(void)
 {
     run_datastructures_selftests();
     run_memory_selftests();

@@ -5,9 +5,9 @@
 #include <memory/vmm.h>
 #include <platform.h>
 #include <stdint.h>
+#include <selftests/selftests.h>
 #include <terminal/terminal.h>
 
-void run_selftests(void);
 void platform_init_complete(void* arg);
 void kmain(void);
 
@@ -138,9 +138,9 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
         }
     }
 
-    KDEBUG("-> run_selftests\n");
-    run_selftests();
-    KDEBUG("<- run_selftests done\n");
+    KDEBUG("-> platform_selftests\n");
+    platform_selftests();
+    KDEBUG("<- platform_selftests done\n");
 
     kterm_printf("Arx kernel: kernel bootstrap done\n");
 

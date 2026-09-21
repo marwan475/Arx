@@ -8,12 +8,23 @@ extern "C"
 
 TaskManager::TaskManager()
 {
+    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
+    {
+        RunningTasks[i] = nullptr;
+    }
+
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
         Tasks[i].allocated = false;
         Tasks[i].id        = (uint64_t) i;
         memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
         Tasks[i].stack = nullptr;
+    }
+
+    uint8_t bspCpuId = arch_cpu_id();
+    if (bspCpuId < BOOT_SMP_MAX_CPUS)
+    {
+        RunningTasks[bspCpuId] = AllocateTask();
     }
 }
 
@@ -87,6 +98,48 @@ bool TaskManager::FreeTask(task_t* task)
     task->id        = (uint64_t) (task - &Tasks[0]);
     task->allocated = false;
 
+    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
+    {
+        if (RunningTasks[i] == task)
+        {
+            RunningTasks[i] = nullptr;
+        }
+    }
+
+    return true;
+}
+
+task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
+{
+    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
+        return nullptr;
+    }
+
+    return RunningTasks[cpuId];
+}
+
+bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
+{
+    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
+        return false;
+    }
+
+    if (task != nullptr)
+    {
+        if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
+        {
+            return false;
+        }
+
+        if (!task->allocated)
+        {
+            return false;
+        }
+    }
+
+    RunningTasks[cpuId] = task;
     return true;
 }
 

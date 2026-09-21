@@ -56,7 +56,6 @@ typedef struct cpu_info
     spinlock_t         ipi_lock;
     void*              kernel_stack_base;
     size_t             kernel_stack_size;
-    void*              current_task;
 } cpu_info_t;
 
 void                           cpus_init(size_t cpu_count);

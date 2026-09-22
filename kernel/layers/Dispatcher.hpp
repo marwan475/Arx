@@ -1,5 +1,6 @@
 #pragma once
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Logic/LogicLayerFactory.hpp"
 class Dispatcher
 {
 public:
@@ -9,4 +10,5 @@ public:
 
 private:
     ResourceLayerFactory* resourceLayerFactory;
+    LogicLayerFactory* logicLayerFactory;
 };

@@ -5,6 +5,7 @@
 
 extern "C"
 {
+#include <cpu/cpu.h>
 #include <klib/klib.h>
 #include <selftests/selftests.h>
 }
@@ -58,12 +59,15 @@ static void task_entry_b(void* arg)
 
 extern "C" void run_task_selftests(void* resourceLayerCaps)
 {
-    size_t passes = 0;
-    size_t fails  = 0;
+    unsigned long long passes = 0;
+    unsigned long long fails  = 0;
     TaskManager* manager = nullptr;
     task_t*      taskA   = nullptr;
     task_t*      taskB   = nullptr;
     task_t*      bspTask = nullptr;
+    task_t*      originalRunningTask = nullptr;
+    task_t*      surrogateTask       = nullptr;
+    auto         cpuId               = arch_cpu_id();
 
     kprintf("Arx kernel: task_selftest start\n");
     kprintf("Arx kernel: task_selftest start\n");
@@ -78,12 +82,27 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
 
     manager = caps->taskManager;
 
-    bspTask = manager->GetCurrentTask();
+    originalRunningTask = manager->GetRunningTask(cpuId);
+    bspTask             = originalRunningTask;
     if (bspTask == nullptr)
     {
-        fails++;
-        kprintf("Arx kernel: task_selftest FAIL: missing BSP current task\n");
-        goto done;
+        surrogateTask = manager->AllocateTask();
+        if (surrogateTask == nullptr)
+        {
+            fails++;
+            kprintf("Arx kernel: task_selftest FAIL: failed to allocate surrogate running task\n");
+            goto done;
+        }
+
+        if (!manager->SetRunningTask(cpuId, surrogateTask))
+        {
+            fails++;
+            kprintf("Arx kernel: task_selftest FAIL: failed to set surrogate running task\n");
+            goto cleanup;
+        }
+
+        bspTask = surrogateTask;
+        kprintf("Arx kernel: task_selftest INFO: using surrogate running task\n");
     }
 
     g_task_test_ctx.manager = manager;
@@ -126,6 +145,11 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     }
 
 cleanup:
+    if (surrogateTask != nullptr)
+    {
+        manager->SetRunningTask(cpuId, originalRunningTask);
+    }
+
     if (taskA != nullptr)
     {
         manager->FreeTask(taskA);
@@ -135,8 +159,20 @@ cleanup:
         manager->FreeTask(taskB);
     }
 
+    if (surrogateTask != nullptr)
+    {
+        manager->FreeTask(surrogateTask);
+    }
+
 done:
     kprintf("Arx kernel: task_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) fails);
     kprintf("Arx kernel: task_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
-    kprintf("Arx kernel: task_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
+    if (fails == 0)
+    {
+        KDEBUG("task_selftest passed with %llu checks\n", (unsigned long long) passes);
+    }
+    else
+    {
+        KDEBUG("task_selftest failed with %llu checks\n", (unsigned long long) fails);
+    }
 }

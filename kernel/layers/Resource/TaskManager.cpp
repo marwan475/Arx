@@ -23,11 +23,6 @@ TaskManager::TaskManager()
         Tasks[i].prev  = nullptr;
     }
 
-    uint8_t bspCpuId = arch_cpu_id();
-    if (bspCpuId < BOOT_SMP_MAX_CPUS)
-    {
-        RunningTasks[bspCpuId] = AllocateTask();
-    }
 }
 
 task_t* TaskManager::AllocateTask()

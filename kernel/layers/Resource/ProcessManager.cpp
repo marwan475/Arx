@@ -152,15 +152,17 @@ bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
         return false;
     }
 
-    process_t* current = RunningProcesses[cpuId];
-    if (current == nullptr)
+    if (process->addressSpace == nullptr)
     {
         return false;
     }
 
-    if (process->addressSpace == nullptr)
+    process_t* current = RunningProcesses[cpuId];
+    if (current == nullptr)
     {
-        return false;
+        RunningProcesses[cpuId] = process;
+        vmm_switch_addr_space(process->addressSpace);
+        return true;
     }
 
     if (current == process)

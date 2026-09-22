@@ -8,6 +8,11 @@ void resourcelayer_selftests(void* resourceLayerCaps)
     run_task_selftests(resourceLayerCaps);
 }
 
+void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps)
+{
+    run_process_selftests(resourceLayerCaps, logicLayerCaps);
+}
+
 void platform_selftests(void)
 {
     run_datastructures_selftests();

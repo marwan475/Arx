@@ -11,6 +11,8 @@ struct task_t
     uint64_t                 id;
     struct arch_task_context taskContext;
     void*                    stack;
+    task_t*                  next;
+    task_t*                  prev;
 };
 
 class TaskManager

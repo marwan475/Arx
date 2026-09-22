@@ -19,6 +19,8 @@ TaskManager::TaskManager()
         Tasks[i].id        = (uint64_t) i;
         memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
         Tasks[i].stack = nullptr;
+        Tasks[i].next  = nullptr;
+        Tasks[i].prev  = nullptr;
     }
 
     uint8_t bspCpuId = arch_cpu_id();
@@ -38,6 +40,8 @@ task_t* TaskManager::AllocateTask()
             Tasks[i].id        = (uint64_t) i;
             memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
             Tasks[i].stack = nullptr;
+            Tasks[i].next  = nullptr;
+            Tasks[i].prev  = nullptr;
             return &Tasks[i];
         }
     }
@@ -97,6 +101,8 @@ bool TaskManager::FreeTask(task_t* task)
     memset(&task->taskContext, 0, sizeof(task->taskContext));
     task->id        = (uint64_t) (task - &Tasks[0]);
     task->allocated = false;
+    task->next      = nullptr;
+    task->prev      = nullptr;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {

@@ -157,8 +157,12 @@ currently all cores wait for the rest of the cores to enter post init then conti
 
 ## Kernel Software Stack
 - Resource
+    - Task manager
+        - Manages schedulable execution units called tasks
 - Logic
 - Request
+
+
 
 ## Third Party
 - [Limine](https://github.com/limine-bootloader/limine) - Bootloader/protocol used to load the kernel and provide boot info.

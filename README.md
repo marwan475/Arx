@@ -159,8 +159,23 @@ currently all cores wait for the rest of the cores to enter post init then conti
 - Resource
     - Task manager
         - Manages schedulable execution units called tasks
+        - Creation and Allocation
+        - Deletion and Clean up
+    - Process manager
+        - Manages Process abstractions
+        - Creation and Allocation
+        - Deletion and Clean up
 - Logic
 - Request
+
+## Processes
+- Tasks
+    - unit of schedulable cpu execution
+    - contain stack and task function
+    - holds cpu context
+- Process
+    - stores tasks part of process
+    - storess address space
 
 
 

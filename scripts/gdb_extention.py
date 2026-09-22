@@ -1,7 +1,330 @@
 import gdb
+import os
+import re
 
 
 PAGE_SIZE = 4096
+
+
+class ArxPlatform:
+    """Helpers for resolving the global platform symbol across GDB contexts."""
+
+    _platform_addr_override = 0
+    _auto_platform_addr_cache = 0
+
+    @staticmethod
+    def _extract_first_hex(text):
+        match = re.search(r"0x[0-9a-fA-F]+", text or "")
+        if match is None:
+            return 0
+
+    @staticmethod
+    def _parse_and_eval_with_language(expr, language):
+        """Evaluate an expression under a temporary GDB language mode."""
+        previous = None
+        try:
+            previous = gdb.execute("show language", to_string=True)
+        except Exception:
+            previous = None
+
+        try:
+            gdb.execute("set language {}".format(language), to_string=True)
+            return gdb.parse_and_eval(expr)
+        finally:
+            if previous is not None:
+                lowered = previous.lower()
+                if "currently c" in lowered:
+                    target = "c"
+                elif "currently c++" in lowered:
+                    target = "c++"
+                elif "currently auto" in lowered:
+                    target = "auto"
+                else:
+                    target = "auto"
+                try:
+                    gdb.execute("set language {}".format(target), to_string=True)
+                except Exception:
+                    pass
+        try:
+            return int(match.group(0), 16)
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _is_plausible_platform_addr(addr):
+        if addr == 0:
+            return False
+        try:
+            platform = ArxPlatform._platform_from_address(addr)
+            cpu_count = int(platform["cpu_count"])
+            arch = int(platform["arch"])
+            int(platform["cpus"])
+            if cpu_count < 0 or cpu_count > 4096:
+                return False
+            if arch not in [0, 1]:
+                return False
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _resolve_from_info_address():
+        for cmd in ["info address 'platform'", "info address platform", "info address ::platform", "info address '::platform'"]:
+            try:
+                output = gdb.execute(cmd, to_string=True)
+                addr = ArxPlatform._extract_first_hex(output)
+                if addr != 0:
+                    return addr
+            except Exception:
+                pass
+        return 0
+
+    @staticmethod
+    def _candidate_map_paths():
+        paths = []
+
+        cwd = os.getcwd()
+        paths.append(os.path.join(cwd, "build", "kernel-x86_64.map"))
+        paths.append(os.path.join(cwd, "build", "kernel-aarch64.map"))
+
+        # Derive repository-relative map paths from the loaded ELF when available.
+        try:
+            prog = gdb.current_progspace()
+            prog_file = getattr(prog, "filename", None)
+            if prog_file:
+                elf_dir = os.path.dirname(os.path.abspath(prog_file))
+                repo_root = os.path.abspath(os.path.join(elf_dir, ".."))
+                paths.append(os.path.join(repo_root, "build", "kernel-x86_64.map"))
+                paths.append(os.path.join(repo_root, "build", "kernel-aarch64.map"))
+        except Exception:
+            pass
+
+        script_path = globals().get("__file__", "")
+        if script_path:
+            script_dir = os.path.dirname(os.path.abspath(script_path))
+            repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+            paths.append(os.path.join(repo_root, "build", "kernel-x86_64.map"))
+            paths.append(os.path.join(repo_root, "build", "kernel-aarch64.map"))
+
+        # Preserve order but de-duplicate.
+        seen = set()
+        ordered = []
+        for path in paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            ordered.append(path)
+
+        return ordered
+
+    @staticmethod
+    def _map_find_symbol_addr(map_path, symbol_name):
+        try:
+            with open(map_path, "r", encoding="utf-8", errors="ignore") as fp:
+                for line in fp:
+                    # Typical map line: 0xffffffff800480e0                platform
+                    strict = r"^\s*(0x[0-9a-fA-F]+)\s+{}\s*$".format(re.escape(symbol_name))
+                    match = re.match(strict, line)
+                    if match is not None:
+                        try:
+                            return int(match.group(1), 16)
+                        except ValueError:
+                            pass
+        except Exception:
+            return 0
+        return 0
+
+    @staticmethod
+    def _runtime_symbol_addr(symbol_name):
+        for cmd in ["info address {}".format(symbol_name), "info address ::{}".format(symbol_name)]:
+            try:
+                output = gdb.execute(cmd, to_string=True)
+                addr = ArxPlatform._extract_first_hex(output)
+                if addr != 0:
+                    return addr
+            except Exception:
+                pass
+        return 0
+
+    @staticmethod
+    def _resolve_from_map_file():
+        for map_path in ArxPlatform._candidate_map_paths():
+            if not os.path.isfile(map_path):
+                continue
+            addr = ArxPlatform._map_find_symbol_addr(map_path, "platform")
+            if addr != 0:
+                return addr
+        return 0
+
+    @staticmethod
+    def _resolve_from_map_with_slide():
+        runtime_start = ArxPlatform._runtime_symbol_addr("_start")
+        if runtime_start == 0:
+            return 0
+
+        for map_path in ArxPlatform._candidate_map_paths():
+            if not os.path.isfile(map_path):
+                continue
+
+            map_start = ArxPlatform._map_find_symbol_addr(map_path, "_start")
+            map_platform = ArxPlatform._map_find_symbol_addr(map_path, "platform")
+            if map_start == 0 or map_platform == 0:
+                continue
+
+            slide = runtime_start - map_start
+            candidate = map_platform + slide
+            if candidate != 0:
+                return candidate
+
+        return 0
+
+    @staticmethod
+    def _parse_address(text):
+        raw = (text or "").strip()
+        if raw == "":
+            raise gdb.GdbError("missing address expression")
+        try:
+            return int(gdb.parse_and_eval(raw))
+        except gdb.error:
+            try:
+                return int(raw, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid address '{}': {}".format(raw, err))
+
+    @staticmethod
+    def _platform_from_address(addr):
+        if addr == 0:
+            raise gdb.GdbError("platform address override is NULL")
+        try:
+            platform_ptr_t = gdb.lookup_type("platform_t").pointer()
+            return gdb.Value(addr).cast(platform_ptr_t).dereference()
+        except Exception as err:
+            raise gdb.GdbError("failed to decode platform_t at 0x{:x}: {}".format(addr, err))
+
+    @staticmethod
+    def set_override(addr):
+        ArxPlatform._platform_addr_override = int(addr)
+
+    @staticmethod
+    def clear_override():
+        ArxPlatform._platform_addr_override = 0
+
+    @staticmethod
+    def get_override():
+        return ArxPlatform._platform_addr_override
+
+    @staticmethod
+    def resolve():
+        if ArxPlatform._platform_addr_override != 0:
+            return ArxPlatform._platform_from_address(ArxPlatform._platform_addr_override)
+
+        if ArxPlatform._auto_platform_addr_cache != 0 and ArxPlatform._is_plausible_platform_addr(ArxPlatform._auto_platform_addr_cache):
+            return ArxPlatform._platform_from_address(ArxPlatform._auto_platform_addr_cache)
+
+        for expr in [
+            "platform",
+            "::platform",
+            "'platform'",
+            "'::platform'",
+            "*(&platform)",
+            "*(&::platform)",
+            "*(&'platform')",
+            "*(&'::platform')",
+        ]:
+            try:
+                value = gdb.parse_and_eval(expr)
+                return value
+            except gdb.error:
+                pass
+
+        # If GDB parser treats platform as a type-name in auto/c++ mode, force C mode for symbol probe.
+        for expr in ["'platform'", "::platform", "*(&'platform')", "*(&::platform)"]:
+            try:
+                value = ArxPlatform._parse_and_eval_with_language(expr, "c")
+                return value
+            except Exception:
+                pass
+
+        for lookup in [getattr(gdb, "lookup_global_symbol", None), getattr(gdb, "lookup_static_symbol", None)]:
+            if lookup is None:
+                continue
+            try:
+                sym = lookup("platform")
+                if sym is not None:
+                    return sym.value()
+            except Exception:
+                pass
+
+        info_addr = ArxPlatform._resolve_from_info_address()
+        if ArxPlatform._is_plausible_platform_addr(info_addr):
+            ArxPlatform._auto_platform_addr_cache = info_addr
+            return ArxPlatform._platform_from_address(info_addr)
+
+        map_addr = ArxPlatform._resolve_from_map_file()
+        if ArxPlatform._is_plausible_platform_addr(map_addr):
+            ArxPlatform._auto_platform_addr_cache = map_addr
+            return ArxPlatform._platform_from_address(map_addr)
+
+        slid_map_addr = ArxPlatform._resolve_from_map_with_slide()
+        if ArxPlatform._is_plausible_platform_addr(slid_map_addr):
+            ArxPlatform._auto_platform_addr_cache = slid_map_addr
+            return ArxPlatform._platform_from_address(slid_map_addr)
+
+        raise gdb.GdbError(
+            "Failed to resolve global 'platform' symbol/address automatically. Ensure correct kernel ELF symbols are loaded."
+        )
+
+
+class ArxPlatformCommand(gdb.Command):
+    """Manage platform symbol/address resolution for Arx GDB commands."""
+
+    def __init__(self):
+        super().__init__("arx-platform", gdb.COMMAND_STATUS)
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        parts = (arg or "").strip().split(None, 1)
+        action = parts[0].lower() if len(parts) > 0 else "show"
+
+        if action == "set":
+            if len(parts) < 2:
+                raise gdb.GdbError("usage: arx-platform set <address_expr>")
+            addr = ArxPlatform._parse_address(parts[1])
+            ArxPlatform.set_override(addr)
+            print("platform override set to 0x{:016x}".format(addr))
+            return
+
+        if action == "clear":
+            ArxPlatform.clear_override()
+            print("platform override cleared")
+            return
+
+        if action in ["show", "status"]:
+            override = ArxPlatform.get_override()
+            if override != 0:
+                print("platform override: 0x{:016x}".format(override))
+            else:
+                print("platform override: (not set)")
+
+            try:
+                platform = ArxPlatform.resolve()
+                try:
+                    cpus_ptr = int(platform["cpus"])
+                    cpu_count = int(platform["cpu_count"])
+                    print("platform resolved: yes")
+                    print("platform.cpus:     0x{:016x}".format(cpus_ptr))
+                    print("platform.cpu_count:{}".format(cpu_count))
+                except Exception:
+                    print("platform resolved: yes")
+            except gdb.GdbError as err:
+                print("platform resolved: no ({})".format(err))
+            return
+
+        raise gdb.GdbError("usage: arx-platform [show|status|set <address_expr>|clear]")
+
+
+ArxPlatformCommand()
 
 
 class ArxPmmCommand(gdb.Command):
@@ -84,10 +407,7 @@ class ArxPmmCommand(gdb.Command):
     def invoke(self, arg, from_tty):
         del from_tty
 
-        try:
-            platform = gdb.parse_and_eval("platform")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
+        platform = ArxPlatform.resolve()
 
         cpu_count = int(platform["cpu_count"])
         cpu_slots = self._array_len(platform["cpus"], fallback=max(cpu_count, 1))
@@ -233,10 +553,7 @@ class ArxVmmCommand(gdb.Command):
     def invoke(self, arg, from_tty):
         del from_tty
 
-        try:
-            platform = gdb.parse_and_eval("platform")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
+        platform = ArxPlatform.resolve()
 
         cpu_count = int(platform["cpu_count"])
         cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
@@ -331,10 +648,7 @@ class ArxCpusCommand(gdb.Command):
     def invoke(self, arg, from_tty):
         del from_tty
 
-        try:
-            platform = gdb.parse_and_eval("platform")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
+        platform = ArxPlatform.resolve()
 
         cpu_count = int(platform["cpu_count"])
         cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
@@ -363,23 +677,23 @@ class ArxCpusCommand(gdb.Command):
         else:
             cpu_indices = list(range(cpu_slots))
 
-        dispatcher_arch = self._read_int_field(platform, "arch", default=-1)
-        dispatcher_arch_info = platform["arch_info"]
+        platform_arch = self._read_int_field(platform, "arch", default=-1)
+        platform_arch_info = platform["arch_info"]
 
         print("Arx CPU state")
         print("=============")
         print("cpu_count: {}".format(cpu_count))
         print("cpu_slots: {}".format(cpu_slots))
-        print("arch:      {}".format(self._arch_name(dispatcher_arch)))
+        print("arch:      {}".format(self._arch_name(platform_arch)))
         print("")
 
         print("Platform")
         print("----------")
-        if dispatcher_arch == 0:
-            ioapic_present = self._read_int_field(dispatcher_arch_info, "acpi_has_ioapic", default=None)
-            ioapic_id = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_id", default=None)
-            ioapic_gsi_base = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_gsi_base", default=None)
-            ioapic_base = self._read_int_field(dispatcher_arch_info, "acpi_ioapic_base_addr", default=None)
+        if platform_arch == 0:
+            ioapic_present = self._read_int_field(platform_arch_info, "acpi_has_ioapic", default=None)
+            ioapic_id = self._read_int_field(platform_arch_info, "acpi_ioapic_id", default=None)
+            ioapic_gsi_base = self._read_int_field(platform_arch_info, "acpi_ioapic_gsi_base", default=None)
+            ioapic_base = self._read_int_field(platform_arch_info, "acpi_ioapic_base_addr", default=None)
 
             if ioapic_present is None:
                 print("arch_info: unavailable in current debug symbols")
@@ -389,7 +703,7 @@ class ArxCpusCommand(gdb.Command):
                 print("acpi_ioapic_gsi_base: {}".format(ioapic_gsi_base if ioapic_gsi_base is not None else 0))
                 print("acpi_ioapic_base_addr: 0x{:016x}".format(ioapic_base if ioapic_base is not None else 0))
         else:
-            print("arch_info: n/a for {}".format(self._arch_name(dispatcher_arch)))
+            print("arch_info: n/a for {}".format(self._arch_name(platform_arch)))
         print("")
 
         for i in cpu_indices:
@@ -414,8 +728,8 @@ class ArxCpusCommand(gdb.Command):
             print("  numa_node:     0x{:016x}".format(numa_node))
             print("  address_space: 0x{:016x}".format(address_space))
 
-            if dispatcher_arch != 0:
-                print("  arch_info: n/a for {}".format(self._arch_name(dispatcher_arch)))
+            if platform_arch != 0:
+                print("  arch_info: n/a for {}".format(self._arch_name(platform_arch)))
             elif acpi_has_lapic is None:
                 print("  arch_info: unavailable in current debug symbols")
             else:
@@ -441,10 +755,7 @@ class ArxPciCommand(gdb.Command):
         del arg
         del from_tty
 
-        try:
-            platform = gdb.parse_and_eval("platform")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
+        platform = ArxPlatform.resolve()
 
         arch = int(platform["arch"])
         device_count = int(platform["pci_device_count"])
@@ -574,10 +885,7 @@ class ArxHeapCommand(gdb.Command):
     def invoke(self, arg, from_tty):
         del from_tty
 
-        try:
-            platform = gdb.parse_and_eval("platform")
-        except gdb.error as err:
-            raise gdb.GdbError("Failed to read platform symbol: {}".format(err))
+        platform = ArxPlatform.resolve()
 
         cpu_count = int(platform["cpu_count"])
         cpu_slots = ArxPmmCommand._array_len(platform["cpus"], fallback=max(cpu_count, 1))
@@ -640,3 +948,432 @@ class ArxHeapCommand(gdb.Command):
 
 
 ArxHeapCommand()
+
+
+class ArxResourceManagers:
+    """Helpers for resolving ResourceLayer manager pointers from platform."""
+
+    @staticmethod
+    def _eval(expr):
+        try:
+            return gdb.parse_and_eval(expr)
+        except gdb.error:
+            return None
+
+    @staticmethod
+    def _read_ptr_at(base_addr, index):
+        """Read pointer-sized slot at ((void**)base_addr)[index]."""
+        if base_addr == 0:
+            return 0
+        try:
+            void_pp = gdb.lookup_type("void").pointer().pointer()
+            slot_ptr = gdb.Value(base_addr).cast(void_pp) + index
+            return int(slot_ptr.dereference())
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _cast_ptr(addr, type_name):
+        if addr == 0:
+            return None
+        try:
+            return gdb.Value(addr).cast(gdb.lookup_type(type_name).pointer())
+        except Exception:
+            return None
+
+    @staticmethod
+    def resolve_dispatcher_addr():
+        """Resolve Dispatcher* pointer stored in global platform with spelling fallbacks."""
+        try:
+            platform = ArxPlatform.resolve()
+        except gdb.GdbError:
+            return 0
+
+        # Prefer direct struct field access first.
+        for field_name in ["dispacher", "dispatcher"]:
+            try:
+                value = int(platform[field_name])
+                if value != 0:
+                    return value
+            except Exception:
+                pass
+
+        # Fall back to expression parsing if field indexing fails.
+        for expr in ["platform.dispacher", "platform.dispatcher"]:
+            value = ArxResourceManagers._eval(expr)
+            if value is not None:
+                try:
+                    addr = int(value)
+                    if addr != 0:
+                        return addr
+                except Exception:
+                    pass
+
+        return 0
+
+    @staticmethod
+    def _resolve_caps_address_from_platform():
+        """
+        Resolve ResourceLayerCaps* by object layout:
+        platform.(dispacher|dispatcher) -> Dispatcher.resourceLayerFactory (first field)
+        ResourceLayerFactory.ResourceLayerExportCaps (first field)
+        """
+        dispatcher_addr = ArxResourceManagers.resolve_dispatcher_addr()
+        if dispatcher_addr == 0:
+            return 0
+
+        resource_factory_addr = ArxResourceManagers._read_ptr_at(dispatcher_addr, 0)
+        if resource_factory_addr == 0:
+            return 0
+
+        return ArxResourceManagers._read_ptr_at(resource_factory_addr, 0)
+
+    @staticmethod
+    def resolve_caps():
+        exprs = [
+            "((ResourceLayerCaps*)((ResourceLayerFactory*)((Dispatcher*)platform.dispatcher)->resourceLayerFactory)->ResourceLayerExportCaps)",
+            "((ResourceLayerFactory*)((Dispatcher*)platform.dispatcher)->resourceLayerFactory)->GetCaps()",
+            "((ResourceLayerCaps*)((ResourceLayerFactory*)((Dispatcher*)platform.dispacher)->resourceLayerFactory)->ResourceLayerExportCaps)",
+            "((ResourceLayerFactory*)((Dispatcher*)platform.dispacher)->resourceLayerFactory)->GetCaps()",
+        ]
+
+        for expr in exprs:
+            value = ArxResourceManagers._eval(expr)
+            if value is not None and int(value) != 0:
+                return value
+
+        caps_addr = ArxResourceManagers._resolve_caps_address_from_platform()
+        if caps_addr == 0:
+            return None
+
+        typed_caps = ArxResourceManagers._cast_ptr(caps_addr, "ResourceLayerCaps")
+        if typed_caps is not None:
+            return typed_caps
+
+        return gdb.Value(caps_addr)
+
+        return None
+
+    @staticmethod
+    def resolve_process_manager():
+        caps = ArxResourceManagers.resolve_caps()
+        if caps is not None:
+            try:
+                manager = caps["processManager"]
+                if int(manager) != 0:
+                    return manager
+            except Exception:
+                pass
+
+        caps_addr = ArxResourceManagers._resolve_caps_address_from_platform()
+        if caps_addr == 0:
+            return None
+
+        manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 1)
+        manager = ArxResourceManagers._cast_ptr(manager_addr, "ProcessManager")
+        if manager is None:
+            return gdb.Value(manager_addr)
+        try:
+            if int(manager) == 0:
+                return None
+            return manager
+        except Exception:
+            return None
+
+    @staticmethod
+    def resolve_task_manager():
+        caps = ArxResourceManagers.resolve_caps()
+        if caps is not None:
+            try:
+                manager = caps["taskManager"]
+                if int(manager) != 0:
+                    return manager
+            except Exception:
+                pass
+
+        caps_addr = ArxResourceManagers._resolve_caps_address_from_platform()
+        if caps_addr == 0:
+            return None
+
+        manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 3)
+        manager = ArxResourceManagers._cast_ptr(manager_addr, "TaskManager")
+        if manager is None:
+            return gdb.Value(manager_addr)
+        try:
+            if int(manager) == 0:
+                return None
+            return manager
+        except Exception:
+            return None
+
+
+class ArxProcCommand(gdb.Command):
+    """List allocated processes or print one process by id from ProcessManager."""
+
+    def __init__(self):
+        super().__init__("arx-proc", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _parse_process_id(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid process id '{}': {}".format(text, err))
+
+    @staticmethod
+    def _iter_process_tasks(head):
+        node = head
+        while int(node) != 0:
+            yield node
+            node = node["next"]
+
+    @staticmethod
+    def _print_process(process, index):
+        pid = int(process["id"])
+        addr_space = int(process["addressSpace"])
+        tasks_head = process["tasks"]
+
+        task_ids = []
+        task_count = 0
+        for task in ArxProcCommand._iter_process_tasks(tasks_head):
+            task_count += 1
+            if task_count <= 16:
+                task_ids.append(int(task["id"]))
+
+        print("process[{}]".format(index))
+        print("  allocated:    {}".format(int(process["allocated"])))
+        print("  id:           {}".format(pid))
+        print("  addressSpace: 0x{:016x}".format(addr_space))
+        print("  tasks_head:   0x{:016x}".format(int(tasks_head)))
+        print("  task_count:   {}".format(task_count))
+        if task_count == 0:
+            print("  task_ids:     (none)")
+        elif task_count <= 16:
+            print("  task_ids:     {}".format(", ".join(str(x) for x in task_ids)))
+        else:
+            print("  task_ids:     {} ...".format(", ".join(str(x) for x in task_ids)))
+        print("")
+
+    @staticmethod
+    def _get_process_array(process_manager):
+        # Preferred path: typed member access.
+        try:
+            processes = process_manager["Processes"]
+            capacity = ArxPmmCommand._array_len(processes, fallback=64)
+            return processes, capacity
+        except Exception:
+            pass
+
+        # Fallback path: ProcessManager object starts with process_t Processes[MAX_PROCESSES].
+        try:
+            manager_addr = int(process_manager)
+            process_ptr_type = gdb.lookup_type("process_t").pointer()
+            processes = gdb.Value(manager_addr).cast(process_ptr_type)
+            return processes, 64
+        except Exception as err:
+            raise gdb.GdbError("Failed to decode ProcessManager process array: {}".format(err))
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        process_manager = ArxResourceManagers.resolve_process_manager()
+        if process_manager is None:
+            raise gdb.GdbError(
+                "Failed to resolve ProcessManager. Ensure platform and ResourceLayerFactory debug symbols are available."
+            )
+
+        processes, capacity = self._get_process_array(process_manager)
+
+        requested_pid = self._parse_process_id(arg)
+
+        print("Arx process state")
+        print("=================")
+        print("process_manager: 0x{:016x}".format(int(process_manager)))
+        print("capacity: {}".format(capacity))
+        print("")
+
+        allocated_count = 0
+        matched = None
+
+        for i in range(capacity):
+            process = processes[i]
+            if int(process["allocated"]) == 0:
+                continue
+
+            allocated_count += 1
+            pid = int(process["id"])
+
+            if requested_pid is None:
+                print(
+                    "process[{}]: id={} addressSpace=0x{:016x} tasks_head=0x{:016x}".format(
+                        i,
+                        pid,
+                        int(process["addressSpace"]),
+                        int(process["tasks"]),
+                    )
+                )
+            elif pid == requested_pid:
+                matched = (i, process)
+                break
+
+        if requested_pid is None:
+            print("")
+            print("allocated_processes: {}".format(allocated_count))
+            if allocated_count == 0:
+                print("(no allocated processes)")
+            return
+
+        if matched is None:
+            print("allocated_processes: {}".format(allocated_count))
+            raise gdb.GdbError("process id {} not found among allocated processes".format(requested_pid))
+
+        self._print_process(matched[1], matched[0])
+
+
+ArxProcCommand()
+
+
+class ArxTaskCommand(gdb.Command):
+    """Print task details by task id from TaskManager."""
+
+    def __init__(self):
+        super().__init__("arx-task", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _parse_task_id(arg):
+        text = (arg or "").strip()
+        if text == "":
+            raise gdb.GdbError("usage: arx-task <task_id>")
+        try:
+            return int(gdb.parse_and_eval(text))
+        except gdb.error:
+            try:
+                return int(text, 0)
+            except ValueError as err:
+                raise gdb.GdbError("invalid task id '{}': {}".format(text, err))
+
+    @staticmethod
+    def _print_task(task, index):
+        print("task[{}]".format(index))
+        print("  allocated:   {}".format(int(task["allocated"])))
+        print("  id:          {}".format(int(task["id"])))
+        print("  stack:       0x{:016x}".format(int(task["stack"])))
+        print("  next:        0x{:016x}".format(int(task["next"])))
+        print("  prev:        0x{:016x}".format(int(task["prev"])))
+        # Keep context dump generic so this works across arch-specific task context layouts.
+        print("  taskContext: {}".format(task["taskContext"]))
+        print("")
+
+    @staticmethod
+    def _get_task_array(task_manager):
+        # Preferred path: typed member access.
+        try:
+            tasks = task_manager["Tasks"]
+            capacity = ArxPmmCommand._array_len(tasks, fallback=64)
+            return tasks, capacity
+        except Exception:
+            pass
+
+        # Fallback path: TaskManager object starts with task_t Tasks[MAX_TASKS].
+        try:
+            manager_addr = int(task_manager)
+            task_ptr_type = gdb.lookup_type("task_t").pointer()
+            tasks = gdb.Value(manager_addr).cast(task_ptr_type)
+            return tasks, 64
+        except Exception as err:
+            raise gdb.GdbError("Failed to decode TaskManager task array: {}".format(err))
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        task_manager = ArxResourceManagers.resolve_task_manager()
+        if task_manager is None:
+            raise gdb.GdbError(
+                "Failed to resolve TaskManager. Ensure platform and ResourceLayerFactory debug symbols are available."
+            )
+
+        tasks, capacity = self._get_task_array(task_manager)
+
+        requested_tid = self._parse_task_id(arg)
+
+        print("Arx task state")
+        print("==============")
+        print("task_manager: 0x{:016x}".format(int(task_manager)))
+        print("capacity: {}".format(capacity))
+        print("")
+
+        allocated_count = 0
+        matched = None
+
+        for i in range(capacity):
+            task = tasks[i]
+            if int(task["allocated"]) == 0:
+                continue
+            allocated_count += 1
+            if int(task["id"]) == requested_tid:
+                matched = (i, task)
+                break
+
+        if matched is None:
+            print("allocated_tasks: {}".format(allocated_count))
+            raise gdb.GdbError("task id {} not found among allocated tasks".format(requested_tid))
+
+        self._print_task(matched[1], matched[0])
+
+
+ArxTaskCommand()
+
+
+class ArxResourceDebugCommand(gdb.Command):
+    """Debug resource manager resolution path for arx-proc/arx-task."""
+
+    def __init__(self):
+        super().__init__("arx-rsrc", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _type_available(type_name):
+        try:
+            gdb.lookup_type(type_name)
+            return True
+        except Exception:
+            return False
+
+    def invoke(self, arg, from_tty):
+        del arg
+        del from_tty
+
+        dispatcher_addr = ArxResourceManagers.resolve_dispatcher_addr()
+        if dispatcher_addr == 0:
+            raise gdb.GdbError(
+                "Failed to resolve dispatcher pointer field from platform (tried fields: dispacher, dispatcher)."
+            )
+
+        resource_factory_addr = ArxResourceManagers._read_ptr_at(dispatcher_addr, 0)
+        caps_addr = ArxResourceManagers._read_ptr_at(resource_factory_addr, 0)
+        process_manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 1)
+        task_manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 3)
+
+        print("Arx resource resolution debug")
+        print("=============================")
+        print("platform.dispatcher_ptr:   0x{:016x}".format(dispatcher_addr))
+        print("resourceLayerFactory addr: 0x{:016x}".format(resource_factory_addr))
+        print("ResourceLayerCaps addr:    0x{:016x}".format(caps_addr))
+        print("ProcessManager addr:       0x{:016x}".format(process_manager_addr))
+        print("TaskManager addr:          0x{:016x}".format(task_manager_addr))
+        print("")
+        print("Type availability")
+        print("-----------------")
+        print("ResourceLayerCaps: {}".format("yes" if self._type_available("ResourceLayerCaps") else "no"))
+        print("ProcessManager:    {}".format("yes" if self._type_available("ProcessManager") else "no"))
+        print("TaskManager:       {}".format("yes" if self._type_available("TaskManager") else "no"))
+        print("process_t:         {}".format("yes" if self._type_available("process_t") else "no"))
+        print("task_t:            {}".format("yes" if self._type_available("task_t") else "no"))
+
+
+ArxResourceDebugCommand()

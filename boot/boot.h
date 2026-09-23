@@ -77,6 +77,11 @@ struct boot_info
     uint64_t             framebuffer_green_mask_shift;
     uint64_t             framebuffer_blue_mask_size;
     uint64_t             framebuffer_blue_mask_shift;
+    uint64_t             initramfs_present;
+    uint64_t             initramfs_address;
+    uint64_t             initramfs_size;
+    uintptr_t            initramfs_path;
+    uintptr_t            initramfs_cmdline;
     struct boot_smp_info smp;
 };
 

@@ -51,6 +51,31 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
+    if (boot_info->initramfs_present == 0)
+    {
+        kprintf("Arx kernel: no initramfs module\n");
+        panic();
+    }
+
+    if (boot_info->initramfs_address == 0 || boot_info->initramfs_size == 0)
+    {
+        kprintf("Arx kernel: invalid initramfs module (addr=0x%llx size=%llu)\n",
+                (unsigned long long) boot_info->initramfs_address,
+                (unsigned long long) boot_info->initramfs_size);
+        panic();
+    }
+
+    if (boot_info->initramfs_path == 0)
+    {
+        kprintf("Arx kernel: initramfs module path missing\n");
+        panic();
+    }
+
+    kprintf("Arx kernel: initramfs module loaded path=%s addr=0x%llx size=%llu\n",
+            (const char*) (uintptr_t) boot_info->initramfs_path,
+            (unsigned long long) boot_info->initramfs_address,
+            (unsigned long long) boot_info->initramfs_size);
+
     platform.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
     platform.framebuffer.width            = (size_t) boot_info->framebuffer_width;
     platform.framebuffer.height           = (size_t) boot_info->framebuffer_height;

@@ -6,6 +6,8 @@ void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("boot summary cpu_count=%llu smp.cpu_count=%llu smp.cpus=0x%llx bsp_id=0x%llx\n", (unsigned long long) cpu_count, (unsigned long long) boot_info->smp.cpu_count, (unsigned long long) boot_info->smp.cpus, (unsigned long long) boot_info->smp.bsp_id);
     KDEBUG("memmap entries=%llu ptr=0x%llx hhdm_present=%llu hhdm_offset=0x%llx\n", (unsigned long long) boot_info->memmap_entry_count, (unsigned long long) boot_info->memmap_entries, (unsigned long long) boot_info->hhdm_present, (unsigned long long) boot_info->hhdm_offset);
     KDEBUG("rsdp=0x%llx kernel=[0x%llx..0x%llx) fb=0x%llx\n", (unsigned long long) boot_info->rsdp_address, (unsigned long long) boot_info->kernel_start, (unsigned long long) boot_info->kernel_end, (unsigned long long) boot_info->framebuffer_addr);
+    KDEBUG("initramfs present=%llu addr=0x%llx size=%llu path=%s cmdline=%s\n", (unsigned long long) boot_info->initramfs_present, (unsigned long long) boot_info->initramfs_address, (unsigned long long) boot_info->initramfs_size,
+           boot_info->initramfs_path != 0 ? (const char*) (uintptr_t) boot_info->initramfs_path : "<none>", boot_info->initramfs_cmdline != 0 ? (const char*) (uintptr_t) boot_info->initramfs_cmdline : "<none>");
 
     if (cpu_count > BOOT_SMP_MAX_CPUS)
     {
@@ -38,6 +40,28 @@ void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
         if (boot_info->framebuffer_pitch < min_pitch)
         {
             KDEBUG("warning framebuffer pitch=%llu < min expected=%llu\n", (unsigned long long) boot_info->framebuffer_pitch, (unsigned long long) min_pitch);
+        }
+    }
+
+    if (boot_info->initramfs_present == 0)
+    {
+        KDEBUG("warning initramfs module missing\n");
+    }
+    else
+    {
+        if (boot_info->initramfs_address == 0)
+        {
+            KDEBUG("warning initramfs address is zero\n");
+        }
+
+        if (boot_info->initramfs_size == 0)
+        {
+            KDEBUG("warning initramfs size is zero\n");
+        }
+
+        if (boot_info->initramfs_path == 0)
+        {
+            KDEBUG("warning initramfs path missing\n");
         }
     }
 }

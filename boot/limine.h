@@ -101,6 +101,61 @@ struct limine_memmap_request
     LIMINE_PTR(struct limine_memmap_response*) response;
 };
 
+#define LIMINE_MEDIA_TYPE_GENERIC 0
+#define LIMINE_MEDIA_TYPE_OPTICAL 1
+#define LIMINE_MEDIA_TYPE_TFTP 2
+
+struct limine_uuid
+{
+    uint32_t a;
+    uint16_t b;
+    uint16_t c;
+    uint8_t  d[8];
+};
+
+struct limine_file
+{
+    uint64_t revision;
+    LIMINE_PTR(void*) address;
+    uint64_t size;
+    LIMINE_PTR(char*) path;
+    LIMINE_PTR(char*) cmdline;
+    uint32_t media_type;
+    uint32_t unused;
+    uint32_t tftp_ip;
+    uint32_t tftp_port;
+    uint32_t partition_index;
+    uint32_t mbr_disk_id;
+    struct limine_uuid gpt_disk_uuid;
+    struct limine_uuid gpt_part_uuid;
+    struct limine_uuid part_uuid;
+};
+
+#define LIMINE_MODULE_REQUEST {LIMINE_COMMON_MAGIC, 0x3e7e279702be32af, 0xca1c4f3bd1280cee}
+
+struct limine_internal_module
+{
+    LIMINE_PTR(const char*) path;
+    LIMINE_PTR(const char*) cmdline;
+    uint64_t                flags;
+};
+
+struct limine_module_response
+{
+    uint64_t revision;
+    uint64_t module_count;
+    LIMINE_PTR(struct limine_file**) modules;
+};
+
+struct limine_module_request
+{
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_module_response*) response;
+    uint64_t internal_module_count;
+    LIMINE_PTR(struct limine_internal_module**) internal_modules;
+};
+
 #define LIMINE_HHDM_REQUEST {LIMINE_COMMON_MAGIC, 0x48dcf1cb8ad2b852, 0x63984e959a98244b}
 
 #define LIMINE_RSDP_REQUEST {LIMINE_COMMON_MAGIC, 0xc5e77b6b397e7b43, 0x27637845accdcf3c}

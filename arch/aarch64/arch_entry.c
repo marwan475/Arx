@@ -45,6 +45,14 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .flags    = 0,
 };
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_module_request module_request = {
+    .id                    = LIMINE_MODULE_REQUEST,
+    .revision              = 0,
+    .response              = 0,
+    .internal_module_count = 0,
+    .internal_modules      = 0,
+};
+
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
@@ -255,6 +263,11 @@ static void gather_boot_info(struct boot_info* boot_info)
     boot_info->framebuffer_green_mask_shift = 0;
     boot_info->framebuffer_blue_mask_size   = 0;
     boot_info->framebuffer_blue_mask_shift  = 0;
+    boot_info->initramfs_present            = 0;
+    boot_info->initramfs_address            = 0;
+    boot_info->initramfs_size               = 0;
+    boot_info->initramfs_path               = 0;
+    boot_info->initramfs_cmdline            = 0;
     boot_info->smp.flags                    = 0;
     boot_info->smp.bsp_id                   = 0;
     boot_info->smp.cpu_count                = 0;
@@ -332,6 +345,20 @@ static void gather_boot_info(struct boot_info* boot_info)
         boot_info->framebuffer_green_mask_shift = fb->green_mask_shift;
         boot_info->framebuffer_blue_mask_size   = fb->blue_mask_size;
         boot_info->framebuffer_blue_mask_shift  = fb->blue_mask_shift;
+    }
+
+    if (module_request.response != 0 && module_request.response->module_count > 0)
+    {
+        struct limine_file* module = module_request.response->modules[0];
+
+        if (module != 0)
+        {
+            boot_info->initramfs_present = 1;
+            boot_info->initramfs_address = (uint64_t) (uintptr_t) module->address;
+            boot_info->initramfs_size    = module->size;
+            boot_info->initramfs_path    = (uintptr_t) module->path;
+            boot_info->initramfs_cmdline = (uintptr_t) module->cmdline;
+        }
     }
 
     if (smp_request.response != 0)

@@ -63,8 +63,11 @@ ISO_AARCH64_ROOT := $(ISO_DIR)/aarch64
 
 BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
+INITRAMFS_DIR ?= initramfs
+INITRAMFS_IMAGE ?= $(BIN_DIR)/initramfs.cpio
+INITRAMFS_CONTENTS := $(shell find $(INITRAMFS_DIR) -type f 2>/dev/null)
 
-.PHONY: all x86_64 aarch64 prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
+.PHONY: all x86_64 aarch64 initramfs prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp klib/cpp_alloc.cpp klib/debug.c kernel/selftests/selftest.c kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
@@ -89,7 +92,15 @@ DEP_FILES := $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
 
 -include $(filter %.d,$(DEP_FILES))
 
-all: x86_64 aarch64
+all: x86_64 aarch64 initramfs
+
+initramfs: $(INITRAMFS_IMAGE)
+
+$(INITRAMFS_IMAGE): $(INITRAMFS_CONTENTS)
+	@mkdir -p $(BIN_DIR)
+	@test -d "$(INITRAMFS_DIR)" || { echo "Error: missing $(INITRAMFS_DIR)" >&2; exit 1; }
+	@command -v cpio >/dev/null 2>&1 || { echo "Error: cpio not found." >&2; exit 1; }
+	@cd "$(INITRAMFS_DIR)" && find . -print | cpio -o -H newc > "$(abspath $@)"
 
 prepare-iso-tools:
 	@command -v parted >/dev/null 2>&1 || { echo "Error: parted not found." >&2; exit 1; }
@@ -126,11 +137,11 @@ $(BUILD_DIR)/aarch64/%.o: %.cpp
 	@command -v $(AARCH64_CXX) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CXX) not found. Set AARCH64_CXX=<compiler>." >&2; exit 1; }
 	$(AARCH64_CXX) $(CXXFLAGS_COMMON) $(CXXFLAGS_AARCH64) -c -o $@ $<
 
-$(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD)
+$(KERNEL_X86_64): $(KERNEL_X86_64_OBJS) $(KERNEL_X86_64_LD) $(INITRAMFS_IMAGE)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	$(X86_64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_X86_64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-x86_64.map -o $@ $(KERNEL_X86_64_OBJS)
 
-$(KERNEL_AARCH64): $(KERNEL_AARCH64_OBJS) $(KERNEL_AARCH64_LD)
+$(KERNEL_AARCH64): $(KERNEL_AARCH64_OBJS) $(KERNEL_AARCH64_LD) $(INITRAMFS_IMAGE)
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 	@command -v $(AARCH64_CC) >/dev/null 2>&1 || { echo "Error: $(AARCH64_CC) not found. Set AARCH64_CC=<compiler>." >&2; exit 1; }
 	$(AARCH64_CC) $(LDFLAGS_COMMON) -Wl,-T,$(KERNEL_AARCH64_LD) -Wl,-Map,$(BUILD_DIR)/kernel-aarch64.map -o $@ $(KERNEL_AARCH64_OBJS)
@@ -141,10 +152,11 @@ clean:
 x86_64: $(ISO_X86_64)
 aarch64: $(ISO_AARCH64)
 
-$(ISO_X86_64): prepare-iso-tools $(KERNEL_X86_64) $(BOOT_CFG) $(BOOTX64_EFI)
+$(ISO_X86_64): prepare-iso-tools $(KERNEL_X86_64) $(BOOT_CFG) $(BOOTX64_EFI) $(INITRAMFS_IMAGE)
 	@mkdir -p $(ISO_X86_64_ROOT)/boot $(ISO_X86_64_ROOT)/EFI/BOOT $(BUILD_DIR) $(BIN_DIR)
 	cp $(BOOTX64_EFI) $(ISO_X86_64_ROOT)/EFI/BOOT/BOOTX64.EFI
 	cp $(KERNEL_X86_64) $(ISO_X86_64_ROOT)/boot/kernel.elf
+	cp $(INITRAMFS_IMAGE) $(ISO_X86_64_ROOT)/boot/initramfs.cpio
 	cp $(BOOT_CFG) $(ISO_X86_64_ROOT)/limine.conf
 	rm -f $@
 	dd if=/dev/zero of=$@ bs=$(SECTOR_SIZE) count=$(IMG_SECTORS) status=none
@@ -164,16 +176,18 @@ $(ISO_X86_64): prepare-iso-tools $(KERNEL_X86_64) $(BOOT_CFG) $(BOOTX64_EFI)
 	mmd -i $$ESP_TMP ::/boot/limine; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/boot/kernel.elf ::/boot/kernel.elf; \
+	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/boot/initramfs.cpio ::/boot/initramfs.cpio; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/limine.conf; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/boot/limine/limine.conf; \
 	mcopy -i $$ESP_TMP $(ISO_X86_64_ROOT)/limine.conf ::/EFI/limine/limine.conf; \
 	dd if=$$ESP_TMP of=$@ bs=$(SECTOR_SIZE) seek=$$START conv=notrunc status=none; \
 	rm -f $$ESP_TMP
 
-$(ISO_AARCH64): prepare-iso-tools $(KERNEL_AARCH64) $(BOOT_CFG) $(BOOTAA64_EFI)
+$(ISO_AARCH64): prepare-iso-tools $(KERNEL_AARCH64) $(BOOT_CFG) $(BOOTAA64_EFI) $(INITRAMFS_IMAGE)
 	@mkdir -p $(ISO_AARCH64_ROOT)/boot $(ISO_AARCH64_ROOT)/EFI/BOOT $(BUILD_DIR) $(BIN_DIR)
 	cp $(BOOTAA64_EFI) $(ISO_AARCH64_ROOT)/EFI/BOOT/BOOTAA64.EFI
 	cp $(KERNEL_AARCH64) $(ISO_AARCH64_ROOT)/boot/kernel.elf
+	cp $(INITRAMFS_IMAGE) $(ISO_AARCH64_ROOT)/boot/initramfs.cpio
 	cp $(BOOT_CFG) $(ISO_AARCH64_ROOT)/limine.conf
 	rm -f $@
 	dd if=/dev/zero of=$@ bs=$(SECTOR_SIZE) count=$(IMG_SECTORS) status=none
@@ -193,6 +207,7 @@ $(ISO_AARCH64): prepare-iso-tools $(KERNEL_AARCH64) $(BOOT_CFG) $(BOOTAA64_EFI)
 	mmd -i $$ESP_TMP ::/boot/limine; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/EFI/BOOT/BOOTAA64.EFI ::/EFI/BOOT/BOOTAA64.EFI; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/boot/kernel.elf ::/boot/kernel.elf; \
+	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/boot/initramfs.cpio ::/boot/initramfs.cpio; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/limine.conf; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/boot/limine/limine.conf; \
 	mcopy -i $$ESP_TMP $(ISO_AARCH64_ROOT)/limine.conf ::/EFI/limine/limine.conf; \

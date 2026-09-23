@@ -1106,6 +1106,117 @@ class ArxResourceManagers:
         except Exception:
             return None
 
+    @staticmethod
+    def resolve_initramfs_manager():
+        caps = ArxResourceManagers.resolve_caps()
+        if caps is not None:
+            try:
+                manager = caps["initRamFileSystemManager"]
+                if int(manager) != 0:
+                    return manager
+            except Exception:
+                pass
+
+        caps_addr = ArxResourceManagers._resolve_caps_address_from_platform()
+        if caps_addr == 0:
+            return None
+
+        manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 4)
+        manager = ArxResourceManagers._cast_ptr(manager_addr, "InitRamFileSystemManager")
+        if manager is None:
+            return gdb.Value(manager_addr)
+        try:
+            if int(manager) == 0:
+                return None
+            return manager
+        except Exception:
+            return None
+
+
+class ArxInitRamFsCommand(gdb.Command):
+    """Print initramfs archive entries parsed by InitRamFileSystemManager."""
+
+    def __init__(self):
+        super().__init__("arx-initramfs", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _get_archive_storage(manager):
+        try:
+            archives = manager["Archives"]
+            count = int(manager["ArchiveCount"])
+            capacity = ArxPmmCommand._array_len(archives, fallback=count)
+            return archives, count, capacity
+        except Exception as err:
+            raise gdb.GdbError("Failed to decode InitRamFileSystemManager storage: {}".format(err))
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        manager = ArxResourceManagers.resolve_initramfs_manager()
+        if manager is None:
+            raise gdb.GdbError(
+                "Failed to resolve InitRamFileSystemManager. Ensure ResourceLayerFactory has been created and symbols are loaded."
+            )
+
+        requested_path = (arg or "").strip()
+        archives, count, capacity = self._get_archive_storage(manager)
+
+        if count < 0:
+            raise gdb.GdbError("invalid ArchiveCount={} (negative)".format(count))
+        if count > capacity:
+            raise gdb.GdbError(
+                "invalid ArchiveCount={} exceeds capacity={} (possibly stale/corrupt debug state)".format(count, capacity)
+            )
+
+        print("Arx initramfs state")
+        print("==================")
+        print("manager:  0x{:016x}".format(int(manager)))
+        print("count:    {}".format(count))
+        print("capacity: {}".format(capacity))
+        print("")
+
+        if count == 0:
+            print("(no parsed initramfs archives)")
+            return
+
+        if requested_path != "":
+            for i in range(count):
+                archive = archives[i]
+                path_ptr = int(archive["path"])
+                if path_ptr == 0:
+                    continue
+                path = archive["path"].string(errors="replace")
+                if path == requested_path:
+                    print("archive[{}]".format(i))
+                    print("  path: {}".format(path))
+                    print("  size: {}".format(int(archive["size"])))
+                    print("  data: 0x{:016x}".format(int(archive["data"])))
+                    return
+
+            raise gdb.GdbError("path '{}' not found".format(requested_path))
+
+        for i in range(count):
+            archive = archives[i]
+            path_ptr = int(archive["path"])
+            path = "<null>"
+            if path_ptr != 0:
+                try:
+                    path = archive["path"].string(errors="replace")
+                except Exception:
+                    path = "<unreadable>"
+
+            print(
+                "[{}] path={} size={} data=0x{:016x}".format(
+                    i,
+                    path,
+                    int(archive["size"]),
+                    int(archive["data"]),
+                )
+            )
+
+
+ArxInitRamFsCommand()
+
 
 class ArxProcCommand(gdb.Command):
     """List allocated processes or print one process by id from ProcessManager."""
@@ -1358,6 +1469,7 @@ class ArxResourceDebugCommand(gdb.Command):
         caps_addr = ArxResourceManagers._read_ptr_at(resource_factory_addr, 0)
         process_manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 1)
         task_manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 3)
+        initramfs_manager_addr = ArxResourceManagers._read_ptr_at(caps_addr, 4)
 
         print("Arx resource resolution debug")
         print("=============================")
@@ -1366,12 +1478,14 @@ class ArxResourceDebugCommand(gdb.Command):
         print("ResourceLayerCaps addr:    0x{:016x}".format(caps_addr))
         print("ProcessManager addr:       0x{:016x}".format(process_manager_addr))
         print("TaskManager addr:          0x{:016x}".format(task_manager_addr))
+        print("InitRamFSManager addr:     0x{:016x}".format(initramfs_manager_addr))
         print("")
         print("Type availability")
         print("-----------------")
         print("ResourceLayerCaps: {}".format("yes" if self._type_available("ResourceLayerCaps") else "no"))
         print("ProcessManager:    {}".format("yes" if self._type_available("ProcessManager") else "no"))
         print("TaskManager:       {}".format("yes" if self._type_available("TaskManager") else "no"))
+        print("InitRamFileSystemManager: {}".format("yes" if self._type_available("InitRamFileSystemManager") else "no"))
         print("process_t:         {}".format("yes" if self._type_available("process_t") else "no"))
         print("task_t:            {}".format("yes" if self._type_available("task_t") else "no"))
 

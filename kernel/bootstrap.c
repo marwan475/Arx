@@ -76,6 +76,9 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
             (unsigned long long) boot_info->initramfs_address,
             (unsigned long long) boot_info->initramfs_size);
 
+        platform.initramfs_address = (uintptr_t) boot_info->initramfs_address;
+        platform.initramfs_size    = boot_info->initramfs_size;
+
     platform.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
     platform.framebuffer.width            = (size_t) boot_info->framebuffer_width;
     platform.framebuffer.height           = (size_t) boot_info->framebuffer_height;

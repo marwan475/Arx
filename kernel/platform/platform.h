@@ -30,6 +30,8 @@ typedef struct platform
     uint32_t                 vector_base;
     struct flanterm_context* terminal_context;
     spinlock_t               terminal_lock;
+    uintptr_t                initramfs_address;
+    uint64_t                 initramfs_size;
     void*                    dispacher;
     arch_type_t              arch;
     pci_device_t*            pci_devices;

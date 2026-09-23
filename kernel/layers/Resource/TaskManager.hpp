@@ -7,7 +7,16 @@
 
 struct task_t
 {
+    struct user_launch_context_t
+    {
+        uint64_t userRip;
+        uint64_t userRsp;
+        uint64_t arg0;
+        uint64_t arg1;
+    } userLaunchContext;
+
     bool                     allocated;
+    bool                     isUserTask;
     uint64_t                 id;
     struct arch_task_context taskContext;
     void*                    stack;
@@ -24,6 +33,7 @@ public:
 
     task_t* AllocateTask();
     task_t* CreateKernelTask(arch_task_entry_t entry, void* arg);
+    task_t* CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
     bool    FreeTask(task_t* task);
     bool    ExecuteTask(task_t* task);
 

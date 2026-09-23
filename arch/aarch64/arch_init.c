@@ -28,12 +28,27 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
     panic();
 }
 
+void arch_set_user_transition_stack(uint64_t kernel_rsp)
+{
+    (void) kernel_rsp;
+}
+
 void arch_init_context(struct arch_task_context* context, void* stack_top, arch_task_entry_t entry, void* arg)
 {
     (void) context;
     (void) stack_top;
     (void) entry;
     (void) arg;
+}
+
+uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context)
+{
+    if (context == NULL)
+    {
+        return 0;
+    }
+
+    return context->sp;
 }
 
 void arch_save_switch_and_execute_context(struct arch_task_context* out_current_context, const struct arch_task_context* new_context)

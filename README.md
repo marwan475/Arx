@@ -140,6 +140,10 @@ Klib allocations
 ran on each smp core
 - x86_64
     - build and install 64 bit GDT for kernel and user segments including a TSS
+    - initialize per cpu TSS rsp0/ist1 and io bitmap base for user -> kernel transitions
+    - initialize per cpu syscall msrs (efer.sce, star, lstar, fmask, kernel gs base)
+    - expose arch_enter_user_mode to iretq into cpl3 using user cs/ss and controlled rflags
+    - syscall entry path switches from user rsp to per cpu kernel syscall stack then dispatches
     - build and install IDT all isrs call a common isr handler and jumps to c code ISRHANDLER passing regs
     - get madt from acpi using uacpi (bsp only)
     - get per core lapic info from madt

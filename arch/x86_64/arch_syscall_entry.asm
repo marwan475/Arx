@@ -14,6 +14,20 @@ extern arch_syscall_dispatch
 %define USER_CS_SELECTOR 0x1b
 %define USER_SS_SELECTOR 0x23
 
+%define SYSCALL_FRAME_SYSCALL_NUMBER_OFFSET 0
+%define SYSCALL_FRAME_ARG0_OFFSET 8
+%define SYSCALL_FRAME_ARG1_OFFSET 16
+%define SYSCALL_FRAME_ARG2_OFFSET 24
+%define SYSCALL_FRAME_ARG3_OFFSET 32
+%define SYSCALL_FRAME_ARG4_OFFSET 40
+%define SYSCALL_FRAME_ARG5_OFFSET 48
+%define SYSCALL_FRAME_USER_RIP_OFFSET 56
+%define SYSCALL_FRAME_USER_CS_OFFSET 64
+%define SYSCALL_FRAME_USER_RFLAGS_OFFSET 72
+%define SYSCALL_FRAME_USER_RSP_OFFSET 80
+%define SYSCALL_FRAME_USER_SS_OFFSET 88
+%define SYSCALL_FRAME_SIZE 96
+
 arch_x86_64_syscall_entry:
     swapgs
     cld
@@ -38,31 +52,18 @@ arch_x86_64_syscall_entry:
     push rdi
     push rax
 
-    ; C ABI: (sysno, arg0, arg1, arg2, arg3, arg4, arg5)
-    mov rdi, [rsp + 0]
-    mov rsi, [rsp + 8]
-    mov rdx, [rsp + 16]
-    mov rcx, [rsp + 24]
-    mov r8,  [rsp + 32]
-    mov r9,  [rsp + 40]
-
-    ; SysV: 7th integer argument goes on stack at [rsp] before call,
-    ; and stack must be 16-byte aligned at call site.
-    sub rsp, 16
-    mov rax, [rsp + 64]
-    mov [rsp + 0], rax
+    ; C ABI: pass pointer to syscall frame in rdi.
+    mov rdi, rsp
 
     call arch_syscall_dispatch
 
-    add rsp, 16
-
     ; Keep return value in rax. Restore volatile arg registers for a clean user return.
-    mov rdi, [rsp + 8]
-    mov rsi, [rsp + 16]
-    mov rdx, [rsp + 24]
-    mov r10, [rsp + 32]
-    mov r8,  [rsp + 40]
-    mov r9,  [rsp + 48]
+    mov rdi, [rsp + SYSCALL_FRAME_ARG0_OFFSET]
+    mov rsi, [rsp + SYSCALL_FRAME_ARG1_OFFSET]
+    mov rdx, [rsp + SYSCALL_FRAME_ARG2_OFFSET]
+    mov r10, [rsp + SYSCALL_FRAME_ARG3_OFFSET]
+    mov r8,  [rsp + SYSCALL_FRAME_ARG4_OFFSET]
+    mov r9,  [rsp + SYSCALL_FRAME_ARG5_OFFSET]
 
     add rsp, 56
 

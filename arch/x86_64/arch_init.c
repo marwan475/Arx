@@ -21,6 +21,16 @@ static uint64_t read_rsp(void)
     return rsp;
 }
 
+uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context)
+{
+    if (context == NULL)
+    {
+        return 0;
+    }
+
+    return context->rsp;
+}
+
 static bool is_low_half_user_va(uint64_t va)
 {
     return (va & 0xFFFF800000000000ULL) == 0;
@@ -228,11 +238,6 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
         kprintf("Arx kernel: arch_enter_user_mode rejected user rsp (expected rsp%%16 == 0 for ELF entry): 0x%llx\n", (unsigned long long) user_rsp);
         panic();
     }
-
-    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
-    set_tss_rsp0(&cpu_info->arch_info.tss, read_rsp());
-    arch_syscall_set_kernel_stack(read_rsp());
-
     uint64_t user_rflags = USER_INITIAL_RFLAGS;
     uint64_t user_cs     = USER_CS;
     uint64_t user_ss     = USER_SS;

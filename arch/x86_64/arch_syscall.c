@@ -41,13 +41,28 @@ static uint64_t read_rsp(void)
 }
 
 extern void     arch_x86_64_syscall_entry(void);
-extern uint64_t arch_syscall_dispatch(uint64_t syscall_number, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
+extern uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame);
+
+static void set_tss_rsp0(tss_t* tss, uint64_t rsp0)
+{
+    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
+    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
+}
 
 void arch_syscall_set_kernel_stack(uint64_t kernel_rsp)
 {
     cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
     cpu_info->arch_info.syscall_ctx.kernel_rsp = kernel_rsp & ~0xFULL;
+}
+
+void arch_set_user_transition_stack(uint64_t kernel_rsp)
+{
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
+    const uint64_t aligned_rsp = kernel_rsp & ~0xFULL;
+
+    arch_syscall_set_kernel_stack(aligned_rsp);
+    set_tss_rsp0(&cpu_info->arch_info.tss, aligned_rsp);
 }
 
 void arch_syscall_init(void)
@@ -73,14 +88,21 @@ void arch_syscall_init(void)
     wrmsr(IA32_EFER, efer);
 }
 
-uint64_t arch_syscall_dispatch(uint64_t syscall_number, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
+uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
 {
-    (void) arg0;
-    (void) arg1;
-    (void) arg2;
-    (void) arg3;
-    (void) arg4;
-    (void) arg5;
+    if (frame == NULL)
+    {
+        return (uint64_t) -22;
+    }
+
+    const uint64_t syscall_number = frame->syscall_number;
+
+    (void) frame->arg0;
+    (void) frame->arg1;
+    (void) frame->arg2;
+    (void) frame->arg3;
+    (void) frame->arg4;
+    (void) frame->arg5;
 
     switch (syscall_number)
     {

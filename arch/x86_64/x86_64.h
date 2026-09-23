@@ -202,6 +202,22 @@ typedef struct registers
 
 } __attribute__((packed)) registers_t;
 
+typedef struct arch_syscall_frame
+{
+    uint64_t syscall_number;
+    uint64_t arg0;
+    uint64_t arg1;
+    uint64_t arg2;
+    uint64_t arg3;
+    uint64_t arg4;
+    uint64_t arg5;
+    uint64_t user_rip;
+    uint64_t user_cs;
+    uint64_t user_rflags;
+    uint64_t user_rsp;
+    uint64_t user_ss;
+} arch_syscall_frame_t;
+
 struct arch_task_context
 {
     uint64_t rbx;

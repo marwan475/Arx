@@ -1,5 +1,6 @@
 #include <acpi/acpi.h>
 #include <arch/arch.h>
+#include <cpu/cpu.h>
 #include <klib/klib.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -11,6 +12,30 @@ static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
 static inline void outb(uint16_t port, uint8_t value)
 {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static uint64_t read_rsp(void)
+{
+    uint64_t rsp = 0;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    return rsp;
+}
+
+static bool is_low_half_user_va(uint64_t va)
+{
+    return (va & 0xFFFF800000000000ULL) == 0;
+}
+
+static void set_tss_rsp0(tss_t* tss, uint64_t rsp0)
+{
+    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
+    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
+}
+
+static void set_tss_ist1(tss_t* tss, uint64_t ist1)
+{
+    tss->IST1_lower = (uint32_t) (ist1 & 0xFFFFFFFFu);
+    tss->IST1_upper = (uint32_t) ((ist1 >> 32) & 0xFFFFFFFFu);
 }
 
 __attribute__((weak, noreturn)) void task_exit(void)
@@ -68,6 +93,22 @@ static void build_gdt(gdt_t* gdt, const tss_discriptor_t* tss_descriptor)
 static void gdt_init()
 {
     cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
+
+    memset(&cpu_info->arch_info.tss, 0, sizeof(cpu_info->arch_info.tss));
+
+    uint64_t kernel_stack_top = 0;
+    if (cpu_info->kernel_stack_base != NULL && cpu_info->kernel_stack_size != 0)
+    {
+        kernel_stack_top = (uint64_t) (uintptr_t) ((uint8_t*) cpu_info->kernel_stack_base + cpu_info->kernel_stack_size);
+    }
+    else
+    {
+        kernel_stack_top = read_rsp();
+    }
+
+    set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
+    set_tss_ist1(&cpu_info->arch_info.tss, kernel_stack_top);
+    cpu_info->arch_info.tss.io_map_base = (uint16_t) sizeof(tss_t);
 
     build_tss_descriptor(&cpu_info->arch_info.tss, &cpu_info->arch_info.tss_descriptor);
     build_gdt(&cpu_info->arch_info.gdt, &cpu_info->arch_info.tss_descriptor);
@@ -172,6 +213,53 @@ static void init_interrupts()
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
+__attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1)
+{
+    static const uint64_t USER_INITIAL_RFLAGS = (1ULL << 1) | (1ULL << 9);
+
+    if (!is_low_half_user_va(user_rip) || !is_low_half_user_va(user_rsp))
+    {
+        kprintf("Arx kernel: arch_enter_user_mode rejected non-user VA rip=0x%llx rsp=0x%llx\n", (unsigned long long) user_rip, (unsigned long long) user_rsp);
+        panic();
+    }
+
+    if ((user_rsp & 0xFULL) != 0)
+    {
+        kprintf("Arx kernel: arch_enter_user_mode rejected user rsp (expected rsp%%16 == 0 for ELF entry): 0x%llx\n", (unsigned long long) user_rsp);
+        panic();
+    }
+
+    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
+    set_tss_rsp0(&cpu_info->arch_info.tss, read_rsp());
+    arch_syscall_set_kernel_stack(read_rsp());
+
+    uint64_t user_rflags = USER_INITIAL_RFLAGS;
+    uint64_t user_cs     = USER_CS;
+    uint64_t user_ss     = USER_SS;
+
+    arch_disable_interrupts();
+
+    __asm__ volatile("mov %[arg0], %%rdi\n"
+                     "mov %[arg1], %%rsi\n"
+                     "pushq %[ss]\n"
+                     "pushq %[rsp]\n"
+                     "pushq %[rflags]\n"
+                     "pushq %[cs]\n"
+                     "pushq %[rip]\n"
+                     "iretq\n"
+                     :
+                     : [arg0] "r"(arg0),
+                       [arg1] "r"(arg1),
+                       [ss] "r"(user_ss),
+                       [rsp] "r"(user_rsp),
+                       [rflags] "r"(user_rflags),
+                       [cs] "r"(user_cs),
+                       [rip] "r"(user_rip)
+                     : "rdi", "rsi", "memory");
+
+    __builtin_unreachable();
+}
+
 static bool init_arch_acpi()
 {
     uacpi_status      status;
@@ -210,6 +298,7 @@ bool arch_init(void)
     }
 
     gdt_init();
+    arch_syscall_init();
     init_interrupts();
 
     kprintf("Arx kernel: cpu %d architecture initialized\n", arch_cpu_id());

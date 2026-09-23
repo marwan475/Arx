@@ -226,6 +226,11 @@ typedef struct arch_info
     tss_t                 tss;
     discriptor_register_t gdt_reg;
     tss_discriptor_t      tss_descriptor;
+    struct
+    {
+        uint64_t kernel_rsp;
+        uint64_t user_rsp;
+    } syscall_ctx;
     idt_description_t     idt_desc;
     idt_entry_t           idt[NUM_IDT_ENTRIES];
 } arch_info_t;
@@ -264,6 +269,8 @@ typedef struct arch_platform_info
 void     lapic_init(void);
 void     lapic_timer_init(void);
 void     lapic_eoi(void);
+void     arch_syscall_init(void);
+void     arch_syscall_set_kernel_stack(uint64_t kernel_rsp);
 void     send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_data);
 void     x86_64_invlpg(uint64_t va);
 void     x86_64_flush_active_tlb_non_global(void);

@@ -18,6 +18,16 @@ __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_
     }
 }
 
+__attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1)
+{
+    (void) user_rip;
+    (void) user_rsp;
+    (void) arg0;
+    (void) arg1;
+
+    panic();
+}
+
 void arch_init_context(struct arch_task_context* context, void* stack_top, arch_task_entry_t entry, void* arg)
 {
     (void) context;

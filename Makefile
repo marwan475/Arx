@@ -17,7 +17,7 @@ IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 KERNEL_SRC ?= kernel/bootstrap.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
-KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
+KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/arch_syscall.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
 KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
@@ -71,7 +71,7 @@ INITRAMFS_CONTENTS := $(shell find $(INITRAMFS_DIR) -type f 2>/dev/null)
 
 KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c kernel/selftests/selftest.c kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
-KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm
+KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm $(ARCH_DIR)/x86_64/arch_syscall_entry.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
 FLANTERM_SRCS := kernel/platform/terminal/flanterm/flanterm.c kernel/platform/terminal/flanterm/flanterm_backends/fb.c
 

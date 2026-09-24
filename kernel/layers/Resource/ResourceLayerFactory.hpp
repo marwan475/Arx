@@ -1,5 +1,7 @@
 #pragma once
 
+#include "layers/Resource/ResourceFileSystem.hpp"
+
 class PhysicalMemoryManager;
 class ProcessManager;
 class VirtualMemoryManager;
@@ -13,6 +15,7 @@ struct ResourceLayerCaps
     VirtualMemoryManager*  virtualMemoryManager;
     TaskManager*           taskManager;
     InitRamFileSystemManager* initRamFileSystemManager;
+    ResourceLayerFileSystemCaps* fileSystemCaps;
 };
 
 class ResourceLayerFactory
@@ -26,4 +29,5 @@ public:
 
 private:
     ResourceLayerCaps* ResourceLayerExportCaps;
+    ResourceFileSystem* ResourceFileSystemExport;
 };

@@ -30,4 +30,14 @@ void Dispatcher::StartKernel()
     logiclayer_selftests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
 }
 
+ResourceLayerCaps* Dispatcher::GetResourceLayerCaps() const
+{
+    return resourceLayerFactory != nullptr ? resourceLayerFactory->GetCaps() : nullptr;
+}
+
+LogicLayerCaps* Dispatcher::GetLogicLayerCaps() const
+{
+    return logicLayerFactory != nullptr ? logicLayerFactory->GetCaps() : nullptr;
+}
+
 

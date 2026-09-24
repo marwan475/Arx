@@ -14,6 +14,12 @@ void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps)
     run_vfs_selftests(logicLayerCaps);
 }
 
+void poststartkerneltests(void* resourceLayerCaps, void* logicLayerCaps)
+{
+    (void)resourceLayerCaps;
+    run_poststart_vfs_selftests(logicLayerCaps);
+}
+
 void platform_selftests(void)
 {
     run_datastructures_selftests();

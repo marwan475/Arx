@@ -89,4 +89,12 @@ extern "C" void run_poststart_vfs_selftests(void* logicLayerCaps)
 done:
     kprintf("Arx kernel: poststart_vfs_selftest summary: pass=%llu fail=%llu\n", passes, fails);
     kprintf("Arx kernel: poststart_vfs_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
+    if (fails == 0)
+    {
+        KDEBUG("poststart_vfs_selftest passed with %llu checks\n", passes);
+    }
+    else
+    {
+        KDEBUG("poststart_vfs_selftest failed with %llu checks\n", fails);
+    }
 }

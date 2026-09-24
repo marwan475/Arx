@@ -1,4 +1,5 @@
 #include "layers/Dispatcher.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
 
 #include <arch/arch.h>
 #include <klib/klib.h>

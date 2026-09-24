@@ -609,28 +609,32 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
 
 	spinlock_acquire(&DentryCacheLock);
 
-	dentry_key_t key;
-	key.parent = parent;
-	key.name   = name;
-
-	khint_t k = khp_get(DentryCache, &key);
-	if (k == khp_end(DentryCache))
+	// khashp's generic get/put equality handling is inconsistent in this tree,
+	// so match (parent,name) explicitly while holding the cache lock.
+	khint_t k;
+	khp_foreach(DentryCache, k)
 	{
-		spinlock_release(&DentryCacheLock);
-		return nullptr;
-	}
+		dentry_key_t existingKey = {};
+		khp_get_key(DentryCache, k, &existingKey);
 
-	dentry_t* value = nullptr;
-	khp_get_val(DentryCache, k, &value);
-	if (value == nullptr)
-	{
+		if (existingKey.parent != parent)
+		{
+			continue;
+		}
+
+		if (existingKey.name == nullptr || strcmp(existingKey.name, name) != 0)
+		{
+			continue;
+		}
+
+		dentry_t* value = nullptr;
+		khp_get_val(DentryCache, k, &value);
 		spinlock_release(&DentryCacheLock);
-		return nullptr;
+		return value;
 	}
 
 	spinlock_release(&DentryCacheLock);
-
-	return value;
+	return nullptr;
 }
 
 dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)

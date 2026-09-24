@@ -125,17 +125,19 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
 {
     unsigned long long passes = 0;
     unsigned long long fails  = 0;
+    VirtualFileSystem  localVfs(nullptr);
+    VirtualFileSystem* vfs    = &localVfs;
 
     kprintf("Arx kernel: vfs_selftest start\n");
 
     LogicLayerCaps* logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
-    if (logicCaps == nullptr || logicCaps->virtualFileSystem == nullptr)
+    if (logicCaps == nullptr)
     {
         vfs_test_log_fail("missing virtual file system", &fails);
         goto done;
     }
 
-    VirtualFileSystem* vfs = logicCaps->virtualFileSystem;
+    {
 
     static dentry_t root = {};
     root.name     = "/";
@@ -573,6 +575,8 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
     else
     {
         passes++;
+    }
+
     }
 
 done:

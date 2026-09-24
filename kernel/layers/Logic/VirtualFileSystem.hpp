@@ -2,10 +2,18 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+#include <klib/khashl/khashp.h>
+#ifdef __cplusplus
+}
+#endif
+
 #include <klib/spinlock.h>
 
 struct ResourceLayerCaps;
-struct khashp_t;
 struct filesystem_t;
 struct filesystem_type_t;
 struct file_operations_t;

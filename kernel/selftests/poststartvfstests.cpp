@@ -17,6 +17,7 @@ extern "C" void run_poststart_vfs_selftests(void* logicLayerCaps)
 {
     unsigned long long passes = 0;
     unsigned long long fails  = 0;
+    VirtualFileSystem* vfs    = nullptr;
 
     kprintf("Arx kernel: poststart_vfs_selftest start\n");
 
@@ -27,7 +28,9 @@ extern "C" void run_poststart_vfs_selftests(void* logicLayerCaps)
         goto done;
     }
 
-    VirtualFileSystem* vfs = logicCaps->virtualFileSystem;
+    vfs = logicCaps->virtualFileSystem;
+
+    {
 
     vfs_path_t start = {};
     vfs_path_t resolved = {};
@@ -62,7 +65,7 @@ extern "C" void run_poststart_vfs_selftests(void* logicLayerCaps)
     if (readResult > 0)
     {
         buffer[(readResult < (int64_t)(sizeof(buffer) - 1)) ? readResult : (int64_t)(sizeof(buffer) - 1)] = '\0';
-        if (strncmp(buffer, "#include", 8) != 0)
+        if (readResult < 8 || memcmp(buffer, "#include", 8) != 0)
         {
             poststart_vfs_test_fail("Read should begin with expected initramfs test.c prefix", &fails);
         }
@@ -79,6 +82,8 @@ extern "C" void run_poststart_vfs_selftests(void* logicLayerCaps)
     else
     {
         passes++;
+    }
+
     }
 
 done:

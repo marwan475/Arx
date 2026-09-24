@@ -209,6 +209,39 @@ flowchart TD
     end
 ```
 
+```mermaid
+flowchart TD
+    subgraph VFS Mount and Open Flow
+        A0[kmain] --> A1[MountRootFileSystem cpio source]
+        A1 --> A2[Resource MountFilesystem]
+        A2 --> A3[Resource GetRootNode]
+        A3 --> A4[wrap backend root into inode]
+        A4 --> A5[create slash dentry]
+        A5 --> A6[create root mount]
+        A6 --> A7[install namespace root mount]
+
+        B0[Open start path flags] --> B1[ResolvePath]
+        B1 --> B2{path component}
+        B2 -->|dot| B1
+        B2 -->|dotdot| B3[parent walk or mount backtrack]
+        B3 --> B1
+        B2 -->|name| B4[dentry cache lookup]
+        B4 --> B5{cache hit}
+        B5 -->|yes| B6[use cached dentry]
+        B5 -->|no| B7[backend Lookup and cache]
+        B6 --> B8[child mount check]
+        B7 --> B8
+        B8 --> B1
+
+        B1 --> B9[resolved inode]
+        B9 --> B10[allocate file struct]
+        B10 --> B11[bind file ops]
+        B11 --> B12[optional backend Open]
+        B12 --> B13[Read Write Seek via backend]
+        B13 --> B14[Retain Close refcount lifecycle]
+    end
+```
+
 
 
 

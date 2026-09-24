@@ -172,7 +172,7 @@ currently all cores wait for the rest of the cores to enter post init then conti
 - Logic
 - Request
 
-### Filesystem Layering
+### Virtual Filesystem Layering
 - Resource owns concrete filesystem backends and exposes them through `ResourceLayerFileSystemCaps`
     - `MountFilesystem`
     - `GetRootNode`
@@ -191,6 +191,9 @@ Startup mount flow:
 
 Current backend:
 - `cpio` through `ResourceFileSystem` using initramfs data provided by platform boot info.
+
+VFS flow diagram:
+- see `docs/DIAGRAMS.md` for `VFS Mount and Open Flow`.
 
 ## Processes
 - Tasks

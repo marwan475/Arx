@@ -2,10 +2,12 @@
 
 struct ResourceLayerCaps;
 class Scheduler;
+class VirtualFileSystem;
 
 struct LogicLayerCaps
 {
 	Scheduler* scheduler;
+	VirtualFileSystem* virtualFileSystem;
 };
 
 class LogicLayerFactory

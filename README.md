@@ -172,6 +172,29 @@ currently all cores wait for the rest of the cores to enter post init then conti
 - Logic
 - Request
 
+### Virtual Filesystem Layering
+- Resource owns concrete filesystem backends and exposes them through `ResourceLayerFileSystemCaps`
+    - `MountFilesystem`
+    - `GetRootNode`
+    - `GetNodeInfo`
+    - `Lookup`
+    - `Read`
+    - `Write`
+- Resource backend objects are opaque handles (`resource_fs_t`, `resource_node_t`) and are not VFS objects.
+- Logic/VFS wraps backend handles into VFS objects (`filesystem_t`, `inode_t`, `dentry_t`, `mount_t`, `file_t`) and gives them Unix-style semantics.
+
+Startup mount flow:
+1. `Dispatcher::StartKernel()` creates Resource and Logic layers.
+2. Logic VFS mounts root via `MountRootFileSystem("cpio", initRamFileSystemManager)`.
+3. Resource returns backend filesystem and root node handles.
+4. Logic creates root inode/dentry/mount and installs root namespace mount.
+
+Current backend:
+- `cpio` through `ResourceFileSystem` using initramfs data provided by platform boot info.
+
+VFS flow diagram:
+- see `docs/DIAGRAMS.md` for `VFS Mount and Open Flow`.
+
 ## Processes
 - Tasks
     - unit of schedulable cpu execution

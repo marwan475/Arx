@@ -147,6 +147,50 @@ size_t strlen(const char* str)
     return len;
 }
 
+int strcmp(const char* lhs, const char* rhs)
+{
+    if (lhs == NULL && rhs == NULL)
+    {
+        return 0;
+    }
+
+    if (lhs == NULL)
+    {
+        return -1;
+    }
+
+    if (rhs == NULL)
+    {
+        return 1;
+    }
+
+    while (*lhs != '\0' && *lhs == *rhs)
+    {
+        lhs++;
+        rhs++;
+    }
+
+    return (int) (unsigned char) *lhs - (int) (unsigned char) *rhs;
+}
+
+char* kstrdup(const char* str)
+{
+    if (str == NULL)
+    {
+        return NULL;
+    }
+
+    size_t len = strlen(str);
+    char*  out = (char*) kmalloc(len + 1);
+    if (out == NULL)
+    {
+        return NULL;
+    }
+
+    memcpy(out, str, len + 1);
+    return out;
+}
+
 // Physical address to higher half direct map
 uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset)
 {

@@ -3,6 +3,7 @@
 #include "layers/Resource/InitRamFileSystemManager.hpp"
 #include "layers/Resource/PhysicalMemoryManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceFileSystem.hpp"
 #include "layers/Resource/TaskManager.hpp"
 #include "layers/Resource/VirtualMemoryManager.hpp"
 #include <platform.h>
@@ -10,6 +11,7 @@
 ResourceLayerFactory::ResourceLayerFactory()
 {
 	ResourceLayerExportCaps = nullptr;
+	ResourceFileSystemExport = nullptr;
 }
 
 ResourceLayerFactory::~ResourceLayerFactory()
@@ -21,6 +23,8 @@ ResourceLayerFactory::~ResourceLayerFactory()
 		delete ResourceLayerExportCaps->taskManager;
 		delete ResourceLayerExportCaps->virtualMemoryManager;
 		delete ResourceLayerExportCaps->initRamFileSystemManager;
+		delete ResourceFileSystemExport;
+		ResourceFileSystemExport = nullptr;
 		delete ResourceLayerExportCaps;
 		ResourceLayerExportCaps = nullptr;
 	}
@@ -39,6 +43,8 @@ ResourceLayerCaps* ResourceLayerFactory::Create()
 	ResourceLayerExportCaps->taskManager           = new TaskManager();
 	ResourceLayerExportCaps->virtualMemoryManager  = new VirtualMemoryManager();
 	ResourceLayerExportCaps->initRamFileSystemManager = new InitRamFileSystemManager(platform.initramfs_size, platform.initramfs_address);
+	ResourceFileSystemExport                        = new ResourceFileSystem(ResourceLayerExportCaps->initRamFileSystemManager);
+	ResourceLayerExportCaps->fileSystemCaps         = ResourceFileSystemExport->GetCaps();
 
 	return ResourceLayerExportCaps;
 }

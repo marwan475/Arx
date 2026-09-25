@@ -50,6 +50,8 @@ extern "C"
     void*     memcpy(void* dest, const void* src, size_t count);
     int       memcmp(const void* lhs, const void* rhs, size_t count);
     size_t    strlen(const char* str);
+    int       strcmp(const char* lhs, const char* rhs);
+    char*     kstrdup(const char* str);
     uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
     uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 

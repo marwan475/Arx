@@ -3,6 +3,7 @@
 
 #include <klib/bitmap.h>
 #include <klib/intrusive_list.h>
+#include <klib/khashl/khashp.h>
 #include <klib/klib.h>
 #include <selftests/selftests.h>
 
@@ -289,8 +290,107 @@ static void ilist_test(void)
     }
 }
 
+static void khashp_selftest_log_fail(const char* message, size_t* failures)
+{
+    (*failures)++;
+    kprintf("Arx kernel: khashp_selftest FAIL: %s\n", message);
+}
+
+static void khashp_selftest(void)
+{
+    size_t failures = 0;
+    size_t passes   = 0;
+
+    kprintf("Arx kernel: khashp_selftest start\n");
+
+    khashp_t* h = khp_init(sizeof(uint32_t), sizeof(int32_t), NULL, NULL);
+    if (h == NULL)
+    {
+        khashp_selftest_log_fail("khp_init returned NULL", &failures);
+        kprintf("Arx kernel: khashp_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+        kprintf("Arx kernel: khashp_selftest RESULT=FAIL\n");
+        return;
+    }
+    passes++;
+
+    const uint32_t key = 42;
+    int            absent;
+    khint_t        pos = khp_put(h, &key, &absent);
+    if (absent != 1)
+    {
+        khashp_selftest_log_fail("khp_put first insert should mark key absent", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (pos == khp_end(h))
+    {
+        khashp_selftest_log_fail("khp_put returned end iterator", &failures);
+    }
+    else
+    {
+        const int32_t value = 1337;
+        int32_t       got   = 0;
+        khp_set_val(h, pos, &value);
+        khp_get_val(h, pos, &got);
+        if (got != value)
+        {
+            khashp_selftest_log_fail("khp_set_val/khp_get_val mismatch", &failures);
+        }
+        else
+        {
+            passes++;
+        }
+    }
+
+    khint_t found = khp_get(h, &key);
+    if (found == khp_end(h))
+    {
+        khashp_selftest_log_fail("khp_get did not find inserted key", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (!khp_del(h, found))
+    {
+        khashp_selftest_log_fail("khp_del failed", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    if (khp_get(h, &key) != khp_end(h))
+    {
+        khashp_selftest_log_fail("key still found after deletion", &failures);
+    }
+    else
+    {
+        passes++;
+    }
+
+    khp_destroy(h);
+
+    kprintf("Arx kernel: khashp_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+    if (failures == 0)
+    {
+        kprintf("Arx kernel: khashp_selftest RESULT=PASS\n");
+        KDEBUG("khashp_selftest passed with %llu checks\n", (unsigned long long) passes);
+    }
+    else
+    {
+        kprintf("Arx kernel: khashp_selftest RESULT=FAIL\n");
+        KDEBUG("khashp_selftest failed with %llu checks\n", (unsigned long long) failures);
+    }
+}
+
 void run_datastructures_selftests(void)
 {
     bitmap_selftest();
     ilist_test();
+    khashp_selftest();
 }

@@ -1133,6 +1133,471 @@ class ArxResourceManagers:
             return None
 
 
+class ArxVfsCommand(gdb.Command):
+    """Print VirtualFileSystem paths (or detailed state with --verbose)."""
+
+    def __init__(self):
+        super().__init__("arx-vfs", gdb.COMMAND_STATUS)
+
+    @staticmethod
+    def _eval(expr):
+        try:
+            return gdb.parse_and_eval(expr)
+        except gdb.error:
+            return None
+
+    @staticmethod
+    def _read_ptr_at(base_addr, index):
+        if base_addr == 0:
+            return 0
+        try:
+            void_pp = gdb.lookup_type("void").pointer().pointer()
+            slot_ptr = gdb.Value(base_addr).cast(void_pp) + index
+            return int(slot_ptr.dereference())
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _cast_ptr(addr, type_name):
+        if addr == 0:
+            return None
+        try:
+            return gdb.Value(addr).cast(gdb.lookup_type(type_name).pointer())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_cstr(char_ptr):
+        try:
+            if int(char_ptr) == 0:
+                return "<null>"
+            return char_ptr.string(errors="replace")
+        except Exception:
+            return "<unreadable>"
+
+    @staticmethod
+    def _inode_type_name(raw_value):
+        mapping = {
+            0: "REGULAR",
+            1: "DIRECTORY",
+            2: "SYMLINK",
+            3: "CHAR_DEVICE",
+            4: "BLOCK_DEVICE",
+        }
+        return mapping.get(raw_value, "UNKNOWN({})".format(raw_value))
+
+    @staticmethod
+    def _dentry_path(dentry_ptr, max_depth=64):
+        try:
+            addr = int(dentry_ptr)
+        except Exception:
+            return "<invalid>"
+
+        if addr == 0:
+            return "<null>"
+
+        parts = []
+        seen = set()
+        cur = dentry_ptr
+        depth = 0
+
+        while int(cur) != 0 and depth < max_depth:
+            cur_addr = int(cur)
+            if cur_addr in seen:
+                return "<cycle>"
+            seen.add(cur_addr)
+
+            name = ArxVfsCommand._safe_cstr(cur["name"])
+            parent = cur["parent"]
+
+            if int(parent) == 0:
+                if name == "/" or name == "":
+                    break
+                parts.append(name)
+                break
+
+            parts.append(name)
+            cur = parent
+            depth += 1
+
+        if depth >= max_depth:
+            return "<depth-limit>"
+
+        if len(parts) == 0:
+            return "/"
+
+        parts.reverse()
+        return "/" + "/".join(parts)
+
+    @staticmethod
+    def _resolve_vfs_from_arg(arg):
+        text = (arg or "").strip()
+        if text == "":
+            return None
+
+        try:
+            value = gdb.parse_and_eval(text)
+            if int(value) == 0:
+                return None
+            if value.type.code == gdb.TYPE_CODE_PTR:
+                return value
+            return value.address
+        except Exception as err:
+            raise gdb.GdbError("invalid VFS expression '{}': {}".format(text, err))
+
+    @staticmethod
+    def _resolve_vfs_default():
+        exprs = [
+            "((Dispatcher*)platform.dispacher)->GetLogicLayerCaps()->virtualFileSystem",
+            "((Dispatcher*)platform.dispatcher)->GetLogicLayerCaps()->virtualFileSystem",
+            "((LogicLayerCaps*)((LogicLayerFactory*)((Dispatcher*)platform.dispacher)->logicLayerFactory)->LogicLayerExportCaps)->virtualFileSystem",
+            "((LogicLayerCaps*)((LogicLayerFactory*)((Dispatcher*)platform.dispatcher)->logicLayerFactory)->LogicLayerExportCaps)->virtualFileSystem",
+        ]
+
+        for expr in exprs:
+            value = ArxVfsCommand._eval(expr)
+            if value is None:
+                continue
+            try:
+                if int(value) != 0:
+                    return value
+            except Exception:
+                pass
+
+        dispatcher_addr = ArxResourceManagers.resolve_dispatcher_addr()
+        if dispatcher_addr == 0:
+            return None
+
+        logic_factory_addr = ArxVfsCommand._read_ptr_at(dispatcher_addr, 1)
+        if logic_factory_addr == 0:
+            return None
+
+        logic_caps_addr = ArxVfsCommand._read_ptr_at(logic_factory_addr, 0)
+        if logic_caps_addr == 0:
+            return None
+
+        vfs_addr = ArxVfsCommand._read_ptr_at(logic_caps_addr, 1)
+        if vfs_addr == 0:
+            return None
+
+        casted = ArxVfsCommand._cast_ptr(vfs_addr, "VirtualFileSystem")
+        if casted is not None:
+            return casted
+
+        return gdb.Value(vfs_addr)
+
+    def _resolve_vfs(self, arg):
+        from_arg = self._resolve_vfs_from_arg(arg)
+        if from_arg is not None:
+            return from_arg
+
+        resolved = self._resolve_vfs_default()
+        if resolved is None:
+            raise gdb.GdbError(
+                "Failed to resolve VirtualFileSystem pointer. Pass one explicitly: arx-vfs <vfs_expr>"
+            )
+        return resolved
+
+    @staticmethod
+    def _print_inode(prefix, inode_ptr):
+        inode_addr = int(inode_ptr)
+        print("{}inode: 0x{:016x}".format(prefix, inode_addr))
+        if inode_addr == 0:
+            return
+
+        try:
+            inode = inode_ptr.dereference()
+            inode_num = int(inode["inodeNumber"])
+            inode_type = int(inode["type"])
+            inode_size = int(inode["size"])
+            inode_fs = int(inode["filesystem"])
+            inode_ops = int(inode["inodeOps"])
+            file_ops = int(inode["fileOps"])
+
+            print("{}  inodeNumber: {}".format(prefix, inode_num))
+            print("{}  type:        {}".format(prefix, ArxVfsCommand._inode_type_name(inode_type)))
+            print("{}  size:        {}".format(prefix, inode_size))
+            print("{}  filesystem:  0x{:016x}".format(prefix, inode_fs))
+            print("{}  inodeOps:    0x{:016x}".format(prefix, inode_ops))
+            print("{}  fileOps:     0x{:016x}".format(prefix, file_ops))
+        except Exception as err:
+            print("{}  <failed to decode inode: {}>".format(prefix, err))
+
+    def _print_mount(self, index, mount_ptr):
+        mount_addr = int(mount_ptr)
+        print("mount[{}] @ 0x{:016x}".format(index, mount_addr))
+
+        try:
+            mount = mount_ptr.dereference()
+        except Exception as err:
+            print("  <failed to decode mount: {}>".format(err))
+            print("")
+            return
+
+        fs_ptr = mount["filesystem"]
+        root_ptr = mount["root"]
+        parent_mount_ptr = mount["parentMount"]
+        mount_point_ptr = mount["mountPoint"]
+        next_ptr = mount["next"]
+
+        print("  filesystem:  0x{:016x}".format(int(fs_ptr)))
+        print("  root:        0x{:016x}".format(int(root_ptr)))
+        print("  parentMount: 0x{:016x}".format(int(parent_mount_ptr)))
+        print("  mountPoint:  0x{:016x}".format(int(mount_point_ptr)))
+        print("  next:        0x{:016x}".format(int(next_ptr)))
+
+        if int(fs_ptr) != 0:
+            try:
+                fs = fs_ptr.dereference()
+                fs_type_ptr = fs["type"]
+                root_inode_ptr = fs["rootInode"]
+                print("  fs.rootInode: 0x{:016x}".format(int(root_inode_ptr)))
+                if int(fs_type_ptr) != 0:
+                    fs_type = fs_type_ptr.dereference()
+                    fs_name = self._safe_cstr(fs_type["name"])
+                    print("  fs.type:      {}".format(fs_name))
+                else:
+                    print("  fs.type:      <null>")
+            except Exception as err:
+                print("  <failed to decode filesystem: {}>".format(err))
+
+        if int(root_ptr) != 0:
+            try:
+                root = root_ptr.dereference()
+                root_name = self._safe_cstr(root["name"])
+                root_path = self._dentry_path(root_ptr)
+                print("  root.name:    {}".format(root_name))
+                print("  root.path:    {}".format(root_path))
+                self._print_inode("  root.", root["inode"])
+            except Exception as err:
+                print("  <failed to decode root dentry: {}>".format(err))
+
+        if int(mount_point_ptr) != 0:
+            try:
+                mount_path = self._dentry_path(mount_point_ptr)
+                print("  mounted_at:   {}".format(mount_path))
+            except Exception as err:
+                print("  mounted_at:   <failed: {}>".format(err))
+
+        print("")
+
+    @staticmethod
+    def _collect_paths_from_dentry_cache(vfs):
+        paths = []
+
+        try:
+            dcache = vfs["DentryCache"]
+            if int(dcache) == 0:
+                return paths
+
+            buckets = dcache["b"]
+            used_words = dcache["used"]
+            if int(buckets) == 0 or int(used_words) == 0:
+                return paths
+
+            bits = int(dcache["bits"])
+            capacity = 1 << bits
+            key_len = int(dcache["key_len"])
+            val_len = int(dcache["val_len"])
+            stride = key_len + val_len
+
+            byte_ptr_t = gdb.lookup_type("unsigned char").pointer()
+            u32_ptr_t = gdb.lookup_type("uint32_t").pointer()
+            dentry_pp_t = gdb.lookup_type("dentry_t").pointer().pointer()
+
+            buckets_base = buckets.cast(byte_ptr_t)
+            used_base = used_words.cast(u32_ptr_t)
+
+            max_entries = 8192
+            scanned = 0
+
+            for i in range(capacity):
+                word = int((used_base + (i >> 5)).dereference())
+                if ((word >> (i & 0x1F)) & 1) == 0:
+                    continue
+
+                bucket = buckets_base + (i * stride)
+                value_ptr = (bucket + key_len).cast(dentry_pp_t)
+                dentry_ptr = value_ptr.dereference()
+
+                if int(dentry_ptr) == 0:
+                    continue
+
+                paths.append(ArxVfsCommand._dentry_path(dentry_ptr))
+
+                scanned += 1
+                if scanned >= max_entries:
+                    break
+        except Exception:
+            pass
+
+        return paths
+
+    def _print_paths_only(self, vfs_ptr):
+        vfs = vfs_ptr.dereference()
+
+        try:
+            mount_head = vfs["MountListHead"]
+            root_mount = vfs["Namespace"]["rootMount"]
+        except Exception as err:
+            raise gdb.GdbError("failed to decode VFS namespace/mount list: {}".format(err))
+
+        print("Arx VFS paths")
+        print("=============")
+        print("vfs: 0x{:016x}".format(int(vfs_ptr)))
+        print("rootMount: 0x{:016x}".format(int(root_mount)))
+        print("")
+
+        print("Mount paths")
+        print("-----------")
+        if int(mount_head) == 0:
+            print("(no registered mounts)")
+        else:
+            seen = set()
+            current = mount_head
+            index = 0
+            max_mounts = 256
+
+            while int(current) != 0 and index < max_mounts:
+                cur_addr = int(current)
+                if cur_addr in seen:
+                    print("<cycle detected at mount 0x{:016x}>".format(cur_addr))
+                    break
+
+                seen.add(cur_addr)
+                mount = current.dereference()
+
+                mount_point = mount["mountPoint"]
+                root_dentry = mount["root"]
+
+                root_path = self._dentry_path(root_dentry) if int(root_dentry) != 0 else "<null>"
+                if int(mount["parentMount"]) == 0:
+                    print("[rootfs] {}".format(root_path))
+                else:
+                    at_path = self._dentry_path(mount_point) if int(mount_point) != 0 else "<null>"
+                    print("[mount]  {} -> {}".format(at_path, root_path))
+
+                current = mount["next"]
+                index += 1
+
+            if index >= max_mounts:
+                print("<stopped after {} mounts (sanity limit)>".format(max_mounts))
+
+        print("")
+        print("Cached dentries")
+        print("--------------")
+
+        cached_paths = self._collect_paths_from_dentry_cache(vfs)
+        if len(cached_paths) == 0:
+            print("(no cached dentries)")
+            return
+
+        unique_paths = sorted(set(cached_paths))
+        for p in unique_paths:
+            print(p)
+
+    def invoke(self, arg, from_tty):
+        del from_tty
+
+        raw = (arg or "").strip()
+        verbose = False
+        vfs_expr = raw
+
+        if raw.startswith("--verbose"):
+            verbose = True
+            vfs_expr = raw[len("--verbose"):].strip()
+        elif raw.startswith("-v"):
+            verbose = True
+            vfs_expr = raw[2:].strip()
+
+        vfs_ptr = self._resolve_vfs(vfs_expr)
+        vfs_addr = int(vfs_ptr)
+        if vfs_addr == 0:
+            raise gdb.GdbError("VirtualFileSystem pointer is NULL")
+
+        if not verbose:
+            self._print_paths_only(vfs_ptr)
+            return
+
+        try:
+            vfs = vfs_ptr.dereference()
+        except Exception as err:
+            raise gdb.GdbError("failed to dereference VirtualFileSystem: {}".format(err))
+
+        print("Arx VFS state")
+        print("=============")
+        print("vfs: 0x{:016x}".format(vfs_addr))
+
+        try:
+            namespace = vfs["Namespace"]
+            root_mount = namespace["rootMount"]
+        except Exception as err:
+            raise gdb.GdbError("failed to decode Namespace/rootMount: {}".format(err))
+
+        try:
+            mount_head = vfs["MountListHead"]
+        except Exception as err:
+            raise gdb.GdbError("failed to decode MountListHead: {}".format(err))
+
+        dcache_ptr = 0
+        dcache_count = "<unknown>"
+        dcache_capacity = "<unknown>"
+        try:
+            dcache = vfs["DentryCache"]
+            dcache_ptr = int(dcache)
+            if dcache_ptr != 0:
+                dcache_count = int(dcache["count"])
+                if int(dcache["b"]) != 0:
+                    dcache_capacity = 1 << int(dcache["bits"])
+                else:
+                    dcache_capacity = 0
+        except Exception:
+            pass
+
+        print("rootMount:     0x{:016x}".format(int(root_mount)))
+        print("mountListHead: 0x{:016x}".format(int(mount_head)))
+        print("dentryCache:   0x{:016x}".format(dcache_ptr))
+        print("dentryCount:   {}".format(dcache_count))
+        print("dentryCap:     {}".format(dcache_capacity))
+        print("")
+
+        if int(mount_head) == 0:
+            print("(no registered mounts)")
+            return
+
+        print("Mounts")
+        print("------")
+
+        seen = set()
+        current = mount_head
+        index = 0
+        max_mounts = 256
+
+        while int(current) != 0 and index < max_mounts:
+            cur_addr = int(current)
+            if cur_addr in seen:
+                print("mount[{}] @ 0x{:016x}".format(index, cur_addr))
+                print("  <cycle detected in mount list>")
+                print("")
+                break
+
+            seen.add(cur_addr)
+            self._print_mount(index, current)
+
+            try:
+                current = current["next"]
+            except Exception as err:
+                print("mount[{}] next decode failed: {}".format(index, err))
+                break
+            index += 1
+
+        if index >= max_mounts:
+            print("<stopped after {} mounts (sanity limit)>".format(max_mounts))
+
+
+ArxVfsCommand()
+
+
 class ArxInitRamFsCommand(gdb.Command):
     """Print initramfs archive entries parsed by InitRamFileSystemManager."""
 

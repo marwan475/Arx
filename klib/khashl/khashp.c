@@ -124,7 +124,7 @@ KHP_SCOPE khint_t khp_get(const khashp_t *h, const void *key)
 	n_buckets = (khint_t)1U << h->bits;
 	mask = n_buckets - 1U;
 	i = last = __kh_h2b(hash, h->bits);
-	while (__kh_used(h->used, i) && h->key_eq(khp_get_bucket(h, i), key, h->key_len) != 0) {
+	while (__kh_used(h->used, i) && !h->key_eq(khp_get_bucket(h, i), key, h->key_len)) {
 		i = (i + 1U) & mask;
 		if (i == last) return n_buckets;
 	}

@@ -69,8 +69,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     task_t*      surrogateTask       = nullptr;
     auto         cpuId               = arch_cpu_id();
 
-    kprintf("Arx kernel: task_selftest start\n");
-    kprintf("Arx kernel: task_selftest start\n");
+    selftest_case_begin("task_selftest");
 
     ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     if (caps == nullptr || caps->taskManager == nullptr)
@@ -165,14 +164,5 @@ cleanup:
     }
 
 done:
-    kprintf("Arx kernel: task_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) fails);
-    kprintf("Arx kernel: task_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
-    if (fails == 0)
-    {
-        KDEBUG("task_selftest passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        KDEBUG("task_selftest failed with %llu checks\n", (unsigned long long) fails);
-    }
+    selftest_case_end("task_selftest", passes, fails);
 }

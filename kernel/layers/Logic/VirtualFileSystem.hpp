@@ -94,6 +94,8 @@ struct inode_t
 	const file_operations_t*  fileOps;
 
 	void* privateData;
+
+	spinlock_t ioLock;
 };
 
 struct dentry_t
@@ -138,6 +140,8 @@ struct file_t
 	const file_operations_t* operations;
 
 	void* privateData;
+
+	spinlock_t ioLock;
 
 	spinlock_t refLock;
 

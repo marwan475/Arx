@@ -106,14 +106,13 @@ static void vmm_test(void)
     const size_t kernel_used_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
     const size_t kernel_free_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions);
 
-    kprintf("Arx kernel: vmm_test start\n");
+    selftest_case_begin("vmm_test");
 
     void* range_block_va = pmm_alloc(PAGE_SIZE * 2ULL);
     if (range_block_va == NULL)
     {
         vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
-        kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+        selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
@@ -128,8 +127,7 @@ static void vmm_test(void)
     {
         vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
         pmm_free(range_block_va);
-        kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
+        selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
     passes++;
@@ -301,17 +299,7 @@ static void vmm_test(void)
 
     pmm_free(range_block_va);
 
-    kprintf("Arx kernel: vmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: vmm_test RESULT=PASS\n");
-        KDEBUG("vmm_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: vmm_test RESULT=FAIL\n");
-        KDEBUG("vmm_test failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void pmm_test(void)
@@ -329,12 +317,12 @@ static void pmm_test(void)
     size_t baseline_used_pages     = 0;
     size_t scenario_expected_pages = 0;
 
-    kprintf("Arx kernel: pmm_test start\n");
+    selftest_case_begin("pmm_test");
 
     if (platform.cpus[arch_cpu_id()].numa_node->zone.buddy_metadata == NULL)
     {
         pmm_test_log_fail("zone metadata is null (did pmm_init run?)", &failures);
-        kprintf("Arx kernel: pmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_end("pmm_test", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
@@ -557,17 +545,7 @@ static void pmm_test(void)
 
     passes++;
 
-    kprintf("Arx kernel: pmm_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: pmm_test RESULT=PASS\n");
-        KDEBUG("pmm_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: pmm_test RESULT=FAIL\n");
-        KDEBUG("pmm_test failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("pmm_test", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void heap_test_log_fail(const char* message, size_t* failures)
@@ -584,15 +562,15 @@ static void heap_test(void)
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     if (cpu->numa_node == NULL)
     {
+        selftest_case_begin("heap_test");
         heap_test_log_fail("cpu numa_node is NULL", &failures);
-        kprintf("Arx kernel: heap_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-        kprintf("Arx kernel: heap_test RESULT=FAIL\n");
+        selftest_case_end("heap_test", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
     kernel_heap_t* heap = &cpu->numa_node->heap;
 
-    kprintf("Arx kernel: heap_test start\n");
+    selftest_case_begin("heap_test");
 
     if (heap_alloc(heap, 0) != NULL)
     {
@@ -737,22 +715,14 @@ static void heap_test(void)
     }
     passes++;
 
-    kprintf("Arx kernel: heap_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: heap_test RESULT=PASS\n");
-        KDEBUG("heap_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: heap_test RESULT=FAIL\n");
-        KDEBUG("heap_test failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("heap_test", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 void run_memory_selftests(void)
 {
+    selftest_group_begin("memory");
     pmm_test();
     vmm_test();
     heap_test();
+    selftest_group_end("memory");
 }

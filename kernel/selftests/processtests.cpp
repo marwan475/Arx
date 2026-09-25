@@ -82,7 +82,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     task_t*    taskB     = nullptr;
     virt_addr_space_t* currentSpace = nullptr;
 
-    kprintf("Arx kernel: process_selftest start\n");
+    selftest_case_begin("process_selftest");
 
     ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
@@ -225,14 +225,5 @@ cleanup:
     }
 
 done:
-    kprintf("Arx kernel: process_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) fails);
-    kprintf("Arx kernel: process_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
-    if (fails == 0)
-    {
-        KDEBUG("process_selftest passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        KDEBUG("process_selftest failed with %llu checks\n", (unsigned long long) fails);
-    }
+    selftest_case_end("process_selftest", passes, fails);
 }

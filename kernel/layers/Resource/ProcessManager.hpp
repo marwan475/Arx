@@ -50,8 +50,6 @@ public:
     bool       FreeProcess(process_t* process);
     bool       AddTask(process_t* process, task_t* task);
     int64_t    AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags);
-    file_handle_t GetFileDescriptor(process_t* process, uint64_t fd, uint32_t* flagsOut) const;
-    bool       RemoveFileDescriptor(process_t* process, uint64_t fd, file_handle_t* fileOut, uint32_t* flagsOut);
     bool       ActivateProcessAddressSpace(process_t* process);
     task_t*    GetTasks(process_t* process) const;
 

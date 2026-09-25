@@ -38,7 +38,7 @@ static void bitmap_selftest(void)
 
     uint8_t bitmap[BITMAP_BYTES_FOR_BITS(BIT_COUNT)];
 
-    kprintf("Arx kernel: bitmap_selftest start\n");
+    selftest_case_begin("bitmap_selftest");
 
     bitmap_init(bitmap, BIT_COUNT);
     bool all_clear = true;
@@ -153,17 +153,7 @@ static void bitmap_selftest(void)
         passes++;
     }
 
-    kprintf("Arx kernel: bitmap_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: bitmap_selftest RESULT=PASS\n");
-        KDEBUG("bitmap_selftest passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: bitmap_selftest RESULT=FAIL\n");
-        KDEBUG("bitmap_selftest failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("bitmap_selftest", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void ilist_test(void)
@@ -185,7 +175,7 @@ static void ilist_test(void)
 
     ilist_test_node_t* head = NULL;
 
-    kprintf("Arx kernel: ilist_test start\n");
+    selftest_case_begin("ilist_test");
 
     ILIST_NODE_INIT(&n1);
     ILIST_NODE_INIT(&n2);
@@ -277,17 +267,7 @@ static void ilist_test(void)
         passes++;
     }
 
-    kprintf("Arx kernel: ilist_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: ilist_test RESULT=PASS\n");
-        KDEBUG("ilist_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: ilist_test RESULT=FAIL\n");
-        KDEBUG("ilist_test failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("ilist_test", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void khashp_selftest_log_fail(const char* message, size_t* failures)
@@ -301,14 +281,13 @@ static void khashp_selftest(void)
     size_t failures = 0;
     size_t passes   = 0;
 
-    kprintf("Arx kernel: khashp_selftest start\n");
+    selftest_case_begin("khashp_selftest");
 
     khashp_t* h = khp_init(sizeof(uint32_t), sizeof(int32_t), NULL, NULL);
     if (h == NULL)
     {
         khashp_selftest_log_fail("khp_init returned NULL", &failures);
-        kprintf("Arx kernel: khashp_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-        kprintf("Arx kernel: khashp_selftest RESULT=FAIL\n");
+        selftest_case_end("khashp_selftest", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
     passes++;
@@ -375,22 +354,14 @@ static void khashp_selftest(void)
 
     khp_destroy(h);
 
-    kprintf("Arx kernel: khashp_selftest summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: khashp_selftest RESULT=PASS\n");
-        KDEBUG("khashp_selftest passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: khashp_selftest RESULT=FAIL\n");
-        KDEBUG("khashp_selftest failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("khashp_selftest", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 void run_datastructures_selftests(void)
 {
+    selftest_group_begin("datastructures");
     bitmap_selftest();
     ilist_test();
     khashp_selftest();
+    selftest_group_end("datastructures");
 }

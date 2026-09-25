@@ -31,6 +31,8 @@ extern "C" void kmain(void)
         poststartkerneltests((void*) resourceLayerCaps, (void*) logicLayerCaps);
     }
 
+    selftest_print_summary();
+
     for (;;)
     {
         arch_pause();

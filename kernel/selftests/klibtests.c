@@ -231,21 +231,11 @@ void run_klib_selftests(void)
     size_t failures = 0;
     size_t passes   = 0;
 
-    kprintf("Arx kernel: klib_test start\n");
+    selftest_case_begin("klib_test");
 
     vmalloc_test(&passes, &failures);
     kmalloc_test(&passes, &failures);
     kzalloc_test(&passes, &failures);
 
-    kprintf("Arx kernel: klib_test summary: pass=%llu fail=%llu\n", (unsigned long long) passes, (unsigned long long) failures);
-    if (failures == 0)
-    {
-        kprintf("Arx kernel: klib_test RESULT=PASS\n");
-        KDEBUG("klib_test passed with %llu checks\n", (unsigned long long) passes);
-    }
-    else
-    {
-        kprintf("Arx kernel: klib_test RESULT=FAIL\n");
-        KDEBUG("klib_test failed with %llu checks\n", (unsigned long long) failures);
-    }
+    selftest_case_end("klib_test", (unsigned long long) passes, (unsigned long long) failures);
 }

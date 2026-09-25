@@ -28,6 +28,26 @@ struct poststart_vfs_process_test_context_t
 
 static poststart_vfs_process_test_context_t g_poststart_vfs_process_ctx;
 
+struct poststart_vfs_two_process_sync_context_t
+{
+    VirtualFileSystem* vfs;
+    ProcessManager*    processManager;
+    TaskManager*       taskManager;
+    task_t*            bspTask;
+
+    const char*        payload;
+    uint64_t           payloadLen;
+    uint32_t           rounds;
+
+    volatile uint32_t  completedRounds;
+    volatile int       reached;
+    volatile int       passed;
+    volatile int       failed;
+};
+
+static poststart_vfs_two_process_sync_context_t g_poststart_vfs_sync_ctx_a;
+static poststart_vfs_two_process_sync_context_t g_poststart_vfs_sync_ctx_b;
+
 static void poststart_vfs_test_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
@@ -247,6 +267,141 @@ static void poststart_vfs_process_file_task(void* arg)
     }
 }
 
+static void poststart_vfs_two_process_sync_task(void* arg)
+{
+    poststart_vfs_two_process_sync_context_t* ctx = static_cast<poststart_vfs_two_process_sync_context_t*>(arg);
+    if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->bspTask == nullptr ||
+        ctx->payload == nullptr || ctx->payloadLen == 0)
+    {
+        if (ctx != nullptr)
+        {
+            ctx->failed = 1;
+            ctx->reached = 1;
+        }
+
+        for (;;)
+        {
+            arch_pause();
+        }
+    }
+
+    ctx->reached = 1;
+
+    process_t* currentProcess = ctx->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        ctx->failed = 1;
+        ctx->taskManager->ExecuteTask(ctx->bspTask);
+        for (;;)
+        {
+            arch_pause();
+        }
+    }
+
+    vfs_path_t start = {};
+    file_t* opened = ctx->vfs->Open(start, "/test.txt", 0);
+    if (opened == nullptr)
+    {
+        ctx->failed = 1;
+        ctx->taskManager->ExecuteTask(ctx->bspTask);
+        for (;;)
+        {
+            arch_pause();
+        }
+    }
+
+    const int64_t fd = ctx->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(opened), FD_FLAG_NONE);
+    if (fd < 0)
+    {
+        (void) ctx->vfs->Close(opened);
+        ctx->failed = 1;
+        ctx->taskManager->ExecuteTask(ctx->bspTask);
+        for (;;)
+        {
+            arch_pause();
+        }
+    }
+
+    for (uint32_t round = 0; round < ctx->rounds; ++round)
+    {
+        if (ctx->vfs->Seek(opened, 0, 0) < 0)
+        {
+            currentProcess->fileDescriptors[fd].file = nullptr;
+            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            (void) ctx->vfs->Close(opened);
+            ctx->failed = 1;
+            ctx->taskManager->ExecuteTask(ctx->bspTask);
+            for (;;)
+            {
+                arch_pause();
+            }
+        }
+
+        const int64_t writeBytes = ctx->vfs->Write(opened, ctx->payload, ctx->payloadLen);
+        if (writeBytes != (int64_t) ctx->payloadLen)
+        {
+            currentProcess->fileDescriptors[fd].file = nullptr;
+            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            (void) ctx->vfs->Close(opened);
+            ctx->failed = 1;
+            ctx->taskManager->ExecuteTask(ctx->bspTask);
+            for (;;)
+            {
+                arch_pause();
+            }
+        }
+
+        if (ctx->vfs->Seek(opened, 0, 0) < 0)
+        {
+            currentProcess->fileDescriptors[fd].file = nullptr;
+            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            (void) ctx->vfs->Close(opened);
+            ctx->failed = 1;
+            ctx->taskManager->ExecuteTask(ctx->bspTask);
+            for (;;)
+            {
+                arch_pause();
+            }
+        }
+
+        char verify[64] = {};
+        const int64_t verifyBytes = ctx->vfs->Read(opened, verify, ctx->payloadLen);
+        if (verifyBytes != (int64_t) ctx->payloadLen || memcmp(verify, ctx->payload, ctx->payloadLen) != 0)
+        {
+            currentProcess->fileDescriptors[fd].file = nullptr;
+            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            (void) ctx->vfs->Close(opened);
+            ctx->failed = 1;
+            ctx->taskManager->ExecuteTask(ctx->bspTask);
+            for (;;)
+            {
+                arch_pause();
+            }
+        }
+
+        ctx->completedRounds = round + 1;
+        ctx->taskManager->ExecuteTask(ctx->bspTask);
+    }
+
+    currentProcess->fileDescriptors[fd].file = nullptr;
+    currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+
+    if (ctx->vfs->Close(opened) != 0)
+    {
+        ctx->failed = 1;
+    }
+    else
+    {
+        ctx->passed = 1;
+    }
+
+    ctx->taskManager->ExecuteTask(ctx->bspTask);
+    for (;;)
+    {
+        arch_pause();
+    }
+}
+
 extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 {
     unsigned long long passes = 0;
@@ -259,7 +414,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
     task_t* task = nullptr;
     virt_addr_space_t* currentSpace = nullptr;
 
-    kprintf("Arx kernel: poststart_vfs_selftest start\n");
+    selftest_case_begin("poststart_vfs_selftest");
 
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps* logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
@@ -409,15 +564,215 @@ process_cleanup:
     }
     }
 
+    {
+    process_t* processA = nullptr;
+    process_t* processB = nullptr;
+    task_t* taskA = nullptr;
+    task_t* taskB = nullptr;
+    char syncOriginal[128] = {};
+    int64_t syncOriginalBytes = -1;
+
+    static const char payloadA[] = "SYNC-A\n";
+    static const char payloadB[] = "SYNC-B\n";
+    static const uint32_t syncRounds = 4;
+
+    memset(&g_poststart_vfs_sync_ctx_a, 0, sizeof(g_poststart_vfs_sync_ctx_a));
+    memset(&g_poststart_vfs_sync_ctx_b, 0, sizeof(g_poststart_vfs_sync_ctx_b));
+
+    g_poststart_vfs_sync_ctx_a.vfs = vfs;
+    g_poststart_vfs_sync_ctx_a.processManager = processManager;
+    g_poststart_vfs_sync_ctx_a.taskManager = taskManager;
+    g_poststart_vfs_sync_ctx_a.bspTask = taskManager->GetCurrentTask();
+    g_poststart_vfs_sync_ctx_a.payload = payloadA;
+    g_poststart_vfs_sync_ctx_a.payloadLen = (uint64_t) (sizeof(payloadA) - 1);
+    g_poststart_vfs_sync_ctx_a.rounds = syncRounds;
+
+    g_poststart_vfs_sync_ctx_b.vfs = vfs;
+    g_poststart_vfs_sync_ctx_b.processManager = processManager;
+    g_poststart_vfs_sync_ctx_b.taskManager = taskManager;
+    g_poststart_vfs_sync_ctx_b.bspTask = taskManager->GetCurrentTask();
+    g_poststart_vfs_sync_ctx_b.payload = payloadB;
+    g_poststart_vfs_sync_ctx_b.payloadLen = (uint64_t) (sizeof(payloadB) - 1);
+    g_poststart_vfs_sync_ctx_b.rounds = syncRounds;
+
+    if (g_poststart_vfs_sync_ctx_a.bspTask == nullptr || g_poststart_vfs_sync_ctx_b.bspTask == nullptr)
+    {
+        poststart_vfs_test_fail("missing BSP task for two-process sync test", &fails);
+        goto sync_cleanup;
+    }
+
+    {
+    vfs_path_t start = {};
+    file_t* baseline = vfs->Open(start, "/test.txt", 0);
+    if (baseline == nullptr)
+    {
+        poststart_vfs_test_fail("failed to open /test.txt baseline for two-process sync test", &fails);
+        goto sync_cleanup;
+    }
+
+    syncOriginalBytes = vfs->Read(baseline, syncOriginal, sizeof(syncOriginal));
+    if (syncOriginalBytes <= 0)
+    {
+        poststart_vfs_test_fail("failed to read baseline /test.txt bytes for sync test", &fails);
+        (void) vfs->Close(baseline);
+        goto sync_cleanup;
+    }
+
+    if (vfs->Close(baseline) != 0)
+    {
+        poststart_vfs_test_fail("failed to close baseline /test.txt for sync test", &fails);
+        goto sync_cleanup;
+    }
+    }
+
+    currentSpace = platform.cpus[arch_cpu_id()].address_space;
+    if (currentSpace == nullptr)
+    {
+        poststart_vfs_test_fail("missing current address space for two-process sync test", &fails);
+        goto sync_cleanup;
+    }
+
+    processA = processManager->CreateProcess(currentSpace);
+    processB = processManager->CreateProcess(currentSpace);
+    if (processA == nullptr || processB == nullptr)
+    {
+        poststart_vfs_test_fail("failed to create two processes for VFS sync test", &fails);
+        goto sync_cleanup;
+    }
+
+    taskA = taskManager->CreateKernelTask(poststart_vfs_two_process_sync_task, &g_poststart_vfs_sync_ctx_a);
+    taskB = taskManager->CreateKernelTask(poststart_vfs_two_process_sync_task, &g_poststart_vfs_sync_ctx_b);
+    if (taskA == nullptr || taskB == nullptr)
+    {
+        poststart_vfs_test_fail("failed to create two tasks for VFS sync test", &fails);
+        goto sync_cleanup;
+    }
+
+    if (!processManager->AddTask(processA, taskA) || !processManager->AddTask(processB, taskB))
+    {
+        poststart_vfs_test_fail("failed to bind two-process VFS tasks", &fails);
+        goto sync_cleanup;
+    }
+
+    for (uint32_t round = 0; round < syncRounds; ++round)
+    {
+        if (!scheduler->ScheduleProcess(processA->id))
+        {
+            poststart_vfs_test_fail("failed to schedule process A in VFS sync test", &fails);
+            goto sync_cleanup;
+        }
+
+        if (!scheduler->ScheduleProcess(processB->id))
+        {
+            poststart_vfs_test_fail("failed to schedule process B in VFS sync test", &fails);
+            goto sync_cleanup;
+        }
+    }
+
+    if (!scheduler->ScheduleProcess(processA->id) || !scheduler->ScheduleProcess(processB->id))
+    {
+        poststart_vfs_test_fail("failed final schedule for VFS sync task cleanup", &fails);
+        goto sync_cleanup;
+    }
+
+    if (!g_poststart_vfs_sync_ctx_a.reached || !g_poststart_vfs_sync_ctx_b.reached)
+    {
+        poststart_vfs_test_fail("two-process VFS sync tasks were not reached", &fails);
+        goto sync_cleanup;
+    }
+
+    if (g_poststart_vfs_sync_ctx_a.failed || g_poststart_vfs_sync_ctx_b.failed)
+    {
+        poststart_vfs_test_fail("two-process VFS sync task reported failure", &fails);
+        goto sync_cleanup;
+    }
+
+    if (!g_poststart_vfs_sync_ctx_a.passed || !g_poststart_vfs_sync_ctx_b.passed)
+    {
+        poststart_vfs_test_fail("two-process VFS sync task did not reach pass state", &fails);
+        goto sync_cleanup;
+    }
+
+    if (g_poststart_vfs_sync_ctx_a.completedRounds != syncRounds || g_poststart_vfs_sync_ctx_b.completedRounds != syncRounds)
+    {
+        poststart_vfs_test_fail("two-process VFS sync task did not complete all rounds", &fails);
+        goto sync_cleanup;
+    }
+
+    {
+    vfs_path_t start = {};
+    file_t* finalOpen = vfs->Open(start, "/test.txt", 0);
+    if (finalOpen == nullptr)
+    {
+        poststart_vfs_test_fail("failed to open /test.txt for final sync verification", &fails);
+        goto sync_cleanup;
+    }
+
+    char finalVerify[64] = {};
+    const uint64_t expectedLen = g_poststart_vfs_sync_ctx_a.payloadLen;
+    const int64_t finalRead = vfs->Read(finalOpen, finalVerify, expectedLen);
+    if (finalRead != (int64_t) expectedLen)
+    {
+        poststart_vfs_test_fail("final sync verification read failed", &fails);
+        (void) vfs->Close(finalOpen);
+        goto sync_cleanup;
+    }
+
+    const bool matchesA = memcmp(finalVerify, payloadA, expectedLen) == 0;
+    const bool matchesB = memcmp(finalVerify, payloadB, expectedLen) == 0;
+    if (!matchesA && !matchesB)
+    {
+        poststart_vfs_test_fail("final /test.txt content is not one of expected sync payloads", &fails);
+        (void) vfs->Close(finalOpen);
+        goto sync_cleanup;
+    }
+
+    // Restore the original bytes captured before the interleaving sync rounds.
+    if (vfs->Seek(finalOpen, 0, 0) < 0)
+    {
+        poststart_vfs_test_fail("failed to seek for /test.txt restore after sync test", &fails);
+        (void) vfs->Close(finalOpen);
+        goto sync_cleanup;
+    }
+
+    if (vfs->Write(finalOpen, syncOriginal, (uint64_t) syncOriginalBytes) != syncOriginalBytes)
+    {
+        poststart_vfs_test_fail("failed to restore original /test.txt content after sync test", &fails);
+        (void) vfs->Close(finalOpen);
+        goto sync_cleanup;
+    }
+
+    if (vfs->Close(finalOpen) != 0)
+    {
+        poststart_vfs_test_fail("failed to close /test.txt after sync restore", &fails);
+        goto sync_cleanup;
+    }
+    }
+
+    passes++;
+
+sync_cleanup:
+    if (taskA != nullptr)
+    {
+        taskManager->FreeTask(taskA);
+    }
+
+    if (taskB != nullptr)
+    {
+        taskManager->FreeTask(taskB);
+    }
+
+    if (processA != nullptr)
+    {
+        processManager->FreeProcess(processA);
+    }
+
+    if (processB != nullptr)
+    {
+        processManager->FreeProcess(processB);
+    }
+    }
+
 done:
-    kprintf("Arx kernel: poststart_vfs_selftest summary: pass=%llu fail=%llu\n", passes, fails);
-    kprintf("Arx kernel: poststart_vfs_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
-    if (fails == 0)
-    {
-        KDEBUG("poststart_vfs_selftest passed with %llu checks\n", passes);
-    }
-    else
-    {
-        KDEBUG("poststart_vfs_selftest failed with %llu checks\n", fails);
-    }
+    selftest_case_end("poststart_vfs_selftest", passes, fails);
 }

@@ -100,6 +100,7 @@ static inode_t* vfs_wrap_resource_node(filesystem_t* filesystem,
 	inode->size        = info.size;
 	inode->filesystem  = filesystem;
 	inode->privateData = inodePrivate;
+	inode->ioLock      = 0;
 
 	inodePrivate->backendNode = backendNode;
 	inodePrivate->caps        = caps;
@@ -315,6 +316,24 @@ static bool vfs_file_ref_release(file_t* file, bool* isLastReference)
 	*isLastReference = (file->refCount == 0);
 	spinlock_release(&file->refLock);
 	return true;
+}
+
+static bool vfs_file_io_begin(file_t* file)
+{
+	if (file == nullptr || file->inode == nullptr)
+	{
+		return false;
+	}
+
+	spinlock_acquire(&file->ioLock);
+	spinlock_acquire(&file->inode->ioLock);
+	return true;
+}
+
+static void vfs_file_io_end(file_t* file)
+{
+	spinlock_release(&file->inode->ioLock);
+	spinlock_release(&file->ioLock);
 }
 
 VirtualFileSystem::VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps)
@@ -823,6 +842,7 @@ file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint6
 	file->statusFlags = flags;
 	file->operations = file->inode->fileOps;
 	file->privateData = nullptr;
+	file->ioLock     = 0;
 	file->refLock    = 0;
 	file->refCount   = 1;
 
@@ -849,7 +869,13 @@ int64_t VirtualFileSystem::Read(file_t* file, void* buffer, uint64_t count)
 		return -1;
 	}
 
-	return file->operations->Read(file, buffer, count);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->Read(file, buffer, count);
+	vfs_file_io_end(file);
+	return result;
 }
 
 int64_t VirtualFileSystem::Write(file_t* file, const void* buffer, uint64_t count)
@@ -859,7 +885,13 @@ int64_t VirtualFileSystem::Write(file_t* file, const void* buffer, uint64_t coun
 		return -1;
 	}
 
-	return file->operations->Write(file, buffer, count);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->Write(file, buffer, count);
+	vfs_file_io_end(file);
+	return result;
 }
 
 int64_t VirtualFileSystem::Seek(file_t* file, int64_t offset, int whence)
@@ -869,7 +901,13 @@ int64_t VirtualFileSystem::Seek(file_t* file, int64_t offset, int whence)
 		return -1;
 	}
 
-	return file->operations->Seek(file, offset, whence);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->Seek(file, offset, whence);
+	vfs_file_io_end(file);
+	return result;
 }
 
 int64_t VirtualFileSystem::ReadDirectory(file_t* file, directory_entry_t* entry)
@@ -879,7 +917,13 @@ int64_t VirtualFileSystem::ReadDirectory(file_t* file, directory_entry_t* entry)
 		return -1;
 	}
 
-	return file->operations->ReadDirectory(file, entry);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->ReadDirectory(file, entry);
+	vfs_file_io_end(file);
+	return result;
 }
 
 int64_t VirtualFileSystem::Ioctl(file_t* file, uint64_t request, uint64_t argument)
@@ -889,7 +933,13 @@ int64_t VirtualFileSystem::Ioctl(file_t* file, uint64_t request, uint64_t argume
 		return -1;
 	}
 
-	return file->operations->Ioctl(file, request, argument);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->Ioctl(file, request, argument);
+	vfs_file_io_end(file);
+	return result;
 }
 
 int64_t VirtualFileSystem::Mmap(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset)
@@ -899,7 +949,13 @@ int64_t VirtualFileSystem::Mmap(file_t* file, void* address, uint64_t length, ui
 		return -1;
 	}
 
-	return file->operations->Mmap(file, address, length, prot, flags, offset);
+	if (!vfs_file_io_begin(file))
+	{
+		return -1;
+	}
+	const int64_t result = file->operations->Mmap(file, address, length, prot, flags, offset);
+	vfs_file_io_end(file);
+	return result;
 }
 
 bool VirtualFileSystem::Retain(file_t* file)

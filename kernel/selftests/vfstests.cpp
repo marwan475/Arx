@@ -128,7 +128,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
     VirtualFileSystem  localVfs(nullptr);
     VirtualFileSystem* vfs    = &localVfs;
 
-    kprintf("Arx kernel: vfs_selftest start\n");
+    selftest_case_begin("vfs_selftest");
 
     LogicLayerCaps* logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
     if (logicCaps == nullptr)
@@ -580,14 +580,5 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
     }
 
 done:
-    kprintf("Arx kernel: vfs_selftest summary: pass=%llu fail=%llu\n", passes, fails);
-    kprintf("Arx kernel: vfs_selftest RESULT=%s\n", fails == 0 ? "PASS" : "FAIL");
-    if (fails == 0)
-    {
-        KDEBUG("vfs_selftest passed with %llu checks\n", passes);
-    }
-    else
-    {
-        KDEBUG("vfs_selftest failed with %llu checks\n", fails);
-    }
+    selftest_case_end("vfs_selftest", passes, fails);
 }

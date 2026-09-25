@@ -22,6 +22,8 @@ ProcessManager::ProcessManager()
         Processes[i].id        = (uint64_t) i;
         Processes[i].addressSpace = nullptr;
         Processes[i].tasks = nullptr;
+        Processes[i].fileDescriptors = nullptr;
+        Processes[i].fileDescriptorCount = 0;
     }
 
 
@@ -37,6 +39,8 @@ process_t* ProcessManager::AllocateProcess()
             Processes[i].id        = (uint64_t) i;
             Processes[i].addressSpace = nullptr;
             Processes[i].tasks = nullptr;
+            Processes[i].fileDescriptors = nullptr;
+            Processes[i].fileDescriptorCount = 0;
             return &Processes[i];
         }
     }
@@ -57,6 +61,15 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
         return nullptr;
     }
 
+    process->fileDescriptors = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
+    if (process->fileDescriptors == nullptr)
+    {
+        process->allocated = false;
+        return nullptr;
+    }
+
+    memset(process->fileDescriptors, 0, sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
+    process->fileDescriptorCount = DEFAULT_FILE_DESCRIPTOR_COUNT;
     process->addressSpace = addressSpace;
 
     return process;
@@ -79,10 +92,17 @@ bool ProcessManager::FreeProcess(process_t* process)
         return false;
     }
 
+    if (process->fileDescriptors != nullptr)
+    {
+        kfree(process->fileDescriptors);
+        process->fileDescriptors = nullptr;
+    }
+
     process->addressSpace = nullptr;
     process->id           = (uint64_t) (process - &Processes[0]);
     process->allocated    = false;
     process->tasks        = nullptr;
+    process->fileDescriptorCount = 0;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
@@ -127,6 +147,68 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
 
     ILIST_APPEND(process->tasks, task);
     return true;
+}
+
+int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags)
+{
+    if (process == nullptr || file == nullptr)
+    {
+        return -1;
+    }
+
+    if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
+    {
+        return -1;
+    }
+
+    if (!process->allocated)
+    {
+        return -1;
+    }
+
+    if (process->fileDescriptors == nullptr || process->fileDescriptorCount == 0)
+    {
+        return -1;
+    }
+
+    for (uint64_t i = 0; i < process->fileDescriptorCount; i++)
+    {
+        if (process->fileDescriptors[i].file == nullptr)
+        {
+            process->fileDescriptors[i].file  = file;
+            process->fileDescriptors[i].flags = flags;
+            return (int64_t) i;
+        }
+    }
+
+    const uint64_t oldCount = process->fileDescriptorCount;
+    uint64_t newCount = oldCount * 2;
+    if (newCount < oldCount)
+    {
+        return -1;
+    }
+
+    file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
+    if (newTable == nullptr)
+    {
+        return -1;
+    }
+
+    memcpy(newTable,
+           process->fileDescriptors,
+            sizeof(file_descriptor_t) * oldCount);
+
+        memset(newTable + oldCount,
+           0,
+            sizeof(file_descriptor_t) * (newCount - oldCount));
+
+    kfree(process->fileDescriptors);
+    process->fileDescriptors   = newTable;
+    process->fileDescriptorCount = newCount;
+
+    process->fileDescriptors[oldCount].file  = file;
+    process->fileDescriptors[oldCount].flags = flags;
+    return (int64_t) oldCount;
 }
 
 bool ProcessManager::ActivateProcessAddressSpace(process_t* process)

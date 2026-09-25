@@ -162,38 +162,21 @@ currently all cores wait for the rest of the cores to enter post init then conti
 ## Kernel Software Stack
 - Resource
     - Task manager
-        - Manages schedulable execution units called tasks
-        - Creation and Allocation
-        - Deletion and Clean up
+        - Owns task objects and task lifecycle
+        - Allocation, creation, cleanup
     - Process manager
-        - Manages Process abstractions
-        - Creation and Allocation
-        - Deletion and Clean up
+        - Owns process objects and process lifecycle
+        - Tracks process task membership and address space
+        - Owns process file descriptor tables
+    - Resource filesystem
+        - Backend filesystem operations (mount, lookup, read, write)
+        - Returns opaque backend node handles
+
 - Logic
+    - Scheduler and kernel execution policy
+    - Virtual filesystem semantics (paths, dentries, mounts, open files)
 - Request
-
-### Virtual Filesystem Layering
-- Resource owns concrete filesystem backends and exposes them through `ResourceLayerFileSystemCaps`
-    - `MountFilesystem`
-    - `GetRootNode`
-    - `GetNodeInfo`
-    - `Lookup`
-    - `Read`
-    - `Write`
-- Resource backend objects are opaque handles (`resource_fs_t`, `resource_node_t`) and are not VFS objects.
-- Logic/VFS wraps backend handles into VFS objects (`filesystem_t`, `inode_t`, `dentry_t`, `mount_t`, `file_t`) and gives them Unix-style semantics.
-
-Startup mount flow:
-1. `Dispatcher::StartKernel()` creates Resource and Logic layers.
-2. Logic VFS mounts root via `MountRootFileSystem("cpio", initRamFileSystemManager)`.
-3. Resource returns backend filesystem and root node handles.
-4. Logic creates root inode/dentry/mount and installs root namespace mount.
-
-Current backend:
-- `cpio` through `ResourceFileSystem` using initramfs data provided by platform boot info.
-
-VFS flow diagram:
-- see `docs/DIAGRAMS.md` for `VFS Mount and Open Flow`.
+    - Entry layer for syscalls/interrupt-driven kernel requests
 
 ## Processes
 - Tasks
@@ -203,6 +186,21 @@ VFS flow diagram:
 - Process
     - stores tasks part of process
     - storess address space
+
+### Filesystem
+- Resource owns backend filesystem access (mount, lookup, read, write).
+- Logic owns VFS behavior (path resolution, dentries, mounts, open files).
+- Resource returns opaque backend handles.
+- Logic wraps them into VFS objects (`inode_t`, `dentry_t`, `mount_t`, `file_t`).
+
+Current backend:
+- `cpio` initramfs via `ResourceFileSystem`.
+
+Flow:
+1. Kernel creates Resource and Logic layers.
+2. Logic mounts root filesystem through Resource.
+3. Resource provides root backend node.
+4. Logic builds root VFS mount/namespace.
 
 
 

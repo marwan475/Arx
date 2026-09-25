@@ -5,9 +5,9 @@
 
 struct initramfs_archive_t
 {
-    char*          path;
-    uint64_t       size;
-    const uint8_t* data;
+    char*    path;
+    uint64_t size;
+    uint8_t* data;
 };
 
 class InitRamFileSystemManager

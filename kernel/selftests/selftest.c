@@ -16,8 +16,7 @@ void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 
 void poststartkerneltests(void* resourceLayerCaps, void* logicLayerCaps)
 {
-    (void)resourceLayerCaps;
-    run_poststart_vfs_selftests(logicLayerCaps);
+    run_poststart_vfs_selftests(resourceLayerCaps, logicLayerCaps);
 }
 
 void platform_selftests(void)

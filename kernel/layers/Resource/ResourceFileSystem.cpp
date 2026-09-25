@@ -289,10 +289,29 @@ int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* b
 
 int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size)
 {
-    (void) node;
-    (void) offset;
-    (void) buffer;
-    (void) size;
+    if (node == nullptr || node->fs == nullptr || node->fs->initRamManager == nullptr || buffer == nullptr)
+    {
+        return -1;
+    }
 
-    return -1;
+    if (node->isDirectory)
+    {
+        return -1;
+    }
+
+    initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
+    if (file == nullptr)
+    {
+        return -1;
+    }
+
+    if (offset >= file->size)
+    {
+        return 0;
+    }
+
+    uint64_t remaining = file->size - offset;
+    uint64_t toWrite = size < remaining ? size : remaining;
+    memcpy(file->data + offset, buffer, toWrite);
+    return (int64_t) toWrite;
 }

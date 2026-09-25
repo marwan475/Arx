@@ -220,7 +220,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
             archive->path = path;
             archive->size = fileSize;
-            archive->data = base + dataOffset;
+            archive->data = (uint8_t*) (base + dataOffset);
             ArchiveCount++;
         }
 

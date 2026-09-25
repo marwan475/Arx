@@ -1,0 +1,2 @@
+Arx initramfs process VFS test baseline.
+This content must be restored after write test.

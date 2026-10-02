@@ -42,23 +42,23 @@ public:
 
     ResourceLayerFileSystemCaps* GetCaps();
 
-    resource_fs_t* MountFilesystem(const char* type, void* source);
+    resource_fs_t*   MountFilesystem(const char* type, void* source);
     resource_node_t* GetRootNode(resource_fs_t* filesystem);
-    bool GetNodeInfo(resource_node_t* node, resource_node_info_t* info);
+    bool             GetNodeInfo(resource_node_t* node, resource_node_info_t* info);
     resource_node_t* Lookup(resource_node_t* directory, const char* name);
-    int64_t Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
-    int64_t Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
+    int64_t          Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
+    int64_t          Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
 
 private:
     static ResourceFileSystem* FromCaps(ResourceLayerFileSystemCaps* caps);
 
-    static resource_fs_t* MountFilesystemThunk(ResourceLayerFileSystemCaps* caps, const char* type, void* source);
+    static resource_fs_t*   MountFilesystemThunk(ResourceLayerFileSystemCaps* caps, const char* type, void* source);
     static resource_node_t* GetRootNodeThunk(ResourceLayerFileSystemCaps* caps, resource_fs_t* filesystem);
-    static bool GetNodeInfoThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, resource_node_info_t* info);
+    static bool             GetNodeInfoThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, resource_node_info_t* info);
     static resource_node_t* LookupThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, const char* name);
-    static int64_t ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
-    static int64_t WriteThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
+    static int64_t          ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
+    static int64_t          WriteThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
 
-    InitRamFileSystemManager* InitRamManager;
+    InitRamFileSystemManager*   InitRamManager;
     ResourceLayerFileSystemCaps Caps;
 };

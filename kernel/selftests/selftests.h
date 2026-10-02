@@ -3,12 +3,12 @@
 
 typedef struct selftest_context
 {
-	unsigned long long tests_ran;
-	unsigned long long tests_passed;
-	unsigned long long tests_failed;
+    unsigned long long tests_ran;
+    unsigned long long tests_passed;
+    unsigned long long tests_failed;
 } selftest_context_t;
 
-void selftest_reset_context(void);
+void                      selftest_reset_context(void);
 const selftest_context_t* selftest_get_context(void);
 
 void selftest_group_begin(const char* group_name);
@@ -27,6 +27,7 @@ void run_task_selftests(void* resourceLayerCaps);
 void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void run_vfs_selftests(void* logicLayerCaps);
 void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps);
+void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 
 void resourcelayer_selftests(void* resourceLayerCaps);
 void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps);

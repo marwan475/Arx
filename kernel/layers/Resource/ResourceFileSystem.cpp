@@ -76,7 +76,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
     node->size        = size;
 
     const char* safePath = path != nullptr ? path : "";
-    node->path = kstrdup(safePath);
+    node->path           = kstrdup(safePath);
     if (node->path == nullptr)
     {
         kfree(node);
@@ -86,8 +86,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
     return node;
 }
 
-ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSystemManager)
-    : InitRamManager(initRamFileSystemManager)
+ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSystemManager) : InitRamManager(initRamFileSystemManager)
 {
     Caps.context         = this;
     Caps.MountFilesystem = MountFilesystemThunk;
@@ -202,11 +201,11 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return nullptr;
     }
 
-    const char* base = directory->path != nullptr ? directory->path : "";
-    const size_t baseLen = strlen(base);
-    const size_t nameLen = strlen(name);
-    const bool hasPrefix = baseLen > 0;
-    const size_t fullLen = hasPrefix ? (baseLen + 1 + nameLen) : nameLen;
+    const char*  base      = directory->path != nullptr ? directory->path : "";
+    const size_t baseLen   = strlen(base);
+    const size_t nameLen   = strlen(name);
+    const bool   hasPrefix = baseLen > 0;
+    const size_t fullLen   = hasPrefix ? (baseLen + 1 + nameLen) : nameLen;
 
     char* fullPath = (char*) kmalloc(fullLen + 1);
     if (fullPath == nullptr)
@@ -234,9 +233,9 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return node;
     }
 
-    const size_t archiveCount = directory->fs->initRamManager->GetArchiveCount();
-    const size_t prefixLen = fullLen;
-    bool directoryFound = false;
+    const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
+    const size_t prefixLen      = fullLen;
+    bool         directoryFound = false;
 
     for (size_t i = 0; i < archiveCount; ++i)
     {
@@ -282,7 +281,7 @@ int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* b
     }
 
     uint64_t remaining = file->size - offset;
-    uint64_t toRead = size < remaining ? size : remaining;
+    uint64_t toRead    = size < remaining ? size : remaining;
     memcpy(buffer, file->data + offset, toRead);
     return (int64_t) toRead;
 }
@@ -311,7 +310,7 @@ int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const 
     }
 
     uint64_t remaining = file->size - offset;
-    uint64_t toWrite = size < remaining ? size : remaining;
+    uint64_t toWrite   = size < remaining ? size : remaining;
     memcpy(file->data + offset, buffer, toWrite);
     return (int64_t) toWrite;
 }

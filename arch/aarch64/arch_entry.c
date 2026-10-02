@@ -46,11 +46,11 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 };
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_module_request module_request = {
-    .id                    = LIMINE_MODULE_REQUEST,
-    .revision              = 0,
-    .response              = 0,
-    .internal_module_count = 0,
-    .internal_modules      = 0,
+        .id                    = LIMINE_MODULE_REQUEST,
+        .revision              = 0,
+        .response              = 0,
+        .internal_module_count = 0,
+        .internal_modules      = 0,
 };
 
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;

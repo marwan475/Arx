@@ -31,16 +31,15 @@ size_t normalizePathStart(const uint8_t* name, size_t nameLen)
 
     return start;
 }
-}
+} // namespace
 
-InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress)
-    : ArchiveCount(0)
+InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress) : ArchiveCount(0)
 {
     for (size_t i = 0; i < MAX_ARCHIVES; i++)
     {
-        Archives[i].path      = nullptr;
-        Archives[i].size      = 0;
-        Archives[i].data      = nullptr;
+        Archives[i].path = nullptr;
+        Archives[i].size = 0;
+        Archives[i].data = nullptr;
     }
 
     loadArchivesFromCpio(initramfsSize, initramfsAddress);
@@ -56,8 +55,8 @@ void InitRamFileSystemManager::reset()
             Archives[i].path = nullptr;
         }
 
-        Archives[i].size      = 0;
-        Archives[i].data      = nullptr;
+        Archives[i].size = 0;
+        Archives[i].data = nullptr;
     }
 
     ArchiveCount = 0;

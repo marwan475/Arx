@@ -247,8 +247,8 @@ typedef struct arch_info
         uint64_t kernel_rsp;
         uint64_t user_rsp;
     } syscall_ctx;
-    idt_description_t     idt_desc;
-    idt_entry_t           idt[NUM_IDT_ENTRIES];
+    idt_description_t idt_desc;
+    idt_entry_t       idt[NUM_IDT_ENTRIES];
 } arch_info_t;
 
 typedef struct pci_ecam_region

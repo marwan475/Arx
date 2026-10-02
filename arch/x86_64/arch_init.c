@@ -253,13 +253,7 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
                      "pushq %[rip]\n"
                      "iretq\n"
                      :
-                     : [arg0] "r"(arg0),
-                       [arg1] "r"(arg1),
-                       [ss] "r"(user_ss),
-                       [rsp] "r"(user_rsp),
-                       [rflags] "r"(user_rflags),
-                       [cs] "r"(user_cs),
-                       [rip] "r"(user_rip)
+                     : [arg0] "r"(arg0), [arg1] "r"(arg1), [ss] "r"(user_ss), [rsp] "r"(user_rsp), [rflags] "r"(user_rflags), [cs] "r"(user_cs), [rip] "r"(user_rip)
                      : "rdi", "rsi", "memory");
 
     __builtin_unreachable();

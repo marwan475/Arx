@@ -18,6 +18,8 @@
 #define RFLAGS_NT (1ULL << 14)
 #define RFLAGS_AC (1ULL << 18)
 
+extern uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled);
+
 static inline uint64_t rdmsr(uint32_t msr)
 {
     uint32_t low  = 0;
@@ -58,7 +60,7 @@ void arch_syscall_set_kernel_stack(uint64_t kernel_rsp)
 
 void arch_set_user_transition_stack(uint64_t kernel_rsp)
 {
-    cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
+    cpu_info_t*    cpu_info    = &platform.cpus[arch_cpu_id()];
     const uint64_t aligned_rsp = kernel_rsp & ~0xFULL;
 
     arch_syscall_set_kernel_stack(aligned_rsp);
@@ -72,7 +74,7 @@ void arch_syscall_init(void)
     cpu_info->arch_info.syscall_ctx.kernel_rsp = read_rsp() & ~0xFULL;
     cpu_info->arch_info.syscall_ctx.user_rsp   = 0;
 
-    const uint64_t star = ((uint64_t) (USER_CS & ~0x3ULL) << 48) | ((uint64_t) KERNEL_CS << 32);
+    const uint64_t star  = ((uint64_t) (USER_CS & ~0x3ULL) << 48) | ((uint64_t) KERNEL_CS << 32);
     const uint64_t lstar = (uint64_t) (uintptr_t) arch_x86_64_syscall_entry;
     const uint64_t fmask = RFLAGS_IF | RFLAGS_TF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC;
 
@@ -93,6 +95,13 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
     if (frame == NULL)
     {
         return (uint64_t) -22;
+    }
+
+    bool     handledBySelftest = false;
+    uint64_t selftestResult    = selftest_syscall_dispatch(frame, &handledBySelftest);
+    if (handledBySelftest)
+    {
+        return selftestResult;
     }
 
     const uint64_t syscall_number = frame->syscall_number;

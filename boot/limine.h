@@ -120,12 +120,12 @@ struct limine_file
     uint64_t size;
     LIMINE_PTR(char*) path;
     LIMINE_PTR(char*) cmdline;
-    uint32_t media_type;
-    uint32_t unused;
-    uint32_t tftp_ip;
-    uint32_t tftp_port;
-    uint32_t partition_index;
-    uint32_t mbr_disk_id;
+    uint32_t           media_type;
+    uint32_t           unused;
+    uint32_t           tftp_ip;
+    uint32_t           tftp_port;
+    uint32_t           partition_index;
+    uint32_t           mbr_disk_id;
     struct limine_uuid gpt_disk_uuid;
     struct limine_uuid gpt_part_uuid;
     struct limine_uuid part_uuid;
@@ -137,7 +137,7 @@ struct limine_internal_module
 {
     LIMINE_PTR(const char*) path;
     LIMINE_PTR(const char*) cmdline;
-    uint64_t                flags;
+    uint64_t flags;
 };
 
 struct limine_module_response

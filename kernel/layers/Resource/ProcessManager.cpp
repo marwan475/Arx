@@ -18,15 +18,14 @@ ProcessManager::ProcessManager()
 
     for (size_t i = 0; i < MAX_PROCESSES; i++)
     {
-        Processes[i].allocated = false;
-        Processes[i].id        = (uint64_t) i;
-        Processes[i].addressSpace = nullptr;
-        Processes[i].tasks = nullptr;
-        Processes[i].fileDescriptors = nullptr;
+        Processes[i].allocated           = false;
+        Processes[i].id                  = (uint64_t) i;
+        Processes[i].addressSpace        = nullptr;
+        Processes[i].elfMetadata         = nullptr;
+        Processes[i].tasks               = nullptr;
+        Processes[i].fileDescriptors     = nullptr;
         Processes[i].fileDescriptorCount = 0;
     }
-
-
 }
 
 process_t* ProcessManager::AllocateProcess()
@@ -35,11 +34,12 @@ process_t* ProcessManager::AllocateProcess()
     {
         if (!Processes[i].allocated)
         {
-            Processes[i].allocated = true;
-            Processes[i].id        = (uint64_t) i;
-            Processes[i].addressSpace = nullptr;
-            Processes[i].tasks = nullptr;
-            Processes[i].fileDescriptors = nullptr;
+            Processes[i].allocated           = true;
+            Processes[i].id                  = (uint64_t) i;
+            Processes[i].addressSpace        = nullptr;
+            Processes[i].elfMetadata         = nullptr;
+            Processes[i].tasks               = nullptr;
+            Processes[i].fileDescriptors     = nullptr;
             Processes[i].fileDescriptorCount = 0;
             return &Processes[i];
         }
@@ -70,7 +70,8 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
 
     memset(process->fileDescriptors, 0, sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
     process->fileDescriptorCount = DEFAULT_FILE_DESCRIPTOR_COUNT;
-    process->addressSpace = addressSpace;
+    process->addressSpace        = addressSpace;
+    process->elfMetadata         = nullptr;
 
     return process;
 }
@@ -98,10 +99,11 @@ bool ProcessManager::FreeProcess(process_t* process)
         process->fileDescriptors = nullptr;
     }
 
-    process->addressSpace = nullptr;
-    process->id           = (uint64_t) (process - &Processes[0]);
-    process->allocated    = false;
-    process->tasks        = nullptr;
+    process->addressSpace        = nullptr;
+    process->elfMetadata         = nullptr;
+    process->id                  = (uint64_t) (process - &Processes[0]);
+    process->allocated           = false;
+    process->tasks               = nullptr;
     process->fileDescriptorCount = 0;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -182,7 +184,7 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
     }
 
     const uint64_t oldCount = process->fileDescriptorCount;
-    uint64_t newCount = oldCount * 2;
+    uint64_t       newCount = oldCount * 2;
     if (newCount < oldCount)
     {
         return -1;
@@ -194,16 +196,12 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
         return -1;
     }
 
-    memcpy(newTable,
-           process->fileDescriptors,
-            sizeof(file_descriptor_t) * oldCount);
+    memcpy(newTable, process->fileDescriptors, sizeof(file_descriptor_t) * oldCount);
 
-        memset(newTable + oldCount,
-           0,
-            sizeof(file_descriptor_t) * (newCount - oldCount));
+    memset(newTable + oldCount, 0, sizeof(file_descriptor_t) * (newCount - oldCount));
 
     kfree(process->fileDescriptors);
-    process->fileDescriptors   = newTable;
+    process->fileDescriptors     = newTable;
     process->fileDescriptorCount = newCount;
 
     process->fileDescriptors[oldCount].file  = file;

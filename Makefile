@@ -43,6 +43,8 @@ CFLAGS_COMMON += -DDEBUG=$(DEBUG)
 
 ifeq ($(DEBUG),1)
 CFLAGS_COMMON += -O0 -ggdb3
+	# Keep call structure intact for source-level debugging (especially C++ constructors).
+	CFLAGS_COMMON += -fno-omit-frame-pointer -fno-inline -fno-optimize-sibling-calls -fno-elide-constructors
 else
 CFLAGS_COMMON += -O2
 endif
@@ -66,10 +68,12 @@ BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 INITRAMFS_DIR ?= initramfs
 INITRAMFS_IMAGE ?= $(BIN_DIR)/initramfs.cpio
 INITRAMFS_CONTENTS := $(shell find $(INITRAMFS_DIR) -type f 2>/dev/null)
+USER_TEST_ELF_SRC ?= $(INITRAMFS_DIR)/test_syscall_exit.S
+USER_TEST_ELF ?= $(INITRAMFS_DIR)/test_syscall_exit.elf
 
 .PHONY: all x86_64 aarch64 initramfs prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c kernel/selftests/selftest.c kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/vfstests.cpp kernel/selftests/poststartvfstests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c kernel/selftests/selftest.c kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/vfstests.cpp kernel/selftests/poststartvfstests.cpp kernel/selftests/poststartelftests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm $(ARCH_DIR)/x86_64/arch_syscall_entry.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
@@ -94,9 +98,13 @@ DEP_FILES := $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
 
 all: x86_64 aarch64 initramfs
 
-initramfs: $(INITRAMFS_IMAGE)
+initramfs: $(USER_TEST_ELF) $(INITRAMFS_IMAGE)
 
-$(INITRAMFS_IMAGE): $(INITRAMFS_CONTENTS)
+$(USER_TEST_ELF): $(USER_TEST_ELF_SRC)
+	@mkdir -p $(INITRAMFS_DIR)
+	$(X86_64_CC) -nostdlib -static -Wl,-n,-e,_start,-Ttext-segment=0x400000 -o $@ $<
+
+$(INITRAMFS_IMAGE): $(INITRAMFS_CONTENTS) $(USER_TEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	@test -d "$(INITRAMFS_DIR)" || { echo "Error: missing $(INITRAMFS_DIR)" >&2; exit 1; }
 	@command -v cpio >/dev/null 2>&1 || { echo "Error: cpio not found." >&2; exit 1; }

@@ -39,5 +39,3 @@ LogicLayerCaps* Dispatcher::GetLogicLayerCaps() const
 {
     return logicLayerFactory != nullptr ? logicLayerFactory->GetCaps() : nullptr;
 }
-
-

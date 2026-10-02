@@ -7,8 +7,8 @@
 static selftest_context_t g_selftest_ctx;
 
 #define SELFTEST_MAX_FAILED_CASES 64
-static const char*         g_failed_case_names[SELFTEST_MAX_FAILED_CASES];
-static unsigned long long  g_failed_case_count = 0;
+static const char*        g_failed_case_names[SELFTEST_MAX_FAILED_CASES];
+static unsigned long long g_failed_case_count = 0;
 
 typedef struct selftest_group_snapshot
 {
@@ -47,10 +47,10 @@ void selftest_group_begin(const char* group_name)
     if (g_group_stack_depth < SELFTEST_GROUP_STACK_MAX)
     {
         selftest_group_snapshot_t* snapshot = &g_group_stack[g_group_stack_depth];
-        snapshot->group_name   = group_name;
-        snapshot->tests_ran    = g_selftest_ctx.tests_ran;
-        snapshot->tests_passed = g_selftest_ctx.tests_passed;
-        snapshot->tests_failed = g_selftest_ctx.tests_failed;
+        snapshot->group_name                = group_name;
+        snapshot->tests_ran                 = g_selftest_ctx.tests_ran;
+        snapshot->tests_passed              = g_selftest_ctx.tests_passed;
+        snapshot->tests_failed              = g_selftest_ctx.tests_failed;
         g_group_stack_depth++;
     }
 
@@ -60,7 +60,7 @@ void selftest_group_begin(const char* group_name)
 
 void selftest_group_end(const char* group_name)
 {
-    unsigned long long group_ran = 0;
+    unsigned long long group_ran    = 0;
     unsigned long long group_passed = 0;
     unsigned long long group_failed = 0;
 
@@ -72,9 +72,9 @@ void selftest_group_end(const char* group_name)
     if (g_group_stack_depth > 0)
     {
         const selftest_group_snapshot_t* snapshot = &g_group_stack[g_group_stack_depth - 1];
-        group_ran    = g_selftest_ctx.tests_ran - snapshot->tests_ran;
-        group_passed = g_selftest_ctx.tests_passed - snapshot->tests_passed;
-        group_failed = g_selftest_ctx.tests_failed - snapshot->tests_failed;
+        group_ran                                 = g_selftest_ctx.tests_ran - snapshot->tests_ran;
+        group_passed                              = g_selftest_ctx.tests_passed - snapshot->tests_passed;
+        group_failed                              = g_selftest_ctx.tests_failed - snapshot->tests_failed;
         g_group_stack_depth--;
     }
 
@@ -139,8 +139,7 @@ void selftest_print_summary(void)
     }
     kprintf("========================================\n\n");
 
-    KDEBUG("[selftest] summary: ran=%llu pass=%llu fail=%llu overall=%s\n", g_selftest_ctx.tests_ran, g_selftest_ctx.tests_passed, g_selftest_ctx.tests_failed,
-           g_selftest_ctx.tests_failed == 0 ? "PASS" : "FAIL");
+    KDEBUG("[selftest] summary: ran=%llu pass=%llu fail=%llu overall=%s\n", g_selftest_ctx.tests_ran, g_selftest_ctx.tests_passed, g_selftest_ctx.tests_failed, g_selftest_ctx.tests_failed == 0 ? "PASS" : "FAIL");
     if (g_failed_case_count > 0)
     {
         for (unsigned long long i = 0; i < g_failed_case_count; i++)
@@ -169,6 +168,7 @@ void poststartkerneltests(void* resourceLayerCaps, void* logicLayerCaps)
 {
     selftest_group_begin("poststart");
     run_poststart_vfs_selftests(resourceLayerCaps, logicLayerCaps);
+    run_poststart_elf_selftests(resourceLayerCaps, logicLayerCaps);
     selftest_group_end("poststart");
 }
 

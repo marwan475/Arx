@@ -53,15 +53,14 @@ TaskManager::TaskManager()
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
         memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-        Tasks[i].allocated = false;
+        Tasks[i].allocated  = false;
         Tasks[i].isUserTask = false;
-        Tasks[i].id        = (uint64_t) i;
+        Tasks[i].id         = (uint64_t) i;
         memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
         Tasks[i].stack = nullptr;
         Tasks[i].next  = nullptr;
         Tasks[i].prev  = nullptr;
     }
-
 }
 
 task_t* TaskManager::AllocateTask()
@@ -71,9 +70,9 @@ task_t* TaskManager::AllocateTask()
         if (!Tasks[i].allocated)
         {
             memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-            Tasks[i].allocated = true;
+            Tasks[i].allocated  = true;
             Tasks[i].isUserTask = false;
-            Tasks[i].id        = (uint64_t) i;
+            Tasks[i].id         = (uint64_t) i;
             memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
             Tasks[i].stack = nullptr;
             Tasks[i].next  = nullptr;
@@ -101,7 +100,7 @@ task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
     task->stack = vmalloc(CPU_KERNEL_STACK_SIZE);
     if (task->stack == nullptr)
     {
-        task->allocated = false;
+        task->allocated  = false;
         task->isUserTask = false;
         return nullptr;
     }
@@ -125,7 +124,7 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
     task->stack = vmalloc(CPU_KERNEL_STACK_SIZE);
     if (task->stack == nullptr)
     {
-        task->allocated = false;
+        task->allocated  = false;
         task->isUserTask = false;
         memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
         return nullptr;
@@ -168,11 +167,11 @@ bool TaskManager::FreeTask(task_t* task)
 
     memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
     memset(&task->taskContext, 0, sizeof(task->taskContext));
-    task->id        = (uint64_t) (task - &Tasks[0]);
-    task->allocated = false;
+    task->id         = (uint64_t) (task - &Tasks[0]);
+    task->allocated  = false;
     task->isUserTask = false;
-    task->next      = nullptr;
-    task->prev      = nullptr;
+    task->next       = nullptr;
+    task->prev       = nullptr;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {

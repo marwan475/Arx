@@ -10,11 +10,11 @@ class InitRamFileSystemManager;
 
 struct ResourceLayerCaps
 {
-    PhysicalMemoryManager* physicalMemoryManager;
-    ProcessManager*        processManager;
-    VirtualMemoryManager*  virtualMemoryManager;
-    TaskManager*           taskManager;
-    InitRamFileSystemManager* initRamFileSystemManager;
+    PhysicalMemoryManager*       physicalMemoryManager;
+    ProcessManager*              processManager;
+    VirtualMemoryManager*        virtualMemoryManager;
+    TaskManager*                 taskManager;
+    InitRamFileSystemManager*    initRamFileSystemManager;
     ResourceLayerFileSystemCaps* fileSystemCaps;
 };
 
@@ -28,6 +28,6 @@ public:
     ResourceLayerCaps* GetCaps() const;
 
 private:
-    ResourceLayerCaps* ResourceLayerExportCaps;
+    ResourceLayerCaps*  ResourceLayerExportCaps;
     ResourceFileSystem* ResourceFileSystemExport;
 };

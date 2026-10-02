@@ -59,15 +59,15 @@ static void task_entry_b(void* arg)
 
 extern "C" void run_task_selftests(void* resourceLayerCaps)
 {
-    unsigned long long passes = 0;
-    unsigned long long fails  = 0;
-    TaskManager* manager = nullptr;
-    task_t*      taskA   = nullptr;
-    task_t*      taskB   = nullptr;
-    task_t*      bspTask = nullptr;
-    task_t*      originalRunningTask = nullptr;
-    task_t*      surrogateTask       = nullptr;
-    auto         cpuId               = arch_cpu_id();
+    unsigned long long passes              = 0;
+    unsigned long long fails               = 0;
+    TaskManager*       manager             = nullptr;
+    task_t*            taskA               = nullptr;
+    task_t*            taskB               = nullptr;
+    task_t*            bspTask             = nullptr;
+    task_t*            originalRunningTask = nullptr;
+    task_t*            surrogateTask       = nullptr;
+    auto               cpuId               = arch_cpu_id();
 
     selftest_case_begin("task_selftest");
 
@@ -110,8 +110,8 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     g_task_test_ctx.bspTask = bspTask;
     g_task_test_ctx.step    = 0;
 
-    taskA = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);
-    taskB = manager->CreateKernelTask(task_entry_b, &g_task_test_ctx);
+    taskA                 = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);
+    taskB                 = manager->CreateKernelTask(task_entry_b, &g_task_test_ctx);
     g_task_test_ctx.taskA = taskA;
     g_task_test_ctx.taskB = taskB;
 

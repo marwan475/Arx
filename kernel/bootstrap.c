@@ -4,8 +4,8 @@
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <platform.h>
-#include <stdint.h>
 #include <selftests/selftests.h>
+#include <stdint.h>
 #include <terminal/terminal.h>
 
 void platform_init_complete(void* arg);
@@ -59,9 +59,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     if (boot_info->initramfs_address == 0 || boot_info->initramfs_size == 0)
     {
-        kprintf("Arx kernel: invalid initramfs module (addr=0x%llx size=%llu)\n",
-                (unsigned long long) boot_info->initramfs_address,
-                (unsigned long long) boot_info->initramfs_size);
+        kprintf("Arx kernel: invalid initramfs module (addr=0x%llx size=%llu)\n", (unsigned long long) boot_info->initramfs_address, (unsigned long long) boot_info->initramfs_size);
         panic();
     }
 
@@ -71,13 +69,10 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    kprintf("Arx kernel: initramfs module loaded path=%s addr=0x%llx size=%llu\n",
-            (const char*) (uintptr_t) boot_info->initramfs_path,
-            (unsigned long long) boot_info->initramfs_address,
-            (unsigned long long) boot_info->initramfs_size);
+    kprintf("Arx kernel: initramfs module loaded path=%s addr=0x%llx size=%llu\n", (const char*) (uintptr_t) boot_info->initramfs_path, (unsigned long long) boot_info->initramfs_address, (unsigned long long) boot_info->initramfs_size);
 
-        platform.initramfs_address = (uintptr_t) boot_info->initramfs_address;
-        platform.initramfs_size    = boot_info->initramfs_size;
+    platform.initramfs_address = (uintptr_t) boot_info->initramfs_address;
+    platform.initramfs_size    = boot_info->initramfs_size;
 
     platform.framebuffer.address          = (void*) (uintptr_t) boot_info->framebuffer_addr;
     platform.framebuffer.width            = (size_t) boot_info->framebuffer_width;

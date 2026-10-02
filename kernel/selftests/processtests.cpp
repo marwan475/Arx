@@ -1,5 +1,5 @@
-#include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/Scheduler.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
@@ -14,33 +14,33 @@ extern "C"
 
 struct process_test_context_t
 {
-    TaskManager*        manager;
-    ProcessManager*     processManager;
-    task_t*             bspTask;
-    process_t*          processA;
-    process_t*          processB;
-    virt_addr_space_t*  expectedSpaceA;
-    virt_addr_space_t*  expectedSpaceB;
-    volatile int        markerA;
-    volatile int        markerB;
-    volatile int        processCheckA;
-    volatile int        processCheckB;
-    volatile int        addressSpaceCheckA;
-    volatile int        addressSpaceCheckB;
+    TaskManager*       manager;
+    ProcessManager*    processManager;
+    task_t*            bspTask;
+    process_t*         processA;
+    process_t*         processB;
+    virt_addr_space_t* expectedSpaceA;
+    virt_addr_space_t* expectedSpaceB;
+    volatile int       markerA;
+    volatile int       markerB;
+    volatile int       processCheckA;
+    volatile int       processCheckB;
+    volatile int       addressSpaceCheckA;
+    volatile int       addressSpaceCheckB;
 };
 
 static process_test_context_t g_process_test_ctx;
 
 static void process_task_a(void* arg)
 {
-    process_test_context_t* ctx = static_cast<process_test_context_t*>(arg);
-    process_t* currentProcess = ctx->processManager->GetCurrentProcess();
-    ctx->processCheckA = (currentProcess == ctx->processA) ? 1 : 0;
-    ctx->addressSpaceCheckA = (platform.cpus[arch_cpu_id()].address_space == ctx->expectedSpaceA) ? 1 : 0;
+    process_test_context_t* ctx            = static_cast<process_test_context_t*>(arg);
+    process_t*              currentProcess = ctx->processManager->GetCurrentProcess();
+    ctx->processCheckA                     = (currentProcess == ctx->processA) ? 1 : 0;
+    ctx->addressSpaceCheckA                = (platform.cpus[arch_cpu_id()].address_space == ctx->expectedSpaceA) ? 1 : 0;
 
     kprintf("Arx kernel: process_selftest task A entered\n");
     kprintf("Arx kernel: process_selftest task A checks: process=%s address_space=%s\n", ctx->processCheckA == 1 ? "OK" : "BAD", ctx->addressSpaceCheckA == 1 ? "OK" : "BAD");
-    ctx->markerA                = 1;
+    ctx->markerA = 1;
     kprintf("Arx kernel: process_selftest task A switching back to BSP\n");
     ctx->manager->ExecuteTask(ctx->bspTask);
 
@@ -52,14 +52,14 @@ static void process_task_a(void* arg)
 
 static void process_task_b(void* arg)
 {
-    process_test_context_t* ctx = static_cast<process_test_context_t*>(arg);
-    process_t* currentProcess = ctx->processManager->GetCurrentProcess();
-    ctx->processCheckB = (currentProcess == ctx->processB) ? 1 : 0;
-    ctx->addressSpaceCheckB = (platform.cpus[arch_cpu_id()].address_space == ctx->expectedSpaceB) ? 1 : 0;
+    process_test_context_t* ctx            = static_cast<process_test_context_t*>(arg);
+    process_t*              currentProcess = ctx->processManager->GetCurrentProcess();
+    ctx->processCheckB                     = (currentProcess == ctx->processB) ? 1 : 0;
+    ctx->addressSpaceCheckB                = (platform.cpus[arch_cpu_id()].address_space == ctx->expectedSpaceB) ? 1 : 0;
 
     kprintf("Arx kernel: process_selftest task B entered\n");
     kprintf("Arx kernel: process_selftest task B checks: process=%s address_space=%s\n", ctx->processCheckB == 1 ? "OK" : "BAD", ctx->addressSpaceCheckB == 1 ? "OK" : "BAD");
-    ctx->markerB                = 1;
+    ctx->markerB = 1;
     kprintf("Arx kernel: process_selftest task B switching back to BSP\n");
     ctx->manager->ExecuteTask(ctx->bspTask);
 
@@ -71,20 +71,20 @@ static void process_task_b(void* arg)
 
 extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 {
-    unsigned long long passes = 0;
-    unsigned long long fails  = 0;
-    Scheduler* scheduler = nullptr;
-    ProcessManager* processManager = nullptr;
-    TaskManager*    taskManager    = nullptr;
-    process_t* processA  = nullptr;
-    process_t* processB  = nullptr;
-    task_t*    taskA     = nullptr;
-    task_t*    taskB     = nullptr;
-    virt_addr_space_t* currentSpace = nullptr;
+    unsigned long long passes         = 0;
+    unsigned long long fails          = 0;
+    Scheduler*         scheduler      = nullptr;
+    ProcessManager*    processManager = nullptr;
+    TaskManager*       taskManager    = nullptr;
+    process_t*         processA       = nullptr;
+    process_t*         processB       = nullptr;
+    task_t*            taskA          = nullptr;
+    task_t*            taskB          = nullptr;
+    virt_addr_space_t* currentSpace   = nullptr;
 
     selftest_case_begin("process_selftest");
 
-    ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
+    ResourceLayerCaps* caps      = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
     if (caps == nullptr || caps->processManager == nullptr || caps->taskManager == nullptr)
     {
@@ -103,17 +103,17 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     processManager = caps->processManager;
     taskManager    = caps->taskManager;
 
-    g_process_test_ctx.manager = taskManager;
-    g_process_test_ctx.processManager = processManager;
-    g_process_test_ctx.bspTask = taskManager->GetCurrentTask();
-    g_process_test_ctx.processA = nullptr;
-    g_process_test_ctx.processB = nullptr;
-    g_process_test_ctx.expectedSpaceA = nullptr;
-    g_process_test_ctx.expectedSpaceB = nullptr;
-    g_process_test_ctx.markerA = 0;
-    g_process_test_ctx.markerB = 0;
-    g_process_test_ctx.processCheckA = 0;
-    g_process_test_ctx.processCheckB = 0;
+    g_process_test_ctx.manager            = taskManager;
+    g_process_test_ctx.processManager     = processManager;
+    g_process_test_ctx.bspTask            = taskManager->GetCurrentTask();
+    g_process_test_ctx.processA           = nullptr;
+    g_process_test_ctx.processB           = nullptr;
+    g_process_test_ctx.expectedSpaceA     = nullptr;
+    g_process_test_ctx.expectedSpaceB     = nullptr;
+    g_process_test_ctx.markerA            = 0;
+    g_process_test_ctx.markerB            = 0;
+    g_process_test_ctx.processCheckA      = 0;
+    g_process_test_ctx.processCheckB      = 0;
     g_process_test_ctx.addressSpaceCheckA = 0;
     g_process_test_ctx.addressSpaceCheckB = 0;
 
@@ -144,8 +144,8 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
         goto cleanup;
     }
 
-    g_process_test_ctx.processA = processA;
-    g_process_test_ctx.processB = processB;
+    g_process_test_ctx.processA       = processA;
+    g_process_test_ctx.processB       = processB;
     g_process_test_ctx.expectedSpaceA = processA->addressSpace;
     g_process_test_ctx.expectedSpaceB = processB->addressSpace;
 

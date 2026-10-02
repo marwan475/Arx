@@ -1,8 +1,9 @@
 #pragma once
 
+#include "layers/Resource/TaskManager.hpp"
+
 #include <arch/arch.h>
 #include <boot/boot.h>
-#include "layers/Resource/TaskManager.hpp"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,6 +33,7 @@ struct process_t
     bool               allocated;
     uint64_t           id;
     virt_addr_space_t* addressSpace;
+    void*              elfMetadata;
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
     uint64_t           fileDescriptorCount;
@@ -40,7 +42,7 @@ struct process_t
 class ProcessManager
 {
 public:
-    static constexpr size_t MAX_PROCESSES = 64;
+    static constexpr size_t   MAX_PROCESSES                 = 64;
     static constexpr uint64_t DEFAULT_FILE_DESCRIPTOR_COUNT = 32;
 
     ProcessManager();

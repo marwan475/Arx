@@ -175,6 +175,9 @@ currently all cores wait for the rest of the cores to enter post init then conti
 - Logic
     - Scheduler and kernel execution policy
     - Virtual filesystem semantics (paths, dentries, mounts, open files)
+    - ElfMapper
+        - Reads ELF metadata from VFS files
+        - Maps PT_LOAD segments into process address spaces via Resource capabilities
 - Request
     - Entry layer for syscalls/interrupt-driven kernel requests
 
@@ -201,6 +204,23 @@ Flow:
 2. Logic mounts root filesystem through Resource.
 3. Resource provides root backend node.
 4. Logic builds root VFS mount/namespace.
+
+### ELF Loading
+- `ElfMapper` lives in Logic and follows a two-phase flow:
+    - `ReadElf(file_t*, elf_metadata_t*)`
+        - Reads and validates ELF64 header
+        - Parses program headers
+        - Extracts `PT_LOAD` segments into metadata
+    - `LoadExecutable(process_t*, file_t*, elf_metadata_t*)`
+        - Maps `PT_LOAD` segments into a process address space
+        - Copies `p_filesz` bytes from file
+        - Zero-fills `p_memsz - p_filesz`
+        - Applies user page permissions from `PF_R/PF_W/PF_X`
+- Not implemented yet:
+    - Dynamic linker / `DT_NEEDED`
+    - Relocations and symbol resolution
+    - TLS setup
+    - argv/envp/auxv and user stack argument layout
 
 
 

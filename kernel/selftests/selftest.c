@@ -2,9 +2,11 @@
 // Not thread safe
 
 #include <klib/klib.h>
+#include <klib/spinlock.h>
 #include <selftests/selftests.h>
 
 static selftest_context_t g_selftest_ctx;
+static spinlock_t         g_selftest_lock = 0;
 
 #define SELFTEST_MAX_FAILED_CASES 64
 static const char*        g_failed_case_names[SELFTEST_MAX_FAILED_CASES];
@@ -24,12 +26,16 @@ static unsigned long long        g_group_stack_depth = 0;
 
 void selftest_reset_context(void)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     g_selftest_ctx.tests_ran    = 0;
     g_selftest_ctx.tests_passed = 0;
     g_selftest_ctx.tests_failed = 0;
 
     g_group_stack_depth = 0;
     g_failed_case_count = 0;
+
+    spinlock_release(&g_selftest_lock);
 }
 
 const selftest_context_t* selftest_get_context(void)
@@ -39,6 +45,8 @@ const selftest_context_t* selftest_get_context(void)
 
 void selftest_group_begin(const char* group_name)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     if (group_name == 0)
     {
         group_name = "unknown";
@@ -56,10 +64,14 @@ void selftest_group_begin(const char* group_name)
 
     kprintf("\n[SELFTEST] GROUP START  %s\n", group_name);
     KDEBUG("\n========== SELFTEST GROUP START: %s =========\n", group_name);
+
+    spinlock_release(&g_selftest_lock);
 }
 
 void selftest_group_end(const char* group_name)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     unsigned long long group_ran    = 0;
     unsigned long long group_passed = 0;
     unsigned long long group_failed = 0;
@@ -80,10 +92,14 @@ void selftest_group_end(const char* group_name)
 
     kprintf("[SELFTEST] GROUP END    %s | ran=%llu pass=%llu fail=%llu\n", group_name, group_ran, group_passed, group_failed);
     KDEBUG("========== SELFTEST GROUP END: %s | ran=%llu pass=%llu fail=%llu =========\n\n", group_name, group_ran, group_passed, group_failed);
+
+    spinlock_release(&g_selftest_lock);
 }
 
 void selftest_case_begin(const char* test_name)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     if (test_name == 0)
     {
         test_name = "unknown";
@@ -91,10 +107,14 @@ void selftest_case_begin(const char* test_name)
 
     kprintf("\n[SELFTEST] START  %s\n", test_name);
     KDEBUG("[selftest] case start: %s\n", test_name);
+
+    spinlock_release(&g_selftest_lock);
 }
 
 void selftest_case_end(const char* test_name, unsigned long long passes, unsigned long long failures)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     if (test_name == 0)
     {
         test_name = "unknown";
@@ -118,10 +138,14 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
 
     kprintf("[SELFTEST] RESULT %s | checks(pass=%llu fail=%llu) => %s\n", test_name, passes, failures, result);
     KDEBUG("[selftest] case end: %s | checks(pass=%llu fail=%llu) => %s\n", test_name, passes, failures, result);
+
+    spinlock_release(&g_selftest_lock);
 }
 
 void selftest_print_summary(void)
 {
+    spinlock_acquire(&g_selftest_lock);
+
     kprintf("\n========================================\n");
     kprintf(" Arx kernel selftest summary\n");
     kprintf("========================================\n");
@@ -147,6 +171,8 @@ void selftest_print_summary(void)
             KDEBUG("[selftest] failed case: %s\n", g_failed_case_names[i]);
         }
     }
+
+    spinlock_release(&g_selftest_lock);
 }
 
 void resourcelayer_selftests(void* resourceLayerCaps)

@@ -43,8 +43,7 @@ CFLAGS_COMMON += -DDEBUG=$(DEBUG)
 
 ifeq ($(DEBUG),1)
 CFLAGS_COMMON += -O0 -ggdb3
-	# Keep call structure intact for source-level debugging (especially C++ constructors).
-	CFLAGS_COMMON += -fno-omit-frame-pointer -fno-inline -fno-optimize-sibling-calls -fno-elide-constructors
+	CFLAGS_COMMON += -fno-omit-frame-pointer -fno-inline -fno-optimize-sibling-calls
 else
 CFLAGS_COMMON += -O2
 endif
@@ -52,6 +51,11 @@ endif
 CFLAGS_X86_64 := -mcmodel=kernel -mno-red-zone
 CFLAGS_AARCH64 := -mno-outline-atomics
 CXXFLAGS_COMMON := $(CFLAGS_COMMON) -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit
+
+ifeq ($(DEBUG),1)
+	# Keep constructor call structure intact for source-level debugging in C++ code.
+	CXXFLAGS_COMMON += -fno-elide-constructors
+endif
 CXXFLAGS_X86_64 := $(CFLAGS_X86_64)
 CXXFLAGS_AARCH64 := $(CFLAGS_AARCH64)
 ASFLAGS_X86_64 := -f elf64

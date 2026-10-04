@@ -26,6 +26,14 @@ constexpr uint64_t USER_STACK_SIZE = PAGE_SIZE * 8;
 constexpr uint64_t SELFTEST_SYSCALL_PROBE = 0x1337;
 constexpr uint64_t SELFTEST_SYSCALL_EXIT  = 60;
 
+constexpr uint64_t AUXV_AT_NULL   = 0;
+constexpr uint64_t AUXV_AT_PHDR   = 3;
+constexpr uint64_t AUXV_AT_PHENT  = 4;
+constexpr uint64_t AUXV_AT_PHNUM  = 5;
+constexpr uint64_t AUXV_AT_PAGESZ = 6;
+constexpr uint64_t AUXV_AT_BASE   = 7;
+constexpr uint64_t AUXV_AT_ENTRY  = 9;
+
 struct poststart_elf_test_context_t
 {
     TaskManager* taskManager;
@@ -224,8 +232,21 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     process_t*          process     = nullptr;
     task_t*             userTask    = nullptr;
     elf_metadata_t      metadata    = {};
+    uint64_t            userRsp     = 0;
     bool                elfMapped   = false;
     bool                stackMapped = false;
+
+        static const char* argvValues[] = {
+            "test_syscall_exit.elf",
+            "--selftest",
+        };
+
+        static const char* envpValues[] = {
+            "ARX_SELFTEST=1",
+        };
+
+        process_user_auxv_entry_t auxvValues[7] = {};
+        process_user_stack_layout_t stackLayout = {};
 
     constexpr uint64_t stackPageCount = USER_STACK_SIZE / PAGE_SIZE;
     mapped_user_page_t stackPages[stackPageCount] = {};
@@ -306,7 +327,31 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     stackMapped = true;
     passes++;
 
-    userTask = resourceCaps->taskManager->CreateUserBootstrapTask(metadata.entryPoint, USER_STACK_TOP - 16, 0, 0);
+        auxvValues[0] = {AUXV_AT_PAGESZ, PAGE_SIZE};
+        auxvValues[1] = {AUXV_AT_ENTRY, metadata.entryPoint};
+        auxvValues[2] = {AUXV_AT_PHENT, metadata.programHeaderEntrySize};
+        auxvValues[3] = {AUXV_AT_PHNUM, metadata.programHeaderCount};
+        auxvValues[4] = {AUXV_AT_PHDR, metadata.loadBias + metadata.programHeaderOffset};
+        auxvValues[5] = {AUXV_AT_BASE, metadata.loadBias};
+        auxvValues[6] = {AUXV_AT_NULL, 0};
+
+    stackLayout.stackBase                   = USER_STACK_TOP - USER_STACK_SIZE;
+    stackLayout.stackSize                   = USER_STACK_SIZE;
+    stackLayout.argv                        = argvValues;
+    stackLayout.argc                        = (uint64_t) (sizeof(argvValues) / sizeof(argvValues[0]));
+    stackLayout.envp                        = envpValues;
+    stackLayout.envc                        = (uint64_t) (sizeof(envpValues) / sizeof(envpValues[0]));
+    stackLayout.auxv                        = auxvValues;
+        stackLayout.auxvCount                   = 7;
+
+    if (!resourceCaps->processManager->BuildUserInitialStack(process, &stackLayout, &userRsp))
+    {
+        poststart_elf_test_fail("failed to build argc/argv/envp/auxv user stack with ProcessManager", &fails);
+        goto cleanup;
+    }
+    passes++;
+
+    userTask = resourceCaps->taskManager->CreateUserBootstrapTask(metadata.entryPoint, userRsp, 0, 0);
     if (userTask == nullptr)
     {
         poststart_elf_test_fail("failed to create user bootstrap task", &fails);

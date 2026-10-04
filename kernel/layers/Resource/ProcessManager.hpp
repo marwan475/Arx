@@ -28,6 +28,27 @@ struct file_descriptor_t
     uint32_t      flags;
 };
 
+struct process_user_auxv_entry_t
+{
+    uint64_t type;
+    uint64_t value;
+};
+
+struct process_user_stack_layout_t
+{
+    uint64_t stackBase;
+    uint64_t stackSize;
+
+    const char* const* argv;
+    uint64_t           argc;
+
+    const char* const* envp;
+    uint64_t           envc;
+
+    const process_user_auxv_entry_t* auxv;
+    uint64_t                        auxvCount;
+};
+
 struct process_t
 {
     bool               allocated;
@@ -52,6 +73,7 @@ public:
     bool       FreeProcess(process_t* process);
     bool       AddTask(process_t* process, task_t* task);
     int64_t    AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags);
+    bool       BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp);
     bool       ActivateProcessAddressSpace(process_t* process);
     task_t*    GetTasks(process_t* process) const;
 

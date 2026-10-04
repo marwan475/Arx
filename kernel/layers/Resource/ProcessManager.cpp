@@ -9,6 +9,65 @@ extern "C"
 #include <platform.h>
 }
 
+namespace
+{
+static bool add_would_overflow_u64(uint64_t a, uint64_t b)
+{
+    return a > (UINT64_MAX - b);
+}
+
+static bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
+{
+    if (addressSpace == nullptr || source == nullptr)
+    {
+        return false;
+    }
+
+    const uint8_t* sourceBytes = (const uint8_t*) source;
+    uint64_t       offset      = 0;
+
+    while (offset < size)
+    {
+        const uint64_t currentVirtualAddress = destinationVirtualAddress + offset;
+        const uint64_t pageOffset            = currentVirtualAddress & (PAGE_SIZE - 1);
+        const uint64_t chunkSize             = ((size - offset) < (PAGE_SIZE - pageOffset)) ? (size - offset) : (PAGE_SIZE - pageOffset);
+
+        phys_addr_t physicalAddress = vmm_virt_to_phys(currentVirtualAddress, addressSpace);
+        if (physicalAddress == 0)
+        {
+            return false;
+        }
+
+        uint8_t* destination = (uint8_t*) pa_to_hhdm((uintptr_t) physicalAddress, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+        if (destination == nullptr)
+        {
+            return false;
+        }
+
+        memcpy(destination + pageOffset, sourceBytes + offset, (size_t) chunkSize);
+        offset += chunkSize;
+    }
+
+    return true;
+}
+
+static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t* writeCursor, uint64_t value)
+{
+    if (addressSpace == nullptr || writeCursor == nullptr)
+    {
+        return false;
+    }
+
+    if (!copy_to_process_virtual(addressSpace, *writeCursor, &value, sizeof(value)))
+    {
+        return false;
+    }
+
+    *writeCursor += sizeof(uint64_t);
+    return true;
+}
+} // namespace
+
 ProcessManager::ProcessManager()
 {
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -207,6 +266,213 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
     process->fileDescriptors[oldCount].file  = file;
     process->fileDescriptors[oldCount].flags = flags;
     return (int64_t) oldCount;
+}
+
+bool ProcessManager::BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp)
+{
+    if (process == nullptr || layout == nullptr || outUserRsp == nullptr)
+    {
+        return false;
+    }
+
+    if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
+    {
+        return false;
+    }
+
+    if (!process->allocated || process->addressSpace == nullptr)
+    {
+        return false;
+    }
+
+    if (layout->stackSize == 0)
+    {
+        return false;
+    }
+
+    if (layout->argc > 0 && layout->argv == nullptr)
+    {
+        return false;
+    }
+
+    if (layout->envc > 0 && layout->envp == nullptr)
+    {
+        return false;
+    }
+
+    if (layout->auxvCount > 0 && layout->auxv == nullptr)
+    {
+        return false;
+    }
+
+    if (add_would_overflow_u64(layout->stackBase, layout->stackSize))
+    {
+        return false;
+    }
+
+    const uint64_t stackLimit = layout->stackBase + layout->stackSize;
+    uint64_t       stackCursor = stackLimit;
+    uint64_t       metadataWordCount = 0;
+    uint64_t       metadataByteCount = 0;
+    uint64_t       writeCursor       = 0;
+
+    uint64_t* argvPointers = nullptr;
+    uint64_t* envpPointers = nullptr;
+
+    if (layout->argc > 0)
+    {
+        argvPointers = (uint64_t*) kmalloc(sizeof(uint64_t) * (size_t) layout->argc);
+        if (argvPointers == nullptr)
+        {
+            return false;
+        }
+        memset(argvPointers, 0, sizeof(uint64_t) * (size_t) layout->argc);
+    }
+
+    if (layout->envc > 0)
+    {
+        envpPointers = (uint64_t*) kmalloc(sizeof(uint64_t) * (size_t) layout->envc);
+        if (envpPointers == nullptr)
+        {
+            if (argvPointers != nullptr)
+            {
+                kfree(argvPointers);
+            }
+            return false;
+        }
+        memset(envpPointers, 0, sizeof(uint64_t) * (size_t) layout->envc);
+    }
+
+    for (uint64_t i = layout->argc; i > 0; --i)
+    {
+        const char* argumentString = layout->argv[i - 1];
+        if (argumentString == nullptr)
+        {
+            goto fail;
+        }
+
+        const uint64_t argumentLength = (uint64_t) strlen(argumentString) + 1;
+        if (stackCursor < layout->stackBase + argumentLength)
+        {
+            goto fail;
+        }
+
+        stackCursor -= argumentLength;
+        if (!copy_to_process_virtual(process->addressSpace, stackCursor, argumentString, argumentLength))
+        {
+            goto fail;
+        }
+
+        argvPointers[i - 1] = stackCursor;
+    }
+
+    for (uint64_t i = layout->envc; i > 0; --i)
+    {
+        const char* environmentString = layout->envp[i - 1];
+        if (environmentString == nullptr)
+        {
+            goto fail;
+        }
+
+        const uint64_t environmentLength = (uint64_t) strlen(environmentString) + 1;
+        if (stackCursor < layout->stackBase + environmentLength)
+        {
+            goto fail;
+        }
+
+        stackCursor -= environmentLength;
+        if (!copy_to_process_virtual(process->addressSpace, stackCursor, environmentString, environmentLength))
+        {
+            goto fail;
+        }
+
+        envpPointers[i - 1] = stackCursor;
+    }
+
+    stackCursor = align_down(stackCursor, 16);
+
+    if (add_would_overflow_u64(layout->auxvCount, layout->argc) || add_would_overflow_u64(layout->auxvCount, layout->envc))
+    {
+        goto fail;
+    }
+
+    metadataWordCount = 1 + (layout->argc + 1) + (layout->envc + 1) + (layout->auxvCount * 2);
+    metadataByteCount = metadataWordCount * sizeof(uint64_t);
+
+    if (stackCursor < layout->stackBase + metadataByteCount)
+    {
+        goto fail;
+    }
+
+    stackCursor -= metadataByteCount;
+    writeCursor = stackCursor;
+
+    if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->argc))
+    {
+        goto fail;
+    }
+
+    for (uint64_t i = 0; i < layout->argc; ++i)
+    {
+        if (!push_word_to_process_stack(process->addressSpace, &writeCursor, argvPointers[i]))
+        {
+            goto fail;
+        }
+    }
+
+    if (!push_word_to_process_stack(process->addressSpace, &writeCursor, 0))
+    {
+        goto fail;
+    }
+
+    for (uint64_t i = 0; i < layout->envc; ++i)
+    {
+        if (!push_word_to_process_stack(process->addressSpace, &writeCursor, envpPointers[i]))
+        {
+            goto fail;
+        }
+    }
+
+    if (!push_word_to_process_stack(process->addressSpace, &writeCursor, 0))
+    {
+        goto fail;
+    }
+
+    for (uint64_t i = 0; i < layout->auxvCount; ++i)
+    {
+        if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].type)
+            || !push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].value))
+        {
+            goto fail;
+        }
+    }
+
+    *outUserRsp = stackCursor;
+
+    if (argvPointers != nullptr)
+    {
+        kfree(argvPointers);
+    }
+
+    if (envpPointers != nullptr)
+    {
+        kfree(envpPointers);
+    }
+
+    return true;
+
+fail:
+    if (argvPointers != nullptr)
+    {
+        kfree(argvPointers);
+    }
+
+    if (envpPointers != nullptr)
+    {
+        kfree(envpPointers);
+    }
+
+    return false;
 }
 
 bool ProcessManager::ActivateProcessAddressSpace(process_t* process)

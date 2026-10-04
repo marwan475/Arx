@@ -4,6 +4,7 @@
 
 #include <arch/arch.h>
 #include <boot/boot.h>
+#include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -87,6 +88,11 @@ public:
     size_t GetCapacity() const;
 
 private:
+    process_t* AllocateProcessUnlocked();
+    void       LockManager() const;
+    void       UnlockManager() const;
+
+    mutable spinlock_t ManagerLock;
     process_t  Processes[MAX_PROCESSES];
     process_t* RunningProcesses[BOOT_SMP_MAX_CPUS];
 };

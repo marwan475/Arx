@@ -45,6 +45,8 @@ static uint64_t resolve_task_kernel_stack_top(const task_t* task, const cpu_info
 
 TaskManager::TaskManager()
 {
+    ManagerLock = 0;
+
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
         RunningTasks[i] = nullptr;
@@ -63,7 +65,17 @@ TaskManager::TaskManager()
     }
 }
 
-task_t* TaskManager::AllocateTask()
+void TaskManager::LockManager() const
+{
+    spinlock_acquire((spinlock_t*) &ManagerLock);
+}
+
+void TaskManager::UnlockManager() const
+{
+    spinlock_release((spinlock_t*) &ManagerLock);
+}
+
+task_t* TaskManager::AllocateTaskUnlocked()
 {
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
@@ -84,6 +96,14 @@ task_t* TaskManager::AllocateTask()
     return nullptr;
 }
 
+task_t* TaskManager::AllocateTask()
+{
+    LockManager();
+    task_t* task = AllocateTaskUnlocked();
+    UnlockManager();
+    return task;
+}
+
 task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
 {
     if (entry == nullptr)
@@ -91,45 +111,51 @@ task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
         return nullptr;
     }
 
-    task_t* task = AllocateTask();
+    void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
+    if (allocatedStack == nullptr)
+    {
+        return nullptr;
+    }
+
+    LockManager();
+
+    task_t* task = AllocateTaskUnlocked();
     if (task == nullptr)
     {
+        UnlockManager();
+        kfree(allocatedStack);
         return nullptr;
     }
 
-    task->stack = vmalloc(CPU_KERNEL_STACK_SIZE);
-    if (task->stack == nullptr)
-    {
-        task->allocated  = false;
-        task->isUserTask = false;
-        return nullptr;
-    }
-
+    task->stack = allocatedStack;
     task->isUserTask = false;
 
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
     arch_init_context(&task->taskContext, stack_top, entry, arg);
 
+    UnlockManager();
     return task;
 }
 
 task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1)
 {
-    task_t* task = AllocateTask();
+    void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
+    if (allocatedStack == nullptr)
+    {
+        return nullptr;
+    }
+
+    LockManager();
+
+    task_t* task = AllocateTaskUnlocked();
     if (task == nullptr)
     {
+        UnlockManager();
+        kfree(allocatedStack);
         return nullptr;
     }
 
-    task->stack = vmalloc(CPU_KERNEL_STACK_SIZE);
-    if (task->stack == nullptr)
-    {
-        task->allocated  = false;
-        task->isUserTask = false;
-        memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
-        return nullptr;
-    }
-
+    task->stack = allocatedStack;
     task->isUserTask                = true;
     task->userLaunchContext.userRip = userRip;
     task->userLaunchContext.userRsp = userRsp;
@@ -139,29 +165,37 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
     arch_init_context(&task->taskContext, stack_top, user_task_bootstrap_entry, &task->userLaunchContext);
 
+    UnlockManager();
     return task;
 }
 
 bool TaskManager::FreeTask(task_t* task)
 {
+    void* stackToFree = nullptr;
+
+    LockManager();
+
     if (task == nullptr)
     {
+        UnlockManager();
         return false;
     }
 
     if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
     {
+        UnlockManager();
         return false;
     }
 
     if (!task->allocated)
     {
+        UnlockManager();
         return false;
     }
 
     if (task->stack != nullptr)
     {
-        vfree(task->stack);
+        stackToFree = task->stack;
         task->stack = nullptr;
     }
 
@@ -181,40 +215,55 @@ bool TaskManager::FreeTask(task_t* task)
         }
     }
 
+    UnlockManager();
+
+    if (stackToFree != nullptr)
+    {
+        kfree(stackToFree);
+    }
+
     return true;
 }
 
 bool TaskManager::ExecuteTask(task_t* task)
 {
+    LockManager();
+
     if (task == nullptr)
     {
+        UnlockManager();
         return false;
     }
 
     if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
     {
+        UnlockManager();
         return false;
     }
 
     if (!task->allocated)
     {
+        UnlockManager();
         return false;
     }
 
     uint8_t cpuId = arch_cpu_id();
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
+        UnlockManager();
         return false;
     }
 
     task_t* current = RunningTasks[cpuId];
     if (current == nullptr)
     {
+        UnlockManager();
         return false;
     }
 
     if (current == task)
     {
+        UnlockManager();
         return true;
     }
 
@@ -229,6 +278,7 @@ bool TaskManager::ExecuteTask(task_t* task)
     }
 
     RunningTasks[cpuId] = task;
+    UnlockManager();
     arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
 
     // We only reach here after another switch restores this task.
@@ -241,18 +291,25 @@ bool TaskManager::ExecuteTask(task_t* task)
         }
     }
 
+    LockManager();
     RunningTasks[cpuId] = current;
+    UnlockManager();
     return true;
 }
 
 task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
 {
+    LockManager();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
+        UnlockManager();
         return nullptr;
     }
 
-    return RunningTasks[cpuId];
+    task_t* task = RunningTasks[cpuId];
+    UnlockManager();
+    return task;
 }
 
 task_t* TaskManager::GetCurrentTask() const
@@ -262,8 +319,11 @@ task_t* TaskManager::GetCurrentTask() const
 
 bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
 {
+    LockManager();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
+        UnlockManager();
         return false;
     }
 
@@ -271,30 +331,42 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
     {
         if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
         {
+            UnlockManager();
             return false;
         }
 
         if (!task->allocated)
         {
+            UnlockManager();
             return false;
         }
     }
 
     RunningTasks[cpuId] = task;
+    UnlockManager();
     return true;
 }
 
 task_t* TaskManager::GetTasks()
 {
-    return Tasks;
+    LockManager();
+    task_t* tasks = Tasks;
+    UnlockManager();
+    return tasks;
 }
 
 const task_t* TaskManager::GetTasks() const
 {
-    return Tasks;
+    LockManager();
+    const task_t* tasks = Tasks;
+    UnlockManager();
+    return tasks;
 }
 
 size_t TaskManager::GetCapacity() const
 {
-    return MAX_TASKS;
+    LockManager();
+    const size_t capacity = MAX_TASKS;
+    UnlockManager();
+    return capacity;
 }

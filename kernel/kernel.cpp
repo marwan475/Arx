@@ -1,4 +1,5 @@
 #include "layers/Dispatcher.hpp"
+#include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/TaskManager.hpp"
@@ -13,7 +14,8 @@ extern "C"
 }
 
 static void KernelPostInit(void);
-static void KernelPostInitCreateApProcess(void);
+static void KernelPostInitTask(void* arg);
+static bool BootstrapPostInitTasks(Dispatcher* dispatcher);
 void        smp_selftests(void);
 
 extern "C" void kmain(void)
@@ -30,59 +32,6 @@ extern "C" void kmain(void)
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
 
-    if (resourceLayerCaps != nullptr && resourceLayerCaps->processManager != nullptr && resourceLayerCaps->taskManager != nullptr)
-    {
-        ProcessManager*   processManager = resourceLayerCaps->processManager;
-        TaskManager*      taskManager    = resourceLayerCaps->taskManager;
-        virt_addr_space_t* activeSpace   = nullptr;
-        task_t*           runningTask    = taskManager->GetRunningTask((uint8_t) platform.bsp_id);
-
-        if (platform.bsp_id < platform.cpu_count)
-        {
-            activeSpace = platform.cpus[platform.bsp_id].address_space;
-        }
-
-        if (activeSpace == nullptr)
-        {
-            kprintf("Arx kernel: cpu %u kmain process create skipped (address space null)\n", (unsigned) platform.bsp_id);
-        }
-        else
-        {
-            process_t* process = processManager->CreateProcess(activeSpace);
-            if (process == nullptr)
-            {
-                kprintf("Arx kernel: cpu %u kmain process create failed\n", (unsigned) platform.bsp_id);
-            }
-            else if (!processManager->SetRunningProcess((uint8_t) platform.bsp_id, process))
-            {
-                kprintf("Arx kernel: cpu %u kmain process set-running failed\n", (unsigned) platform.bsp_id);
-                (void) processManager->FreeProcess(process);
-            }
-            else
-            {
-                kprintf("Arx kernel: cpu %u kmain process created id=%llu\n", (unsigned) platform.bsp_id, (unsigned long long) process->id);
-
-                if (runningTask == nullptr)
-                {
-                    runningTask = taskManager->AllocateTask();
-                    if (runningTask == nullptr)
-                    {
-                        kprintf("Arx kernel: cpu %u kmain running task allocation failed\n", (unsigned) platform.bsp_id);
-                    }
-                    else if (!taskManager->SetRunningTask((uint8_t) platform.bsp_id, runningTask))
-                    {
-                        kprintf("Arx kernel: cpu %u kmain running task set failed\n", (unsigned) platform.bsp_id);
-                        (void) taskManager->FreeTask(runningTask);
-                    }
-                    else
-                    {
-                        kprintf("Arx kernel: cpu %u kmain running task created id=%llu\n", (unsigned) platform.bsp_id, (unsigned long long) runningTask->id);
-                    }
-                }
-            }
-        }
-    }
-
     if (resourceLayerCaps != nullptr && logicLayerCaps != nullptr && logicLayerCaps->virtualFileSystem != nullptr)
     {
         const bool mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
@@ -92,13 +41,24 @@ extern "C" void kmain(void)
 
     selftest_print_summary();
 
+    BootstrapPostInitTasks(dispatcher);
+
     platform.bsp_kmain_exited = 1;
+
+    if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
+    {
+        if (logicLayerCaps->scheduler->RunNextReadyProcess((uint8_t) platform.bsp_id))
+        {
+            return;
+        }
+    }
 
     KernelPostInit();
 }
 
 extern "C" void smp_kmain(void)
 {
+
     kterm_printf("Arx kernel: cpu %u entered smp_kmain wait\n", (unsigned) arch_cpu_id());
 
     while (platform.bsp_kmain_exited == 0)
@@ -106,96 +66,138 @@ extern "C" void smp_kmain(void)
         arch_pause();
     }
 
+    Dispatcher*    dispatcher    = (Dispatcher*) platform.dispacher;
+    LogicLayerCaps* logicLayerCaps = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
     kterm_printf("Arx kernel: cpu %u observed BSP exit from kmain\n", (unsigned) arch_cpu_id());
+
+    if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
+    {
+        if (logicLayerCaps->scheduler->RunNextReadyProcess((uint8_t) arch_cpu_id()))
+        {
+            return;
+        }
+    }
 
     KernelPostInit();
 }
 
 static void KernelPostInit(void)
 {
-    KernelPostInitCreateApProcess();
     smp_selftests();
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
+    KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     for (;;)
     {
         arch_pause();
     }
 }
 
-static void KernelPostInitCreateApProcess(void)
+static void KernelPostInitTask(void* arg)
 {
-    const uint64_t cpu_id = (uint64_t) arch_cpu_id();
+    (void) arg;
+    KernelPostInit();
+}
 
-    if (cpu_id == platform.bsp_id)
-    {
-        return;
-    }
-
-    Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
+{
     if (dispatcher == nullptr)
     {
-        kprintf("Arx kernel: cpu %u KernelPostInit AP process skipped (dispatcher null)\n", (unsigned) cpu_id);
-        return;
+        kprintf("Arx kernel: bootstrap post-init tasks skipped (dispatcher null)\n");
+        return false;
     }
 
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
-    if (resourceLayerCaps == nullptr || resourceLayerCaps->processManager == nullptr || resourceLayerCaps->taskManager == nullptr)
+    LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+    if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->processManager == nullptr || resourceLayerCaps->taskManager == nullptr || logicLayerCaps->scheduler == nullptr)
     {
-        kprintf("Arx kernel: cpu %u KernelPostInit AP process skipped (process/task manager null)\n", (unsigned) cpu_id);
-        return;
+        kprintf("Arx kernel: bootstrap post-init tasks skipped (missing caps)\n");
+        return false;
     }
 
     ProcessManager* processManager = resourceLayerCaps->processManager;
     TaskManager*    taskManager    = resourceLayerCaps->taskManager;
-    virt_addr_space_t* activeSpace = platform.cpus[cpu_id].address_space;
-    task_t*         runningTask    = taskManager->GetRunningTask((uint8_t) cpu_id);
+    Scheduler*      scheduler      = logicLayerCaps->scheduler;
 
-    if (activeSpace == nullptr && platform.bsp_id < platform.cpu_count)
-    {
-        activeSpace = platform.cpus[platform.bsp_id].address_space;
-    }
+    bool all_ok = true;
 
-    if (activeSpace == nullptr)
+    for (uint8_t cpuId = 0; cpuId < (uint8_t) platform.cpu_count; cpuId++)
     {
-        kprintf("Arx kernel: cpu %u KernelPostInit AP process skipped (address space null)\n", (unsigned) cpu_id);
-        return;
-    }
-
-    process_t* process = processManager->CreateProcess(activeSpace);
-    if (process == nullptr)
-    {
-        kprintf("Arx kernel: cpu %u KernelPostInit AP process create failed\n", (unsigned) cpu_id);
-        return;
-    }
-
-    if (!processManager->SetRunningProcess((uint8_t) cpu_id, process))
-    {
-        kprintf("Arx kernel: cpu %u KernelPostInit AP process set-running failed\n", (unsigned) cpu_id);
-        (void) processManager->FreeProcess(process);
-        return;
-    }
-
-    if (runningTask == nullptr)
-    {
-        runningTask = taskManager->AllocateTask();
-        if (runningTask == nullptr)
+        virt_addr_space_t* activeSpace = platform.cpus[cpuId].address_space;
+        if (activeSpace == nullptr && platform.bsp_id < platform.cpu_count)
         {
-            kprintf("Arx kernel: cpu %u KernelPostInit AP running task allocation failed\n", (unsigned) cpu_id);
-            (void) processManager->FreeProcess(process);
-            return;
+            activeSpace = platform.cpus[platform.bsp_id].address_space;
         }
 
-        if (!taskManager->SetRunningTask((uint8_t) cpu_id, runningTask))
+        if (activeSpace == nullptr)
         {
-            kprintf("Arx kernel: cpu %u KernelPostInit AP running task set failed\n", (unsigned) cpu_id);
-            (void) taskManager->FreeTask(runningTask);
-            (void) processManager->FreeProcess(process);
-            return;
+            kprintf("Arx kernel: bootstrap cpu %u post-init process skipped (address space null)\n", (unsigned) cpuId);
+            all_ok = false;
+            continue;
         }
 
-        kprintf("Arx kernel: cpu %u KernelPostInit AP running task created id=%llu\n", (unsigned) cpu_id, (unsigned long long) runningTask->id);
+        process_t* process = processManager->CreateProcess(activeSpace);
+        if (process == nullptr)
+        {
+            kprintf("Arx kernel: bootstrap cpu %u post-init process create failed\n", (unsigned) cpuId);
+            all_ok = false;
+            continue;
+        }
+
+        task_t* seedTask = taskManager->AllocateTask();
+        if (seedTask == nullptr)
+        {
+            kprintf("Arx kernel: bootstrap cpu %u running task allocation failed\n", (unsigned) cpuId);
+            (void) processManager->FreeProcess(process);
+            all_ok = false;
+            continue;
+        }
+
+        if (!taskManager->SetRunningTask(cpuId, seedTask))
+        {
+            kprintf("Arx kernel: bootstrap cpu %u running task set failed\n", (unsigned) cpuId);
+            (void) taskManager->FreeTask(seedTask);
+            (void) processManager->FreeProcess(process);
+            all_ok = false;
+            continue;
+        }
+
+        if (!processManager->SetRunningProcess(cpuId, process))
+        {
+            kprintf("Arx kernel: bootstrap cpu %u running process set failed\n", (unsigned) cpuId);
+            (void) taskManager->SetRunningTask(cpuId, nullptr);
+            (void) taskManager->FreeTask(seedTask);
+            (void) processManager->FreeProcess(process);
+            all_ok = false;
+            continue;
+        }
+
+        task_t* postInitTask = taskManager->CreateKernelTask(KernelPostInitTask, (void*) (uintptr_t) cpuId);
+        if (postInitTask == nullptr)
+        {
+            kprintf("Arx kernel: bootstrap cpu %u post-init task create failed\n", (unsigned) cpuId);
+            all_ok = false;
+            continue;
+        }
+
+        if (!processManager->AddTask(process, postInitTask))
+        {
+            kprintf("Arx kernel: bootstrap cpu %u post-init task attach failed\n", (unsigned) cpuId);
+            (void) taskManager->FreeTask(postInitTask);
+            all_ok = false;
+            continue;
+        }
+
+        if (!scheduler->EnqueueProcess(cpuId, process->id))
+        {
+            kprintf("Arx kernel: bootstrap cpu %u post-init enqueue failed\n", (unsigned) cpuId);
+            all_ok = false;
+            continue;
+        }
+
+        kprintf("Arx kernel: bootstrap cpu %u queued post-init process=%llu task=%llu\n", (unsigned) cpuId, (unsigned long long) process->id, (unsigned long long) postInitTask->id);
     }
 
-    kprintf("Arx kernel: cpu %u KernelPostInit AP process created id=%llu\n", (unsigned) cpu_id, (unsigned long long) process->id);
+    return all_ok;
 }

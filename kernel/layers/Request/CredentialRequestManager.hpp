@@ -6,20 +6,20 @@
 class CredentialRequestManager
 {
 public:
-    uint64_t HandlegetuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegeteuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetegidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetresuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetresgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetreuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetregidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetresuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetresgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetfsuidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetfsgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetgroupsRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetgroupsRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGeteuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetegidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetresuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetresgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetreuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetregidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetresuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetresgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetfsuidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetfsgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetgroupsRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetgroupsRequest(const arch_syscall_frame_t* frame);
 };

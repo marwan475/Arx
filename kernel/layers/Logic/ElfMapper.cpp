@@ -51,14 +51,14 @@ constexpr uint8_t ELF_MAGIC_1 = 'E';
 constexpr uint8_t ELF_MAGIC_2 = 'L';
 constexpr uint8_t ELF_MAGIC_3 = 'F';
 
-constexpr uint8_t ELF_CLASS_64 = 2;
-constexpr uint8_t ELF_DATA_LSB = 1;
+constexpr uint8_t ELF_CLASS_64        = 2;
+constexpr uint8_t ELF_DATA_LSB        = 1;
 constexpr uint8_t ELF_VERSION_CURRENT = 1;
 
 constexpr uint16_t ELF_TYPE_EXEC = 2;
 constexpr uint16_t ELF_TYPE_DYN  = 3;
 
-constexpr uint16_t ELF_MACHINE_X86_64 = 62;
+constexpr uint16_t ELF_MACHINE_X86_64  = 62;
 constexpr uint16_t ELF_MACHINE_AARCH64 = 183;
 
 constexpr uint32_t ELF_PH_TYPE_LOAD = 1;
@@ -68,7 +68,7 @@ constexpr uint32_t ELF_PF_W = 0x2;
 constexpr uint32_t ELF_PF_R = 0x4;
 
 constexpr uint64_t ELF_MAX_PROGRAM_HEADERS = 1024;
-}
+} // namespace
 
 ElfMapper::ElfMapper(ResourceLayerCaps* resourceLayerCaps)
 {
@@ -483,8 +483,8 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         }
 
         const uint64_t mapStart = align_down(mappedAddress, PAGE_SIZE);
-        const uint64_t mapEnd = align_up(mappedAddress + segment.memorySize, PAGE_SIZE);
-        const uint64_t mapSize = mapEnd - mapStart;
+        const uint64_t mapEnd   = align_up(mappedAddress + segment.memorySize, PAGE_SIZE);
+        const uint64_t mapSize  = mapEnd - mapStart;
 
         if (mapSize % PAGE_SIZE != 0)
         {
@@ -517,7 +517,8 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
 
     uint64_t mappedPageCount = 0;
 
-    auto findMappedPageIndex = [&](uint64_t pageVirtualAddress) -> int64_t {
+    auto findMappedPageIndex = [&](uint64_t pageVirtualAddress) -> int64_t
+    {
         for (uint64_t index = 0; index < mappedPageCount; ++index)
         {
             if (mappedPages[index].virtualAddress == pageVirtualAddress)
@@ -594,9 +595,9 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             mappedPageCount++;
         }
 
-        uint64_t sourceOffset  = segment.fileOffset;
-        uint64_t destination   = mappedAddress;
-        uint64_t bytesToCopy   = segment.fileSize;
+        uint64_t sourceOffset = segment.fileOffset;
+        uint64_t destination  = mappedAddress;
+        uint64_t bytesToCopy  = segment.fileSize;
 
         while (bytesToCopy > 0)
         {

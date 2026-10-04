@@ -6,20 +6,20 @@
 class SocketRequestManager
 {
 public:
-    uint64_t HandlesocketRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesocketpairRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlebindRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleconnectRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlelistenRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleaccept4Request(const arch_syscall_frame_t* frame);
-    uint64_t HandleacceptRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlerecvfromRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlerecvmsgRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesendtoRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesendmsgRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleshutdownRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetsockoptRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetsockoptRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetsocknameRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetpeernameRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSocketRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSocketpairRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleBindRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleConnectRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleListenRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleAccept4Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleAcceptRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleRecvfromRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleRecvmsgRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSendtoRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSendmsgRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleShutdownRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetsockoptRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetsockoptRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetsocknameRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetpeernameRequest(const arch_syscall_frame_t* frame);
 };

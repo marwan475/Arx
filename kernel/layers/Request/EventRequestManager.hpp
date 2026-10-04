@@ -6,22 +6,22 @@
 class EventRequestManager
 {
 public:
-    uint64_t HandlepollRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleppollRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleselectRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handlepselect6Request(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_createRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_create1Request(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_ctlRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_waitRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_pwaitRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleepoll_pwait2Request(const arch_syscall_frame_t* frame);
-    uint64_t Handleinotify_initRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleinotify_init1Request(const arch_syscall_frame_t* frame);
-    uint64_t Handleinotify_add_watchRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleinotify_rm_watchRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleeventfdRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleeventfd2Request(const arch_syscall_frame_t* frame);
-    uint64_t HandlesignalfdRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handlesignalfd4Request(const arch_syscall_frame_t* frame);
+    uint64_t HandlePollRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandlePpollRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSelectRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandlePselect6Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_createRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_create1Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_ctlRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_waitRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_pwaitRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEpoll_pwait2Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleInotify_initRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleInotify_init1Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleInotify_add_watchRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleInotify_rm_watchRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEventfdRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleEventfd2Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleSignalfdRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSignalfd4Request(const arch_syscall_frame_t* frame);
 };

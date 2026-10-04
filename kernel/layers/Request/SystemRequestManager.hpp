@@ -6,13 +6,13 @@
 class SystemRequestManager
 {
 public:
-    uint64_t Handlearch_prctlRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleumaskRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleprlimit64Request(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetrlimitRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetrlimitRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleprctlRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleunameRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesysinfoRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetrandomRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleArch_prctlRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleUmaskRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandlePrlimit64Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetrlimitRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetrlimitRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandlePrctlRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleUnameRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSysinfoRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetrandomRequest(const arch_syscall_frame_t* frame);
 };

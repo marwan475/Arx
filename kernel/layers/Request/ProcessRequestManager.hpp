@@ -6,22 +6,22 @@
 class ProcessRequestManager
 {
 public:
-    uint64_t HandleexitRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleexit_groupRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandleforkRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlevforkRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlecloneRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleclone3Request(const arch_syscall_frame_t* frame);
-    uint64_t HandleexecveRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handlewait4Request(const arch_syscall_frame_t* frame);
-    uint64_t HandlewaitidRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handleset_tid_addressRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegettidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetpidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetppidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetpgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetpgrpRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetpgidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetsidRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlesetsidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleExitRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleExit_groupRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleForkRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleVforkRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleCloneRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleClone3Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleExecveRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleWait4Request(const arch_syscall_frame_t* frame);
+    uint64_t HandleWaitidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSet_tid_addressRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGettidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetpidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetppidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetpgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetpgrpRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetpgidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetsidRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSetsidRequest(const arch_syscall_frame_t* frame);
 };

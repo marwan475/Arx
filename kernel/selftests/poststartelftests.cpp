@@ -182,7 +182,7 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
 }
 } // namespace
 
- #if defined(__x86_64__)
+#if defined(__x86_64__)
 extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled)
 {
     if (handled == nullptr)
@@ -200,9 +200,8 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
     if (frame->syscall_number == SELFTEST_SYSCALL_PROBE)
     {
         g_poststart_elf_ctx.syscallProbeSeen = 1;
-        kprintf("Arx kernel: poststart_elf_selftest syscall probe hit (nr=%llu arg0=0x%llx)\n", (unsigned long long) frame->syscall_number,
-                (unsigned long long) frame->arg0);
-        *handled                              = true;
+        kprintf("Arx kernel: poststart_elf_selftest syscall probe hit (nr=%llu arg0=0x%llx)\n", (unsigned long long) frame->syscall_number, (unsigned long long) frame->arg0);
+        *handled = true;
         return 0;
     }
 
@@ -226,29 +225,29 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
 extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 {
-    unsigned long long passes       = 0;
-    unsigned long long fails        = 0;
-    file_t*             file        = nullptr;
-    process_t*          process     = nullptr;
-    task_t*             userTask    = nullptr;
-    elf_metadata_t      metadata    = {};
-    uint64_t            userRsp     = 0;
-    bool                elfMapped   = false;
-    bool                stackMapped = false;
+    unsigned long long passes      = 0;
+    unsigned long long fails       = 0;
+    file_t*            file        = nullptr;
+    process_t*         process     = nullptr;
+    task_t*            userTask    = nullptr;
+    elf_metadata_t     metadata    = {};
+    uint64_t           userRsp     = 0;
+    bool               elfMapped   = false;
+    bool               stackMapped = false;
 
-        static const char* argvValues[] = {
+    static const char* argvValues[] = {
             "test_syscall_exit.elf",
             "--selftest",
-        };
+    };
 
-        static const char* envpValues[] = {
+    static const char* envpValues[] = {
             "ARX_SELFTEST=1",
-        };
+    };
 
-        process_user_auxv_entry_t auxvValues[7] = {};
-        process_user_stack_layout_t stackLayout = {};
+    process_user_auxv_entry_t   auxvValues[7] = {};
+    process_user_stack_layout_t stackLayout   = {};
 
-    constexpr uint64_t stackPageCount = USER_STACK_SIZE / PAGE_SIZE;
+    constexpr uint64_t stackPageCount             = USER_STACK_SIZE / PAGE_SIZE;
     mapped_user_page_t stackPages[stackPageCount] = {};
 
     selftest_case_begin("poststart_elf_selftest");
@@ -276,7 +275,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
 
     {
         vfs_path_t start = {};
-        file            = logicCaps->virtualFileSystem->Open(start, "/test_syscall_exit.elf", 0);
+        file             = logicCaps->virtualFileSystem->Open(start, "/test_syscall_exit.elf", 0);
         if (file == nullptr)
         {
             poststart_elf_test_fail("failed to open /test_syscall_exit.elf", &fails);
@@ -327,22 +326,22 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     stackMapped = true;
     passes++;
 
-        auxvValues[0] = {AUXV_AT_PAGESZ, PAGE_SIZE};
-        auxvValues[1] = {AUXV_AT_ENTRY, metadata.entryPoint};
-        auxvValues[2] = {AUXV_AT_PHENT, metadata.programHeaderEntrySize};
-        auxvValues[3] = {AUXV_AT_PHNUM, metadata.programHeaderCount};
-        auxvValues[4] = {AUXV_AT_PHDR, metadata.loadBias + metadata.programHeaderOffset};
-        auxvValues[5] = {AUXV_AT_BASE, metadata.loadBias};
-        auxvValues[6] = {AUXV_AT_NULL, 0};
+    auxvValues[0] = {AUXV_AT_PAGESZ, PAGE_SIZE};
+    auxvValues[1] = {AUXV_AT_ENTRY, metadata.entryPoint};
+    auxvValues[2] = {AUXV_AT_PHENT, metadata.programHeaderEntrySize};
+    auxvValues[3] = {AUXV_AT_PHNUM, metadata.programHeaderCount};
+    auxvValues[4] = {AUXV_AT_PHDR, metadata.loadBias + metadata.programHeaderOffset};
+    auxvValues[5] = {AUXV_AT_BASE, metadata.loadBias};
+    auxvValues[6] = {AUXV_AT_NULL, 0};
 
-    stackLayout.stackBase                   = USER_STACK_TOP - USER_STACK_SIZE;
-    stackLayout.stackSize                   = USER_STACK_SIZE;
-    stackLayout.argv                        = argvValues;
-    stackLayout.argc                        = (uint64_t) (sizeof(argvValues) / sizeof(argvValues[0]));
-    stackLayout.envp                        = envpValues;
-    stackLayout.envc                        = (uint64_t) (sizeof(envpValues) / sizeof(envpValues[0]));
-    stackLayout.auxv                        = auxvValues;
-        stackLayout.auxvCount                   = 7;
+    stackLayout.stackBase = USER_STACK_TOP - USER_STACK_SIZE;
+    stackLayout.stackSize = USER_STACK_SIZE;
+    stackLayout.argv      = argvValues;
+    stackLayout.argc      = (uint64_t) (sizeof(argvValues) / sizeof(argvValues[0]));
+    stackLayout.envp      = envpValues;
+    stackLayout.envc      = (uint64_t) (sizeof(envpValues) / sizeof(envpValues[0]));
+    stackLayout.auxv      = auxvValues;
+    stackLayout.auxvCount = 7;
 
     if (!resourceCaps->processManager->BuildUserInitialStack(process, &stackLayout, &userRsp))
     {

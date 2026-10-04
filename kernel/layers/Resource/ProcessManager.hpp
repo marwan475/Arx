@@ -46,7 +46,7 @@ struct process_user_stack_layout_t
     uint64_t           envc;
 
     const process_user_auxv_entry_t* auxv;
-    uint64_t                        auxvCount;
+    uint64_t                         auxvCount;
 };
 
 struct process_t

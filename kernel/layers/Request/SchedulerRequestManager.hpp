@@ -6,7 +6,7 @@
 class SchedulerRequestManager
 {
 public:
-    uint64_t Handlesched_yieldRequest(const arch_syscall_frame_t* frame);
-    uint64_t Handlesched_getaffinityRequest(const arch_syscall_frame_t* frame);
-    uint64_t HandlegetcpuRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSched_yieldRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleSched_getaffinityRequest(const arch_syscall_frame_t* frame);
+    uint64_t HandleGetcpuRequest(const arch_syscall_frame_t* frame);
 };

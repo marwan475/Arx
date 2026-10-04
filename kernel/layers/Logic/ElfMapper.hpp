@@ -61,9 +61,9 @@ private:
     bool ValidateUserspaceRange(uint64_t virtualAddress, uint64_t memorySize) const;
     bool IsSupportedMachine(uint16_t machine) const;
 
-    static bool AddWouldOverflow(uint64_t a, uint64_t b);
+    static bool     AddWouldOverflow(uint64_t a, uint64_t b);
     static uint64_t MinU64(uint64_t a, uint64_t b);
-    static bool IsPowerOfTwo(uint64_t value);
+    static bool     IsPowerOfTwo(uint64_t value);
 
     ResourceLayerCaps* ResourceLayerImportCaps;
 };

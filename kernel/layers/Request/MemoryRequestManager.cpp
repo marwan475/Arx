@@ -1,38 +1,37 @@
 #include "layers/Request/MemoryRequestManager.hpp"
 
-uint64_t MemoryRequestManager::HandlemmapRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
 
-uint64_t MemoryRequestManager::HandlemunmapRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleMunmapRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
 
-uint64_t MemoryRequestManager::HandlemprotectRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleMprotectRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
 
-uint64_t MemoryRequestManager::HandlemincoreRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleMincoreRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
 
-uint64_t MemoryRequestManager::HandlemadviseRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleMadviseRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
 
-uint64_t MemoryRequestManager::HandlebrkRequest(const arch_syscall_frame_t* frame)
+uint64_t MemoryRequestManager::HandleBrkRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
     return (uint64_t) -38;
 }
-

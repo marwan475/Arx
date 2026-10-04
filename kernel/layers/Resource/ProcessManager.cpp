@@ -310,8 +310,8 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
         return false;
     }
 
-    const uint64_t stackLimit = layout->stackBase + layout->stackSize;
-    uint64_t       stackCursor = stackLimit;
+    const uint64_t stackLimit        = layout->stackBase + layout->stackSize;
+    uint64_t       stackCursor       = stackLimit;
     uint64_t       metadataWordCount = 0;
     uint64_t       metadataByteCount = 0;
     uint64_t       writeCursor       = 0;
@@ -440,8 +440,7 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
 
     for (uint64_t i = 0; i < layout->auxvCount; ++i)
     {
-        if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].type)
-            || !push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].value))
+        if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].type) || !push_word_to_process_stack(process->addressSpace, &writeCursor, layout->auxv[i].value))
         {
             goto fail;
         }

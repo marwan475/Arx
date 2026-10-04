@@ -20,6 +20,20 @@ struct arch_task_context
     uint64_t pc;
 };
 
+typedef struct arch_syscall_frame
+{
+    uint64_t syscall_number;
+    uint64_t arg0;
+    uint64_t arg1;
+    uint64_t arg2;
+    uint64_t arg3;
+    uint64_t arg4;
+    uint64_t arg5;
+    uint64_t user_elr;
+    uint64_t user_spsr;
+    uint64_t user_sp;
+} arch_syscall_frame_t;
+
 typedef struct arch_info
 {
 } arch_info_t;

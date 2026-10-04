@@ -19,6 +19,7 @@
 #define RFLAGS_AC (1ULL << 18)
 
 extern uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled);
+extern uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
 
 static inline uint64_t rdmsr(uint32_t msr)
 {
@@ -104,18 +105,5 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
         return selftestResult;
     }
 
-    const uint64_t syscall_number = frame->syscall_number;
-
-    (void) frame->arg0;
-    (void) frame->arg1;
-    (void) frame->arg2;
-    (void) frame->arg3;
-    (void) frame->arg4;
-    (void) frame->arg5;
-
-    switch (syscall_number)
-    {
-        default:
-            return (uint64_t) -38;
-    }
+    return dispatcher_dispatch_syscall(frame);
 }

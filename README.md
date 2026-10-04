@@ -180,6 +180,18 @@ currently all cores wait for the rest of the cores to enter post init then conti
         - Maps PT_LOAD segments into process address spaces via Resource capabilities
 - Request
     - Entry layer for syscalls/interrupt-driven kernel requests
+    - Managers currently in tree:
+        - ProcessRequestManager
+        - SchedulerRequestManager
+        - TimeRequestManager
+        - MemoryRequestManager
+        - VfsRequestManager
+        - EventRequestManager
+        - SyncRequestManager
+        - SignalRequestManager
+        - CredentialRequestManager
+        - SystemRequestManager
+        - SocketRequestManager
 
 ## Processes
 - Tasks

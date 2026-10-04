@@ -10,6 +10,7 @@
 
 void platform_init_complete(void* arg);
 void kmain(void);
+void smp_kmain(void);
 
 // From bootloader we need
 // - memory map
@@ -170,13 +171,13 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     cpu_init_stack(platform_init_complete, 0);
 }
 
-void smp_kmain(void)
+void smp_platform_init(void)
 {
-    kprintf("Arx kernel: cpu %d entered smp_kmain\n", arch_cpu_id());
+    kprintf("Arx kernel: cpu %d entered smp_platform_init\n", arch_cpu_id());
 
     arch_init();
 
-    kterm_printf("Arx kernel: cpu %u smp_kmain initialization complete\n", (unsigned) arch_cpu_id());
+    kterm_printf("Arx kernel: cpu %u smp_platform_init initialization complete\n", (unsigned) arch_cpu_id());
 
     platform.cpus[arch_cpu_id()].initialized = true;
 
@@ -201,6 +202,10 @@ void platform_init_complete(void* arg)
     if ((uint64_t) arch_cpu_id() == platform.bsp_id)
     {
         kmain();
+    }
+    else
+    {
+        smp_kmain();
     }
 
     for (;;)

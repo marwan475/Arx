@@ -132,8 +132,8 @@ Klib allocations
 - BSP runs arch_smp_init(boot_info) after base kernel init in kernel_bootstrap
 - arch_smp_init walks all cpus and skips the BSP
 - each AP gets goto_address = smp_entry set from its Limine SMP record
-- AP enters smp_entry and then calls smp_kmain
-- smp_kmain runs per-core arch init
+- AP enters smp_entry and then calls smp_platform_init
+- smp_platform_init runs per-core arch init
 
 
 ### Arch Init

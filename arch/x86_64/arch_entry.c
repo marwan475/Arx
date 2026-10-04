@@ -182,7 +182,7 @@ static void smp_entry(struct limine_smp_info* cpu)
         kprintf("Arx kernel: cpu[%u] boot entry\n", (unsigned) arch_cpu_id());
     }
 
-    smp_kmain();
+    smp_platform_init();
 
     for (;;)
     {

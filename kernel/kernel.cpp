@@ -10,6 +10,8 @@ extern "C"
 #include <selftests/selftests.h>
 }
 
+static void KernelPostInit(void);
+
 extern "C" void kmain(void)
 {
     Dispatcher* dispatcher = new Dispatcher();
@@ -33,6 +35,29 @@ extern "C" void kmain(void)
 
     selftest_print_summary();
 
+    platform.bsp_kmain_exited = 1;
+
+    KernelPostInit();
+}
+
+extern "C" void smp_kmain(void)
+{
+    kterm_printf("Arx kernel: cpu %u entered smp_kmain wait\n", (unsigned) arch_cpu_id());
+
+    while (platform.bsp_kmain_exited == 0)
+    {
+        arch_pause();
+    }
+
+    kterm_printf("Arx kernel: cpu %u observed BSP exit from kmain\n", (unsigned) arch_cpu_id());
+
+    KernelPostInit();
+}
+
+static void KernelPostInit(void)
+{
+
+    kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     for (;;)
     {
         arch_pause();

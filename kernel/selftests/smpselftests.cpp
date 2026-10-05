@@ -6,6 +6,7 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 #include <platform.h>
+#include <selftests/selftests.h>
 
 typedef struct smp_pid_vfs_task_context
 {
@@ -18,6 +19,16 @@ typedef struct smp_pid_vfs_task_context
     volatile int       completed;
     volatile int       passed;
 } smp_pid_vfs_task_context_t;
+
+typedef struct smp_test_totals
+{
+    unsigned long long passes;
+    unsigned long long fails;
+} smp_test_totals_t;
+
+static volatile unsigned long long g_smp_selftests_total_passes   = 0;
+static volatile unsigned long long g_smp_selftests_total_fails    = 0;
+static volatile unsigned long long g_smp_selftests_finished_cpus  = 0;
 
 static size_t format_pid_payload(uint64_t pid, char* out, size_t outCapacity)
 {
@@ -175,157 +186,203 @@ static void smp_pid_vfs_task(void* arg)
     }
 }
 
-void smp_selftests(void)
+extern "C" void smp_selftests(void)
 {
     const uint64_t cpuId = (uint64_t) arch_cpu_id();
+    smp_test_totals_t totals            = {};
+    ResourceLayerCaps* resourceLayerCaps = nullptr;
+    LogicLayerCaps*    logicLayerCaps    = nullptr;
 
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
     if (dispatcher == nullptr)
     {
         kprintf("Arx kernel: smp pid-vfs test skipped cpu=%u (dispatcher null)\n", (unsigned) cpuId);
         KDEBUG("smp pid-vfs test skipped cpu=%u (dispatcher null)\n", (unsigned) cpuId);
-        return;
+        totals.fails++;
     }
-
-    ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
-    LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
-    if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->taskManager == nullptr || resourceLayerCaps->processManager == nullptr || logicLayerCaps->virtualFileSystem == nullptr)
+    else
     {
-        kprintf("Arx kernel: smp pid-vfs test skipped cpu=%u (missing managers)\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs test skipped cpu=%u (missing managers)\n", (unsigned) cpuId);
-        return;
+        resourceLayerCaps = dispatcher->GetResourceLayerCaps();
+        logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+        if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->taskManager == nullptr || resourceLayerCaps->processManager == nullptr || logicLayerCaps->virtualFileSystem == nullptr)
+        {
+            kprintf("Arx kernel: smp pid-vfs test skipped cpu=%u (missing managers)\n", (unsigned) cpuId);
+            KDEBUG("smp pid-vfs test skipped cpu=%u (missing managers)\n", (unsigned) cpuId);
+            totals.fails++;
+        }
+        else
+        {
+
+            TaskManager*       taskManager    = resourceLayerCaps->taskManager;
+            ProcessManager*    processManager = resourceLayerCaps->processManager;
+            VirtualFileSystem* vfs            = logicLayerCaps->virtualFileSystem;
+
+            kprintf("Arx kernel: smp pid-vfs start cpu=%u\n", (unsigned) cpuId);
+            KDEBUG("smp pid-vfs start cpu=%u\n", (unsigned) cpuId);
+
+            unsigned long long passes = 0;
+            unsigned long long fails  = 0;
+
+            task_t*            returnTask = taskManager->GetRunningTask((uint8_t) cpuId);
+            process_t*         originalRun = processManager->GetRunningProcess((uint8_t) cpuId);
+            virt_addr_space_t* activeSpace = platform.cpus[cpuId].address_space;
+            process_t*         process      = nullptr;
+            task_t*            task         = nullptr;
+            smp_pid_vfs_task_context_t ctx  = {};
+
+            do
+            {
+                if (returnTask == nullptr)
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u missing running task\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u missing running task\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (activeSpace == nullptr && originalRun != nullptr)
+                {
+                    activeSpace = originalRun->addressSpace;
+                }
+
+                if (activeSpace == nullptr && platform.bsp_id < platform.cpu_count)
+                {
+                    activeSpace = platform.cpus[platform.bsp_id].address_space;
+                }
+
+                if (activeSpace == nullptr)
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u missing address space\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u missing address space\n", (unsigned) cpuId);
+                    break;
+                }
+
+                process = processManager->CreateProcess(activeSpace);
+                if (process == nullptr)
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u create process failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u create process failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                ctx.vfs            = vfs;
+                ctx.processManager = processManager;
+                ctx.taskManager    = taskManager;
+                ctx.returnTask     = returnTask;
+                ctx.cpuId          = cpuId;
+                ctx.processId      = process->id;
+                ctx.completed      = 0;
+                ctx.passed         = 0;
+
+                task = taskManager->CreateKernelTask(smp_pid_vfs_task, &ctx);
+                if (task == nullptr)
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u create task failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u create task failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (!processManager->AddTask(process, task))
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u add task failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u add task failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (!processManager->SetRunningProcess((uint8_t) cpuId, process))
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u set running process failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u set running process failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (!taskManager->ExecuteTask(task))
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u execute task failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u execute task failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (!processManager->SetRunningProcess((uint8_t) cpuId, originalRun))
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u restore running process failed\n", (unsigned) cpuId);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u restore running process failed\n", (unsigned) cpuId);
+                    break;
+                }
+
+                if (ctx.completed != 1 || ctx.passed != 1)
+                {
+                    fails++;
+                    kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
+                    KDEBUG("smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
+                    break;
+                }
+
+                passes++;
+                kprintf("Arx kernel: smp pid-vfs PASS cpu=%u pid=%llu\n", (unsigned) cpuId, (unsigned long long) ctx.processId);
+                KDEBUG("smp pid-vfs PASS cpu=%u pid=%llu\n", (unsigned) cpuId, (unsigned long long) ctx.processId);
+            } while (0);
+
+            if (task != nullptr)
+            {
+                (void) taskManager->FreeTask(task);
+            }
+
+            if (process != nullptr)
+            {
+                (void) processManager->FreeProcess(process);
+            }
+
+            if (processManager->GetRunningProcess((uint8_t) cpuId) != originalRun)
+            {
+                (void) processManager->SetRunningProcess((uint8_t) cpuId, originalRun);
+            }
+
+            totals.passes += passes;
+            totals.fails += fails;
+
+            unsigned long long schedulerPasses = 0;
+            unsigned long long schedulerFails  = 0;
+            run_smp_scheduler_selftest((void*) logicLayerCaps, (void*) resourceLayerCaps, (unsigned long long) cpuId, &schedulerPasses, &schedulerFails);
+            totals.passes += schedulerPasses;
+            totals.fails += schedulerFails;
+        }
     }
+    (void) __atomic_fetch_add(&g_smp_selftests_total_passes, totals.passes, __ATOMIC_RELAXED);
+    (void) __atomic_fetch_add(&g_smp_selftests_total_fails, totals.fails, __ATOMIC_RELAXED);
+    (void) __atomic_add_fetch(&g_smp_selftests_finished_cpus, 1ULL, __ATOMIC_ACQ_REL);
+}
 
-    TaskManager*       taskManager    = resourceLayerCaps->taskManager;
-    ProcessManager*    processManager = resourceLayerCaps->processManager;
-    VirtualFileSystem* vfs            = logicLayerCaps->virtualFileSystem;
-
-    kprintf("Arx kernel: smp pid-vfs start cpu=%u\n", (unsigned) cpuId);
-    KDEBUG("smp pid-vfs start cpu=%u\n", (unsigned) cpuId);
-
-    unsigned long long passes = 0;
-    unsigned long long fails  = 0;
-
-    task_t*            returnTask = taskManager->GetRunningTask((uint8_t) cpuId);
-    process_t*         originalRun = processManager->GetRunningProcess((uint8_t) cpuId);
-    virt_addr_space_t* activeSpace = platform.cpus[cpuId].address_space;
-    process_t*         process      = nullptr;
-    task_t*            task         = nullptr;
-    smp_pid_vfs_task_context_t ctx  = {};
-
-    if (returnTask == nullptr)
+extern "C" void smp_selftests_wait_for_all_cpus(void)
+{
+    const unsigned long long expected = (unsigned long long) platform.cpu_count;
+    while (__atomic_load_n(&g_smp_selftests_finished_cpus, __ATOMIC_ACQUIRE) < expected)
     {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u missing running task\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u missing running task\n", (unsigned) cpuId);
-        goto smp_done;
+        arch_pause();
     }
+}
 
-    if (activeSpace == nullptr && originalRun != nullptr)
+extern "C" void smp_selftests_get_totals(unsigned long long* out_passes, unsigned long long* out_fails, unsigned long long* out_finished_cpus)
+{
+    if (out_passes != nullptr)
     {
-        activeSpace = originalRun->addressSpace;
+        *out_passes = __atomic_load_n(&g_smp_selftests_total_passes, __ATOMIC_RELAXED);
     }
 
-    if (activeSpace == nullptr && platform.bsp_id < platform.cpu_count)
+    if (out_fails != nullptr)
     {
-        activeSpace = platform.cpus[platform.bsp_id].address_space;
+        *out_fails = __atomic_load_n(&g_smp_selftests_total_fails, __ATOMIC_RELAXED);
     }
 
-    if (activeSpace == nullptr)
+    if (out_finished_cpus != nullptr)
     {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u missing address space\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u missing address space\n", (unsigned) cpuId);
-        goto smp_done;
+        *out_finished_cpus = __atomic_load_n(&g_smp_selftests_finished_cpus, __ATOMIC_ACQUIRE);
     }
-
-    process = processManager->CreateProcess(activeSpace);
-    if (process == nullptr)
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u create process failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u create process failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    ctx.vfs            = vfs;
-    ctx.processManager = processManager;
-    ctx.taskManager    = taskManager;
-    ctx.returnTask     = returnTask;
-    ctx.cpuId          = cpuId;
-    ctx.processId      = process->id;
-    ctx.completed      = 0;
-    ctx.passed         = 0;
-
-    task = taskManager->CreateKernelTask(smp_pid_vfs_task, &ctx);
-    if (task == nullptr)
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u create task failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u create task failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    if (!processManager->AddTask(process, task))
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u add task failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u add task failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    if (!processManager->SetRunningProcess((uint8_t) cpuId, process))
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u set running process failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u set running process failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    if (!taskManager->ExecuteTask(task))
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u execute task failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u execute task failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    if (!processManager->SetRunningProcess((uint8_t) cpuId, originalRun))
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u restore running process failed\n", (unsigned) cpuId);
-        KDEBUG("smp pid-vfs FAIL cpu=%u restore running process failed\n", (unsigned) cpuId);
-        goto smp_done;
-    }
-
-    if (ctx.completed != 1 || ctx.passed != 1)
-    {
-        fails++;
-        kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
-        KDEBUG("smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
-        goto smp_done;
-    }
-
-    passes++;
-    kprintf("Arx kernel: smp pid-vfs PASS cpu=%u pid=%llu\n", (unsigned) cpuId, (unsigned long long) ctx.processId);
-    KDEBUG("smp pid-vfs PASS cpu=%u pid=%llu\n", (unsigned) cpuId, (unsigned long long) ctx.processId);
-
-smp_done:
-    if (task != nullptr)
-    {
-        (void) taskManager->FreeTask(task);
-    }
-
-    if (process != nullptr)
-    {
-        (void) processManager->FreeProcess(process);
-    }
-
-    if (processManager->GetRunningProcess((uint8_t) cpuId) != originalRun)
-    {
-        (void) processManager->SetRunningProcess((uint8_t) cpuId, originalRun);
-    }
-
-    kprintf("Arx kernel: smp pid-vfs result cpu=%u pass=%llu fail=%llu\n", (unsigned) cpuId, passes, fails);
-    KDEBUG("smp pid-vfs result cpu=%u pass=%llu fail=%llu\n", (unsigned) cpuId, passes, fails);
 }

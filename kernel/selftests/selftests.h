@@ -1,6 +1,11 @@
 #ifndef SELFTESTS_H
 #define SELFTESTS_H
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 typedef struct selftest_context
 {
     unsigned long long tests_ran;
@@ -28,9 +33,18 @@ void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void run_vfs_selftests(void* logicLayerCaps);
 void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps);
+void run_smp_scheduler_selftest(void* logicLayerCaps, void* resourceLayerCaps, unsigned long long cpuId, unsigned long long* outPasses, unsigned long long* outFails);
+
+void smp_selftests(void);
+void smp_selftests_wait_for_all_cpus(void);
+void smp_selftests_get_totals(unsigned long long* out_passes, unsigned long long* out_fails, unsigned long long* out_finished_cpus);
 
 void resourcelayer_selftests(void* resourceLayerCaps);
 void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void poststartkerneltests(void* resourceLayerCaps, void* logicLayerCaps);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -16,7 +16,6 @@ extern "C"
 static void KernelPostInit(void);
 static void KernelPostInitTask(void* arg);
 static bool BootstrapPostInitTasks(Dispatcher* dispatcher);
-void        smp_selftests(void);
 
 extern "C" void kmain(void)
 {
@@ -39,8 +38,6 @@ extern "C" void kmain(void)
         poststartkerneltests((void*) resourceLayerCaps, (void*) logicLayerCaps);
     }
 
-    selftest_print_summary();
-
     BootstrapPostInitTasks(dispatcher);
 
     platform.bsp_kmain_exited = 1;
@@ -50,12 +47,34 @@ extern "C" void kmain(void)
         logicLayerCaps->scheduler->ActivateScheduling();
     }
 
-    KernelPostInit();
+    for (;;)
+    {
+        arch_pause();
+    }
 }
 
 static void KernelPostInit(void)
 {
     smp_selftests();
+
+    if (arch_cpu_id() == platform.bsp_id)
+    {
+        unsigned long long smpPasses   = 0;
+        unsigned long long smpFails    = 0;
+        unsigned long long smpFinished = 0;
+
+        smp_selftests_wait_for_all_cpus();
+        smp_selftests_get_totals(&smpPasses, &smpFails, &smpFinished);
+
+        KDEBUG("smp summary: finished_cpus=%llu pass=%llu fail=%llu\n", smpFinished, smpPasses, smpFails);
+
+        selftest_group_begin("smp");
+        selftest_case_begin("smp_selftests");
+        selftest_case_end("smp_selftests", smpPasses, smpFails);
+        selftest_group_end("smp");
+
+        selftest_print_summary();
+    }
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());

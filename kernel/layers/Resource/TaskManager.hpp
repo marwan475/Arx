@@ -28,7 +28,7 @@ struct task_t
 class TaskManager
 {
 public:
-    static constexpr size_t MAX_TASKS = 64;
+    static constexpr size_t MAX_TASKS = 128;
 
     TaskManager();
 

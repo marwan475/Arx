@@ -18,7 +18,7 @@ public:
 private:
     void HandleScheduleRequest();
 
-    static constexpr uint64_t SCHEDULE_TICK_INTERVAL = 10;
+    static constexpr uint64_t SCHEDULE_TICK_INTERVAL = 5;
     uint64_t                  ScheduleTickCounters[BOOT_SMP_MAX_CPUS];
 };
 #endif

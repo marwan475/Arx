@@ -10,6 +10,7 @@
 
 extern "C"
 {
+#include <arch/arch.h>
 #include <boot/boot.h>
 #include <cpu/cpu.h>
 #include <klib/klib.h>
@@ -212,6 +213,9 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
         if (g_poststart_elf_ctx.taskManager != nullptr && g_poststart_elf_ctx.bspTask != nullptr)
         {
+            // x86 syscall entry masks IF; restore interrupts before switching
+            // back to BSP task because task context switch does not restore RFLAGS.
+            arch_enable_interrupts();
             (void) g_poststart_elf_ctx.taskManager->ExecuteTask(g_poststart_elf_ctx.bspTask);
         }
 

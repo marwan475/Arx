@@ -27,13 +27,10 @@ Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
 
 void Scheduler::ActivateScheduling()
 {
-    const uint8_t cpuId = arch_cpu_id();
-    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
-        return;
+        SchedulingActive[i] = true;
     }
-
-    SchedulingActive[cpuId] = true;
 }
 
 bool Scheduler::IsSchedulingActive() const

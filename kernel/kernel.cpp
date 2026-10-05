@@ -47,36 +47,7 @@ extern "C" void kmain(void)
 
     if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
     {
-        if (logicLayerCaps->scheduler->RunNextReadyProcess((uint8_t) platform.bsp_id))
-        {
-            return;
-        }
-    }
-
-    KernelPostInit();
-}
-
-extern "C" void smp_kmain(void)
-{
-
-    kterm_printf("Arx kernel: cpu %u entered smp_kmain wait\n", (unsigned) arch_cpu_id());
-
-    while (platform.bsp_kmain_exited == 0)
-    {
-        arch_pause();
-    }
-
-    Dispatcher*    dispatcher    = (Dispatcher*) platform.dispacher;
-    LogicLayerCaps* logicLayerCaps = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
-
-    kterm_printf("Arx kernel: cpu %u observed BSP exit from kmain\n", (unsigned) arch_cpu_id());
-
-    if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
-    {
-        if (logicLayerCaps->scheduler->RunNextReadyProcess((uint8_t) arch_cpu_id()))
-        {
-            return;
-        }
+        logicLayerCaps->scheduler->ActivateScheduling();
     }
 
     KernelPostInit();

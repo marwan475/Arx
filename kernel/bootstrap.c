@@ -10,7 +10,6 @@
 
 void platform_init_complete(void* arg);
 void kmain(void);
-void smp_kmain(void);
 
 // From bootloader we need
 // - memory map
@@ -205,7 +204,17 @@ void platform_init_complete(void* arg)
     }
     else
     {
-        smp_kmain();
+        while (platform.bsp_kmain_exited == 0)
+        {
+            arch_pause();
+        }
+
+        kprintf("Arx kernel: cpu %d awaiting scheduler dispatch\n", arch_cpu_id());
+
+        for (;;)
+        {
+            arch_pause();
+        }
     }
 
     for (;;)

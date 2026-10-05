@@ -227,43 +227,35 @@ bool TaskManager::FreeTask(task_t* task)
 
 bool TaskManager::ExecuteTask(task_t* task)
 {
-    LockManager();
-
     if (task == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
     {
-        UnlockManager();
         return false;
     }
 
     if (!task->allocated)
     {
-        UnlockManager();
         return false;
     }
 
     uint8_t cpuId = arch_cpu_id();
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return false;
     }
 
     task_t* current = RunningTasks[cpuId];
     if (current == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (current == task)
     {
-        UnlockManager();
         return true;
     }
 
@@ -278,7 +270,6 @@ bool TaskManager::ExecuteTask(task_t* task)
     }
 
     RunningTasks[cpuId] = task;
-    UnlockManager();
     arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
 
     // We only reach here after another switch restores this task.
@@ -291,25 +282,18 @@ bool TaskManager::ExecuteTask(task_t* task)
         }
     }
 
-    LockManager();
     RunningTasks[cpuId] = current;
-    UnlockManager();
     return true;
 }
 
 task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
 {
-    LockManager();
-
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return nullptr;
     }
 
-    task_t* task = RunningTasks[cpuId];
-    UnlockManager();
-    return task;
+    return RunningTasks[cpuId];
 }
 
 task_t* TaskManager::GetCurrentTask() const
@@ -319,11 +303,8 @@ task_t* TaskManager::GetCurrentTask() const
 
 bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
 {
-    LockManager();
-
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return false;
     }
 
@@ -331,42 +312,30 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
     {
         if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
         {
-            UnlockManager();
             return false;
         }
 
         if (!task->allocated)
         {
-            UnlockManager();
             return false;
         }
     }
 
     RunningTasks[cpuId] = task;
-    UnlockManager();
     return true;
 }
 
 task_t* TaskManager::GetTasks()
 {
-    LockManager();
-    task_t* tasks = Tasks;
-    UnlockManager();
-    return tasks;
+    return Tasks;
 }
 
 const task_t* TaskManager::GetTasks() const
 {
-    LockManager();
-    const task_t* tasks = Tasks;
-    UnlockManager();
-    return tasks;
+    return Tasks;
 }
 
 size_t TaskManager::GetCapacity() const
 {
-    LockManager();
-    const size_t capacity = MAX_TASKS;
-    UnlockManager();
-    return capacity;
+    return MAX_TASKS;
 }

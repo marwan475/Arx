@@ -19,10 +19,32 @@ Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
         ReadyQueues[i].head = 0;
         ReadyQueues[i].tail = 0;
         ReadyQueues[i].count = 0;
-        ReadyQueues[i].lock = 0;
+        SchedulingActive[i] = false;
     }
 
     InitializeBspProcessAndTask();
+}
+
+void Scheduler::ActivateScheduling()
+{
+    const uint8_t cpuId = arch_cpu_id();
+    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
+        return;
+    }
+
+    SchedulingActive[cpuId] = true;
+}
+
+bool Scheduler::IsSchedulingActive() const
+{
+    const uint8_t cpuId = arch_cpu_id();
+    if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
+        return false;
+    }
+
+    return SchedulingActive[cpuId];
 }
 
 void Scheduler::InitializeBspProcessAndTask()
@@ -214,17 +236,14 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     }
 
     ready_queue_t* queue = &ReadyQueues[cpuId];
-    spinlock_acquire(&queue->lock);
     if (queue->count >= READY_QUEUE_CAPACITY)
     {
-        spinlock_release(&queue->lock);
         return false;
     }
 
     queue->processIds[queue->tail] = processId;
     queue->tail                    = (queue->tail + 1) % READY_QUEUE_CAPACITY;
     queue->count++;
-    spinlock_release(&queue->lock);
     return true;
 }
 
@@ -243,17 +262,14 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
     ready_queue_t* queue = &ReadyQueues[cpuId];
     uint64_t       processId;
 
-    spinlock_acquire(&queue->lock);
     if (queue->count == 0)
     {
-        spinlock_release(&queue->lock);
         return false;
     }
 
     processId   = queue->processIds[queue->head];
     queue->head = (queue->head + 1) % READY_QUEUE_CAPACITY;
     queue->count--;
-    spinlock_release(&queue->lock);
 
     return ScheduleProcess(processId);
 }

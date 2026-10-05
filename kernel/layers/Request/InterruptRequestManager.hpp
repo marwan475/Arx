@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boot/boot.h>
 #include <stdint.h>
 
 enum interrupt_request_number
@@ -11,6 +12,13 @@ enum interrupt_request_number
 class InterruptRequestManager
 {
 public:
+    InterruptRequestManager();
     void HandleInterruptRequest(uint64_t requestNumber);
+
+private:
+    void HandleScheduleRequest();
+
+    static constexpr uint64_t SCHEDULE_TICK_INTERVAL = 10;
+    uint64_t                  ScheduleTickCounters[BOOT_SMP_MAX_CPUS];
 };
 #endif

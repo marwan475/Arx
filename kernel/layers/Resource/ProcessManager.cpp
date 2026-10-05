@@ -218,23 +218,18 @@ bool ProcessManager::FreeProcess(process_t* process)
 
 bool ProcessManager::AddTask(process_t* process, task_t* task)
 {
-    LockManager();
-
     if (process == nullptr || task == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
     {
-        UnlockManager();
         return false;
     }
 
     if (!process->allocated || !task->allocated)
     {
-        UnlockManager();
         return false;
     }
 
@@ -242,47 +237,38 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
     {
         if (iter == task)
         {
-            UnlockManager();
             return true;
         }
     }
 
     if (task->next != nullptr || task->prev != nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     ILIST_APPEND(process->tasks, task);
-    UnlockManager();
     return true;
 }
 
 int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags)
 {
-    LockManager();
-
     if (process == nullptr || file == nullptr)
     {
-        UnlockManager();
         return -1;
     }
 
     if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
     {
-        UnlockManager();
         return -1;
     }
 
     if (!process->allocated)
     {
-        UnlockManager();
         return -1;
     }
 
     if (process->fileDescriptors == nullptr || process->fileDescriptorCount == 0)
     {
-        UnlockManager();
         return -1;
     }
 
@@ -292,7 +278,6 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
         {
             process->fileDescriptors[i].file  = file;
             process->fileDescriptors[i].flags = flags;
-            UnlockManager();
             return (int64_t) i;
         }
     }
@@ -301,14 +286,12 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
     uint64_t       newCount = oldCount * 2;
     if (newCount < oldCount)
     {
-        UnlockManager();
         return -1;
     }
 
     file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
     if (newTable == nullptr)
     {
-        UnlockManager();
         return -1;
     }
 
@@ -322,59 +305,48 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
 
     process->fileDescriptors[oldCount].file  = file;
     process->fileDescriptors[oldCount].flags = flags;
-    UnlockManager();
     return (int64_t) oldCount;
 }
 
 bool ProcessManager::BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp)
 {
-    LockManager();
-
     if (process == nullptr || layout == nullptr || outUserRsp == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
     {
-        UnlockManager();
         return false;
     }
 
     if (!process->allocated || process->addressSpace == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (layout->stackSize == 0)
     {
-        UnlockManager();
         return false;
     }
 
     if (layout->argc > 0 && layout->argv == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (layout->envc > 0 && layout->envp == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (layout->auxvCount > 0 && layout->auxv == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (add_would_overflow_u64(layout->stackBase, layout->stackSize))
     {
-        UnlockManager();
         return false;
     }
 
@@ -392,7 +364,6 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
         argvPointers = (uint64_t*) kmalloc(sizeof(uint64_t) * (size_t) layout->argc);
         if (argvPointers == nullptr)
         {
-            UnlockManager();
             return false;
         }
         memset(argvPointers, 0, sizeof(uint64_t) * (size_t) layout->argc);
@@ -407,7 +378,6 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
             {
                 kfree(argvPointers);
             }
-            UnlockManager();
             return false;
         }
         memset(envpPointers, 0, sizeof(uint64_t) * (size_t) layout->envc);
@@ -527,8 +497,6 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
     {
         kfree(envpPointers);
     }
-
-    UnlockManager();
     return true;
 
 fail:
@@ -541,8 +509,6 @@ fail:
     {
         kfree(envpPointers);
     }
-
-    UnlockManager();
     return false;
 }
 
@@ -550,36 +516,29 @@ bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
 {
     virt_addr_space_t* targetAddressSpace = nullptr;
 
-    LockManager();
-
     if (process == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
     if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
     {
-        UnlockManager();
         return false;
     }
 
     if (!process->allocated)
     {
-        UnlockManager();
         return false;
     }
 
     uint8_t cpuId = arch_cpu_id();
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return false;
     }
 
     if (process->addressSpace == nullptr)
     {
-        UnlockManager();
         return false;
     }
 
@@ -588,7 +547,6 @@ bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
     {
         RunningProcesses[cpuId] = process;
         targetAddressSpace      = process->addressSpace;
-        UnlockManager();
         platform.cpus[cpuId].address_space = targetAddressSpace;
         vmm_switch_addr_space(targetAddressSpace);
         return true;
@@ -597,13 +555,11 @@ bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
     if (current == process)
     {
         platform.cpus[cpuId].address_space = process->addressSpace;
-        UnlockManager();
         return true;
     }
 
     RunningProcesses[cpuId] = process;
     targetAddressSpace      = process->addressSpace;
-    UnlockManager();
     platform.cpus[cpuId].address_space = targetAddressSpace;
     vmm_switch_addr_space(targetAddressSpace);
     return true;
@@ -611,44 +567,32 @@ bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
 
 task_t* ProcessManager::GetTasks(process_t* process) const
 {
-    LockManager();
-
     if (process == nullptr)
     {
-        UnlockManager();
         return nullptr;
     }
 
     if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
     {
-        UnlockManager();
         return nullptr;
     }
 
     if (!process->allocated)
     {
-        UnlockManager();
         return nullptr;
     }
 
-    task_t* tasks = process->tasks;
-    UnlockManager();
-    return tasks;
+    return process->tasks;
 }
 
 process_t* ProcessManager::GetRunningProcess(uint8_t cpuId) const
 {
-    LockManager();
-
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return nullptr;
     }
 
-    process_t* process = RunningProcesses[cpuId];
-    UnlockManager();
-    return process;
+    return RunningProcesses[cpuId];
 }
 
 process_t* ProcessManager::GetCurrentProcess() const
@@ -661,11 +605,8 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
     bool               shouldSwitch      = false;
     virt_addr_space_t* targetAddressSpace = nullptr;
 
-    LockManager();
-
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        UnlockManager();
         return false;
     }
 
@@ -673,13 +614,11 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
     {
         if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
         {
-            UnlockManager();
             return false;
         }
 
         if (!process->allocated)
         {
-            UnlockManager();
             return false;
         }
     }
@@ -693,8 +632,6 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
         platform.cpus[cpuId].address_space = targetAddressSpace;
     }
 
-    UnlockManager();
-
     if (shouldSwitch)
     {
         vmm_switch_addr_space(targetAddressSpace);
@@ -705,24 +642,15 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
 
 process_t* ProcessManager::GetProcesses()
 {
-    LockManager();
-    process_t* processes = Processes;
-    UnlockManager();
-    return processes;
+    return Processes;
 }
 
 const process_t* ProcessManager::GetProcesses() const
 {
-    LockManager();
-    const process_t* processes = Processes;
-    UnlockManager();
-    return processes;
+    return Processes;
 }
 
 size_t ProcessManager::GetCapacity() const
 {
-    LockManager();
-    const size_t capacity = MAX_PROCESSES;
-    UnlockManager();
-    return capacity;
+    return MAX_PROCESSES;
 }

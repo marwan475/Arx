@@ -59,6 +59,12 @@ static void KernelPostInit(void)
 
     if (arch_cpu_id() == platform.bsp_id)
     {
+        Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+        if (dispatcher != nullptr)
+        {
+            launch_syscall_selftests((void*) dispatcher->GetRequestLayerCaps());
+        }
+
         unsigned long long smpPasses   = 0;
         unsigned long long smpFails    = 0;
         unsigned long long smpFinished = 0;

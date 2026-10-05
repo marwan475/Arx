@@ -34,6 +34,7 @@ void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void run_vfs_selftests(void* logicLayerCaps);
 void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps);
 void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps);
+void launch_syscall_selftests(void* requestLayerCaps);
 void run_smp_scheduler_selftest(void* logicLayerCaps, void* resourceLayerCaps, unsigned long long cpuId, unsigned long long* outPasses, unsigned long long* outFails, unsigned long long* outFailMask);
 
 void smp_selftests(void);

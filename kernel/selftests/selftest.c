@@ -242,7 +242,14 @@ void selftest_print_summary(void)
         {
             const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
             const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
-            kprintf("  - %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            if (strcmp(name, "requestlayer_selftest") == 0)
+            {
+                kprintf("  - %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            }
+            else
+            {
+                kprintf("  - %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            }
             if (g_case_results[i].failures != 0)
             {
                 const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";
@@ -267,7 +274,16 @@ void selftest_print_summary(void)
         {
             const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
             const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
-            KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            if (strcmp(name, "requestlayer_selftest") == 0)
+            {
+                KDEBUG("[selftest] case detail: %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures,
+                       result);
+            }
+            else
+            {
+                KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures,
+                       result);
+            }
             if (g_case_results[i].failures != 0)
             {
                 const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";

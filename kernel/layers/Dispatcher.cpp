@@ -31,9 +31,11 @@ void Dispatcher::StartKernel()
 
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
-    requestLayerFactory->Create();
-
     logiclayer_selftests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
+
+    RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create();
+
+    (void) RequestLayerImportCaps;
 }
 
 ResourceLayerCaps* Dispatcher::GetResourceLayerCaps() const
@@ -414,6 +416,17 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
     }
 }
 
+void Dispatcher::DispatchInterruptRequest(uint64_t interruptNumber) const
+{
+    RequestLayerCaps* caps = GetRequestLayerCaps();
+    if (caps == nullptr || caps->interruptRequestManager == nullptr)
+    {
+        return;
+    }
+
+    caps->interruptRequestManager->HandleInterruptRequest(interruptNumber);
+}
+
 extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame)
 {
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
@@ -423,4 +436,15 @@ extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* fram
     }
 
     return dispatcher->DispatchSyscall(frame);
+}
+
+extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
+{
+    Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+    if (dispatcher == nullptr)
+    {
+        return;
+    }
+
+    dispatcher->DispatchInterruptRequest(interrupt_number);
 }

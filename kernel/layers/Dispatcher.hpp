@@ -12,6 +12,7 @@ public:
     LogicLayerCaps*    GetLogicLayerCaps() const;
     RequestLayerCaps*  GetRequestLayerCaps() const;
     uint64_t           DispatchSyscall(const arch_syscall_frame_t* frame) const;
+    void               DispatchInterruptRequest(uint64_t interruptNumber) const;
 
 private:
     ResourceLayerFactory* resourceLayerFactory;

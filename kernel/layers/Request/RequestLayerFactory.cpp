@@ -20,6 +20,7 @@ RequestLayerFactory::~RequestLayerFactory()
         delete RequestLayerExportCaps->credentialRequestManager;
         delete RequestLayerExportCaps->systemRequestManager;
         delete RequestLayerExportCaps->socketRequestManager;
+        delete RequestLayerExportCaps->interruptRequestManager;
         delete RequestLayerExportCaps;
         RequestLayerExportCaps = nullptr;
     }
@@ -44,6 +45,7 @@ RequestLayerCaps* RequestLayerFactory::Create()
     RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager();
     RequestLayerExportCaps->systemRequestManager     = new SystemRequestManager();
     RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager();
+    RequestLayerExportCaps->interruptRequestManager  = new InterruptRequestManager();
 
     return RequestLayerExportCaps;
 }

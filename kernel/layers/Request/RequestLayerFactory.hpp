@@ -2,6 +2,7 @@
 
 #include "layers/Request/CredentialRequestManager.hpp"
 #include "layers/Request/EventRequestManager.hpp"
+#include "layers/Request/InterruptRequestManager.hpp"
 #include "layers/Request/MemoryRequestManager.hpp"
 #include "layers/Request/ProcessRequestManager.hpp"
 #include "layers/Request/SchedulerRequestManager.hpp"
@@ -197,6 +198,7 @@ struct RequestLayerCaps
     CredentialRequestManager* credentialRequestManager;
     SystemRequestManager*     systemRequestManager;
     SocketRequestManager*     socketRequestManager;
+    InterruptRequestManager*  interruptRequestManager;
 };
 
 class RequestLayerFactory

@@ -1,6 +1,9 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
+#include <layers/Request/InterruptRequestManager.hpp>
 #include <platform.h>
+
+extern void dispatcher_handle_interrupt_request(uint64_t interrupt_number);
 
 static void blue_screen(void)
 {
@@ -159,6 +162,7 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
+        dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
         return;
     }
 

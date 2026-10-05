@@ -193,6 +193,12 @@ currently all cores wait for the rest of the cores to enter post init then conti
         - SystemRequestManager
         - SocketRequestManager
 
+    ### Interrupt Scheduling
+    - `InterruptRequestManager` handles arch-independent interrupt request numbers (for example schedule request `1`).
+    - x86_64 timer interrupts are translated into this request and routed through Dispatcher into Request layer.
+    - Schedule requests are tick-gated (`SCHEDULE_TICK_INTERVAL`) to avoid switching every timer tick.
+    - On schedule request, current process is re-queued on its CPU ready queue and scheduler runs the next ready process.
+
 ## Processes
 - Tasks
     - unit of schedulable cpu execution

@@ -67,9 +67,14 @@ static void KernelPostInit(void)
         smp_selftests_get_totals(&smpPasses, &smpFails, &smpFinished);
 
         KDEBUG("smp summary: finished_cpus=%llu pass=%llu fail=%llu\n", smpFinished, smpPasses, smpFails);
+        smp_selftests_kdebug_summary_details();
 
         selftest_group_begin("smp");
         selftest_case_begin("smp_selftests");
+        if (smpFails > 0)
+        {
+            smp_selftests_record_failure_details();
+        }
         selftest_case_end("smp_selftests", smpPasses, smpFails);
         selftest_group_end("smp");
 

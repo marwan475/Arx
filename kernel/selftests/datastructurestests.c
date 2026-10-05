@@ -17,12 +17,14 @@ typedef struct ilist_test_node
 static void ilist_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: ilist_test FAIL: %s\n", message);
 }
 
 static void bitmap_selftest_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: bitmap_selftest FAIL: %s\n", message);
 }
 
@@ -273,6 +275,7 @@ static void ilist_test(void)
 static void khashp_selftest_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: khashp_selftest FAIL: %s\n", message);
 }
 

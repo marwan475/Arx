@@ -89,6 +89,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (caps == nullptr || caps->processManager == nullptr || caps->taskManager == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("missing managers");
         kprintf("Arx kernel: process_selftest FAIL: missing managers\n");
         goto done;
     }
@@ -96,6 +97,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (logicCaps == nullptr || logicCaps->scheduler == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("missing logic scheduler");
         kprintf("Arx kernel: process_selftest FAIL: missing logic scheduler\n");
         goto done;
     }
@@ -120,6 +122,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.bspTask == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("missing BSP task");
         kprintf("Arx kernel: process_selftest FAIL: missing BSP task\n");
         goto done;
     }
@@ -130,6 +133,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (currentSpace == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("missing current address space");
         kprintf("Arx kernel: process_selftest FAIL: missing current address space\n");
         goto done;
     }
@@ -140,6 +144,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (processA == nullptr || processB == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("failed to create processes");
         kprintf("Arx kernel: process_selftest FAIL: failed to create processes\n");
         goto cleanup;
     }
@@ -154,6 +159,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (taskA == nullptr || taskB == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("failed to create tasks");
         kprintf("Arx kernel: process_selftest FAIL: failed to create tasks\n");
         goto cleanup;
     }
@@ -161,6 +167,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!processManager->AddTask(processA, taskA) || !processManager->AddTask(processB, taskB))
     {
         fails++;
+        selftest_record_failure_detail("failed to attach tasks to processes");
         kprintf("Arx kernel: process_selftest FAIL: failed to attach tasks to processes\n");
         goto cleanup;
     }
@@ -168,6 +175,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!scheduler->ScheduleProcess(processA->id))
     {
         fails++;
+        selftest_record_failure_detail("ScheduleProcess(processA) failed");
         kprintf("Arx kernel: process_selftest FAIL: ScheduleProcess(processA) failed\n");
         goto cleanup;
     }
@@ -175,6 +183,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!scheduler->ScheduleProcess(processB->id))
     {
         fails++;
+        selftest_record_failure_detail("ScheduleProcess(processB) failed");
         kprintf("Arx kernel: process_selftest FAIL: ScheduleProcess(processB) failed\n");
         goto cleanup;
     }
@@ -182,6 +191,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.markerA != 1 || g_process_test_ctx.markerB != 1)
     {
         fails++;
+        selftest_record_failure_detail("expected markers A=1 and B=1");
         kprintf("Arx kernel: process_selftest FAIL: expected markers A=1 B=1, got A=%d B=%d\n", g_process_test_ctx.markerA, g_process_test_ctx.markerB);
         goto cleanup;
     }
@@ -189,6 +199,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.processCheckA != 1 || g_process_test_ctx.processCheckB != 1)
     {
         fails++;
+        selftest_record_failure_detail("process identity checks failed");
         kprintf("Arx kernel: process_selftest FAIL: process checks A=%d B=%d\n", g_process_test_ctx.processCheckA, g_process_test_ctx.processCheckB);
         goto cleanup;
     }
@@ -196,6 +207,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.addressSpaceCheckA != 1 || g_process_test_ctx.addressSpaceCheckB != 1)
     {
         fails++;
+        selftest_record_failure_detail("address-space checks failed");
         kprintf("Arx kernel: process_selftest FAIL: address-space checks A=%d B=%d\n", g_process_test_ctx.addressSpaceCheckA, g_process_test_ctx.addressSpaceCheckB);
         goto cleanup;
     }

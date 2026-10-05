@@ -35,6 +35,7 @@ static size_t pmm_test_round_up_pow2_pages(size_t size)
 static void pmm_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: pmm_test FAIL: %s\n", message);
 }
 
@@ -51,6 +52,7 @@ static bool pmm_test_check_zone_accounting(const zone_t* zone)
 static void vmm_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: vmm_test FAIL: %s\n", message);
 }
 
@@ -551,6 +553,7 @@ static void pmm_test(void)
 static void heap_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: heap_test FAIL: %s\n", message);
 }
 

@@ -75,6 +75,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (caps == nullptr || caps->taskManager == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("missing resource layer task manager");
         kprintf("Arx kernel: task_selftest FAIL: missing resource layer task manager\n");
         goto done;
     }
@@ -89,6 +90,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         if (surrogateTask == nullptr)
         {
             fails++;
+            selftest_record_failure_detail("failed to allocate surrogate running task");
             kprintf("Arx kernel: task_selftest FAIL: failed to allocate surrogate running task\n");
             goto done;
         }
@@ -96,6 +98,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         if (!manager->SetRunningTask(cpuId, surrogateTask))
         {
             fails++;
+            selftest_record_failure_detail("failed to set surrogate running task");
             kprintf("Arx kernel: task_selftest FAIL: failed to set surrogate running task\n");
             goto cleanup;
         }
@@ -118,6 +121,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (taskA == nullptr || taskB == nullptr)
     {
         fails++;
+        selftest_record_failure_detail("failed to create task pair");
         kprintf("Arx kernel: task_selftest FAIL: failed to create task pair\n");
         goto cleanup;
     }
@@ -127,6 +131,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (!manager->ExecuteTask(taskA))
     {
         fails++;
+        selftest_record_failure_detail("ExecuteTask(taskA) failed");
         kprintf("Arx kernel: task_selftest FAIL: ExecuteTask(taskA) failed\n");
         goto cleanup;
     }
@@ -136,6 +141,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (g_task_test_ctx.step != 3)
     {
         fails++;
+        selftest_record_failure_detail("expected step=3 after task chain");
         kprintf("Arx kernel: task_selftest FAIL: expected step=3, got %d\n", g_task_test_ctx.step);
     }
     else

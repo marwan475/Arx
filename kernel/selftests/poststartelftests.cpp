@@ -56,6 +56,7 @@ struct mapped_user_page_t
 static void poststart_elf_test_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: poststart_elf_selftest FAIL: %s\n", message);
 }
 

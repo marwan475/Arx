@@ -10,6 +10,7 @@ extern "C"
 static void vfs_test_log_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: vfs_selftest FAIL: %s\n", message);
 }
 

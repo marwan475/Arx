@@ -9,6 +9,42 @@ static selftest_context_t g_selftest_ctx;
 static const char*        g_failed_case_names[SELFTEST_MAX_FAILED_CASES];
 static unsigned long long g_failed_case_count = 0;
 
+#define SELFTEST_MAX_CASES 128
+#define SELFTEST_DETAIL_MAX 256
+typedef struct selftest_case_result
+{
+    const char*        test_name;
+    unsigned long long passes;
+    unsigned long long failures;
+} selftest_case_result_t;
+
+static selftest_case_result_t g_case_results[SELFTEST_MAX_CASES];
+static unsigned long long     g_case_result_count = 0;
+static unsigned long long     g_current_case_idx  = (unsigned long long) -1;
+static char                   g_case_fail_details[SELFTEST_MAX_CASES][SELFTEST_DETAIL_MAX];
+
+static void selftest_append_detail(char* dst, const char* src)
+{
+    if (dst == 0 || src == 0)
+    {
+        return;
+    }
+
+    const size_t dstLen = strlen(dst);
+    if (dstLen >= (SELFTEST_DETAIL_MAX - 1))
+    {
+        return;
+    }
+
+    size_t srcIndex = 0;
+    size_t dstIndex = dstLen;
+    while (src[srcIndex] != '\0' && dstIndex < (SELFTEST_DETAIL_MAX - 1))
+    {
+        dst[dstIndex++] = src[srcIndex++];
+    }
+    dst[dstIndex] = '\0';
+}
+
 typedef struct selftest_group_snapshot
 {
     const char*        group_name;
@@ -29,6 +65,11 @@ void selftest_reset_context(void)
 
     g_group_stack_depth = 0;
     g_failed_case_count = 0;
+    g_case_result_count = 0;
+    g_current_case_idx  = (unsigned long long) -1;
+
+    memset(g_case_results, 0, sizeof(g_case_results));
+    memset(g_case_fail_details, 0, sizeof(g_case_fail_details));
 }
 
 const selftest_context_t* selftest_get_context(void)
@@ -90,6 +131,42 @@ void selftest_case_begin(const char* test_name)
 
     kprintf("\n[SELFTEST] START  %s\n", test_name);
     KDEBUG("[selftest] case start: %s\n", test_name);
+
+    if (g_case_result_count < SELFTEST_MAX_CASES)
+    {
+        const unsigned long long idx = g_case_result_count;
+        g_case_results[idx].test_name = test_name;
+        g_case_results[idx].passes    = 0;
+        g_case_results[idx].failures  = 0;
+        g_case_fail_details[idx][0]   = '\0';
+        g_current_case_idx            = idx;
+        g_case_result_count++;
+    }
+    else
+    {
+        g_current_case_idx = (unsigned long long) -1;
+    }
+}
+
+void selftest_record_failure_detail(const char* detail)
+{
+    if (detail == 0 || detail[0] == '\0')
+    {
+        return;
+    }
+
+    if (g_current_case_idx == (unsigned long long) -1 || g_current_case_idx >= SELFTEST_MAX_CASES)
+    {
+        return;
+    }
+
+    char* dst = g_case_fail_details[g_current_case_idx];
+    if (dst[0] != '\0')
+    {
+        selftest_append_detail(dst, "; ");
+    }
+
+    selftest_append_detail(dst, detail);
 }
 
 void selftest_case_end(const char* test_name, unsigned long long passes, unsigned long long failures)
@@ -100,6 +177,18 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
     }
 
     const char* result = failures == 0 ? "PASS" : "FAIL";
+
+    if (g_current_case_idx != (unsigned long long) -1 && g_current_case_idx < SELFTEST_MAX_CASES)
+    {
+        g_case_results[g_current_case_idx].test_name = test_name;
+        g_case_results[g_current_case_idx].passes    = passes;
+        g_case_results[g_current_case_idx].failures  = failures;
+
+        if (failures != 0 && g_case_fail_details[g_current_case_idx][0] == '\0')
+        {
+            selftest_append_detail(g_case_fail_details[g_current_case_idx], "failure count incremented with no explicit detail");
+        }
+    }
 
     (void) __atomic_fetch_add(&g_selftest_ctx.tests_ran, 1ULL, __ATOMIC_RELAXED);
     if (failures == 0)
@@ -118,6 +207,8 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
 
     kprintf("[SELFTEST] RESULT %s | checks(pass=%llu fail=%llu) => %s\n", test_name, passes, failures, result);
     KDEBUG("[selftest] case end: %s | checks(pass=%llu fail=%llu) => %s\n", test_name, passes, failures, result);
+
+    g_current_case_idx = (unsigned long long) -1;
 }
 
 void selftest_print_summary(void)
@@ -143,6 +234,22 @@ void selftest_print_summary(void)
             kprintf("  - %s\n", g_failed_case_names[i]);
         }
     }
+
+    if (g_case_result_count > 0)
+    {
+        kprintf(" case details:\n");
+        for (unsigned long long i = 0; i < g_case_result_count; i++)
+        {
+            const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
+            const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
+            kprintf("  - %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            if (g_case_results[i].failures != 0)
+            {
+                const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";
+                kprintf("    detail: %s\n", detail);
+            }
+        }
+    }
     kprintf("========================================\n\n");
 
     KDEBUG("[selftest] summary: ran=%llu pass=%llu fail=%llu overall=%s\n", testsRan, testsPassed, testsFailed, testsFailed == 0 ? "PASS" : "FAIL");
@@ -151,6 +258,21 @@ void selftest_print_summary(void)
         for (unsigned long long i = 0; i < failedPrint; i++)
         {
             KDEBUG("[selftest] failed case: %s\n", g_failed_case_names[i]);
+        }
+    }
+
+    if (g_case_result_count > 0)
+    {
+        for (unsigned long long i = 0; i < g_case_result_count; i++)
+        {
+            const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
+            const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
+            KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
+            if (g_case_results[i].failures != 0)
+            {
+                const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";
+                KDEBUG("[selftest] case detail reason: %s\n", detail);
+            }
         }
     }
 }

@@ -15,6 +15,21 @@ extern "C"
 
 namespace
 {
+enum scheduler_fail_mask_bits
+{
+    SCHED_FAIL_MISSING_MANAGERS            = 1ULL << 0,
+    SCHED_FAIL_MISSING_RUNNING_TASK        = 1ULL << 1,
+    SCHED_FAIL_MISSING_ADDRESS_SPACE       = 1ULL << 2,
+    SCHED_FAIL_CREATE_PROCESS              = 1ULL << 3,
+    SCHED_FAIL_CREATE_TASK                 = 1ULL << 4,
+    SCHED_FAIL_ADD_TASK                    = 1ULL << 5,
+    SCHED_FAIL_ENQUEUE                     = 1ULL << 6,
+    SCHED_FAIL_DISPATCH_ATTEMPTS_EXHAUSTED = 1ULL << 7,
+    SCHED_FAIL_RUN_NEXT                    = 1ULL << 8,
+    SCHED_FAIL_TASK_NOT_ENTERED            = 1ULL << 9,
+    SCHED_FAIL_PROCESS_MISMATCH            = 1ULL << 10,
+};
+
 struct smp_scheduler_task_context_t
 {
     ProcessManager* processManager;
@@ -59,7 +74,8 @@ static void smp_scheduler_task(void* arg)
 }
 } // namespace
 
-extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resourceLayerCapsPtr, unsigned long long cpuIdValue, unsigned long long* outPasses, unsigned long long* outFails)
+extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resourceLayerCapsPtr, unsigned long long cpuIdValue, unsigned long long* outPasses, unsigned long long* outFails,
+                                             unsigned long long* outFailMask)
 {
     if (outPasses != nullptr)
     {
@@ -69,6 +85,11 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
     if (outFails != nullptr)
     {
         *outFails = 0;
+    }
+
+    if (outFailMask != nullptr)
+    {
+        *outFailMask = 0;
     }
 
     LogicLayerCaps*    logicLayerCaps    = (LogicLayerCaps*) logicLayerCapsPtr;
@@ -82,6 +103,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (outFails != nullptr)
         {
             (*outFails)++;
+        }
+        if (outFailMask != nullptr)
+        {
+            *outFailMask |= SCHED_FAIL_MISSING_MANAGERS;
         }
         return;
     }
@@ -100,6 +125,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (outFails != nullptr)
         {
             (*outFails)++;
+        }
+        if (outFailMask != nullptr)
+        {
+            *outFailMask |= SCHED_FAIL_MISSING_RUNNING_TASK;
         }
         return;
     }
@@ -121,6 +150,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (outFails != nullptr)
         {
             (*outFails)++;
+        }
+        if (outFailMask != nullptr)
+        {
+            *outFailMask |= SCHED_FAIL_MISSING_ADDRESS_SPACE;
         }
         return;
     }
@@ -147,6 +180,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (processes[i] == nullptr)
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_CREATE_PROCESS;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u create process[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             KDEBUG("smp scheduler FAIL cpu=%u create process[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             abort = true;
@@ -164,6 +201,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (tasks[i] == nullptr)
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_CREATE_TASK;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u create task[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             KDEBUG("smp scheduler FAIL cpu=%u create task[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             abort = true;
@@ -173,6 +214,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (!processManager->AddTask(processes[i], tasks[i]))
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_ADD_TASK;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u add task[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             KDEBUG("smp scheduler FAIL cpu=%u add task[%llu] failed\n", (unsigned) cpuId, (unsigned long long) i);
             abort = true;
@@ -182,6 +227,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (!scheduler->EnqueueProcess((uint8_t) cpuId, processes[i]->id))
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_ENQUEUE;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u enqueue process[%llu] pid=%llu failed\n", (unsigned) cpuId, (unsigned long long) i, (unsigned long long) processes[i]->id);
             KDEBUG("smp scheduler FAIL cpu=%u enqueue process[%llu] pid=%llu failed\n", (unsigned) cpuId, (unsigned long long) i, (unsigned long long) processes[i]->id);
             abort = true;
@@ -210,6 +259,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (dispatchAttempts >= maxDispatchAttempts)
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_DISPATCH_ATTEMPTS_EXHAUSTED;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u dispatch attempts exhausted entered=%llu expected=%llu\n", (unsigned) cpuId, (unsigned long long) enteredCount, (unsigned long long) SCHED_TEST_PROCESS_COUNT);
             KDEBUG("smp scheduler FAIL cpu=%u dispatch attempts exhausted entered=%llu expected=%llu\n", (unsigned) cpuId, (unsigned long long) enteredCount, (unsigned long long) SCHED_TEST_PROCESS_COUNT);
             abort = true;
@@ -219,6 +272,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (!scheduler->RunNextReadyProcess((uint8_t) cpuId))
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_RUN_NEXT;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u run ready process attempt=%llu failed\n", (unsigned) cpuId, (unsigned long long) dispatchAttempts);
             KDEBUG("smp scheduler FAIL cpu=%u run ready process attempt=%llu failed\n", (unsigned) cpuId, (unsigned long long) dispatchAttempts);
             abort = true;
@@ -233,6 +290,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (contexts[i].entered != 1)
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_TASK_NOT_ENTERED;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u task[%llu] never entered\n", (unsigned) cpuId, (unsigned long long) i);
             KDEBUG("smp scheduler FAIL cpu=%u task[%llu] never entered\n", (unsigned) cpuId, (unsigned long long) i);
             continue;
@@ -241,6 +302,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (contexts[i].processMatched != 1)
         {
             fails++;
+            if (outFailMask != nullptr)
+            {
+                *outFailMask |= SCHED_FAIL_PROCESS_MISMATCH;
+            }
             kprintf("Arx kernel: smp scheduler FAIL cpu=%u task[%llu] process mismatch expected=%llu\n", (unsigned) cpuId, (unsigned long long) i, (unsigned long long) contexts[i].expectedProcessId);
             KDEBUG("smp scheduler FAIL cpu=%u task[%llu] process mismatch expected=%llu\n", (unsigned) cpuId, (unsigned long long) i, (unsigned long long) contexts[i].expectedProcessId);
             continue;

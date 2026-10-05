@@ -9,6 +9,7 @@
 static void klib_test_log_fail(const char* message, size_t* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: klib_test FAIL: %s\n", message);
 }
 

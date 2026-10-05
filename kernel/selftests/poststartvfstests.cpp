@@ -51,6 +51,7 @@ static poststart_vfs_two_process_sync_context_t g_poststart_vfs_sync_ctx_b;
 static void poststart_vfs_test_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
+    selftest_record_failure_detail(message);
     kprintf("Arx kernel: poststart_vfs_selftest FAIL: %s\n", message);
 }
 

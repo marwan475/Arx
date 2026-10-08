@@ -25,6 +25,7 @@ constexpr uint64_t LINUX_EBADF  = (uint64_t) -9;
 constexpr uint64_t LINUX_EFAULT = (uint64_t) -14;
 constexpr uint64_t LINUX_EINVAL = (uint64_t) -22;
 constexpr uint64_t LINUX_ENOSYS = (uint64_t) -38;
+constexpr int64_t  LINUX_AT_FDCWD = -100;
 
 enum : uint64_t
 {

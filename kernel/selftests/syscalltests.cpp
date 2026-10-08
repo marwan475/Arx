@@ -16,10 +16,6 @@ extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* fram
 
 namespace
 {
-constexpr uint64_t LINUX_ENOSYS = (uint64_t) -38;
-constexpr uint64_t LINUX_EINVAL = (uint64_t) -22;
-constexpr uint64_t LINUX_EBADF  = (uint64_t) -9;
-
 enum expected_result_kind_t
 {
         EXPECT_NEG_ERRNO,
@@ -250,512 +246,107 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
         return validationPass;
 }
 
-static void populate_custom_args(uint64_t syscallNumber, arch_syscall_frame_t* frame)
+static bool custom_case_validate_open(const custom_case_ctx_t* ctx)
 {
-        if (frame == nullptr)
+        if (ctx == nullptr || ctx->frame == nullptr)
         {
-                return;
+                return false;
         }
 
-        frame->arg0 = 0;
-        frame->arg1 = 0;
-        frame->arg2 = 0;
-        frame->arg3 = 0;
-        frame->arg4 = 0;
-        frame->arg5 = 0;
-
-        const uint64_t badFd  = UINT64_MAX;
-        const uint64_t badPtr = 0x1ULL;
-
-        switch (syscallNumber)
+        if ((int64_t) ctx->result >= 0 || ctx->result == LINUX_ENOSYS)
         {
-                case SYSCALL_read:
-                case SYSCALL_write:
-                case SYSCALL_pread64:
-                case SYSCALL_pwrite64:
-                case SYSCALL_readv:
-                case SYSCALL_writev:
-                case SYSCALL_preadv:
-                case SYSCALL_pwritev:
-                case SYSCALL_fstat:
-                case SYSCALL_ftruncate:
-                case SYSCALL_fchmod:
-                case SYSCALL_fchown:
-                case SYSCALL_fchdir:
-                case SYSCALL_fcntl:
-                case SYSCALL_fstatfs:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 1;
-                        break;
-
-                case SYSCALL_open:
-                case SYSCALL_creat:
-                case SYSCALL_stat:
-                case SYSCALL_lstat:
-                case SYSCALL_unlink:
-                case SYSCALL_rmdir:
-                case SYSCALL_chdir:
-                case SYSCALL_readlink:
-                case SYSCALL_chmod:
-                case SYSCALL_chown:
-                case SYSCALL_access:
-                case SYSCALL_truncate:
-                case SYSCALL_mkdir:
-                case SYSCALL_mknod:
-                case SYSCALL_rename:
-                case SYSCALL_symlink:
-                case SYSCALL_link:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_openat:
-                case SYSCALL_mkdirat:
-                case SYSCALL_mknodat:
-                case SYSCALL_unlinkat:
-                case SYSCALL_renameat:
-                case SYSCALL_linkat:
-                case SYSCALL_symlinkat:
-                case SYSCALL_readlinkat:
-                case SYSCALL_fchmodat:
-                case SYSCALL_fchmodat2:
-                case SYSCALL_faccessat:
-                case SYSCALL_faccessat2:
-                case SYSCALL_fchownat:
-                case SYSCALL_newfstatat:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 0;
-                        break;
-
-                case SYSCALL_close:
-                case SYSCALL_dup:
-                        frame->arg0 = badFd;
-                        break;
-
-                case SYSCALL_dup2:
-                case SYSCALL_dup3:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badFd;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_ioctl:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        frame->arg2 = badPtr;
-                        break;
-
-                case SYSCALL_lseek:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_pipe:
-                case SYSCALL_pipe2:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_getcwd:
-                case SYSCALL_getdents64:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 1;
-                        break;
-
-                case SYSCALL_mount:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 0;
-                        frame->arg4 = badPtr;
-                        break;
-
-                case SYSCALL_mmap:
-                        frame->arg0 = 0;
-                        frame->arg1 = 4096;
-                        frame->arg2 = 0;
-                        frame->arg3 = 0;
-                        frame->arg4 = badFd;
-                        frame->arg5 = 0;
-                        break;
-
-                case SYSCALL_munmap:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 4096;
-                        break;
-
-                case SYSCALL_mprotect:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 4096;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_mincore:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 4096;
-                        frame->arg2 = badPtr;
-                        break;
-
-                case SYSCALL_madvise:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 4096;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_brk:
-                        frame->arg0 = badPtr;
-                        break;
-
-                case SYSCALL_poll:
-                case SYSCALL_ppoll:
-                case SYSCALL_select:
-                case SYSCALL_pselect6:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 0;
-                        frame->arg2 = 0;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_epoll_create:
-                case SYSCALL_epoll_create1:
-                        frame->arg0 = 0;
-                        break;
-
-                case SYSCALL_epoll_ctl:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        frame->arg2 = badFd;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_epoll_wait:
-                case SYSCALL_epoll_pwait:
-                case SYSCALL_epoll_pwait2:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 1;
-                        frame->arg3 = 0;
-                        frame->arg4 = badPtr;
-                        break;
-
-                case SYSCALL_inotify_add_watch:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_inotify_rm_watch:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_inotify_init:
-                case SYSCALL_inotify_init1:
-                case SYSCALL_eventfd:
-                case SYSCALL_eventfd2:
-                case SYSCALL_memfd_create:
-                        frame->arg0 = 0;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_signalfd:
-                case SYSCALL_signalfd4:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 0;
-                        frame->arg3 = 0;
-                        break;
-
-                case SYSCALL_socket:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_socketpair:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_bind:
-                case SYSCALL_connect:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 16;
-                        break;
-
-                case SYSCALL_listen:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_accept:
-                case SYSCALL_accept4:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 0;
-                        break;
-
-                case SYSCALL_recvfrom:
-                case SYSCALL_sendto:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 1;
-                        frame->arg3 = 0;
-                        frame->arg4 = badPtr;
-                        frame->arg5 = badPtr;
-                        break;
-
-                case SYSCALL_recvmsg:
-                case SYSCALL_sendmsg:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_shutdown:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_getsockopt:
-                case SYSCALL_setsockopt:
-                        frame->arg0 = badFd;
-                        frame->arg1 = 0;
-                        frame->arg2 = 0;
-                        frame->arg3 = badPtr;
-                        frame->arg4 = badPtr;
-                        break;
-
-                case SYSCALL_getsockname:
-                case SYSCALL_getpeername:
-                        frame->arg0 = badFd;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        break;
-
-                case SYSCALL_set_tid_address:
-                case SYSCALL_get_robust_list:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        break;
-
-                case SYSCALL_set_robust_list:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 0;
-                        break;
-
-                case SYSCALL_futex:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 0;
-                        frame->arg2 = 0;
-                        frame->arg3 = badPtr;
-                        frame->arg4 = badPtr;
-                        frame->arg5 = 0;
-                        break;
-
-                case SYSCALL_rt_sigaction:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 8;
-                        break;
-
-                case SYSCALL_rt_sigprocmask:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 8;
-                        break;
-
-                case SYSCALL_rt_sigreturn:
-                case SYSCALL_pause:
-                case SYSCALL_sched_yield:
-                case SYSCALL_getpid:
-                case SYSCALL_getppid:
-                case SYSCALL_gettid:
-                case SYSCALL_getuid:
-                case SYSCALL_getgid:
-                case SYSCALL_geteuid:
-                case SYSCALL_getegid:
-                case SYSCALL_getpgrp:
-                case SYSCALL_setsid:
-                case SYSCALL_getgroups:
-                case SYSCALL_getresuid:
-                case SYSCALL_getresgid:
-                case SYSCALL_getcpu:
-                case SYSCALL_time:
-                case SYSCALL_alarm:
-                case SYSCALL_umask:
-                        break;
-
-                case SYSCALL_kill:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_tgkill:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_sigaltstack:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_setuid:
-                case SYSCALL_setgid:
-                case SYSCALL_setreuid:
-                case SYSCALL_setregid:
-                case SYSCALL_setresuid:
-                case SYSCALL_setresgid:
-                case SYSCALL_setfsuid:
-                case SYSCALL_setfsgid:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_getpgid:
-                case SYSCALL_getsid:
-                        frame->arg0 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_setpgid:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_arch_prctl:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_prlimit64:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_getrlimit:
-                case SYSCALL_setrlimit:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_prctl:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        frame->arg3 = UINT64_MAX;
-                        frame->arg4 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_uname:
-                case SYSCALL_sysinfo:
-                        frame->arg0 = badPtr;
-                        break;
-
-                case SYSCALL_getrandom:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = 16;
-                        frame->arg2 = 0;
-                        break;
-
-                case SYSCALL_wait4:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = 0;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_waitid:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = 0;
-                        frame->arg4 = badPtr;
-                        break;
-
-                case SYSCALL_execve:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        break;
-
-                case SYSCALL_fork:
-                case SYSCALL_vfork:
-                case SYSCALL_clone:
-                case SYSCALL_clone3:
-                case SYSCALL_exit:
-                case SYSCALL_exit_group:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = UINT64_MAX;
-                        frame->arg2 = UINT64_MAX;
-                        frame->arg3 = UINT64_MAX;
-                        frame->arg4 = UINT64_MAX;
-                        frame->arg5 = UINT64_MAX;
-                        break;
-
-                case SYSCALL_gettimeofday:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_clock_gettime:
-                case SYSCALL_clock_getres:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_clock_nanosleep:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = 0;
-                        frame->arg2 = badPtr;
-                        frame->arg3 = badPtr;
-                        break;
-
-                case SYSCALL_nanosleep:
-                        frame->arg0 = badPtr;
-                        frame->arg1 = badPtr;
-                        break;
-
-                case SYSCALL_getitimer:
-                case SYSCALL_setitimer:
-                        frame->arg0 = UINT64_MAX;
-                        frame->arg1 = badPtr;
-                        frame->arg2 = badPtr;
-                        break;
-
-                default:
-                        frame->arg0 = 0x1000ULL ^ syscallNumber;
-                        frame->arg1 = 0x2000ULL ^ syscallNumber;
-                        frame->arg2 = 0x3000ULL ^ syscallNumber;
-                        frame->arg3 = 0x4000ULL ^ syscallNumber;
-                        frame->arg4 = 0x5000ULL ^ syscallNumber;
-                        frame->arg5 = 0x6000ULL ^ syscallNumber;
-                        break;
+                return false;
         }
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFrame.arg1                 = 0;
+        openFrame.arg2                 = 0;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+
+        const uint64_t closeResult = dispatcher_dispatch_syscall(&closeFrame);
+        return closeResult == 0;
 }
 
-static arch_syscall_frame_t make_frame(uint64_t syscallNumber)
+static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
 {
-        arch_syscall_frame_t frame = {};
-        frame.syscall_number       = syscallNumber;
-        populate_custom_args(syscallNumber, &frame);
-        return frame;
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if ((int64_t) ctx->result >= 0 || ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openatFrame = {};
+        openatFrame.syscall_number       = SYSCALL_openat;
+        openatFrame.arg0                 = LINUX_AT_FDCWD;
+        openatFrame.arg1                 = (uint64_t) (uintptr_t) "/test.txt";
+        openatFrame.arg2                 = 0;
+        openatFrame.arg3                 = 0;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&openatFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+
+        const uint64_t closeResult = dispatcher_dispatch_syscall(&closeFrame);
+        return closeResult == 0;
+}
+
+static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result != LINUX_EBADF)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFrame.arg1                 = 0;
+        openFrame.arg2                 = 0;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+
+        const uint64_t firstClose = dispatcher_dispatch_syscall(&closeFrame);
+        if (firstClose != 0)
+        {
+                return false;
+        }
+
+        const uint64_t secondClose = dispatcher_dispatch_syscall(&closeFrame);
+        return secondClose == LINUX_EBADF;
 }
 
 static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
@@ -826,7 +417,18 @@ static void run_manager_tests(const char* managerName, ManagerT* manager, const 
 
         for (size_t index = 0; index < N; ++index)
         {
-                arch_syscall_frame_t frame  = make_frame(tests[index].syscallNumber);
+                arch_syscall_frame_t frame  = {};
+                frame.syscall_number        = tests[index].syscallNumber;
+                if (tests[index].customValidator == nullptr)
+                {
+                        // Non-custom tests get deterministic synthetic args.
+                        frame.arg0 = 0x1000ULL ^ tests[index].syscallNumber;
+                        frame.arg1 = 0x2000ULL ^ tests[index].syscallNumber;
+                        frame.arg2 = 0x3000ULL ^ tests[index].syscallNumber;
+                        frame.arg3 = 0x4000ULL ^ tests[index].syscallNumber;
+                        frame.arg4 = 0x5000ULL ^ tests[index].syscallNumber;
+                        frame.arg5 = 0x6000ULL ^ tests[index].syscallNumber;
+                }
                 uint64_t             result = (manager->*(tests[index].method))(&frame);
                 stats->total++;
 
@@ -947,10 +549,10 @@ static void test_memory_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
 static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
         static const request_method_test_t<VfsRequestManager> tests[] = {
-                        {"HandleOpenatRequest", &VfsRequestManager::HandleOpenatRequest, SYSCALL_openat},
-                        {"HandleOpenRequest", &VfsRequestManager::HandleOpenRequest, SYSCALL_open},
+                        {"HandleOpenatRequest", &VfsRequestManager::HandleOpenatRequest, SYSCALL_openat, custom_case_validate_openat},
+                        {"HandleOpenRequest", &VfsRequestManager::HandleOpenRequest, SYSCALL_open, custom_case_validate_open},
                         {"HandleCreatRequest", &VfsRequestManager::HandleCreatRequest, SYSCALL_creat},
-                        {"HandleCloseRequest", &VfsRequestManager::HandleCloseRequest, SYSCALL_close},
+                        {"HandleCloseRequest", &VfsRequestManager::HandleCloseRequest, SYSCALL_close, custom_case_validate_close},
                         {"HandleClose_rangeRequest", &VfsRequestManager::HandleClose_rangeRequest, SYSCALL_close_range},
                         {"HandleMkdiratRequest", &VfsRequestManager::HandleMkdiratRequest, SYSCALL_mkdirat},
                         {"HandleMkdirRequest", &VfsRequestManager::HandleMkdirRequest, SYSCALL_mkdir},

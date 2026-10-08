@@ -90,6 +90,7 @@ ProcessManager::ProcessManager()
         Processes[i].tasks               = nullptr;
         Processes[i].fileDescriptors     = nullptr;
         Processes[i].fileDescriptorCount = 0;
+        Processes[i].umask               = 0022U;
         memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
         Processes[i].cwdPath[0] = '/';
     }
@@ -122,6 +123,7 @@ process_t* ProcessManager::AllocateProcessUnlocked()
             Processes[i].tasks               = nullptr;
             Processes[i].fileDescriptors     = nullptr;
             Processes[i].fileDescriptorCount = 0;
+            Processes[i].umask               = 0022U;
             memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
             Processes[i].cwdPath[0] = '/';
             return &Processes[i];
@@ -229,6 +231,7 @@ bool ProcessManager::FreeProcess(process_t* process)
     process->allocated           = false;
     process->tasks               = nullptr;
     process->fileDescriptorCount = 0;
+    process->umask               = 0022U;
     memset(process->cwdPath, 0, sizeof(process->cwdPath));
     process->cwdPath[0] = '/';
 

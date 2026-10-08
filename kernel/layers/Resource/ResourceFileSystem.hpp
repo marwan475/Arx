@@ -23,6 +23,13 @@ struct resource_node_info_t
     resource_node_type_t type;
 };
 
+struct resource_directory_entry_t
+{
+    char                 name[256];
+    uint64_t             inodeNumber;
+    resource_node_type_t type;
+};
+
 struct ResourceLayerFileSystemCaps
 {
     void* context;
@@ -31,6 +38,7 @@ struct ResourceLayerFileSystemCaps
     resource_node_t* (*GetRootNode)(ResourceLayerFileSystemCaps* caps, resource_fs_t* filesystem);
     bool (*GetNodeInfo)(ResourceLayerFileSystemCaps* caps, resource_node_t* node, resource_node_info_t* info);
     resource_node_t* (*Lookup)(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, const char* name);
+    int64_t (*ReadDirectory)(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry);
     int64_t (*Read)(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     int64_t (*Write)(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
 };
@@ -46,6 +54,7 @@ public:
     resource_node_t* GetRootNode(resource_fs_t* filesystem);
     bool             GetNodeInfo(resource_node_t* node, resource_node_info_t* info);
     resource_node_t* Lookup(resource_node_t* directory, const char* name);
+    int64_t          ReadDirectory(resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry);
     int64_t          Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     int64_t          Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
 
@@ -56,6 +65,8 @@ private:
     static resource_node_t* GetRootNodeThunk(ResourceLayerFileSystemCaps* caps, resource_fs_t* filesystem);
     static bool             GetNodeInfoThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, resource_node_info_t* info);
     static resource_node_t* LookupThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, const char* name);
+    static int64_t          ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor,
+                                               resource_directory_entry_t* entry);
     static int64_t          ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     static int64_t          WriteThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
 

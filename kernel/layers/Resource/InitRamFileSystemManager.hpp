@@ -18,6 +18,7 @@ public:
     InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress);
 
     initramfs_archive_t* find(const char* path);
+    const initramfs_archive_t* GetArchiveAt(size_t index) const;
 
     size_t GetArchiveCount() const;
 

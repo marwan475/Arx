@@ -1,6 +1,8 @@
 #include "layers/Request/SystemRequestManager.hpp"
 
 #include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
 
 extern "C"
 {
@@ -62,6 +64,11 @@ static void copy_uts_field(char* destination, size_t destinationSize, const char
 }
 } // namespace
 
+SystemRequestManager::SystemRequestManager(ResourceLayerCaps* resourceLayerCaps)
+    : ResourceCaps(resourceLayerCaps)
+{
+}
+
 uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
@@ -70,8 +77,26 @@ uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_
 
 uint64_t SystemRequestManager::HandleUmaskRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint32_t newMask = (uint32_t) frame->arg0 & 0777U;
+    const uint32_t oldMask = currentProcess->umask;
+    currentProcess->umask  = newMask;
+    return (uint64_t) oldMask;
 }
 
 uint64_t SystemRequestManager::HandlePrlimit64Request(const arch_syscall_frame_t* frame)

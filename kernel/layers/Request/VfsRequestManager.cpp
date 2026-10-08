@@ -31,6 +31,30 @@ struct linux_stat_t
     int64_t          reserved[3];
 };
 
+struct linux_dirent64_header_t
+{
+    uint64_t d_ino;
+    int64_t  d_off;
+    uint16_t d_reclen;
+    uint8_t  d_type;
+} __attribute__((packed));
+
+struct linux_statfs_t
+{
+    int64_t  f_type;
+    int64_t  f_bsize;
+    uint64_t f_blocks;
+    uint64_t f_bfree;
+    uint64_t f_bavail;
+    uint64_t f_files;
+    uint64_t f_ffree;
+    int32_t  f_fsid_val[2];
+    int64_t  f_namelen;
+    int64_t  f_frsize;
+    int64_t  f_flags;
+    int64_t  f_spare[4];
+};
+
 constexpr uint32_t LINUX_S_IFREG = 0100000U;
 constexpr uint32_t LINUX_S_IFDIR = 0040000U;
 constexpr uint32_t LINUX_S_IFLNK = 0120000U;
@@ -42,6 +66,19 @@ constexpr uint64_t LINUX_O_CLOEXEC = 02000000ULL;
 
 constexpr int64_t  LINUX_AT_SYMLINK_NOFOLLOW = 0x100;
 constexpr int64_t  LINUX_AT_EMPTY_PATH       = 0x1000;
+constexpr int64_t  LINUX_AT_EACCESS          = 0x200;
+
+constexpr int64_t  LINUX_F_OK = 0;
+constexpr int64_t  LINUX_X_OK = 1;
+constexpr int64_t  LINUX_W_OK = 2;
+constexpr int64_t  LINUX_R_OK = 4;
+
+constexpr uint8_t LINUX_DT_UNKNOWN = 0;
+constexpr uint8_t LINUX_DT_CHR     = 2;
+constexpr uint8_t LINUX_DT_DIR     = 4;
+constexpr uint8_t LINUX_DT_BLK     = 6;
+constexpr uint8_t LINUX_DT_REG     = 8;
+constexpr uint8_t LINUX_DT_LNK     = 10;
 
 constexpr uint64_t LINUX_F_DUPFD         = 0;
 constexpr uint64_t LINUX_F_GETFD         = 1;
@@ -57,6 +94,10 @@ constexpr uint64_t LINUX_CLOSE_RANGE_UNSHARE = 1ULL << 1;
 constexpr uint64_t LINUX_ENOTTY = (uint64_t) -25;
 constexpr uint64_t LINUX_EMFILE = (uint64_t) -24;
 constexpr uint64_t LINUX_ENOMEM = (uint64_t) -12;
+constexpr uint64_t LINUX_EACCES = (uint64_t) -13;
+
+constexpr int64_t  LINUX_TMPFS_MAGIC = 0x01021994;
+constexpr uint64_t LINUX_STATFS_BSIZE = 4096;
 
 static uint32_t linux_mode_for_inode(const inode_t* inode)
 {
@@ -96,6 +137,92 @@ static void fill_linux_stat_from_inode(const inode_t* inode, linux_stat_t* statB
     statData.st_blocks    = (int64_t) ((inode->size + 511ULL) / 512ULL);
 
     *statBuffer = statData;
+}
+
+static uint8_t linux_dirent_type_for_inode_type(inode_type_t type)
+{
+    switch (type)
+    {
+        case INODE_DIRECTORY:
+            return LINUX_DT_DIR;
+        case INODE_SYMLINK:
+            return LINUX_DT_LNK;
+        case INODE_CHAR_DEVICE:
+            return LINUX_DT_CHR;
+        case INODE_BLOCK_DEVICE:
+            return LINUX_DT_BLK;
+        case INODE_REGULAR:
+            return LINUX_DT_REG;
+        default:
+            return LINUX_DT_UNKNOWN;
+    }
+}
+
+static uint16_t align_dirent_record_length(uint16_t length)
+{
+    return (uint16_t) ((length + 7U) & ~7U);
+}
+
+static bool inode_allows_access_mode(const inode_t* inode, int64_t mode)
+{
+    if (inode == nullptr)
+    {
+        return false;
+    }
+
+    if (mode == LINUX_F_OK)
+    {
+        return true;
+    }
+
+    const uint32_t inodeMode = linux_mode_for_inode(inode) & 0777U;
+    const uint32_t ownerBits = (inodeMode >> 6) & 0x7U;
+
+    if ((mode & LINUX_R_OK) != 0 && (ownerBits & 4U) == 0)
+    {
+        return false;
+    }
+
+    if ((mode & LINUX_W_OK) != 0 && (ownerBits & 2U) == 0)
+    {
+        return false;
+    }
+
+    if ((mode & LINUX_X_OK) != 0 && (ownerBits & 1U) == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static void fill_linux_statfs_from_inode(const inode_t* inode, linux_statfs_t* statfsBuffer)
+{
+    if (inode == nullptr || statfsBuffer == nullptr)
+    {
+        return;
+    }
+
+    linux_statfs_t statfsData = {};
+    statfsData.f_type         = LINUX_TMPFS_MAGIC;
+    statfsData.f_bsize        = (int64_t) LINUX_STATFS_BSIZE;
+    statfsData.f_frsize       = (int64_t) LINUX_STATFS_BSIZE;
+    statfsData.f_namelen      = 255;
+    statfsData.f_flags        = 0;
+
+    uint64_t blocks = (inode->size + (LINUX_STATFS_BSIZE - 1ULL)) / LINUX_STATFS_BSIZE;
+    if (blocks == 0)
+    {
+        blocks = 1;
+    }
+
+    statfsData.f_blocks = blocks;
+    statfsData.f_bfree  = 0;
+    statfsData.f_bavail = 0;
+    statfsData.f_files  = 0;
+    statfsData.f_ffree  = 0;
+
+    *statfsBuffer = statfsData;
 }
 
 static bool is_obviously_invalid_user_pointer(const void* pointer)
@@ -1141,8 +1268,104 @@ uint64_t VfsRequestManager::HandleFchdirRequest(const arch_syscall_frame_t* fram
 
 uint64_t VfsRequestManager::HandleGetdents64Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    char* userBuffer = (char*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(userBuffer))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const uint64_t userBufferSize = frame->arg2;
+    if (userBufferSize == 0)
+    {
+        return 0;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    if (file->inode == nullptr || file->inode->type != INODE_DIRECTORY)
+    {
+        return LINUX_ENOTDIR;
+    }
+
+    uint64_t bytesWritten = 0;
+    while (bytesWritten < userBufferSize)
+    {
+        directory_entry_t entry = {};
+        const int64_t readResult = LogicCaps->virtualFileSystem->ReadDirectory(file, &entry);
+        if (readResult < 0)
+        {
+            return (bytesWritten > 0) ? bytesWritten : normalize_vfs_result(readResult);
+        }
+
+        if (readResult == 0)
+        {
+            break;
+        }
+
+        if (entry.name == nullptr)
+        {
+            continue;
+        }
+
+        const uint64_t nameLength = (uint64_t) strlen(entry.name);
+        if (nameLength > (uint64_t) UINT16_MAX)
+        {
+            return (bytesWritten > 0) ? bytesWritten : LINUX_EIO;
+        }
+
+        const uint16_t baseRecordLength = (uint16_t) (sizeof(linux_dirent64_header_t) + nameLength + 1U);
+        const uint16_t recordLength     = align_dirent_record_length(baseRecordLength);
+
+        if ((uint64_t) recordLength > (userBufferSize - bytesWritten))
+        {
+            break;
+        }
+
+        char* recordBase = userBuffer + bytesWritten;
+        linux_dirent64_header_t header = {};
+        header.d_ino    = entry.inodeNumber;
+        header.d_off    = (int64_t) file->offset;
+        header.d_reclen = recordLength;
+        header.d_type   = linux_dirent_type_for_inode_type(entry.type);
+
+        memcpy(recordBase, &header, sizeof(header));
+        memcpy(recordBase + sizeof(linux_dirent64_header_t), entry.name, (size_t) nameLength + 1U);
+        if (recordLength > baseRecordLength)
+        {
+            memset(recordBase + baseRecordLength, 0, (size_t) (recordLength - baseRecordLength));
+        }
+
+        bytesWritten += recordLength;
+    }
+
+    return bytesWritten;
 }
 
 uint64_t VfsRequestManager::HandleUnlinkatRequest(const arch_syscall_frame_t* frame)
@@ -1818,8 +2041,6 @@ uint64_t VfsRequestManager::HandleLinkRequest(const arch_syscall_frame_t* frame)
 
 uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* frame)
 {
-    kprintf("Arx kernel: rq symlinkat enter\n");
-
     if (frame == nullptr)
     {
         return LINUX_EINVAL;
@@ -1844,8 +2065,6 @@ uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* f
     {
         return LINUX_EFAULT;
     }
-
-    kprintf("Arx kernel: rq symlinkat args target=%s link=%s dirfd=%lld\n", target, linkPath, (long long) dirfd);
 
     char        effectiveLinkPathBuffer[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
     const char* effectiveLinkPath = linkPath;
@@ -1900,9 +2119,7 @@ uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* f
         }
     }
 
-    kprintf("Arx kernel: rq symlinkat call vfs path=%s\n", effectiveLinkPath);
     const int64_t result = LogicCaps->virtualFileSystem->Symlink({}, target, effectiveLinkPath);
-    kprintf("Arx kernel: rq symlinkat return vfs=%lld\n", (long long) result);
     return normalize_vfs_result(result);
 }
 
@@ -1922,20 +2139,156 @@ uint64_t VfsRequestManager::HandleSymlinkRequest(const arch_syscall_frame_t* fra
 
 uint64_t VfsRequestManager::HandleFaccessatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t faccessat2Frame = {};
+    faccessat2Frame.arg0                 = frame->arg0;
+    faccessat2Frame.arg1                 = frame->arg1;
+    faccessat2Frame.arg2                 = frame->arg2;
+    faccessat2Frame.arg3                 = 0;
+    return HandleFaccessat2Request(&faccessat2Frame);
 }
 
 uint64_t VfsRequestManager::HandleFaccessat2Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t dirfd  = (int64_t) frame->arg0;
+    const char*   path   = (const char*) (uintptr_t) frame->arg1;
+    const int64_t mode   = (int64_t) frame->arg2;
+    const int64_t flags  = (int64_t) frame->arg3;
+
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    if ((mode & ~(LINUX_R_OK | LINUX_W_OK | LINUX_X_OK)) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if ((flags & ~(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_EMPTY_PATH | LINUX_AT_EACCESS)) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (path[0] == '\0')
+    {
+        if ((flags & LINUX_AT_EMPTY_PATH) == 0)
+        {
+            return LINUX_ENOENT;
+        }
+
+        if (dirfd < 0)
+        {
+            return LINUX_EBADF;
+        }
+
+        const uint64_t fd = (uint64_t) dirfd;
+        if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+        {
+            return LINUX_EBADF;
+        }
+
+        file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+        if (descriptor->file == nullptr)
+        {
+            return LINUX_EBADF;
+        }
+
+        file_t* file = static_cast<file_t*>(descriptor->file);
+        if (file->inode == nullptr)
+        {
+            return LINUX_EIO;
+        }
+
+        return inode_allows_access_mode(file->inode, mode) ? 0 : LINUX_EACCES;
+    }
+
+    vfs_path_t start            = {};
+    bool       nonDirectoryBase = false;
+    char       cwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+
+    if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = cwdResolvedPath;
+    }
+
+    if ((flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0)
+    {
+        inode_t* inode = nullptr;
+        const int64_t statResult = LogicCaps->virtualFileSystem->StatNoFollow(start, effectivePath, &inode);
+        if (statResult < 0 || inode == nullptr)
+        {
+            return normalize_vfs_result(statResult);
+        }
+
+        return inode_allows_access_mode(inode, mode) ? 0 : LINUX_EACCES;
+    }
+
+    if (effectivePath[0] == '/')
+    {
+        start = {};
+    }
+    else
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, dirfd, &start, &nonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (nonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    vfs_path_t resolved = {};
+    if (!LogicCaps->virtualFileSystem->ResolvePath(start, effectivePath, &resolved) || resolved.dentry == nullptr || resolved.dentry->inode == nullptr)
+    {
+        return LINUX_ENOENT;
+    }
+
+    return inode_allows_access_mode(resolved.dentry->inode, mode) ? 0 : LINUX_EACCES;
 }
 
 uint64_t VfsRequestManager::HandleAccessRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t faccessat2Frame = {};
+    faccessat2Frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    faccessat2Frame.arg1                 = frame->arg0;
+    faccessat2Frame.arg2                 = frame->arg1;
+    faccessat2Frame.arg3                 = 0;
+    return HandleFaccessat2Request(&faccessat2Frame);
 }
 
 uint64_t VfsRequestManager::HandleFchownatRequest(const arch_syscall_frame_t* frame)
@@ -1994,14 +2347,100 @@ uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleStatfsRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const char* path = (const char*) (uintptr_t) frame->arg0;
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    linux_statfs_t* statfsBuffer = (linux_statfs_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(statfsBuffer))
+    {
+        return LINUX_EFAULT;
+    }
+
+    char        effectivePathBuffer[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+    if (path[0] != '/')
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, effectivePathBuffer, sizeof(effectivePathBuffer)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = effectivePathBuffer;
+    }
+
+    vfs_path_t resolved = {};
+    if (!LogicCaps->virtualFileSystem->ResolvePath({}, effectivePath, &resolved) || resolved.dentry == nullptr || resolved.dentry->inode == nullptr)
+    {
+        return LINUX_ENOENT;
+    }
+
+    fill_linux_statfs_from_inode(resolved.dentry->inode, statfsBuffer);
+    return 0;
 }
 
 uint64_t VfsRequestManager::HandleFstatfsRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_statfs_t* statfsBuffer = (linux_statfs_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(statfsBuffer))
+    {
+        return LINUX_EFAULT;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    if (file->inode == nullptr)
+    {
+        return LINUX_EIO;
+    }
+
+    fill_linux_statfs_from_inode(file->inode, statfsBuffer);
+    return 0;
 }
 
 uint64_t VfsRequestManager::HandleMknodatRequest(const arch_syscall_frame_t* frame)

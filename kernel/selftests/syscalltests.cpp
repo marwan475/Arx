@@ -1888,6 +1888,255 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
         return (int64_t) readResult > 0;
 }
 
+static bool custom_case_validate_getdents64(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openDir = {};
+        openDir.syscall_number       = SYSCALL_open;
+        openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+        const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+        if ((int64_t) dirFd < 0)
+        {
+                return false;
+        }
+
+        char                 buffer[512] = {};
+        arch_syscall_frame_t frame       = {};
+        frame.syscall_number             = SYSCALL_getdents64;
+        frame.arg0                       = dirFd;
+        frame.arg1                       = (uint64_t) (uintptr_t) buffer;
+        frame.arg2                       = sizeof(buffer);
+
+        const uint64_t getdentsResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t badFdFrame = frame;
+        badFdFrame.arg0                 = dirFd + 1024;
+        const uint64_t badFdResult      = dispatcher_dispatch_syscall(&badFdFrame);
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = dirFd;
+        const uint64_t closeResult      = dispatcher_dispatch_syscall(&closeFrame);
+
+        return (int64_t) getdentsResult >= 0 && badFdResult == LINUX_EBADF && closeResult == 0;
+}
+
+static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
+{
+        constexpr uint64_t TEST_LINUX_EACCES = (uint64_t) -13;
+
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = ctx->syscallNumber;
+
+        if (ctx->syscallNumber == SYSCALL_access)
+        {
+                frame.arg0 = (uint64_t) (uintptr_t) "/test.txt";
+                frame.arg1 = 0;
+        }
+        else
+        {
+                frame.arg0 = (uint64_t) LINUX_AT_FDCWD;
+                frame.arg1 = (uint64_t) (uintptr_t) "/test.txt";
+                frame.arg2 = 0;
+                frame.arg3 = 0;
+        }
+
+        const uint64_t existsResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t execCheckFrame = frame;
+        if (ctx->syscallNumber == SYSCALL_access)
+        {
+                execCheckFrame.arg1 = 1;
+        }
+        else
+        {
+                execCheckFrame.arg2 = 1;
+        }
+        const uint64_t execCheckResult = dispatcher_dispatch_syscall(&execCheckFrame);
+
+        arch_syscall_frame_t missingFrame = frame;
+        if (ctx->syscallNumber == SYSCALL_access)
+        {
+                missingFrame.arg0 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+        }
+        else
+        {
+                missingFrame.arg1 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+        }
+        const uint64_t missingResult = dispatcher_dispatch_syscall(&missingFrame);
+
+        arch_syscall_frame_t badModeFrame = frame;
+        if (ctx->syscallNumber == SYSCALL_access)
+        {
+                badModeFrame.arg1 = 8;
+        }
+        else
+        {
+                badModeFrame.arg2 = 8;
+        }
+        const uint64_t badModeResult = dispatcher_dispatch_syscall(&badModeFrame);
+
+        bool flagsResultOk = true;
+        if (ctx->syscallNumber == SYSCALL_faccessat2)
+        {
+                arch_syscall_frame_t badFlagsFrame = frame;
+                badFlagsFrame.arg3                 = 1ULL << 20;
+                flagsResultOk                      = dispatcher_dispatch_syscall(&badFlagsFrame) == LINUX_EINVAL;
+        }
+
+        return existsResult == 0 && execCheckResult == TEST_LINUX_EACCES && missingResult == LINUX_ENOENT && badModeResult == LINUX_EINVAL && flagsResultOk;
+}
+
+static bool custom_case_validate_statfs(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_statfs_t
+        {
+                int64_t  f_type;
+                int64_t  f_bsize;
+                uint64_t f_blocks;
+                uint64_t f_bfree;
+                uint64_t f_bavail;
+                uint64_t f_files;
+                uint64_t f_ffree;
+                int32_t  f_fsid_val[2];
+                int64_t  f_namelen;
+                int64_t  f_frsize;
+                int64_t  f_flags;
+                int64_t  f_spare[4];
+        };
+
+        test_linux_statfs_t statfsData = {};
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_statfs;
+        frame.arg0                 = (uint64_t) (uintptr_t) "/";
+        frame.arg1                 = (uint64_t) (uintptr_t) &statfsData;
+
+        const uint64_t statfsResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t missingFrame = frame;
+        missingFrame.arg0                 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+        const uint64_t missingResult      = dispatcher_dispatch_syscall(&missingFrame);
+
+        return statfsResult == 0 && statfsData.f_bsize > 0 && missingResult == LINUX_ENOENT;
+}
+
+static bool custom_case_validate_fstatfs(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) fd < 0)
+        {
+                return false;
+        }
+
+        struct test_linux_statfs_t
+        {
+                int64_t  f_type;
+                int64_t  f_bsize;
+                uint64_t f_blocks;
+                uint64_t f_bfree;
+                uint64_t f_bavail;
+                uint64_t f_files;
+                uint64_t f_ffree;
+                int32_t  f_fsid_val[2];
+                int64_t  f_namelen;
+                int64_t  f_frsize;
+                int64_t  f_flags;
+                int64_t  f_spare[4];
+        };
+
+        test_linux_statfs_t statfsData = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_fstatfs;
+        frame.arg0                 = fd;
+        frame.arg1                 = (uint64_t) (uintptr_t) &statfsData;
+        const uint64_t fstatfsResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t badFdFrame = frame;
+        badFdFrame.arg0                 = fd + 1024;
+        const uint64_t badFdResult      = dispatcher_dispatch_syscall(&badFdFrame);
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fd;
+        const uint64_t closeResult      = dispatcher_dispatch_syscall(&closeFrame);
+
+        return fstatfsResult == 0 && statfsData.f_bsize > 0 && badFdResult == LINUX_EBADF && closeResult == 0;
+}
+
+static bool custom_case_validate_umask(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        constexpr uint64_t firstMask  = 0022;
+        constexpr uint64_t secondMask = 0077;
+
+        arch_syscall_frame_t firstFrame = {};
+        firstFrame.syscall_number       = SYSCALL_umask;
+        firstFrame.arg0                 = firstMask;
+        const uint64_t oldMask          = dispatcher_dispatch_syscall(&firstFrame);
+
+        arch_syscall_frame_t secondFrame = firstFrame;
+        secondFrame.arg0                 = secondMask;
+        const uint64_t previousSecond    = dispatcher_dispatch_syscall(&secondFrame);
+
+        arch_syscall_frame_t restoreFrame = firstFrame;
+        restoreFrame.arg0                 = oldMask;
+        const uint64_t previousRestore    = dispatcher_dispatch_syscall(&restoreFrame);
+
+        return previousSecond == firstMask && previousRestore == secondMask;
+}
+
 static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
 {
         switch (syscallNumber)
@@ -2112,7 +2361,8 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleGetcwdRequest", &VfsRequestManager::HandleGetcwdRequest, SYSCALL_getcwd, custom_case_validate_getcwd},
                         {"HandleChdirRequest", &VfsRequestManager::HandleChdirRequest, SYSCALL_chdir, custom_case_validate_chdir},
                         {"HandleFchdirRequest", &VfsRequestManager::HandleFchdirRequest, SYSCALL_fchdir, custom_case_validate_fchdir},
-                        {"HandleGetdents64Request", &VfsRequestManager::HandleGetdents64Request, SYSCALL_getdents64},
+                        {"HandleGetdents64Request", &VfsRequestManager::HandleGetdents64Request, SYSCALL_getdents64,
+                         custom_case_validate_getdents64},
                         {"HandleUnlinkatRequest", &VfsRequestManager::HandleUnlinkatRequest, SYSCALL_unlinkat},
                         {"HandleUnlinkRequest", &VfsRequestManager::HandleUnlinkRequest, SYSCALL_unlink},
                         {"HandleRmdirRequest", &VfsRequestManager::HandleRmdirRequest, SYSCALL_rmdir},
@@ -2133,9 +2383,11 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleLinkRequest", &VfsRequestManager::HandleLinkRequest, SYSCALL_link},
                         {"HandleSymlinkatRequest", &VfsRequestManager::HandleSymlinkatRequest, SYSCALL_symlinkat, custom_case_validate_symlinkat},
                         {"HandleSymlinkRequest", &VfsRequestManager::HandleSymlinkRequest, SYSCALL_symlink, custom_case_validate_symlink},
-                        {"HandleFaccessatRequest", &VfsRequestManager::HandleFaccessatRequest, SYSCALL_faccessat},
-                        {"HandleFaccessat2Request", &VfsRequestManager::HandleFaccessat2Request, SYSCALL_faccessat2},
-                        {"HandleAccessRequest", &VfsRequestManager::HandleAccessRequest, SYSCALL_access},
+                        {"HandleFaccessatRequest", &VfsRequestManager::HandleFaccessatRequest, SYSCALL_faccessat,
+                         custom_case_validate_access_family},
+                        {"HandleFaccessat2Request", &VfsRequestManager::HandleFaccessat2Request, SYSCALL_faccessat2,
+                         custom_case_validate_access_family},
+                        {"HandleAccessRequest", &VfsRequestManager::HandleAccessRequest, SYSCALL_access, custom_case_validate_access_family},
                         {"HandleFchownatRequest", &VfsRequestManager::HandleFchownatRequest, SYSCALL_fchownat},
                         {"HandleChownRequest", &VfsRequestManager::HandleChownRequest, SYSCALL_chown},
                         {"HandleFchownRequest", &VfsRequestManager::HandleFchownRequest, SYSCALL_fchown},
@@ -2145,8 +2397,8 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleChmodRequest", &VfsRequestManager::HandleChmodRequest, SYSCALL_chmod},
                         {"HandleFchmodRequest", &VfsRequestManager::HandleFchmodRequest, SYSCALL_fchmod},
                         {"HandleMountRequest", &VfsRequestManager::HandleMountRequest, SYSCALL_mount},
-                        {"HandleStatfsRequest", &VfsRequestManager::HandleStatfsRequest, SYSCALL_statfs},
-                        {"HandleFstatfsRequest", &VfsRequestManager::HandleFstatfsRequest, SYSCALL_fstatfs},
+                        {"HandleStatfsRequest", &VfsRequestManager::HandleStatfsRequest, SYSCALL_statfs, custom_case_validate_statfs},
+                        {"HandleFstatfsRequest", &VfsRequestManager::HandleFstatfsRequest, SYSCALL_fstatfs, custom_case_validate_fstatfs},
                         {"HandleMknodatRequest", &VfsRequestManager::HandleMknodatRequest, SYSCALL_mknodat},
                         {"HandleMknodRequest", &VfsRequestManager::HandleMknodRequest, SYSCALL_mknod},
                         {"HandleTruncateRequest", &VfsRequestManager::HandleTruncateRequest, SYSCALL_truncate},
@@ -2239,7 +2491,7 @@ static void test_system_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
 {
         static const request_method_test_t<SystemRequestManager> tests[] = {
                         {"HandleArch_prctlRequest", &SystemRequestManager::HandleArch_prctlRequest, SYSCALL_arch_prctl},
-                        {"HandleUmaskRequest", &SystemRequestManager::HandleUmaskRequest, SYSCALL_umask},
+                        {"HandleUmaskRequest", &SystemRequestManager::HandleUmaskRequest, SYSCALL_umask, custom_case_validate_umask},
                         {"HandlePrlimit64Request", &SystemRequestManager::HandlePrlimit64Request, SYSCALL_prlimit64},
                         {"HandleGetrlimitRequest", &SystemRequestManager::HandleGetrlimitRequest, SYSCALL_getrlimit},
                         {"HandleSetrlimitRequest", &SystemRequestManager::HandleSetrlimitRequest, SYSCALL_setrlimit},

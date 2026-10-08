@@ -63,6 +63,7 @@ struct process_t
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
     uint64_t           fileDescriptorCount;
+    uint32_t           umask;
     char               cwdPath[256];
 };
 

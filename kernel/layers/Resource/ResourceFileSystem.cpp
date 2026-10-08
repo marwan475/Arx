@@ -57,6 +57,45 @@ static bool has_component_separator(const char* name)
     return false;
 }
 
+static bool path_starts_with_component(const char* path, const char* prefix)
+{
+    if (path == nullptr || prefix == nullptr)
+    {
+        return false;
+    }
+
+    const size_t prefixLen = strlen(prefix);
+    if (prefixLen == 0)
+    {
+        return true;
+    }
+
+    if (memcmp(path, prefix, prefixLen) != 0)
+    {
+        return false;
+    }
+
+    return path[prefixLen] == '\0' || path[prefixLen] == '/';
+}
+
+static bool is_duplicate_name(const char* const* names, size_t count, const char* name, size_t nameLen)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (names[i] == nullptr)
+        {
+            continue;
+        }
+
+        if (strlen(names[i]) == nameLen && memcmp(names[i], name, nameLen) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDirectory, uint64_t size)
 {
     if (fs == nullptr)
@@ -93,6 +132,7 @@ ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSyst
     Caps.GetRootNode     = GetRootNodeThunk;
     Caps.GetNodeInfo     = GetNodeInfoThunk;
     Caps.Lookup          = LookupThunk;
+    Caps.ReadDirectory   = ReadDirectoryThunk;
     Caps.Read            = ReadThunk;
     Caps.Write           = WriteThunk;
 }
@@ -134,6 +174,13 @@ resource_node_t* ResourceFileSystem::LookupThunk(ResourceLayerFileSystemCaps* ca
 {
     ResourceFileSystem* self = FromCaps(caps);
     return self != nullptr ? self->Lookup(directory, name) : nullptr;
+}
+
+int64_t ResourceFileSystem::ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor,
+                                               resource_directory_entry_t* entry)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->ReadDirectory(directory, cursor, entry) : -1;
 }
 
 int64_t ResourceFileSystem::ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size)
@@ -233,16 +280,27 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return node;
     }
 
-    const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
-    const size_t prefixLen      = fullLen;
+    const size_t archiveCount = directory->fs->initRamManager->GetArchiveCount();
     bool         directoryFound = false;
-
     for (size_t i = 0; i < archiveCount; ++i)
     {
-        // We do not have random archive access yet, so directory discovery stays file-only.
-        // Keep loop for future expansion without changing API.
-        (void) i;
-        break;
+        const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+        if (archive == nullptr || archive->path == nullptr)
+        {
+            continue;
+        }
+
+        if (!path_starts_with_component(archive->path, fullPath))
+        {
+            continue;
+        }
+
+        const size_t fullPathLen = strlen(fullPath);
+        if (strlen(archive->path) > fullPathLen && archive->path[fullPathLen] == '/')
+        {
+            directoryFound = true;
+            break;
+        }
     }
 
     if (directoryFound)
@@ -252,9 +310,108 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return node;
     }
 
-    (void) prefixLen;
     kfree(fullPath);
     return nullptr;
+}
+
+int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry)
+{
+    if (directory == nullptr || directory->fs == nullptr || directory->fs->initRamManager == nullptr || cursor == nullptr || entry == nullptr)
+    {
+        return -1;
+    }
+
+    if (!directory->isDirectory)
+    {
+        return -1;
+    }
+
+    const char* basePath = directory->path != nullptr ? directory->path : "";
+    const size_t baseLen = strlen(basePath);
+    const size_t archiveCount = directory->fs->initRamManager->GetArchiveCount();
+    const uint64_t targetIndex = *cursor;
+    uint64_t currentIndex = 0;
+
+    // Track discovered names to avoid duplicate directory entries from multiple descendants.
+    const char* discoveredNames[1024] = {};
+    size_t discoveredCount = 0;
+
+    for (size_t i = 0; i < archiveCount; ++i)
+    {
+        const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+        if (archive == nullptr || archive->path == nullptr)
+        {
+            continue;
+        }
+
+        const char* path = archive->path;
+        if (baseLen > 0)
+        {
+            if (memcmp(path, basePath, baseLen) != 0 || path[baseLen] != '/')
+            {
+                continue;
+            }
+            path += baseLen + 1;
+        }
+
+        if (*path == '\0')
+        {
+            continue;
+        }
+
+        const char* separator = nullptr;
+        for (const char* p = path; *p != '\0'; ++p)
+        {
+            if (*p == '/')
+            {
+                separator = p;
+                break;
+            }
+        }
+        const size_t nameLen = separator != nullptr ? (size_t) (separator - path) : strlen(path);
+        if (nameLen == 0 || nameLen >= sizeof(entry->name))
+        {
+            continue;
+        }
+
+        if (is_duplicate_name(discoveredNames, discoveredCount, path, nameLen))
+        {
+            continue;
+        }
+
+        if (discoveredCount < (sizeof(discoveredNames) / sizeof(discoveredNames[0])))
+        {
+            discoveredNames[discoveredCount++] = path;
+        }
+
+        if (currentIndex == targetIndex)
+        {
+            memset(entry, 0, sizeof(*entry));
+            memcpy(entry->name, path, nameLen);
+            entry->name[nameLen] = '\0';
+            entry->type          = separator != nullptr ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
+
+            char fullPath[512] = {};
+            if (baseLen > 0)
+            {
+                memcpy(fullPath, basePath, baseLen);
+                fullPath[baseLen] = '/';
+                memcpy(fullPath + baseLen + 1, entry->name, nameLen + 1);
+            }
+            else
+            {
+                memcpy(fullPath, entry->name, nameLen + 1);
+            }
+
+            entry->inodeNumber = resource_hash_path(fullPath, entry->type == RESOURCE_NODE_DIRECTORY);
+            *cursor += 1;
+            return 1;
+        }
+
+        currentIndex += 1;
+    }
+
+    return 0;
 }
 
 int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size)

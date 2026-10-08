@@ -243,6 +243,16 @@ initramfs_archive_t* InitRamFileSystemManager::find(const char* path)
     return nullptr;
 }
 
+const initramfs_archive_t* InitRamFileSystemManager::GetArchiveAt(size_t index) const
+{
+    if (index >= ArchiveCount)
+    {
+        return nullptr;
+    }
+
+    return &Archives[index];
+}
+
 size_t InitRamFileSystemManager::GetArchiveCount() const
 {
     return ArchiveCount;

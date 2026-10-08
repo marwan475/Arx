@@ -32,6 +32,7 @@ static int64_t  vfs_resource_open(file_t* file);
 static int64_t  vfs_resource_read(file_t* file, void* buffer, uint64_t count);
 static int64_t  vfs_resource_write(file_t* file, const void* buffer, uint64_t count);
 static int64_t  vfs_resource_seek(file_t* file, int64_t offset, int whence);
+static int64_t  vfs_resource_readdir(file_t* file, directory_entry_t* entry);
 static void     vfs_resource_release(file_t* file);
 
 static int64_t  vfs_symlink_read(file_t* file, void* buffer, uint64_t count);
@@ -41,7 +42,7 @@ static const inode_operations_t g_vfs_resource_inode_ops = {
 };
 
 static const file_operations_t g_vfs_resource_file_ops = {
-        vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, nullptr, nullptr, nullptr, vfs_resource_release,
+    vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, vfs_resource_readdir, nullptr, nullptr, vfs_resource_release,
 };
 
 static const file_operations_t g_vfs_symlink_file_ops = {
@@ -51,6 +52,11 @@ static const file_operations_t g_vfs_symlink_file_ops = {
 struct vfs_symlink_private_t
 {
     char* target;
+};
+
+struct vfs_resource_file_private_t
+{
+    char direntName[256];
 };
 
 struct vfs_overlay_dentry_entry_t
@@ -124,7 +130,7 @@ static inode_t* vfs_wrap_resource_node(filesystem_t* filesystem, ResourceLayerFi
     if (inode->type == INODE_DIRECTORY)
     {
         inode->inodeOps = &g_vfs_resource_inode_ops;
-        inode->fileOps  = nullptr;
+        inode->fileOps  = &g_vfs_resource_file_ops;
     }
     else
     {
@@ -159,7 +165,19 @@ static inode_t* vfs_resource_lookup(inode_t* directory, const char* name)
 
 static int64_t vfs_resource_open(file_t* file)
 {
-    (void) file;
+    if (file == nullptr)
+    {
+        return -1;
+    }
+
+    vfs_resource_file_private_t* filePrivate = (vfs_resource_file_private_t*) kmalloc(sizeof(vfs_resource_file_private_t));
+    if (filePrivate == nullptr)
+    {
+        return -1;
+    }
+
+    memset(filePrivate, 0, sizeof(*filePrivate));
+    file->privateData = filePrivate;
     return 0;
 }
 
@@ -246,6 +264,67 @@ static int64_t vfs_resource_seek(file_t* file, int64_t offset, int whence)
     return (int64_t) newOffset;
 }
 
+static int64_t vfs_resource_readdir(file_t* file, directory_entry_t* entry)
+{
+    if (file == nullptr || file->inode == nullptr || file->inode->privateData == nullptr || entry == nullptr)
+    {
+        return -1;
+    }
+
+    if (file->inode->type != INODE_DIRECTORY)
+    {
+        return -1;
+    }
+
+    vfs_resource_file_private_t* filePrivate = (vfs_resource_file_private_t*) file->privateData;
+    if (filePrivate == nullptr)
+    {
+        return -1;
+    }
+
+    vfs_resource_inode_private_t* inodePrivate = (vfs_resource_inode_private_t*) file->inode->privateData;
+    if (inodePrivate->caps == nullptr || inodePrivate->caps->ReadDirectory == nullptr)
+    {
+        return -1;
+    }
+
+    resource_directory_entry_t resourceEntry = {};
+    uint64_t cursor = file->offset;
+    const int64_t result = inodePrivate->caps->ReadDirectory(inodePrivate->caps, inodePrivate->backendNode, &cursor, &resourceEntry);
+    if (result <= 0)
+    {
+        return result;
+    }
+
+    memcpy(filePrivate->direntName, resourceEntry.name, sizeof(filePrivate->direntName));
+
+    entry->name       = filePrivate->direntName;
+    entry->inodeNumber = resourceEntry.inodeNumber;
+
+    switch (resourceEntry.type)
+    {
+        case RESOURCE_NODE_DIRECTORY:
+            entry->type = INODE_DIRECTORY;
+            break;
+        case RESOURCE_NODE_SYMLINK:
+            entry->type = INODE_SYMLINK;
+            break;
+        case RESOURCE_NODE_CHAR_DEVICE:
+            entry->type = INODE_CHAR_DEVICE;
+            break;
+        case RESOURCE_NODE_BLOCK_DEVICE:
+            entry->type = INODE_BLOCK_DEVICE;
+            break;
+        case RESOURCE_NODE_REGULAR:
+        default:
+            entry->type = INODE_REGULAR;
+            break;
+    }
+
+    file->offset = cursor;
+    return 1;
+}
+
 static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count)
 {
     if (file == nullptr || file->inode == nullptr || file->inode->privateData == nullptr || buffer == nullptr)
@@ -274,7 +353,16 @@ static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count)
 
 static void vfs_resource_release(file_t* file)
 {
-    (void) file;
+    if (file == nullptr)
+    {
+        return;
+    }
+
+    if (file->privateData != nullptr)
+    {
+        kfree(file->privateData);
+        file->privateData = nullptr;
+    }
 }
 
 static uint32_t vfs_hash_parent_and_name(const dentry_t* parent, const char* name)

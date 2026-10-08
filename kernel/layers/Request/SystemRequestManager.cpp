@@ -1,5 +1,67 @@
 #include "layers/Request/SystemRequestManager.hpp"
 
+#include "layers/Request/RequestLayerFactory.hpp"
+
+extern "C"
+{
+#include <boot/boot.h>
+#include <klib/klib.h>
+#include <platform.h>
+}
+
+namespace
+{
+struct linux_utsname_t
+{
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+    char domainname[65];
+};
+
+struct linux_sysinfo_t
+{
+    int64_t  uptime;
+    uint64_t loads[3];
+    uint64_t totalram;
+    uint64_t freeram;
+    uint64_t sharedram;
+    uint64_t bufferram;
+    uint64_t totalswap;
+    uint64_t freeswap;
+    uint16_t procs;
+    uint16_t pad;
+    uint64_t totalhigh;
+    uint64_t freehigh;
+    uint32_t mem_unit;
+    char     _f[0];
+};
+
+static void copy_uts_field(char* destination, size_t destinationSize, const char* source)
+{
+    if (destination == nullptr || destinationSize == 0)
+    {
+        return;
+    }
+
+    memset(destination, 0, destinationSize);
+    if (source == nullptr)
+    {
+        return;
+    }
+
+    size_t sourceLength = strlen(source);
+    if (sourceLength >= destinationSize)
+    {
+        sourceLength = destinationSize - 1;
+    }
+
+    memcpy(destination, source, sourceLength);
+}
+} // namespace
+
 uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
@@ -38,14 +100,66 @@ uint64_t SystemRequestManager::HandlePrctlRequest(const arch_syscall_frame_t* fr
 
 uint64_t SystemRequestManager::HandleUnameRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    linux_utsname_t* userUts = (linux_utsname_t*) (uintptr_t) frame->arg0;
+    if (userUts == nullptr)
+    {
+        return LINUX_EFAULT;
+    }
+
+    linux_utsname_t utsData = {};
+    copy_uts_field(utsData.sysname, sizeof(utsData.sysname), "Arx");
+    copy_uts_field(utsData.nodename, sizeof(utsData.nodename), "arx-kernel");
+    copy_uts_field(utsData.release, sizeof(utsData.release), "0.1.0");
+    copy_uts_field(utsData.version, sizeof(utsData.version), "Arx");
+    copy_uts_field(utsData.machine, sizeof(utsData.machine), platform.arch == ARCH_AARCH64 ? "aarch64" : "x86_64");
+    copy_uts_field(utsData.domainname, sizeof(utsData.domainname), "localdomain");
+
+    *userUts = utsData;
+    return 0;
 }
 
 uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    linux_sysinfo_t* userSysinfo = (linux_sysinfo_t*) (uintptr_t) frame->arg0;
+    if (userSysinfo == nullptr)
+    {
+        return LINUX_EFAULT;
+    }
+
+    uint64_t totalMemoryBytes = 0;
+    uint64_t freeMemoryBytes  = 0;
+
+    for (size_t node = 0; node < platform.numa_node_count; ++node)
+    {
+        totalMemoryBytes += (uint64_t) platform.numa_nodes[node].zone.total_memory;
+        freeMemoryBytes += (uint64_t) platform.numa_nodes[node].zone.free_pages * PAGE_SIZE;
+    }
+
+    linux_sysinfo_t sysinfoData = {};
+    sysinfoData.uptime          = 0;
+    sysinfoData.totalram        = totalMemoryBytes;
+    sysinfoData.freeram         = freeMemoryBytes;
+    sysinfoData.sharedram       = 0;
+    sysinfoData.bufferram       = 0;
+    sysinfoData.totalswap       = 0;
+    sysinfoData.freeswap        = 0;
+    sysinfoData.procs           = (uint16_t) platform.cpu_count;
+    sysinfoData.totalhigh       = 0;
+    sysinfoData.freehigh        = 0;
+    sysinfoData.mem_unit        = 1;
+
+    *userSysinfo = sysinfoData;
+    return 0;
 }
 
 uint64_t SystemRequestManager::HandleGetrandomRequest(const arch_syscall_frame_t* frame)

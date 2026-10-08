@@ -465,6 +465,162 @@ static bool custom_case_validate_sched_yield(const custom_case_ctx_t* ctx)
         return dispatchResult == 0;
 }
 
+static bool custom_case_validate_getcpu(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result != 0)
+        {
+                return false;
+        }
+
+        uint32_t cpuValue  = UINT32_MAX;
+        uint32_t nodeValue = UINT32_MAX;
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_getcpu;
+        frame.arg0                 = (uint64_t) (uintptr_t) &cpuValue;
+        frame.arg1                 = (uint64_t) (uintptr_t) &nodeValue;
+        frame.arg2                 = 0;
+
+        const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
+        const bool cpuInRange         = cpuValue < BOOT_SMP_MAX_CPUS;
+        return dispatchResult == 0 && cpuInRange && nodeValue == 0;
+}
+
+static bool custom_case_validate_sched_getaffinity(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        uint8_t mask[sizeof(uint64_t)] = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_sched_getaffinity;
+        frame.arg0                 = 0;
+        frame.arg1                 = sizeof(mask);
+        frame.arg2                 = (uint64_t) (uintptr_t) mask;
+
+        const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
+        if (dispatchResult != sizeof(uint64_t))
+        {
+                return false;
+        }
+
+        uint64_t affinityMask = 0;
+        memcpy(&affinityMask, mask, sizeof(affinityMask));
+        if (affinityMask == 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t shortFrame = frame;
+        shortFrame.arg1                 = sizeof(uint32_t);
+        const uint64_t shortResult      = dispatcher_dispatch_syscall(&shortFrame);
+        return shortResult == LINUX_EINVAL;
+}
+
+static bool custom_case_validate_uname(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_utsname_t
+        {
+                char sysname[65];
+                char nodename[65];
+                char release[65];
+                char version[65];
+                char machine[65];
+                char domainname[65];
+        };
+
+        test_linux_utsname_t uts = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_uname;
+        frame.arg0                 = (uint64_t) (uintptr_t) &uts;
+
+        const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
+        if (dispatchResult != 0)
+        {
+                return false;
+        }
+
+        if (strcmp(uts.sysname, "Arx") != 0)
+        {
+                return false;
+        }
+
+        return uts.machine[0] != '\0';
+}
+
+static bool custom_case_validate_sysinfo(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_sysinfo_t
+        {
+                int64_t  uptime;
+                uint64_t loads[3];
+                uint64_t totalram;
+                uint64_t freeram;
+                uint64_t sharedram;
+                uint64_t bufferram;
+                uint64_t totalswap;
+                uint64_t freeswap;
+                uint16_t procs;
+                uint16_t pad;
+                uint64_t totalhigh;
+                uint64_t freehigh;
+                uint32_t mem_unit;
+        };
+
+        test_linux_sysinfo_t info = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_sysinfo;
+        frame.arg0                 = (uint64_t) (uintptr_t) &info;
+
+        const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
+        if (dispatchResult != 0)
+        {
+                return false;
+        }
+
+        if (info.mem_unit == 0)
+        {
+                return false;
+        }
+
+        return info.totalram >= info.freeram;
+}
+
 static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
 {
         if (ctx == nullptr || ctx->frame == nullptr)
@@ -818,8 +974,9 @@ static void test_scheduler_manager(RequestLayerCaps* caps, requestlayer_stats_t*
 {
         static const request_method_test_t<SchedulerRequestManager> tests[] = {
                         {"HandleSched_yieldRequest", &SchedulerRequestManager::HandleSched_yieldRequest, SYSCALL_sched_yield, custom_case_validate_sched_yield},
-                        {"HandleSched_getaffinityRequest", &SchedulerRequestManager::HandleSched_getaffinityRequest, SYSCALL_sched_getaffinity},
-                        {"HandleGetcpuRequest", &SchedulerRequestManager::HandleGetcpuRequest, SYSCALL_getcpu},
+                        {"HandleSched_getaffinityRequest", &SchedulerRequestManager::HandleSched_getaffinityRequest, SYSCALL_sched_getaffinity,
+                         custom_case_validate_sched_getaffinity},
+                        {"HandleGetcpuRequest", &SchedulerRequestManager::HandleGetcpuRequest, SYSCALL_getcpu, custom_case_validate_getcpu},
         };
 
         run_manager_tests("scheduler", caps->schedulerRequestManager, tests, stats);
@@ -1010,8 +1167,8 @@ static void test_system_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
                         {"HandleGetrlimitRequest", &SystemRequestManager::HandleGetrlimitRequest, SYSCALL_getrlimit},
                         {"HandleSetrlimitRequest", &SystemRequestManager::HandleSetrlimitRequest, SYSCALL_setrlimit},
                         {"HandlePrctlRequest", &SystemRequestManager::HandlePrctlRequest, SYSCALL_prctl},
-                        {"HandleUnameRequest", &SystemRequestManager::HandleUnameRequest, SYSCALL_uname},
-                        {"HandleSysinfoRequest", &SystemRequestManager::HandleSysinfoRequest, SYSCALL_sysinfo},
+                        {"HandleUnameRequest", &SystemRequestManager::HandleUnameRequest, SYSCALL_uname, custom_case_validate_uname},
+                        {"HandleSysinfoRequest", &SystemRequestManager::HandleSysinfoRequest, SYSCALL_sysinfo, custom_case_validate_sysinfo},
                         {"HandleGetrandomRequest", &SystemRequestManager::HandleGetrandomRequest, SYSCALL_getrandom},
         };
 

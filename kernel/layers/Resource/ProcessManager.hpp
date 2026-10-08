@@ -63,6 +63,7 @@ struct process_t
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
     uint64_t           fileDescriptorCount;
+    char               cwdPath[256];
 };
 
 class ProcessManager
@@ -70,6 +71,7 @@ class ProcessManager
 public:
     static constexpr size_t   MAX_PROCESSES                 = 64;
     static constexpr uint64_t DEFAULT_FILE_DESCRIPTOR_COUNT = 32;
+    static constexpr size_t   MAX_CWD_PATH_LENGTH           = 256;
 
     ProcessManager();
 

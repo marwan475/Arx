@@ -90,6 +90,8 @@ ProcessManager::ProcessManager()
         Processes[i].tasks               = nullptr;
         Processes[i].fileDescriptors     = nullptr;
         Processes[i].fileDescriptorCount = 0;
+        memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
+        Processes[i].cwdPath[0] = '/';
     }
 }
 
@@ -120,6 +122,8 @@ process_t* ProcessManager::AllocateProcessUnlocked()
             Processes[i].tasks               = nullptr;
             Processes[i].fileDescriptors     = nullptr;
             Processes[i].fileDescriptorCount = 0;
+            memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
+            Processes[i].cwdPath[0] = '/';
             return &Processes[i];
         }
     }
@@ -166,6 +170,8 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     process->elfMetadata         = nullptr;
     process->exited              = false;
     process->exitStatus          = 0;
+    memset(process->cwdPath, 0, sizeof(process->cwdPath));
+    process->cwdPath[0] = '/';
 
     const uint8_t currentCpu = arch_cpu_id();
     if (currentCpu < BOOT_SMP_MAX_CPUS && RunningProcesses[currentCpu] != nullptr)
@@ -223,6 +229,8 @@ bool ProcessManager::FreeProcess(process_t* process)
     process->allocated           = false;
     process->tasks               = nullptr;
     process->fileDescriptorCount = 0;
+    memset(process->cwdPath, 0, sizeof(process->cwdPath));
+    process->cwdPath[0] = '/';
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {

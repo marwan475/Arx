@@ -153,6 +153,8 @@ struct vfs_namespace_t
     mount_t* rootMount;
 };
 
+struct vfs_overlay_dentry_entry_t;
+
 class VirtualFileSystem
 {
 public:
@@ -167,6 +169,11 @@ public:
     bool      RegisterMount(mount_t* mount);
     bool      MountRootFileSystem(const char* filesystemType, void* source);
     bool      ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result);
+    bool      BuildAbsolutePathFromDentry(const dentry_t* dentry, char* outPath, size_t outPathSize) const;
+    bool      JoinPath(const char* base, const char* path, char* outPath, size_t outPathSize) const;
+    int64_t   StatNoFollow(const vfs_path_t& start, const char* path, inode_t** outInode);
+    int64_t   Symlink(const vfs_path_t& start, const char* target, const char* linkPath);
+    int64_t   Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize);
     file_t*   Open(const vfs_path_t& start, const char* path, uint64_t flags);
     int64_t   Read(file_t* file, void* buffer, uint64_t count);
     int64_t   Write(file_t* file, const void* buffer, uint64_t count);
@@ -179,10 +186,14 @@ public:
 
 private:
     mount_t* FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
+    dentry_t* FindOverlayDentry(const dentry_t* parent, const char* name) const;
+    bool      AddOverlayDentry(dentry_t* dentry);
 
     ResourceLayerCaps* ResourceLayerImportCaps;
     mutable spinlock_t DentryCacheLock;
     khashp_t*          DentryCache;
+    mutable spinlock_t OverlayDentryLock;
+    vfs_overlay_dentry_entry_t* OverlayDentryHead;
 
     vfs_namespace_t Namespace;
     // TODO: Protect MountListHead with a lock once mounts can mutate concurrently.

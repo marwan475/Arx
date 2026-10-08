@@ -254,3 +254,4 @@ All third-party components retain their original licenses.
 - Build system and scripts are AI generated
 - selftest.c is AI generated testing of kernel subsystems
 - Ai used for refactoring and codebase managment
+- Ai implements syscall handlers using layer import caps

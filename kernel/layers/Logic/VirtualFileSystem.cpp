@@ -34,6 +34,8 @@ static int64_t  vfs_resource_write(file_t* file, const void* buffer, uint64_t co
 static int64_t  vfs_resource_seek(file_t* file, int64_t offset, int whence);
 static void     vfs_resource_release(file_t* file);
 
+static int64_t  vfs_symlink_read(file_t* file, void* buffer, uint64_t count);
+
 static const inode_operations_t g_vfs_resource_inode_ops = {
         vfs_resource_lookup,
 };
@@ -41,6 +43,28 @@ static const inode_operations_t g_vfs_resource_inode_ops = {
 static const file_operations_t g_vfs_resource_file_ops = {
         vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, nullptr, nullptr, nullptr, vfs_resource_release,
 };
+
+static const file_operations_t g_vfs_symlink_file_ops = {
+    nullptr, vfs_symlink_read, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+};
+
+struct vfs_symlink_private_t
+{
+    char* target;
+};
+
+struct vfs_overlay_dentry_entry_t
+{
+    dentry_t*                    dentry;
+    vfs_overlay_dentry_entry_t*  next;
+};
+
+constexpr int64_t VFS_ERR_NOENT  = -2;
+constexpr int64_t VFS_ERR_EXIST  = -17;
+constexpr int64_t VFS_ERR_NOTDIR = -20;
+constexpr int64_t VFS_ERR_INVAL  = -22;
+constexpr int64_t VFS_ERR_NOMEM  = -12;
+constexpr int64_t VFS_ERR_LOOP   = -40;
 
 static inode_type_t vfs_map_resource_node_type(resource_node_type_t type)
 {
@@ -222,6 +246,32 @@ static int64_t vfs_resource_seek(file_t* file, int64_t offset, int whence)
     return (int64_t) newOffset;
 }
 
+static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count)
+{
+    if (file == nullptr || file->inode == nullptr || file->inode->privateData == nullptr || buffer == nullptr)
+    {
+        return -1;
+    }
+
+    vfs_symlink_private_t* symlink = (vfs_symlink_private_t*) file->inode->privateData;
+    if (symlink->target == nullptr)
+    {
+        return -1;
+    }
+
+    const uint64_t targetLen = (uint64_t) strlen(symlink->target);
+    if (file->offset >= targetLen)
+    {
+        return 0;
+    }
+
+    const uint64_t remaining = targetLen - file->offset;
+    const uint64_t toRead    = count < remaining ? count : remaining;
+    memcpy(buffer, symlink->target + file->offset, (size_t) toRead);
+    file->offset += toRead;
+    return (int64_t) toRead;
+}
+
 static void vfs_resource_release(file_t* file)
 {
     (void) file;
@@ -322,6 +372,122 @@ static bool vfs_file_io_begin(file_t* file)
     return true;
 }
 
+static bool vfs_read_symlink_target(dentry_t* dentry, char* outTarget, size_t outTargetSize)
+{
+    if (dentry == nullptr || dentry->inode == nullptr || outTarget == nullptr || outTargetSize < 2)
+    {
+        return false;
+    }
+
+    if (dentry->inode->type != INODE_SYMLINK)
+    {
+        return false;
+    }
+
+    if (dentry->inode->fileOps == nullptr || dentry->inode->fileOps->Read == nullptr)
+    {
+        return false;
+    }
+
+    file_t linkFile = {};
+    linkFile.inode  = dentry->inode;
+    linkFile.offset = 0;
+
+    const int64_t readResult = dentry->inode->fileOps->Read(&linkFile, outTarget, outTargetSize - 1);
+    if (readResult <= 0)
+    {
+        return false;
+    }
+
+    const size_t used = (size_t) readResult;
+    if (used >= outTargetSize)
+    {
+        return false;
+    }
+
+    outTarget[used] = '\0';
+    return true;
+}
+
+static bool vfs_split_parent_and_leaf(const char* path, char* parentOut, size_t parentOutSize, char* leafOut, size_t leafOutSize)
+{
+    if (path == nullptr || parentOut == nullptr || leafOut == nullptr || parentOutSize == 0 || leafOutSize == 0)
+    {
+        return false;
+    }
+
+    const size_t originalLen = strlen(path);
+    if (originalLen == 0)
+    {
+        return false;
+    }
+
+    size_t len = originalLen;
+    while (len > 1 && path[len - 1] == '/')
+    {
+        len--;
+    }
+
+    if (len == 1 && path[0] == '/')
+    {
+        return false;
+    }
+
+    size_t lastSlash = SIZE_MAX;
+    for (size_t i = 0; i < len; ++i)
+    {
+        if (path[i] == '/')
+        {
+            lastSlash = i;
+        }
+    }
+
+    if (lastSlash == SIZE_MAX)
+    {
+        if (parentOutSize < 2 || len + 1 > leafOutSize)
+        {
+            return false;
+        }
+
+        parentOut[0] = '.';
+        parentOut[1] = '\0';
+        memcpy(leafOut, path, len);
+        leafOut[len] = '\0';
+        return true;
+    }
+
+    if (lastSlash == 0)
+    {
+        if (parentOutSize < 2)
+        {
+            return false;
+        }
+
+        parentOut[0] = '/';
+        parentOut[1] = '\0';
+    }
+    else
+    {
+        if (lastSlash + 1 > parentOutSize)
+        {
+            return false;
+        }
+
+        memcpy(parentOut, path, lastSlash);
+        parentOut[lastSlash] = '\0';
+    }
+
+    const size_t leafLen = len - (lastSlash + 1);
+    if (leafLen == 0 || leafLen + 1 > leafOutSize)
+    {
+        return false;
+    }
+
+    memcpy(leafOut, path + lastSlash + 1, leafLen);
+    leafOut[leafLen] = '\0';
+    return true;
+}
+
 static void vfs_file_io_end(file_t* file)
 {
     spinlock_release(&file->inode->ioLock);
@@ -333,6 +499,8 @@ VirtualFileSystem::VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps)
     ResourceLayerImportCaps = resourceLayerCaps;
     DentryCacheLock         = 0;
     DentryCache             = khp_init(sizeof(dentry_key_t), sizeof(dentry_t*), vfs_dentry_cache_hash_fn, vfs_dentry_cache_eq_fn);
+    OverlayDentryLock       = 0;
+    OverlayDentryHead       = nullptr;
     Namespace.rootMount     = nullptr;
     MountListHead           = nullptr;
 }
@@ -370,6 +538,108 @@ VirtualFileSystem::~VirtualFileSystem()
         khp_destroy(DentryCache);
         DentryCache = nullptr;
     }
+
+    spinlock_acquire(&OverlayDentryLock);
+    vfs_overlay_dentry_entry_t* overlay = OverlayDentryHead;
+    OverlayDentryHead                  = nullptr;
+    spinlock_release(&OverlayDentryLock);
+
+    while (overlay != nullptr)
+    {
+        vfs_overlay_dentry_entry_t* next = overlay->next;
+        dentry_t*                   d    = overlay->dentry;
+        if (d != nullptr)
+        {
+            if (d->ownedName != nullptr)
+            {
+                kfree(d->ownedName);
+                d->ownedName = nullptr;
+            }
+
+            if (d->inode != nullptr)
+            {
+                vfs_symlink_private_t* symlinkPrivate = (vfs_symlink_private_t*) d->inode->privateData;
+                if (symlinkPrivate != nullptr)
+                {
+                    if (symlinkPrivate->target != nullptr)
+                    {
+                        kfree(symlinkPrivate->target);
+                    }
+                    kfree(symlinkPrivate);
+                }
+                kfree(d->inode);
+            }
+
+            kfree(d);
+        }
+
+        kfree(overlay);
+        overlay = next;
+    }
+}
+
+dentry_t* VirtualFileSystem::FindOverlayDentry(const dentry_t* parent, const char* name) const
+{
+    if (name == nullptr)
+    {
+        return nullptr;
+    }
+
+    spinlock_acquire(&OverlayDentryLock);
+    for (vfs_overlay_dentry_entry_t* entry = OverlayDentryHead; entry != nullptr; entry = entry->next)
+    {
+        dentry_t* dentry = entry->dentry;
+        if (dentry == nullptr || dentry->name == nullptr)
+        {
+            continue;
+        }
+
+        if (dentry->parent == parent && strcmp(dentry->name, name) == 0)
+        {
+            spinlock_release(&OverlayDentryLock);
+            return dentry;
+        }
+    }
+
+    spinlock_release(&OverlayDentryLock);
+    return nullptr;
+}
+
+bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
+{
+    if (dentry == nullptr || dentry->name == nullptr)
+    {
+        return false;
+    }
+
+    vfs_overlay_dentry_entry_t* entry = (vfs_overlay_dentry_entry_t*) kmalloc(sizeof(vfs_overlay_dentry_entry_t));
+    if (entry == nullptr)
+    {
+        return false;
+    }
+
+    spinlock_acquire(&OverlayDentryLock);
+    for (vfs_overlay_dentry_entry_t* it = OverlayDentryHead; it != nullptr; it = it->next)
+    {
+        dentry_t* existing = it->dentry;
+        if (existing == nullptr || existing->name == nullptr)
+        {
+            continue;
+        }
+
+        if (existing->parent == dentry->parent && strcmp(existing->name, dentry->name) == 0)
+        {
+            spinlock_release(&OverlayDentryLock);
+            kfree(entry);
+            return false;
+        }
+    }
+
+    entry->dentry = dentry;
+    entry->next   = OverlayDentryHead;
+    OverlayDentryHead = entry;
+    spinlock_release(&OverlayDentryLock);
+    return true;
 }
 
 uint32_t VirtualFileSystem::HashDentryKey(const dentry_t* parent, const char* name) const
@@ -615,7 +885,13 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
 {
     if (DentryCache == nullptr || name == nullptr)
     {
-        return nullptr;
+        return FindOverlayDentry(parent, name);
+    }
+
+    dentry_t* overlay = FindOverlayDentry(parent, name);
+    if (overlay != nullptr)
+    {
+        return overlay;
     }
 
     spinlock_acquire(&DentryCacheLock);
@@ -703,11 +979,13 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
 bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result)
 {
     // TODO: Enforce trailing '/' directory requirement once open/create semantics land.
-    // TODO: Add symlink traversal with a max-follow bound.
     if (result == nullptr || path == nullptr)
     {
         return false;
     }
+
+    constexpr size_t VFS_MAX_SYMLINK_FOLLOWS = 16;
+    size_t           symlinkFollows           = 0;
 
     const size_t pathLen = strlen(path);
     if (pathLen == 0)
@@ -788,12 +1066,67 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
             continue;
         }
 
+        const vfs_path_t beforeLookup = cur;
+
         dentry_t* next = Lookup(cur.dentry, component);
         *p             = saved;
         if (next == nullptr)
         {
             kfree(work);
             return false;
+        }
+
+        if (next->inode != nullptr && next->inode->type == INODE_SYMLINK)
+        {
+            if (symlinkFollows >= VFS_MAX_SYMLINK_FOLLOWS)
+            {
+                kfree(work);
+                return false;
+            }
+
+            char linkTarget[512] = {};
+            if (!vfs_read_symlink_target(next, linkTarget, sizeof(linkTarget)))
+            {
+                kfree(work);
+                return false;
+            }
+
+            const char* remainder = (saved == '\0') ? "" : p;
+            const size_t targetLen = strlen(linkTarget);
+            const size_t remainLen = strlen(remainder);
+
+            char* replacement = (char*) kmalloc(targetLen + remainLen + 1);
+            if (replacement == nullptr)
+            {
+                kfree(work);
+                return false;
+            }
+
+            memcpy(replacement, linkTarget, targetLen);
+            memcpy(replacement + targetLen, remainder, remainLen + 1);
+
+            if (linkTarget[0] == '/')
+            {
+                if (Namespace.rootMount == nullptr || Namespace.rootMount->root == nullptr)
+                {
+                    kfree(replacement);
+                    kfree(work);
+                    return false;
+                }
+
+                cur.mount  = Namespace.rootMount;
+                cur.dentry = Namespace.rootMount->root;
+            }
+            else
+            {
+                cur = beforeLookup;
+            }
+
+            kfree(work);
+            work = replacement;
+            p    = work;
+            symlinkFollows++;
+            continue;
         }
 
         mount_t* childMount = FindChildMount(cur.mount, next);
@@ -811,6 +1144,334 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     kfree(work);
     *result = cur;
     return true;
+}
+
+bool VirtualFileSystem::BuildAbsolutePathFromDentry(const dentry_t* dentry, char* outPath, size_t outPathSize) const
+{
+    if (dentry == nullptr || outPath == nullptr || outPathSize == 0)
+    {
+        return false;
+    }
+
+    if (dentry->parent == nullptr)
+    {
+        if (outPathSize < 2)
+        {
+            return false;
+        }
+
+        outPath[0] = '/';
+        outPath[1] = '\0';
+        return true;
+    }
+
+    const dentry_t* nodes[64] = {};
+    size_t          depth     = 0;
+
+    const dentry_t* current = dentry;
+    while (current != nullptr && current->parent != nullptr)
+    {
+        if (depth >= (sizeof(nodes) / sizeof(nodes[0])))
+        {
+            return false;
+        }
+
+        nodes[depth++] = current;
+        current        = current->parent;
+    }
+
+    size_t writePos = 0;
+    if (writePos >= outPathSize)
+    {
+        return false;
+    }
+
+    outPath[writePos++] = '/';
+
+    for (size_t i = depth; i > 0; --i)
+    {
+        const char* component = nodes[i - 1]->name;
+        if (component == nullptr)
+        {
+            return false;
+        }
+
+        const size_t componentLen = strlen(component);
+        if (writePos + componentLen + 1 >= outPathSize)
+        {
+            return false;
+        }
+
+        memcpy(outPath + writePos, component, componentLen);
+        writePos += componentLen;
+
+        if (i > 1)
+        {
+            outPath[writePos++] = '/';
+        }
+    }
+
+    outPath[writePos] = '\0';
+    return true;
+}
+
+bool VirtualFileSystem::JoinPath(const char* base, const char* path, char* outPath, size_t outPathSize) const
+{
+    if (base == nullptr || path == nullptr || outPath == nullptr || outPathSize == 0)
+    {
+        return false;
+    }
+
+    if (path[0] == '/')
+    {
+        const size_t pathLen = strlen(path);
+        if (pathLen + 1 > outPathSize)
+        {
+            return false;
+        }
+
+        memcpy(outPath, path, pathLen + 1);
+        return true;
+    }
+
+    size_t baseLen = strlen(base);
+    if (baseLen == 0)
+    {
+        base = "/";
+        baseLen = 1;
+    }
+
+    const size_t pathLen = strlen(path);
+    if (base[baseLen - 1] == '/')
+    {
+        if (baseLen + pathLen + 1 > outPathSize)
+        {
+            return false;
+        }
+
+        memcpy(outPath, base, baseLen);
+        memcpy(outPath + baseLen, path, pathLen + 1);
+        return true;
+    }
+
+    if (baseLen + 1 + pathLen + 1 > outPathSize)
+    {
+        return false;
+    }
+
+    memcpy(outPath, base, baseLen);
+    outPath[baseLen] = '/';
+    memcpy(outPath + baseLen + 1, path, pathLen + 1);
+    return true;
+}
+
+int64_t VirtualFileSystem::StatNoFollow(const vfs_path_t& start, const char* path, inode_t** outInode)
+{
+    if (path == nullptr || outInode == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    *outInode = nullptr;
+
+    if (strcmp(path, "/") == 0)
+    {
+        vfs_path_t resolvedRoot = {};
+        if (!ResolvePath({}, "/", &resolvedRoot) || resolvedRoot.dentry == nullptr || resolvedRoot.dentry->inode == nullptr)
+        {
+            return VFS_ERR_NOENT;
+        }
+
+        *outInode = resolvedRoot.dentry->inode;
+        return 0;
+    }
+
+    char parentPath[512] = {};
+    char leafName[256]   = {};
+    if (!vfs_split_parent_and_leaf(path, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    vfs_path_t parentStart = start;
+    if (parentPath[0] == '/')
+    {
+        parentStart = {};
+    }
+
+    vfs_path_t resolvedParent = {};
+    if (!ResolvePath(parentStart, parentPath, &resolvedParent) || resolvedParent.dentry == nullptr || resolvedParent.dentry->inode == nullptr)
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    dentry_t* targetDentry = nullptr;
+    if (strcmp(leafName, "/") == 0)
+    {
+        targetDentry = resolvedParent.dentry;
+    }
+    else
+    {
+        targetDentry = Lookup(resolvedParent.dentry, leafName);
+    }
+
+    if (targetDentry == nullptr || targetDentry->inode == nullptr)
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    *outInode = targetDentry->inode;
+    return 0;
+}
+
+int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, const char* linkPath)
+{
+    if (target == nullptr || linkPath == nullptr || target[0] == '\0' || linkPath[0] == '\0')
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    char parentPath[512] = {};
+    char leafName[256]   = {};
+    if (!vfs_split_parent_and_leaf(linkPath, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    vfs_path_t parentStart = start;
+    if (parentPath[0] == '/')
+    {
+        parentStart = {};
+    }
+
+    vfs_path_t parentResolved = {};
+    if (!ResolvePath(parentStart, parentPath, &parentResolved) || parentResolved.dentry == nullptr || parentResolved.dentry->inode == nullptr)
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    if (parentResolved.dentry->inode->type != INODE_DIRECTORY)
+    {
+        return VFS_ERR_NOTDIR;
+    }
+
+    vfs_symlink_private_t* symlinkPrivate = (vfs_symlink_private_t*) kmalloc(sizeof(vfs_symlink_private_t));
+    if (symlinkPrivate == nullptr)
+    {
+        return VFS_ERR_NOMEM;
+    }
+
+    symlinkPrivate->target = kstrdup(target);
+    if (symlinkPrivate->target == nullptr)
+    {
+        kfree(symlinkPrivate);
+        return VFS_ERR_NOMEM;
+    }
+
+    inode_t* inode = (inode_t*) kmalloc(sizeof(inode_t));
+    if (inode == nullptr)
+    {
+        kfree(symlinkPrivate->target);
+        kfree(symlinkPrivate);
+        return VFS_ERR_NOMEM;
+    }
+
+    memset(inode, 0, sizeof(inode_t));
+    inode->inodeNumber = vfs_hash_parent_and_name(parentResolved.dentry, leafName) ^ 0x53594d4cU;
+    inode->type        = INODE_SYMLINK;
+    inode->size        = (uint64_t) strlen(target);
+    inode->filesystem  = parentResolved.dentry->inode->filesystem;
+    inode->inodeOps    = nullptr;
+    inode->fileOps     = &g_vfs_symlink_file_ops;
+    inode->privateData = symlinkPrivate;
+    inode->ioLock      = 0;
+
+    dentry_t* newDentry = (dentry_t*) kmalloc(sizeof(dentry_t));
+    if (newDentry == nullptr)
+    {
+        kfree(inode);
+        kfree(symlinkPrivate->target);
+        kfree(symlinkPrivate);
+        return VFS_ERR_NOMEM;
+    }
+
+    memset(newDentry, 0, sizeof(dentry_t));
+    newDentry->name                 = leafName;
+    newDentry->parent               = parentResolved.dentry;
+    newDentry->inode                = inode;
+    newDentry->cacheOwnedAllocation = true;
+
+    newDentry->ownedName = kstrdup(leafName);
+    if (newDentry->ownedName == nullptr)
+    {
+        kfree(newDentry);
+        kfree(inode);
+        kfree(symlinkPrivate->target);
+        kfree(symlinkPrivate);
+        return VFS_ERR_NOMEM;
+    }
+    newDentry->name = newDentry->ownedName;
+
+    if (!AddOverlayDentry(newDentry))
+    {
+        kfree(newDentry->ownedName);
+        kfree(newDentry);
+        kfree(inode);
+        kfree(symlinkPrivate->target);
+        kfree(symlinkPrivate);
+        return VFS_ERR_EXIST;
+    }
+
+    return 0;
+}
+
+int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize)
+{
+    if (path == nullptr || buffer == nullptr || bufferSize == 0)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    char parentPath[512] = {};
+    char leafName[256]   = {};
+    if (!vfs_split_parent_and_leaf(path, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    vfs_path_t parentStart = start;
+    if (parentPath[0] == '/')
+    {
+        parentStart = {};
+    }
+
+    vfs_path_t parentResolved = {};
+    if (!ResolvePath(parentStart, parentPath, &parentResolved) || parentResolved.dentry == nullptr || parentResolved.dentry->inode == nullptr)
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    dentry_t* targetDentry = Lookup(parentResolved.dentry, leafName);
+    if (targetDentry == nullptr || targetDentry->inode == nullptr)
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    if (targetDentry->inode->type != INODE_SYMLINK)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    char linkTarget[512] = {};
+    if (!vfs_read_symlink_target(targetDentry, linkTarget, sizeof(linkTarget)))
+    {
+        return VFS_ERR_NOENT;
+    }
+
+    const uint64_t targetLen = (uint64_t) strlen(linkTarget);
+    const uint64_t toCopy    = bufferSize < targetLen ? bufferSize : targetLen;
+    memcpy(buffer, linkTarget, (size_t) toCopy);
+    return (int64_t) toCopy;
 }
 
 file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint64_t flags)

@@ -278,6 +278,37 @@ static bool custom_case_validate_open(const custom_case_ctx_t* ctx)
         return closeResult == 0;
 }
 
+static bool custom_case_validate_creat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if ((int64_t) ctx->result >= 0 || ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t creatFrame = {};
+        creatFrame.syscall_number       = SYSCALL_creat;
+        creatFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        creatFrame.arg1                 = 0644;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&creatFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+
+        const uint64_t closeResult = dispatcher_dispatch_syscall(&closeFrame);
+        return closeResult == 0;
+}
+
 static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
 {
         if (ctx == nullptr || ctx->frame == nullptr)
@@ -737,6 +768,118 @@ static bool custom_case_validate_lseek(const custom_case_ctx_t* ctx)
         return (int64_t) endOffset >= 0 && badWhence == LINUX_EINVAL && closeResult == 0;
 }
 
+static bool custom_case_validate_getcwd(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        char cwdBuffer[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_getcwd;
+        frame.arg0                 = (uint64_t) (uintptr_t) cwdBuffer;
+        frame.arg1                 = sizeof(cwdBuffer);
+
+        const uint64_t getcwdResult = dispatcher_dispatch_syscall(&frame);
+        if ((char*) (uintptr_t) getcwdResult != cwdBuffer)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t badSizeFrame = frame;
+        badSizeFrame.arg1                 = 1;
+        const uint64_t badSizeResult      = dispatcher_dispatch_syscall(&badSizeFrame);
+        return badSizeResult == LINUX_ERANGE;
+}
+
+static bool custom_case_validate_chdir(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t chdirRoot = {};
+        chdirRoot.syscall_number       = SYSCALL_chdir;
+        chdirRoot.arg0                 = (uint64_t) (uintptr_t) "/";
+        const uint64_t chdirRootResult = dispatcher_dispatch_syscall(&chdirRoot);
+        if (chdirRootResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t chdirBad = {};
+        chdirBad.syscall_number       = SYSCALL_chdir;
+        chdirBad.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        const uint64_t chdirBadResult = dispatcher_dispatch_syscall(&chdirBad);
+        return chdirBadResult == LINUX_ENOTDIR;
+}
+
+static bool custom_case_validate_fchdir(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openDir = {};
+        openDir.syscall_number       = SYSCALL_open;
+        openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+        openDir.arg1                 = 0;
+        openDir.arg2                 = 0;
+        const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+        if ((int64_t) dirFd < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t fchdirFrame = {};
+        fchdirFrame.syscall_number       = SYSCALL_fchdir;
+        fchdirFrame.arg0                 = dirFd;
+        const uint64_t fchdirResult      = dispatcher_dispatch_syscall(&fchdirFrame);
+
+        arch_syscall_frame_t closeDir = {};
+        closeDir.syscall_number       = SYSCALL_close;
+        closeDir.arg0                 = dirFd;
+        const uint64_t closeDirResult = dispatcher_dispatch_syscall(&closeDir);
+
+        arch_syscall_frame_t openFile = {};
+        openFile.syscall_number       = SYSCALL_open;
+        openFile.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFile.arg1                 = 0;
+        openFile.arg2                 = 0;
+        const uint64_t fileFd         = dispatcher_dispatch_syscall(&openFile);
+        if ((int64_t) fileFd < 0)
+        {
+                return false;
+        }
+
+        fchdirFrame.arg0                  = fileFd;
+        const uint64_t fileFchdirResult   = dispatcher_dispatch_syscall(&fchdirFrame);
+
+        closeDir.arg0                     = fileFd;
+        const uint64_t closeFileResult    = dispatcher_dispatch_syscall(&closeDir);
+
+        return fchdirResult == 0 && closeDirResult == 0 && fileFchdirResult == LINUX_ENOTDIR && closeFileResult == 0;
+}
+
 static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
 {
         if (ctx == nullptr)
@@ -813,6 +956,344 @@ static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
 
         return fstatResult == 0 && statBuffer.st_nlink >= 1 && modeLooksRegular && sizeReasonable && blockSizeSet && badFdResult == LINUX_EBADF &&
                         closeResult == 0;
+}
+
+static bool custom_case_validate_newfstatat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_timespec_t
+        {
+                int64_t tv_sec;
+                int64_t tv_nsec;
+        };
+
+        struct test_linux_stat_t
+        {
+                uint64_t              st_dev;
+                uint64_t              st_ino;
+                uint64_t              st_nlink;
+                uint32_t              st_mode;
+                uint32_t              st_uid;
+                uint32_t              st_gid;
+                int32_t               pad0;
+                uint64_t              st_rdev;
+                int64_t               st_size;
+                int64_t               st_blksize;
+                int64_t               st_blocks;
+                test_linux_timespec_t st_atim;
+                test_linux_timespec_t st_mtim;
+                test_linux_timespec_t st_ctim;
+                int64_t               reserved[3];
+        };
+
+        test_linux_stat_t statBuffer = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_newfstatat;
+        frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+        frame.arg1                 = (uint64_t) (uintptr_t) "/test.txt";
+        frame.arg2                 = (uint64_t) (uintptr_t) &statBuffer;
+        frame.arg3                 = 0;
+
+        const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t badFlagFrame = frame;
+        badFlagFrame.arg3                 = 0x80000000ULL;
+        const uint64_t badFlagResult      = dispatcher_dispatch_syscall(&badFlagFrame);
+
+        arch_syscall_frame_t badPathFrame = frame;
+        badPathFrame.arg1                 = (uint64_t) (uintptr_t) "/does-not-exist";
+        const uint64_t badPathResult      = dispatcher_dispatch_syscall(&badPathFrame);
+
+        return okResult == 0 && statBuffer.st_nlink >= 1 && badFlagResult == LINUX_EINVAL && badPathResult == LINUX_ENOENT;
+}
+
+static bool custom_case_validate_stat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_timespec_t
+        {
+                int64_t tv_sec;
+                int64_t tv_nsec;
+        };
+
+        struct test_linux_stat_t
+        {
+                uint64_t              st_dev;
+                uint64_t              st_ino;
+                uint64_t              st_nlink;
+                uint32_t              st_mode;
+                uint32_t              st_uid;
+                uint32_t              st_gid;
+                int32_t               pad0;
+                uint64_t              st_rdev;
+                int64_t               st_size;
+                int64_t               st_blksize;
+                int64_t               st_blocks;
+                test_linux_timespec_t st_atim;
+                test_linux_timespec_t st_mtim;
+                test_linux_timespec_t st_ctim;
+                int64_t               reserved[3];
+        };
+
+        test_linux_stat_t statBuffer = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_stat;
+        frame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        frame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+
+        const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t nullBufferFrame = frame;
+        nullBufferFrame.arg1                 = 0;
+        const uint64_t nullBufferResult      = dispatcher_dispatch_syscall(&nullBufferFrame);
+
+        arch_syscall_frame_t badPathFrame = frame;
+        badPathFrame.arg0                 = (uint64_t) (uintptr_t) "/does-not-exist";
+        const uint64_t badPathResult      = dispatcher_dispatch_syscall(&badPathFrame);
+
+        return okResult == 0 && statBuffer.st_nlink >= 1 && nullBufferResult == LINUX_EFAULT && badPathResult == LINUX_ENOENT;
+}
+
+static bool custom_case_validate_lstat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_timespec_t
+        {
+                int64_t tv_sec;
+                int64_t tv_nsec;
+        };
+
+        struct test_linux_stat_t
+        {
+                uint64_t              st_dev;
+                uint64_t              st_ino;
+                uint64_t              st_nlink;
+                uint32_t              st_mode;
+                uint32_t              st_uid;
+                uint32_t              st_gid;
+                int32_t               pad0;
+                uint64_t              st_rdev;
+                int64_t               st_size;
+                int64_t               st_blksize;
+                int64_t               st_blocks;
+                test_linux_timespec_t st_atim;
+                test_linux_timespec_t st_mtim;
+                test_linux_timespec_t st_ctim;
+                int64_t               reserved[3];
+        };
+
+        test_linux_stat_t statBuffer = {};
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_lstat;
+        frame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        frame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+
+        const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t nullPathFrame = frame;
+        nullPathFrame.arg0                 = 0;
+        const uint64_t nullPathResult      = dispatcher_dispatch_syscall(&nullPathFrame);
+
+        return okResult == 0 && statBuffer.st_nlink >= 1 && nullPathResult == LINUX_EFAULT;
+}
+
+static bool custom_case_validate_symlink(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t linkFrame = {};
+        linkFrame.syscall_number       = SYSCALL_symlink;
+        linkFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        linkFrame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-link";
+        const uint64_t linkResult      = dispatcher_dispatch_syscall(&linkFrame);
+
+        if (linkResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t readFrame = {};
+        char                 target[64] = {};
+        readFrame.syscall_number        = SYSCALL_readlink;
+        readFrame.arg0                  = (uint64_t) (uintptr_t) "/tmp-syscall-link";
+        readFrame.arg1                  = (uint64_t) (uintptr_t) target;
+        readFrame.arg2                  = sizeof(target);
+        const uint64_t readResult       = dispatcher_dispatch_syscall(&readFrame);
+
+        return (int64_t) readResult > 0 && memcmp(target, "/test.txt", (size_t) readResult) == 0;
+}
+
+static bool custom_case_validate_symlinkat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openDir = {};
+        openDir.syscall_number       = SYSCALL_open;
+        openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+        const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+        if ((int64_t) dirFd < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t linkFrame = {};
+        linkFrame.syscall_number       = SYSCALL_symlinkat;
+        linkFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        linkFrame.arg1                 = dirFd;
+        linkFrame.arg2                 = (uint64_t) (uintptr_t) "tmp-syscall-link-at";
+        const uint64_t linkResult      = dispatcher_dispatch_syscall(&linkFrame);
+
+        arch_syscall_frame_t closeDir = {};
+        closeDir.syscall_number       = SYSCALL_close;
+        closeDir.arg0                 = dirFd;
+        (void) dispatcher_dispatch_syscall(&closeDir);
+
+        if (linkResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t readFrame = {};
+        char                 target[64] = {};
+        readFrame.syscall_number        = SYSCALL_readlink;
+        readFrame.arg0                  = (uint64_t) (uintptr_t) "/tmp-syscall-link-at";
+        readFrame.arg1                  = (uint64_t) (uintptr_t) target;
+        readFrame.arg2                  = sizeof(target);
+        const uint64_t readResult       = dispatcher_dispatch_syscall(&readFrame);
+
+        return (int64_t) readResult > 0 && memcmp(target, "/test.txt", (size_t) readResult) == 0;
+}
+
+static bool custom_case_validate_readlink(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t createFrame = {};
+        createFrame.syscall_number       = SYSCALL_symlink;
+        createFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        createFrame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-link-read";
+        const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
+        if (createResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t frame = {};
+        char                 target[64] = {};
+        frame.syscall_number          = SYSCALL_readlink;
+        frame.arg0                    = (uint64_t) (uintptr_t) "/tmp-syscall-link-read";
+        frame.arg1                    = (uint64_t) (uintptr_t) target;
+        frame.arg2                    = sizeof(target);
+
+        const uint64_t readResult = dispatcher_dispatch_syscall(&frame);
+        return (int64_t) readResult > 0;
+}
+
+static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openDir = {};
+        openDir.syscall_number       = SYSCALL_open;
+        openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+        const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+        if ((int64_t) dirFd < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t createFrame = {};
+        createFrame.syscall_number       = SYSCALL_symlinkat;
+        createFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        createFrame.arg1                 = dirFd;
+        createFrame.arg2                 = (uint64_t) (uintptr_t) "tmp-syscall-link-at-read";
+        const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
+        if (createResult != 0)
+        {
+                arch_syscall_frame_t closeDir = {};
+                closeDir.syscall_number       = SYSCALL_close;
+                closeDir.arg0                 = dirFd;
+                (void) dispatcher_dispatch_syscall(&closeDir);
+                return false;
+        }
+
+        arch_syscall_frame_t frame = {};
+        char                 target[64] = {};
+        frame.syscall_number          = SYSCALL_readlinkat;
+        frame.arg0                    = dirFd;
+        frame.arg1                    = (uint64_t) (uintptr_t) "tmp-syscall-link-at-read";
+        frame.arg2                    = (uint64_t) (uintptr_t) target;
+        frame.arg3                    = sizeof(target);
+        const uint64_t readResult     = dispatcher_dispatch_syscall(&frame);
+
+        arch_syscall_frame_t closeDir = {};
+        closeDir.syscall_number       = SYSCALL_close;
+        closeDir.arg0                 = dirFd;
+        (void) dispatcher_dispatch_syscall(&closeDir);
+
+        return (int64_t) readResult > 0;
 }
 
 static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
@@ -895,6 +1376,10 @@ static void run_manager_tests(const char* managerName, ManagerT* manager, const 
                         frame.arg4 = 0x5000ULL ^ tests[index].syscallNumber;
                         frame.arg5 = 0x6000ULL ^ tests[index].syscallNumber;
                 }
+
+                kprintf("Arx kernel: requestlayer_selftest run %s::%s syscall=%llu\n", managerName, tests[index].name,
+                                (unsigned long long) tests[index].syscallNumber);
+
                 uint64_t             result = (manager->*(tests[index].method))(&frame);
                 stats->total++;
 
@@ -1018,7 +1503,7 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
         static const request_method_test_t<VfsRequestManager> tests[] = {
                         {"HandleOpenatRequest", &VfsRequestManager::HandleOpenatRequest, SYSCALL_openat, custom_case_validate_openat},
                         {"HandleOpenRequest", &VfsRequestManager::HandleOpenRequest, SYSCALL_open, custom_case_validate_open},
-                        {"HandleCreatRequest", &VfsRequestManager::HandleCreatRequest, SYSCALL_creat},
+                        {"HandleCreatRequest", &VfsRequestManager::HandleCreatRequest, SYSCALL_creat, custom_case_validate_creat},
                         {"HandleCloseRequest", &VfsRequestManager::HandleCloseRequest, SYSCALL_close, custom_case_validate_close},
                         {"HandleClose_rangeRequest", &VfsRequestManager::HandleClose_rangeRequest, SYSCALL_close_range},
                         {"HandleMkdiratRequest", &VfsRequestManager::HandleMkdiratRequest, SYSCALL_mkdirat},
@@ -1032,9 +1517,9 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandlePreadvRequest", &VfsRequestManager::HandlePreadvRequest, SYSCALL_preadv},
                         {"HandlePwritevRequest", &VfsRequestManager::HandlePwritevRequest, SYSCALL_pwritev},
                         {"HandleLseekRequest", &VfsRequestManager::HandleLseekRequest, SYSCALL_lseek, custom_case_validate_lseek},
-                        {"HandleGetcwdRequest", &VfsRequestManager::HandleGetcwdRequest, SYSCALL_getcwd},
-                        {"HandleChdirRequest", &VfsRequestManager::HandleChdirRequest, SYSCALL_chdir},
-                        {"HandleFchdirRequest", &VfsRequestManager::HandleFchdirRequest, SYSCALL_fchdir},
+                        {"HandleGetcwdRequest", &VfsRequestManager::HandleGetcwdRequest, SYSCALL_getcwd, custom_case_validate_getcwd},
+                        {"HandleChdirRequest", &VfsRequestManager::HandleChdirRequest, SYSCALL_chdir, custom_case_validate_chdir},
+                        {"HandleFchdirRequest", &VfsRequestManager::HandleFchdirRequest, SYSCALL_fchdir, custom_case_validate_fchdir},
                         {"HandleGetdents64Request", &VfsRequestManager::HandleGetdents64Request, SYSCALL_getdents64},
                         {"HandleUnlinkatRequest", &VfsRequestManager::HandleUnlinkatRequest, SYSCALL_unlinkat},
                         {"HandleUnlinkRequest", &VfsRequestManager::HandleUnlinkRequest, SYSCALL_unlink},
@@ -1043,19 +1528,19 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleDupRequest", &VfsRequestManager::HandleDupRequest, SYSCALL_dup},
                         {"HandleDup2Request", &VfsRequestManager::HandleDup2Request, SYSCALL_dup2},
                         {"HandleDup3Request", &VfsRequestManager::HandleDup3Request, SYSCALL_dup3},
-                        {"HandleNewfstatatRequest", &VfsRequestManager::HandleNewfstatatRequest, SYSCALL_newfstatat},
-                        {"HandleStatRequest", &VfsRequestManager::HandleStatRequest, SYSCALL_stat},
+                        {"HandleNewfstatatRequest", &VfsRequestManager::HandleNewfstatatRequest, SYSCALL_newfstatat, custom_case_validate_newfstatat},
+                        {"HandleStatRequest", &VfsRequestManager::HandleStatRequest, SYSCALL_stat, custom_case_validate_stat},
                         {"HandleFstatRequest", &VfsRequestManager::HandleFstatRequest, SYSCALL_fstat, custom_case_validate_fstat},
-                        {"HandleLstatRequest", &VfsRequestManager::HandleLstatRequest, SYSCALL_lstat},
+                        {"HandleLstatRequest", &VfsRequestManager::HandleLstatRequest, SYSCALL_lstat, custom_case_validate_lstat},
                         {"HandleRenameatRequest", &VfsRequestManager::HandleRenameatRequest, SYSCALL_renameat},
                         {"HandleRenameRequest", &VfsRequestManager::HandleRenameRequest, SYSCALL_rename},
-                        {"HandleReadlinkatRequest", &VfsRequestManager::HandleReadlinkatRequest, SYSCALL_readlinkat},
-                        {"HandleReadlinkRequest", &VfsRequestManager::HandleReadlinkRequest, SYSCALL_readlink},
+                        {"HandleReadlinkatRequest", &VfsRequestManager::HandleReadlinkatRequest, SYSCALL_readlinkat, custom_case_validate_readlinkat},
+                        {"HandleReadlinkRequest", &VfsRequestManager::HandleReadlinkRequest, SYSCALL_readlink, custom_case_validate_readlink},
                         {"HandleIoctlRequest", &VfsRequestManager::HandleIoctlRequest, SYSCALL_ioctl},
                         {"HandleLinkatRequest", &VfsRequestManager::HandleLinkatRequest, SYSCALL_linkat},
                         {"HandleLinkRequest", &VfsRequestManager::HandleLinkRequest, SYSCALL_link},
-                        {"HandleSymlinkatRequest", &VfsRequestManager::HandleSymlinkatRequest, SYSCALL_symlinkat},
-                        {"HandleSymlinkRequest", &VfsRequestManager::HandleSymlinkRequest, SYSCALL_symlink},
+                        {"HandleSymlinkatRequest", &VfsRequestManager::HandleSymlinkatRequest, SYSCALL_symlinkat, custom_case_validate_symlinkat},
+                        {"HandleSymlinkRequest", &VfsRequestManager::HandleSymlinkRequest, SYSCALL_symlink, custom_case_validate_symlink},
                         {"HandleFaccessatRequest", &VfsRequestManager::HandleFaccessatRequest, SYSCALL_faccessat},
                         {"HandleFaccessat2Request", &VfsRequestManager::HandleFaccessat2Request, SYSCALL_faccessat2},
                         {"HandleAccessRequest", &VfsRequestManager::HandleAccessRequest, SYSCALL_access},

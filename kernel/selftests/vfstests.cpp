@@ -16,6 +16,9 @@ static void vfs_test_log_fail(const char* message, unsigned long long* failures)
 
 static inode_t g_lookup_child_inode;
 static inode_t g_lookup_dir_inode;
+static inode_t g_lookup_symlink_inode;
+static inode_t g_lookup_symlink_to_dir_inode;
+static inode_t g_lookup_symlink_loop_inode;
 static inode_t g_root_inode;
 static inode_t g_mounted_root_inode;
 static int     g_lookup_invocations       = 0;
@@ -39,6 +42,33 @@ static int64_t vfs_file_read_stub(file_t* file, void* buffer, uint64_t count)
     if (file == nullptr || buffer == nullptr)
     {
         return -1;
+    }
+
+    if (file->inode == &g_lookup_symlink_inode)
+    {
+        static const char target[] = "/dir/file";
+        const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
+        const uint64_t    toCopy    = count < targetLen ? count : targetLen;
+        memcpy(buffer, target, (size_t) toCopy);
+        return (int64_t) toCopy;
+    }
+
+    if (file->inode == &g_lookup_symlink_to_dir_inode)
+    {
+        static const char target[] = "/dir";
+        const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
+        const uint64_t    toCopy    = count < targetLen ? count : targetLen;
+        memcpy(buffer, target, (size_t) toCopy);
+        return (int64_t) toCopy;
+    }
+
+    if (file->inode == &g_lookup_symlink_loop_inode)
+    {
+        static const char target[] = "loop";
+        const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
+        const uint64_t    toCopy    = count < targetLen ? count : targetLen;
+        memcpy(buffer, target, (size_t) toCopy);
+        return (int64_t) toCopy;
     }
 
     g_file_read_invocations++;
@@ -81,6 +111,24 @@ static inode_t* vfs_lookup_stub(inode_t* directory, const char* name)
         {
             g_lookup_invocations++;
             return &g_lookup_dir_inode;
+        }
+
+        if (strcmp(name, "link") == 0)
+        {
+            g_lookup_invocations++;
+            return &g_lookup_symlink_inode;
+        }
+
+        if (strcmp(name, "dirlink") == 0)
+        {
+            g_lookup_invocations++;
+            return &g_lookup_symlink_to_dir_inode;
+        }
+
+        if (strcmp(name, "loop") == 0)
+        {
+            g_lookup_invocations++;
+            return &g_lookup_symlink_loop_inode;
         }
 
         return nullptr;
@@ -199,6 +247,30 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         g_lookup_child_inode.inodeOps    = nullptr;
         g_lookup_child_inode.fileOps     = &g_file_ops;
         g_lookup_child_inode.privateData = nullptr;
+
+        g_lookup_symlink_inode.inodeNumber = 5;
+        g_lookup_symlink_inode.type        = INODE_SYMLINK;
+        g_lookup_symlink_inode.size        = 9;
+        g_lookup_symlink_inode.filesystem  = nullptr;
+        g_lookup_symlink_inode.inodeOps    = nullptr;
+        g_lookup_symlink_inode.fileOps     = &g_file_ops;
+        g_lookup_symlink_inode.privateData = nullptr;
+
+        g_lookup_symlink_to_dir_inode.inodeNumber = 6;
+        g_lookup_symlink_to_dir_inode.type        = INODE_SYMLINK;
+        g_lookup_symlink_to_dir_inode.size        = 4;
+        g_lookup_symlink_to_dir_inode.filesystem  = nullptr;
+        g_lookup_symlink_to_dir_inode.inodeOps    = nullptr;
+        g_lookup_symlink_to_dir_inode.fileOps     = &g_file_ops;
+        g_lookup_symlink_to_dir_inode.privateData = nullptr;
+
+        g_lookup_symlink_loop_inode.inodeNumber = 7;
+        g_lookup_symlink_loop_inode.type        = INODE_SYMLINK;
+        g_lookup_symlink_loop_inode.size        = 4;
+        g_lookup_symlink_loop_inode.filesystem  = nullptr;
+        g_lookup_symlink_loop_inode.inodeOps    = nullptr;
+        g_lookup_symlink_loop_inode.fileOps     = &g_file_ops;
+        g_lookup_symlink_loop_inode.privateData = nullptr;
 
         g_mounted_root_inode.inodeNumber = 4;
         g_mounted_root_inode.type        = INODE_DIRECTORY;
@@ -401,12 +473,79 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         {
             vfs_test_log_fail("ResolvePath relative and absolute should converge on same cached dentry", &fails);
         }
+
+        vfs_path_t symlinkResolved = {};
+        if (!vfs->ResolvePath(startPath, "/link", &symlinkResolved) || symlinkResolved.dentry == nullptr || symlinkResolved.dentry->inode != &g_lookup_child_inode)
+        {
+            vfs_test_log_fail("ResolvePath should follow symlink target for final component", &fails);
+        }
         else
         {
             passes++;
         }
 
-        if (g_lookup_invocations != invocationsAfterAbsolute)
+        vfs_path_t symlinkDirResolved = {};
+        if (!vfs->ResolvePath(startPath, "/dirlink/file", &symlinkDirResolved) || symlinkDirResolved.dentry == nullptr ||
+            symlinkDirResolved.dentry->inode != &g_lookup_child_inode)
+        {
+            vfs_test_log_fail("ResolvePath should follow symlink target in intermediate components", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        vfs_path_t loopResolved = {};
+        if (vfs->ResolvePath(startPath, "/loop", &loopResolved))
+        {
+            vfs_test_log_fail("ResolvePath should fail on symlink loops after max-follow bound", &fails);
+        }
+
+        const int64_t symlinkCreateResult = vfs->Symlink(startPath, "/dir/file", "/created-link");
+        if (symlinkCreateResult != 0)
+        {
+            vfs_test_log_fail("Symlink should create a new symlink dentry", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int64_t symlinkDuplicateResult = vfs->Symlink(startPath, "/dir/file", "/created-link");
+        if (symlinkDuplicateResult >= 0)
+        {
+            vfs_test_log_fail("Symlink should fail when link path already exists", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int invocationsBeforeCreatedLinkResolve = g_lookup_invocations;
+
+        vfs_path_t createdLinkResolved = {};
+        if (!vfs->ResolvePath(startPath, "/created-link", &createdLinkResolved) || createdLinkResolved.dentry == nullptr ||
+            createdLinkResolved.dentry->inode != &g_lookup_child_inode)
+        {
+            vfs_test_log_fail("ResolvePath should follow newly created symlink", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        char linkTargetBuffer[64] = {};
+        const int64_t readlinkResult = vfs->Readlink(startPath, "/created-link", linkTargetBuffer, sizeof(linkTargetBuffer));
+        if (readlinkResult <= 0 || memcmp(linkTargetBuffer, "/dir/file", (size_t) readlinkResult) != 0)
+        {
+            vfs_test_log_fail("Readlink should return created symlink target", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        if (g_lookup_invocations != invocationsBeforeCreatedLinkResolve)
         {
             vfs_test_log_fail("ResolvePath cache hit should not call backend again", &fails);
         }

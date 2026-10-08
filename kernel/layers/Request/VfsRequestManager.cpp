@@ -1,5 +1,34 @@
 #include "layers/Request/VfsRequestManager.hpp"
 
+#include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
+#include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
+
+namespace
+{
+static uint64_t normalize_vfs_result(int64_t result)
+{
+    if (result >= 0)
+    {
+        return (uint64_t) result;
+    }
+
+    if (result >= -4095)
+    {
+        return (uint64_t) result;
+    }
+
+    return LINUX_EIO;
+}
+}
+
+VfsRequestManager::VfsRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
+    : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
+{
+}
+
 uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* frame)
 {
     (void) frame;
@@ -44,14 +73,96 @@ uint64_t VfsRequestManager::HandleMkdirRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    const uint64_t count = frame->arg2;
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    void* buffer = (void*) (uintptr_t) frame->arg1;
+    if (buffer == nullptr)
+    {
+        return LINUX_EFAULT;
+    }
+
+    file_t* file    = static_cast<file_t*>(descriptor->file);
+    int64_t result  = LogicCaps->virtualFileSystem->Read(file, buffer, count);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleWriteRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    const uint64_t count = frame->arg2;
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    const void* buffer = (const void*) (uintptr_t) frame->arg1;
+    if (buffer == nullptr)
+    {
+        return LINUX_EFAULT;
+    }
+
+    file_t* file    = static_cast<file_t*>(descriptor->file);
+    int64_t result  = LogicCaps->virtualFileSystem->Write(file, buffer, count);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePread64Request(const arch_syscall_frame_t* frame)

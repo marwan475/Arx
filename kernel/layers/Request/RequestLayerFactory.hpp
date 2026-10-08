@@ -18,6 +18,14 @@
 struct ResourceLayerCaps;
 struct LogicLayerCaps;
 
+// Shared Linux ABI-style syscall return codes used by request managers.
+constexpr uint64_t LINUX_ESRCH  = (uint64_t) -3;
+constexpr uint64_t LINUX_EIO    = (uint64_t) -5;
+constexpr uint64_t LINUX_EBADF  = (uint64_t) -9;
+constexpr uint64_t LINUX_EFAULT = (uint64_t) -14;
+constexpr uint64_t LINUX_EINVAL = (uint64_t) -22;
+constexpr uint64_t LINUX_ENOSYS = (uint64_t) -38;
+
 enum : uint64_t
 {
     SYSCALL_read              = 0,

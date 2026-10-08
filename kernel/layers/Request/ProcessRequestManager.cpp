@@ -1,15 +1,10 @@
 #include "layers/Request/ProcessRequestManager.hpp"
 
 #include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
-
-namespace
-{
-constexpr uint64_t LINUX_ENOSYS = (uint64_t) -38;
-constexpr uint64_t LINUX_ESRCH  = (uint64_t) -3;
-}
 
 ProcessRequestManager::ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
     : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)

@@ -1,4 +1,5 @@
 #include "layers/Dispatcher.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -17,6 +18,7 @@ namespace
 {
 constexpr uint64_t LINUX_ENOSYS = (uint64_t) -38;
 constexpr uint64_t LINUX_EINVAL = (uint64_t) -22;
+constexpr uint64_t LINUX_EBADF  = (uint64_t) -9;
 
 enum expected_result_kind_t
 {
@@ -130,6 +132,122 @@ static bool custom_case_validate_process_identity(const custom_case_ctx_t* ctx)
         }
 
         return false;
+}
+
+static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if ((int64_t) ctx->result >= 0 || ctx->result == LINUX_ENOSYS || ctx->result == LINUX_EINVAL)
+        {
+                return false;
+        }
+
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        if (dispatcher == nullptr)
+        {
+                return false;
+        }
+
+        ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+        LogicLayerCaps*    logicCaps    = dispatcher->GetLogicLayerCaps();
+        if (resourceCaps == nullptr || resourceCaps->processManager == nullptr || logicCaps == nullptr || logicCaps->virtualFileSystem == nullptr)
+        {
+                return false;
+        }
+
+        process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+        if (currentProcess == nullptr)
+        {
+                return false;
+        }
+
+        vfs_path_t start = {};
+        file_t*    file  = logicCaps->virtualFileSystem->Open(start, "/test.txt", 0);
+        if (file == nullptr)
+        {
+                return false;
+        }
+
+        int64_t fd = resourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE);
+        if (fd < 0)
+        {
+                (void) logicCaps->virtualFileSystem->Close(file);
+                return false;
+        }
+
+        bool validationPass = false;
+        if (ctx->syscallNumber == SYSCALL_read)
+        {
+                char readBuffer[32]            = {};
+                arch_syscall_frame_t syscallFrame = *(ctx->frame);
+                syscallFrame.syscall_number       = SYSCALL_read;
+                syscallFrame.arg0                 = (uint64_t) fd;
+                syscallFrame.arg1                 = (uint64_t) (uintptr_t) readBuffer;
+                syscallFrame.arg2                 = (uint64_t) sizeof(readBuffer);
+
+                uint64_t readResult = dispatcher_dispatch_syscall(&syscallFrame);
+                if ((int64_t) readResult >= 0)
+                {
+                        arch_syscall_frame_t badFdFrame = syscallFrame;
+                        badFdFrame.arg0                 = (uint64_t) (fd + 1);
+                        const uint64_t badFdResult      = dispatcher_dispatch_syscall(&badFdFrame);
+                        validationPass                  = (badFdResult == LINUX_EBADF);
+                }
+        }
+        else if (ctx->syscallNumber == SYSCALL_write)
+        {
+                static const char payload[] = "Arx syscall write selftest\n";
+                char              original[sizeof(payload)] = {};
+                const uint64_t    maxBytes = (uint64_t) (sizeof(payload) - 1);
+
+                uint64_t testBytes = 0;
+                if (logicCaps->virtualFileSystem->Seek(file, 0, 0) >= 0)
+                {
+                        int64_t originalRead = logicCaps->virtualFileSystem->Read(file, original, maxBytes);
+                        if (originalRead > 0)
+                        {
+                                testBytes = (uint64_t) originalRead;
+                                if (testBytes > maxBytes)
+                                {
+                                        testBytes = maxBytes;
+                                }
+                        }
+                }
+
+                if (logicCaps->virtualFileSystem->Seek(file, 0, 0) >= 0)
+                {
+                        arch_syscall_frame_t syscallFrame = *(ctx->frame);
+                        syscallFrame.syscall_number       = SYSCALL_write;
+                        syscallFrame.arg0                 = (uint64_t) fd;
+                        syscallFrame.arg1                 = (uint64_t) (uintptr_t) payload;
+                        syscallFrame.arg2                 = testBytes;
+
+                        uint64_t writeResult = dispatcher_dispatch_syscall(&syscallFrame);
+                        if (writeResult == testBytes)
+                        {
+                                arch_syscall_frame_t badFdFrame = syscallFrame;
+                                badFdFrame.arg0                 = (uint64_t) (fd + 1);
+                                const uint64_t badFdResult      = dispatcher_dispatch_syscall(&badFdFrame);
+                                validationPass                  = (badFdResult == LINUX_EBADF);
+                        }
+
+                        if (testBytes > 0)
+                        {
+                                (void) logicCaps->virtualFileSystem->Seek(file, 0, 0);
+                                (void) logicCaps->virtualFileSystem->Write(file, original, testBytes);
+                        }
+                }
+        }
+
+        currentProcess->fileDescriptors[fd].file  = nullptr;
+        currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+        (void) logicCaps->virtualFileSystem->Close(file);
+
+        return validationPass;
 }
 
 static void populate_custom_args(uint64_t syscallNumber, arch_syscall_frame_t* frame)

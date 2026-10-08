@@ -3,9 +3,14 @@
 #include <arch/arch.h>
 #include <stdint.h>
 
+struct ResourceLayerCaps;
+struct LogicLayerCaps;
+
 class VfsRequestManager
 {
 public:
+    VfsRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps);
+
     uint64_t HandleOpenatRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleOpenRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleCreatRequest(const arch_syscall_frame_t* frame);
@@ -67,4 +72,8 @@ public:
     uint64_t HandlePipeRequest(const arch_syscall_frame_t* frame);
     uint64_t HandlePipe2Request(const arch_syscall_frame_t* frame);
     uint64_t HandleMemfd_createRequest(const arch_syscall_frame_t* frame);
+
+private:
+    ResourceLayerCaps* ResourceCaps;
+    LogicLayerCaps*    LogicCaps;
 };

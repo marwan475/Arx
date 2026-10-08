@@ -98,16 +98,6 @@ static void fill_linux_stat_from_inode(const inode_t* inode, linux_stat_t* statB
     *statBuffer = statData;
 }
 
-static bool build_path_from_cwd(VirtualFileSystem* virtualFileSystem, process_t* process, const char* path, char* outPath, size_t outPathSize)
-{
-    if (virtualFileSystem == nullptr || process == nullptr || path == nullptr || outPath == nullptr || outPathSize == 0)
-    {
-        return false;
-    }
-
-    return virtualFileSystem->JoinPath(process->cwdPath, path, outPath, outPathSize);
-}
-
 static bool is_obviously_invalid_user_pointer(const void* pointer)
 {
     const uintptr_t address = (uintptr_t) pointer;
@@ -368,7 +358,7 @@ uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* fram
     const char*   effectivePath = path;
     if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
     {
-        if (!build_path_from_cwd(LogicCaps->virtualFileSystem, currentProcess, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
         {
             return LINUX_ENAMETOOLONG;
         }
@@ -1080,7 +1070,7 @@ uint64_t VfsRequestManager::HandleChdirRequest(const arch_syscall_frame_t* frame
     }
 
     char resolvedPathBuffer[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
-    if (!build_path_from_cwd(LogicCaps->virtualFileSystem, currentProcess, path, resolvedPathBuffer, sizeof(resolvedPathBuffer)))
+    if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, resolvedPathBuffer, sizeof(resolvedPathBuffer)))
     {
         return LINUX_ENAMETOOLONG;
     }
@@ -1534,7 +1524,7 @@ uint64_t VfsRequestManager::HandleNewfstatatRequest(const arch_syscall_frame_t* 
 
     if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
     {
-        if (!build_path_from_cwd(LogicCaps->virtualFileSystem, currentProcess, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
         {
             return LINUX_ENAMETOOLONG;
         }
@@ -1709,7 +1699,7 @@ uint64_t VfsRequestManager::HandleReadlinkatRequest(const arch_syscall_frame_t* 
     {
         if (dirfd == LINUX_AT_FDCWD)
         {
-            if (!build_path_from_cwd(LogicCaps->virtualFileSystem, currentProcess, path, effectivePathBuffer, sizeof(effectivePathBuffer)))
+            if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, effectivePathBuffer, sizeof(effectivePathBuffer)))
             {
                 return LINUX_ENAMETOOLONG;
             }
@@ -1863,7 +1853,7 @@ uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* f
     {
         if (dirfd == LINUX_AT_FDCWD)
         {
-            if (!build_path_from_cwd(LogicCaps->virtualFileSystem, currentProcess, linkPath, effectiveLinkPathBuffer, sizeof(effectiveLinkPathBuffer)))
+            if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, linkPath, effectiveLinkPathBuffer, sizeof(effectiveLinkPathBuffer)))
             {
                 return LINUX_ENAMETOOLONG;
             }

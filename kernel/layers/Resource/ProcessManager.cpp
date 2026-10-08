@@ -286,27 +286,81 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
 
 int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags)
 {
+    return AddFileDescriptorFrom(process, file, flags, 0);
+}
+
+bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex)
+{
+    if (process == nullptr)
+    {
+        return false;
+    }
+
+    if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
+    {
+        return false;
+    }
+
+    if (!process->allocated)
+    {
+        return false;
+    }
+
+    if (requiredIndex < process->fileDescriptorCount && process->fileDescriptors != nullptr)
+    {
+        return true;
+    }
+
+    uint64_t oldCount = process->fileDescriptorCount;
+    uint64_t newCount = oldCount;
+
+    if (newCount == 0)
+    {
+        newCount = DEFAULT_FILE_DESCRIPTOR_COUNT;
+        oldCount = 0;
+    }
+
+    while (requiredIndex >= newCount)
+    {
+        if (newCount > (UINT64_MAX / 2ULL))
+        {
+            return false;
+        }
+        newCount *= 2ULL;
+    }
+
+    file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
+    if (newTable == nullptr)
+    {
+        return false;
+    }
+
+    memset(newTable, 0, sizeof(file_descriptor_t) * newCount);
+
+    if (process->fileDescriptors != nullptr && process->fileDescriptorCount > 0)
+    {
+        memcpy(newTable, process->fileDescriptors, sizeof(file_descriptor_t) * process->fileDescriptorCount);
+        kfree(process->fileDescriptors);
+    }
+
+    process->fileDescriptors = newTable;
+    process->fileDescriptorCount = newCount;
+    return true;
+}
+
+int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd)
+{
     if (process == nullptr || file == nullptr)
     {
         return -1;
     }
 
-    if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
+    if (!EnsureFileDescriptorCapacity(process, minFd))
     {
         return -1;
     }
 
-    if (!process->allocated)
-    {
-        return -1;
-    }
-
-    if (process->fileDescriptors == nullptr || process->fileDescriptorCount == 0)
-    {
-        return -1;
-    }
-
-    for (uint64_t i = 0; i < process->fileDescriptorCount; i++)
+    for (uint64_t i = minFd; i < process->fileDescriptorCount; i++)
     {
         if (process->fileDescriptors[i].file == nullptr)
         {
@@ -316,30 +370,23 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
         }
     }
 
-    const uint64_t oldCount = process->fileDescriptorCount;
-    uint64_t       newCount = oldCount * 2;
-    if (newCount < oldCount)
+    const uint64_t growFrom = process->fileDescriptorCount;
+    if (!EnsureFileDescriptorCapacity(process, growFrom))
     {
         return -1;
     }
 
-    file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
-    if (newTable == nullptr)
+    for (uint64_t i = minFd; i < process->fileDescriptorCount; i++)
     {
-        return -1;
+        if (process->fileDescriptors[i].file == nullptr)
+        {
+            process->fileDescriptors[i].file  = file;
+            process->fileDescriptors[i].flags = flags;
+            return (int64_t) i;
+        }
     }
 
-    memcpy(newTable, process->fileDescriptors, sizeof(file_descriptor_t) * oldCount);
-
-    memset(newTable + oldCount, 0, sizeof(file_descriptor_t) * (newCount - oldCount));
-
-    kfree(process->fileDescriptors);
-    process->fileDescriptors     = newTable;
-    process->fileDescriptorCount = newCount;
-
-    process->fileDescriptors[oldCount].file  = file;
-    process->fileDescriptors[oldCount].flags = flags;
-    return (int64_t) oldCount;
+    return -1;
 }
 
 bool ProcessManager::BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp)

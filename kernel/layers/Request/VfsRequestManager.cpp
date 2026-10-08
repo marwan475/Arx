@@ -38,9 +38,25 @@ constexpr uint32_t LINUX_S_IFLNK = 0120000U;
 constexpr uint64_t LINUX_O_WRONLY = 01ULL;
 constexpr uint64_t LINUX_O_CREAT  = 0100ULL;
 constexpr uint64_t LINUX_O_TRUNC  = 01000ULL;
+constexpr uint64_t LINUX_O_CLOEXEC = 02000000ULL;
 
 constexpr int64_t  LINUX_AT_SYMLINK_NOFOLLOW = 0x100;
 constexpr int64_t  LINUX_AT_EMPTY_PATH       = 0x1000;
+
+constexpr uint64_t LINUX_F_DUPFD         = 0;
+constexpr uint64_t LINUX_F_GETFD         = 1;
+constexpr uint64_t LINUX_F_SETFD         = 2;
+constexpr uint64_t LINUX_F_GETFL         = 3;
+constexpr uint64_t LINUX_F_SETFL         = 4;
+constexpr uint64_t LINUX_F_DUPFD_CLOEXEC = 1030;
+constexpr uint64_t LINUX_FD_CLOEXEC      = 1;
+
+constexpr uint64_t LINUX_CLOSE_RANGE_CLOEXEC = 1ULL << 2;
+constexpr uint64_t LINUX_CLOSE_RANGE_UNSHARE = 1ULL << 1;
+
+constexpr uint64_t LINUX_ENOTTY = (uint64_t) -25;
+constexpr uint64_t LINUX_EMFILE = (uint64_t) -24;
+constexpr uint64_t LINUX_ENOMEM = (uint64_t) -12;
 
 static uint32_t linux_mode_for_inode(const inode_t* inode)
 {
@@ -199,6 +215,102 @@ static bool resolve_relative_base_for_dirfd(process_t* currentProcess, int64_t d
 
     *outStart = baseFile->path;
     return true;
+}
+
+struct linux_iovec_t
+{
+    void*    iov_base;
+    uint64_t iov_len;
+};
+
+constexpr int64_t LINUX_IOV_MAX = 1024;
+
+static int64_t perform_vector_io(VirtualFileSystem* virtualFileSystem, file_t* file, const linux_iovec_t* iov, int64_t iovCount, bool isWrite, bool positioned,
+                                 uint64_t positionedOffset)
+{
+    if (virtualFileSystem == nullptr || file == nullptr || iov == nullptr)
+    {
+        return -1;
+    }
+
+    uint64_t originalOffset = file->offset;
+    uint64_t runningOffset  = positionedOffset;
+    int64_t  total          = 0;
+
+    for (int64_t i = 0; i < iovCount; ++i)
+    {
+        const uint64_t len = iov[i].iov_len;
+        if (len == 0)
+        {
+            continue;
+        }
+
+        if (is_obviously_invalid_user_pointer(iov[i].iov_base))
+        {
+            if (positioned)
+            {
+                (void) virtualFileSystem->Seek(file, (int64_t) originalOffset, 0);
+            }
+            return (total > 0) ? total : (int64_t) LINUX_EFAULT;
+        }
+
+        if (positioned)
+        {
+            const int64_t seekResult = virtualFileSystem->Seek(file, (int64_t) runningOffset, 0);
+            if (seekResult < 0)
+            {
+                (void) virtualFileSystem->Seek(file, (int64_t) originalOffset, 0);
+                return (total > 0) ? total : seekResult;
+            }
+        }
+
+        int64_t ioResult = 0;
+        if (isWrite)
+        {
+            ioResult = virtualFileSystem->Write(file, iov[i].iov_base, len);
+        }
+        else
+        {
+            ioResult = virtualFileSystem->Read(file, iov[i].iov_base, len);
+        }
+
+        if (ioResult < 0)
+        {
+            if (positioned)
+            {
+                (void) virtualFileSystem->Seek(file, (int64_t) originalOffset, 0);
+            }
+            return (total > 0) ? total : ioResult;
+        }
+
+        if (total > INT64_MAX - ioResult)
+        {
+            if (positioned)
+            {
+                (void) virtualFileSystem->Seek(file, (int64_t) originalOffset, 0);
+            }
+            return (total > 0) ? total : (int64_t) LINUX_EINVAL;
+        }
+
+        total += ioResult;
+
+        if (positioned)
+        {
+            runningOffset += (uint64_t) ioResult;
+        }
+
+        if ((uint64_t) ioResult < len)
+        {
+            break;
+        }
+    }
+
+    if (positioned)
+    {
+        (void) virtualFileSystem->Seek(file, (int64_t) originalOffset, 0);
+    }
+
+    return total;
 }
 
 
@@ -364,8 +476,67 @@ uint64_t VfsRequestManager::HandleCloseRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleClose_rangeRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    uint64_t first = frame->arg0;
+    uint64_t last  = frame->arg1;
+    uint64_t flags = frame->arg2;
+
+    if (first > last)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if ((flags & ~(LINUX_CLOSE_RANGE_CLOEXEC | LINUX_CLOSE_RANGE_UNSHARE)) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (currentProcess->fileDescriptors == nullptr || currentProcess->fileDescriptorCount == 0)
+    {
+        return 0;
+    }
+
+    if (last >= currentProcess->fileDescriptorCount)
+    {
+        last = currentProcess->fileDescriptorCount - 1;
+    }
+
+    for (uint64_t fd = first; fd <= last; ++fd)
+    {
+        file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+        if (descriptor->file == nullptr)
+        {
+            continue;
+        }
+
+        if ((flags & LINUX_CLOSE_RANGE_CLOEXEC) != 0)
+        {
+            descriptor->flags |= FD_FLAG_CLOEXEC;
+            continue;
+        }
+
+        file_t* file      = static_cast<file_t*>(descriptor->file);
+        descriptor->file  = nullptr;
+        descriptor->flags = FD_FLAG_NONE;
+        (void) LogicCaps->virtualFileSystem->Close(file);
+    }
+
+    return 0;
 }
 
 uint64_t VfsRequestManager::HandleMkdiratRequest(const arch_syscall_frame_t* frame)
@@ -476,38 +647,330 @@ uint64_t VfsRequestManager::HandleWriteRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandlePread64Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    void* buffer = (void*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(buffer))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const uint64_t count = frame->arg2;
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    const int64_t offset = (int64_t) frame->arg3;
+    if (offset < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    linux_iovec_t iov = {buffer, count};
+    file_t*       file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, &iov, 1, false, true, (uint64_t) offset);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePwrite64Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    void* buffer = (void*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(buffer))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const uint64_t count = frame->arg2;
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    const int64_t offset = (int64_t) frame->arg3;
+    if (offset < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    linux_iovec_t iov = {buffer, count};
+    file_t*       file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, &iov, 1, true, true, (uint64_t) offset);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleReadvRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_iovec_t* iov = (linux_iovec_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(iov))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const int64_t iovCount = (int64_t) frame->arg2;
+    if (iovCount < 0 || iovCount > LINUX_IOV_MAX)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (iovCount == 0)
+    {
+        return 0;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, iov, iovCount, false, false, 0);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleWritevRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_iovec_t* iov = (linux_iovec_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(iov))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const int64_t iovCount = (int64_t) frame->arg2;
+    if (iovCount < 0 || iovCount > LINUX_IOV_MAX)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (iovCount == 0)
+    {
+        return 0;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, iov, iovCount, true, false, 0);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePreadvRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_iovec_t* iov = (linux_iovec_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(iov))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const int64_t iovCount = (int64_t) frame->arg2;
+    if (iovCount < 0 || iovCount > LINUX_IOV_MAX)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (iovCount == 0)
+    {
+        return 0;
+    }
+
+    const int64_t offset = (int64_t) frame->arg3;
+    if (offset < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, iov, iovCount, false, true, (uint64_t) offset);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePwritevRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_iovec_t* iov = (linux_iovec_t*) (uintptr_t) frame->arg1;
+    if (is_obviously_invalid_user_pointer(iov))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const int64_t iovCount = (int64_t) frame->arg2;
+    if (iovCount < 0 || iovCount > LINUX_IOV_MAX)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (iovCount == 0)
+    {
+        return 0;
+    }
+
+    const int64_t offset = (int64_t) frame->arg3;
+    if (offset < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = perform_vector_io(LogicCaps->virtualFileSystem, file, iov, iovCount, true, true, (uint64_t) offset);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleLseekRequest(const arch_syscall_frame_t* frame)
@@ -589,7 +1052,7 @@ uint64_t VfsRequestManager::HandleGetcwdRequest(const arch_syscall_frame_t* fram
     }
 
     memcpy(buffer, currentProcess->cwdPath, cwdLength);
-    return (uint64_t) (uintptr_t) buffer;
+    return (uint64_t) cwdLength;
 }
 
 uint64_t VfsRequestManager::HandleChdirRequest(const arch_syscall_frame_t* frame)
@@ -712,26 +1175,285 @@ uint64_t VfsRequestManager::HandleRmdirRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    const uint64_t cmd = frame->arg1;
+    const uint64_t arg = frame->arg2;
+
+    if (cmd == LINUX_F_GETFD)
+    {
+        return (descriptor->flags & FD_FLAG_CLOEXEC) ? LINUX_FD_CLOEXEC : 0;
+    }
+
+    if (cmd == LINUX_F_SETFD)
+    {
+        if ((arg & ~LINUX_FD_CLOEXEC) != 0)
+        {
+            return LINUX_EINVAL;
+        }
+
+        if ((arg & LINUX_FD_CLOEXEC) != 0)
+        {
+            descriptor->flags |= FD_FLAG_CLOEXEC;
+        }
+        else
+        {
+            descriptor->flags &= ~FD_FLAG_CLOEXEC;
+        }
+
+        return 0;
+    }
+
+    if (cmd == LINUX_F_DUPFD || cmd == LINUX_F_DUPFD_CLOEXEC)
+    {
+        const uint64_t minFd = arg;
+        if ((int64_t) minFd < 0)
+        {
+            return LINUX_EINVAL;
+        }
+
+        uint32_t newFlags = FD_FLAG_NONE;
+        if (cmd == LINUX_F_DUPFD_CLOEXEC)
+        {
+            newFlags = FD_FLAG_CLOEXEC;
+        }
+
+        file_t* oldFile = static_cast<file_t*>(descriptor->file);
+        if (!LogicCaps->virtualFileSystem->Retain(oldFile))
+        {
+            return LINUX_EIO;
+        }
+
+        const int64_t newFd = ResourceCaps->processManager->AddFileDescriptorFrom(currentProcess, descriptor->file, newFlags, minFd);
+        if (newFd < 0)
+        {
+            (void) LogicCaps->virtualFileSystem->Close(oldFile);
+            return LINUX_ENOMEM;
+        }
+
+        return (uint64_t) newFd;
+    }
+
+    if (cmd == LINUX_F_GETFL)
+    {
+        file_t* file = static_cast<file_t*>(descriptor->file);
+        if (file == nullptr)
+        {
+            return LINUX_EBADF;
+        }
+
+        return file->statusFlags;
+    }
+
+    if (cmd == LINUX_F_SETFL)
+    {
+        file_t* file = static_cast<file_t*>(descriptor->file);
+        if (file == nullptr)
+        {
+            return LINUX_EBADF;
+        }
+
+        file->statusFlags = arg;
+        return 0;
+    }
+
+    return LINUX_EINVAL;
 }
 
 uint64_t VfsRequestManager::HandleDupRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t oldFd = frame->arg0;
+    if (oldFd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[oldFd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_t* oldFile = static_cast<file_t*>(descriptor->file);
+    if (!LogicCaps->virtualFileSystem->Retain(oldFile))
+    {
+        return LINUX_EIO;
+    }
+
+    const int64_t newFd = ResourceCaps->processManager->AddFileDescriptorFrom(currentProcess, descriptor->file, FD_FLAG_NONE, 0);
+    if (newFd < 0)
+    {
+        (void) LogicCaps->virtualFileSystem->Close(oldFile);
+        return LINUX_ENOMEM;
+    }
+
+    return (uint64_t) newFd;
 }
 
 uint64_t VfsRequestManager::HandleDup2Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t oldFd = frame->arg0;
+    const uint64_t newFd = frame->arg1;
+
+    if (currentProcess->fileDescriptors == nullptr || oldFd >= currentProcess->fileDescriptorCount ||
+        currentProcess->fileDescriptors[oldFd].file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    if (!ResourceCaps->processManager->EnsureFileDescriptorCapacity(currentProcess, newFd))
+    {
+        return LINUX_ENOMEM;
+    }
+
+    if (oldFd == newFd)
+    {
+        return newFd;
+    }
+
+    if (currentProcess->fileDescriptors[newFd].file != nullptr)
+    {
+        file_t* existing = static_cast<file_t*>(currentProcess->fileDescriptors[newFd].file);
+        currentProcess->fileDescriptors[newFd].file  = nullptr;
+        currentProcess->fileDescriptors[newFd].flags = FD_FLAG_NONE;
+        (void) LogicCaps->virtualFileSystem->Close(existing);
+    }
+
+    file_t* oldFile = static_cast<file_t*>(currentProcess->fileDescriptors[oldFd].file);
+    if (!LogicCaps->virtualFileSystem->Retain(oldFile))
+    {
+        return LINUX_EIO;
+    }
+
+    currentProcess->fileDescriptors[newFd].file  = currentProcess->fileDescriptors[oldFd].file;
+    currentProcess->fileDescriptors[newFd].flags = FD_FLAG_NONE;
+    return newFd;
 }
 
 uint64_t VfsRequestManager::HandleDup3Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t oldFd  = frame->arg0;
+    const uint64_t newFd  = frame->arg1;
+    const uint64_t flags  = frame->arg2;
+
+    if ((flags & ~LINUX_O_CLOEXEC) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (oldFd == newFd)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (currentProcess->fileDescriptors == nullptr || oldFd >= currentProcess->fileDescriptorCount ||
+        currentProcess->fileDescriptors[oldFd].file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    uint32_t newFdFlags = FD_FLAG_NONE;
+    if ((flags & LINUX_O_CLOEXEC) != 0)
+    {
+        newFdFlags = FD_FLAG_CLOEXEC;
+    }
+
+    if (!ResourceCaps->processManager->EnsureFileDescriptorCapacity(currentProcess, newFd))
+    {
+        return LINUX_ENOMEM;
+    }
+
+    if (currentProcess->fileDescriptors[newFd].file != nullptr)
+    {
+        file_t* existing = static_cast<file_t*>(currentProcess->fileDescriptors[newFd].file);
+        currentProcess->fileDescriptors[newFd].file  = nullptr;
+        currentProcess->fileDescriptors[newFd].flags = FD_FLAG_NONE;
+        (void) LogicCaps->virtualFileSystem->Close(existing);
+    }
+
+    file_t* oldFile = static_cast<file_t*>(currentProcess->fileDescriptors[oldFd].file);
+    if (!LogicCaps->virtualFileSystem->Retain(oldFile))
+    {
+        return LINUX_EIO;
+    }
+
+    currentProcess->fileDescriptors[newFd].file  = currentProcess->fileDescriptors[oldFd].file;
+    currentProcess->fileDescriptors[newFd].flags = newFdFlags;
+    return newFd;
 }
 
 uint64_t VfsRequestManager::HandleNewfstatatRequest(const arch_syscall_frame_t* frame)
@@ -1054,8 +1776,42 @@ uint64_t VfsRequestManager::HandleReadlinkRequest(const arch_syscall_frame_t* fr
 
 uint64_t VfsRequestManager::HandleIoctlRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    const int64_t result = LogicCaps->virtualFileSystem->Ioctl(file, frame->arg1, frame->arg2);
+    if (result == -1)
+    {
+        return LINUX_ENOTTY;
+    }
+
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleLinkatRequest(const arch_syscall_frame_t* frame)

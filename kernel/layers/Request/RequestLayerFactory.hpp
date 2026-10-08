@@ -15,6 +15,9 @@
 
 #include <stdint.h>
 
+struct ResourceLayerCaps;
+struct LogicLayerCaps;
+
 enum : uint64_t
 {
     SYSCALL_read              = 0,
@@ -207,7 +210,7 @@ public:
     RequestLayerFactory();
     ~RequestLayerFactory();
 
-    RequestLayerCaps* Create();
+    RequestLayerCaps* Create(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps);
 
     RequestLayerCaps* GetCaps() const;
 

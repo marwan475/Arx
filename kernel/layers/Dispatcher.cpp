@@ -33,7 +33,7 @@ void Dispatcher::StartKernel()
 
     logiclayer_selftests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
 
-    RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create();
+    RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create(ResourceLayerImportCaps, LogicLayerImportCaps);
 
     (void) RequestLayerImportCaps;
 }

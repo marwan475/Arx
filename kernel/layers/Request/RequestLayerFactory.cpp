@@ -26,7 +26,7 @@ RequestLayerFactory::~RequestLayerFactory()
     }
 }
 
-RequestLayerCaps* RequestLayerFactory::Create()
+RequestLayerCaps* RequestLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
 {
     if (RequestLayerExportCaps != nullptr)
     {
@@ -34,7 +34,7 @@ RequestLayerCaps* RequestLayerFactory::Create()
     }
 
     RequestLayerExportCaps                           = new RequestLayerCaps();
-    RequestLayerExportCaps->processRequestManager    = new ProcessRequestManager();
+    RequestLayerExportCaps->processRequestManager    = new ProcessRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->schedulerRequestManager  = new SchedulerRequestManager();
     RequestLayerExportCaps->timeRequestManager       = new TimeRequestManager();
     RequestLayerExportCaps->memoryRequestManager     = new MemoryRequestManager();

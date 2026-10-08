@@ -1,10 +1,17 @@
+#include "layers/Dispatcher.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/TaskManager.hpp"
 
 extern "C"
 {
 #include <klib/klib.h>
+#include <platform.h>
 #include <selftests/selftests.h>
 }
+
+extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
 
 namespace
 {
@@ -61,6 +68,68 @@ static bool custom_case_stub_process_lifecycle(const custom_case_ctx_t* ctx)
 
         // Stub path: until full scenario tests are implemented, keep this non-failing.
         return true;
+}
+
+static bool resolve_runtime_identity(uint64_t* outPid, uint64_t* outTid)
+{
+        if (outPid == nullptr || outTid == nullptr)
+        {
+                return false;
+        }
+
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        if (dispatcher == nullptr)
+        {
+                return false;
+        }
+
+        ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+        if (resourceCaps == nullptr || resourceCaps->processManager == nullptr || resourceCaps->taskManager == nullptr)
+        {
+                return false;
+        }
+
+        process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+        task_t*    currentTask    = resourceCaps->taskManager->GetCurrentTask();
+        if (currentProcess == nullptr || currentTask == nullptr)
+        {
+                return false;
+        }
+
+        *outPid = currentProcess->id;
+        *outTid = currentTask->id;
+        return true;
+}
+
+static bool custom_case_validate_process_identity(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        uint64_t expectedPid = 0;
+        uint64_t expectedTid = 0;
+        if (!resolve_runtime_identity(&expectedPid, &expectedTid))
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
+        dispatchedFrame.syscall_number       = ctx->syscallNumber;
+        const uint64_t dispatchResult        = dispatcher_dispatch_syscall(&dispatchedFrame);
+
+        if (ctx->syscallNumber == SYSCALL_getpid)
+        {
+                return ctx->result == expectedPid && dispatchResult == expectedPid;
+        }
+
+        if (ctx->syscallNumber == SYSCALL_gettid)
+        {
+                return ctx->result == expectedTid && dispatchResult == expectedTid;
+        }
+
+        return false;
 }
 
 static void populate_custom_args(uint64_t syscallNumber, arch_syscall_frame_t* frame)
@@ -702,8 +771,8 @@ static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* s
                         {"HandleWait4Request", &ProcessRequestManager::HandleWait4Request, SYSCALL_wait4, nullptr},
                         {"HandleWaitidRequest", &ProcessRequestManager::HandleWaitidRequest, SYSCALL_waitid, nullptr},
                         {"HandleSet_tid_addressRequest", &ProcessRequestManager::HandleSet_tid_addressRequest, SYSCALL_set_tid_address, nullptr},
-                        {"HandleGettidRequest", &ProcessRequestManager::HandleGettidRequest, SYSCALL_gettid, nullptr},
-                        {"HandleGetpidRequest", &ProcessRequestManager::HandleGetpidRequest, SYSCALL_getpid, nullptr},
+                        {"HandleGettidRequest", &ProcessRequestManager::HandleGettidRequest, SYSCALL_gettid, custom_case_validate_process_identity},
+                        {"HandleGetpidRequest", &ProcessRequestManager::HandleGetpidRequest, SYSCALL_getpid, custom_case_validate_process_identity},
                         {"HandleGetppidRequest", &ProcessRequestManager::HandleGetppidRequest, SYSCALL_getppid, nullptr},
                         {"HandleGetpgidRequest", &ProcessRequestManager::HandleGetpgidRequest, SYSCALL_getpgid, nullptr},
                         {"HandleGetpgrpRequest", &ProcessRequestManager::HandleGetpgrpRequest, SYSCALL_getpgrp, nullptr},

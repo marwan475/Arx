@@ -35,7 +35,7 @@ RequestLayerCaps* RequestLayerFactory::Create(ResourceLayerCaps* resourceLayerCa
 
     RequestLayerExportCaps                           = new RequestLayerCaps();
     RequestLayerExportCaps->processRequestManager    = new ProcessRequestManager(resourceLayerCaps, logicLayerCaps);
-    RequestLayerExportCaps->schedulerRequestManager  = new SchedulerRequestManager();
+    RequestLayerExportCaps->schedulerRequestManager  = new SchedulerRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->timeRequestManager       = new TimeRequestManager();
     RequestLayerExportCaps->memoryRequestManager     = new MemoryRequestManager();
     RequestLayerExportCaps->vfsRequestManager        = new VfsRequestManager(resourceLayerCaps, logicLayerCaps);

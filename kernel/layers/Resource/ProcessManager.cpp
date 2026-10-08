@@ -81,6 +81,10 @@ ProcessManager::ProcessManager()
     {
         Processes[i].allocated           = false;
         Processes[i].id                  = (uint64_t) i;
+        Processes[i].hasParent           = false;
+        Processes[i].parentId            = 0;
+        Processes[i].exited              = false;
+        Processes[i].exitStatus          = 0;
         Processes[i].addressSpace        = nullptr;
         Processes[i].elfMetadata         = nullptr;
         Processes[i].tasks               = nullptr;
@@ -107,6 +111,10 @@ process_t* ProcessManager::AllocateProcessUnlocked()
         {
             Processes[i].allocated           = true;
             Processes[i].id                  = (uint64_t) i;
+            Processes[i].hasParent           = false;
+            Processes[i].parentId            = 0;
+            Processes[i].exited              = false;
+            Processes[i].exitStatus          = 0;
             Processes[i].addressSpace        = nullptr;
             Processes[i].elfMetadata         = nullptr;
             Processes[i].tasks               = nullptr;
@@ -156,6 +164,20 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     process->fileDescriptorCount = DEFAULT_FILE_DESCRIPTOR_COUNT;
     process->addressSpace        = addressSpace;
     process->elfMetadata         = nullptr;
+    process->exited              = false;
+    process->exitStatus          = 0;
+
+    const uint8_t currentCpu = arch_cpu_id();
+    if (currentCpu < BOOT_SMP_MAX_CPUS && RunningProcesses[currentCpu] != nullptr)
+    {
+        process->hasParent = true;
+        process->parentId  = RunningProcesses[currentCpu]->id;
+    }
+    else
+    {
+        process->hasParent = false;
+        process->parentId  = 0;
+    }
 
     UnlockManager();
     return process;
@@ -194,6 +216,10 @@ bool ProcessManager::FreeProcess(process_t* process)
     process->addressSpace        = nullptr;
     process->elfMetadata         = nullptr;
     process->id                  = (uint64_t) (process - &Processes[0]);
+    process->hasParent           = false;
+    process->parentId            = 0;
+    process->exited              = false;
+    process->exitStatus          = 0;
     process->allocated           = false;
     process->tasks               = nullptr;
     process->fileDescriptorCount = 0;
@@ -648,6 +674,50 @@ process_t* ProcessManager::GetProcesses()
 const process_t* ProcessManager::GetProcesses() const
 {
     return Processes;
+}
+
+bool ProcessManager::IsProcessRunning(const process_t* process) const
+{
+    if (process == nullptr)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; ++i)
+    {
+        if (RunningProcesses[i] == process)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ProcessManager::TryReapExitedProcess(uint64_t processId)
+{
+    if (processId >= MAX_PROCESSES)
+    {
+        return false;
+    }
+
+    process_t* process = &Processes[processId];
+    if (!process->allocated)
+    {
+        return false;
+    }
+
+    if (!process->exited)
+    {
+        return false;
+    }
+
+    if (IsProcessRunning(process))
+    {
+        return false;
+    }
+
+    return FreeProcess(process);
 }
 
 size_t ProcessManager::GetCapacity() const

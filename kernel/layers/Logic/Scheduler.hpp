@@ -18,6 +18,7 @@ public:
     bool ScheduleProcess(uint64_t processId);
     bool EnqueueProcess(uint8_t cpuId, uint64_t processId);
     bool RunNextReadyProcess(uint8_t cpuId);
+    bool KillProcess(uint64_t processId, int32_t exitStatus);
 
 private:
     void InitializeBspProcessAndTask();
@@ -31,6 +32,8 @@ private:
         size_t   tail;
         size_t   count;
     };
+
+    bool RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId);
 
     ready_queue_t ReadyQueues[BOOT_SMP_MAX_CPUS];
     bool          SchedulingActive[BOOT_SMP_MAX_CPUS];

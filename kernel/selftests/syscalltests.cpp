@@ -308,7 +308,68 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
         closeFrame.arg0                 = fdResult;
 
         const uint64_t closeResult = dispatcher_dispatch_syscall(&closeFrame);
-        return closeResult == 0;
+        if (closeResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t rootDirFrame = {};
+        rootDirFrame.syscall_number       = SYSCALL_open;
+        rootDirFrame.arg0                 = (uint64_t) (uintptr_t) "/";
+        rootDirFrame.arg1                 = 0;
+        rootDirFrame.arg2                 = 0;
+
+        const uint64_t rootDirFd = dispatcher_dispatch_syscall(&rootDirFrame);
+        if ((int64_t) rootDirFd < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t relativeOpenat = {};
+        relativeOpenat.syscall_number       = SYSCALL_openat;
+        relativeOpenat.arg0                 = rootDirFd;
+        relativeOpenat.arg1                 = (uint64_t) (uintptr_t) "test.txt";
+        relativeOpenat.arg2                 = 0;
+        relativeOpenat.arg3                 = 0;
+
+        const uint64_t relativeFd = dispatcher_dispatch_syscall(&relativeOpenat);
+
+        arch_syscall_frame_t closeRootDir = {};
+        closeRootDir.syscall_number       = SYSCALL_close;
+        closeRootDir.arg0                 = rootDirFd;
+        const uint64_t closeRootDirResult = dispatcher_dispatch_syscall(&closeRootDir);
+
+        if ((int64_t) relativeFd < 0 || closeRootDirResult != 0)
+        {
+                return false;
+        }
+
+        closeFrame.arg0                        = relativeFd;
+        const uint64_t closeRelativeResult     = dispatcher_dispatch_syscall(&closeFrame);
+        if (closeRelativeResult != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t regularFileFrame = {};
+        regularFileFrame.syscall_number       = SYSCALL_open;
+        regularFileFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        regularFileFrame.arg1                 = 0;
+        regularFileFrame.arg2                 = 0;
+
+        const uint64_t regularFd = dispatcher_dispatch_syscall(&regularFileFrame);
+        if ((int64_t) regularFd < 0)
+        {
+                return false;
+        }
+
+        relativeOpenat.arg0                  = regularFd;
+        const uint64_t nonDirOpenResult      = dispatcher_dispatch_syscall(&relativeOpenat);
+
+        closeFrame.arg0                      = regularFd;
+        const uint64_t closeRegularResult    = dispatcher_dispatch_syscall(&closeFrame);
+
+        return nonDirOpenResult == LINUX_ENOTDIR && closeRegularResult == 0;
 }
 
 static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
@@ -347,6 +408,255 @@ static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
 
         const uint64_t secondClose = dispatcher_dispatch_syscall(&closeFrame);
         return secondClose == LINUX_EBADF;
+}
+
+static bool custom_case_validate_getppid(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        if (dispatcher == nullptr)
+        {
+                return false;
+        }
+
+        ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+        if (resourceCaps == nullptr || resourceCaps->processManager == nullptr)
+        {
+                return false;
+        }
+
+        process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+        if (currentProcess == nullptr)
+        {
+                return false;
+        }
+
+        const uint64_t expectedPpid = currentProcess->hasParent ? currentProcess->parentId : 0;
+        if (ctx->result != expectedPpid)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
+        dispatchedFrame.syscall_number       = SYSCALL_getppid;
+        const uint64_t dispatchResult        = dispatcher_dispatch_syscall(&dispatchedFrame);
+        return dispatchResult == expectedPpid;
+}
+
+static bool custom_case_validate_sched_yield(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result != 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
+        dispatchedFrame.syscall_number       = SYSCALL_sched_yield;
+        const uint64_t dispatchResult        = dispatcher_dispatch_syscall(&dispatchedFrame);
+        return dispatchResult == 0;
+}
+
+static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr || ctx->frame == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result != 0)
+        {
+                return false;
+        }
+
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        if (dispatcher == nullptr)
+        {
+                return false;
+        }
+
+        ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+        if (resourceCaps == nullptr || resourceCaps->processManager == nullptr)
+        {
+                return false;
+        }
+
+        process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+        if (currentProcess == nullptr)
+        {
+                return false;
+        }
+
+        if (!currentProcess->exited)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFrame.arg1                 = 0;
+        openFrame.arg2                 = 0;
+        const uint64_t testFd          = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) testFd < 0)
+        {
+                return false;
+        }
+
+        // Keep the harness process alive after validation.
+        currentProcess->exited     = false;
+        currentProcess->exitStatus = 0;
+
+        arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
+        dispatchedFrame.syscall_number       = ctx->syscallNumber;
+        const uint64_t dispatchResult        = dispatcher_dispatch_syscall(&dispatchedFrame);
+        const bool dispatchMarkedExited      = currentProcess->exited;
+        bool       descriptorClosed          = false;
+
+        if (testFd < currentProcess->fileDescriptorCount && currentProcess->fileDescriptors != nullptr)
+        {
+                descriptorClosed = (currentProcess->fileDescriptors[testFd].file == nullptr);
+        }
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = testFd;
+        const uint64_t closeAfterExit   = dispatcher_dispatch_syscall(&closeFrame);
+
+        currentProcess->exited     = false;
+        currentProcess->exitStatus = 0;
+
+        return dispatchResult == 0 && dispatchMarkedExited && descriptorClosed && closeAfterExit == LINUX_EBADF;
+}
+
+static bool custom_case_validate_lseek(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFrame.arg1                 = 0;
+        openFrame.arg2                 = 0;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        arch_syscall_frame_t lseekEnd = {};
+        lseekEnd.syscall_number       = SYSCALL_lseek;
+        lseekEnd.arg0                 = fdResult;
+        lseekEnd.arg1                 = 0;
+        lseekEnd.arg2                 = 2;
+
+        const uint64_t endOffset = dispatcher_dispatch_syscall(&lseekEnd);
+
+        arch_syscall_frame_t lseekBad = lseekEnd;
+        lseekBad.arg2                 = 99;
+        const uint64_t badWhence = dispatcher_dispatch_syscall(&lseekBad);
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+        const uint64_t closeResult      = dispatcher_dispatch_syscall(&closeFrame);
+
+        return (int64_t) endOffset >= 0 && badWhence == LINUX_EINVAL && closeResult == 0;
+}
+
+static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
+{
+        if (ctx == nullptr)
+        {
+                return false;
+        }
+
+        if (ctx->result == LINUX_ENOSYS)
+        {
+                return false;
+        }
+
+        struct test_linux_timespec_t
+        {
+                int64_t tv_sec;
+                int64_t tv_nsec;
+        };
+
+        struct test_linux_stat_t
+        {
+                uint64_t              st_dev;
+                uint64_t              st_ino;
+                uint64_t              st_nlink;
+                uint32_t              st_mode;
+                uint32_t              st_uid;
+                uint32_t              st_gid;
+                int32_t               pad0;
+                uint64_t              st_rdev;
+                int64_t               st_size;
+                int64_t               st_blksize;
+                int64_t               st_blocks;
+                test_linux_timespec_t st_atim;
+                test_linux_timespec_t st_mtim;
+                test_linux_timespec_t st_ctim;
+                int64_t               reserved[3];
+        };
+
+        arch_syscall_frame_t openFrame = {};
+        openFrame.syscall_number       = SYSCALL_open;
+        openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+        openFrame.arg1                 = 0;
+        openFrame.arg2                 = 0;
+
+        uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+        if ((int64_t) fdResult < 0)
+        {
+                return false;
+        }
+
+        test_linux_stat_t statBuffer = {};
+
+        arch_syscall_frame_t fstatFrame = {};
+        fstatFrame.syscall_number       = SYSCALL_fstat;
+        fstatFrame.arg0                 = fdResult;
+        fstatFrame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+
+        const uint64_t fstatResult = dispatcher_dispatch_syscall(&fstatFrame);
+
+        arch_syscall_frame_t badFdFrame = fstatFrame;
+        badFdFrame.arg0                 = fdResult + 1;
+        const uint64_t badFdResult      = dispatcher_dispatch_syscall(&badFdFrame);
+
+        arch_syscall_frame_t closeFrame = {};
+        closeFrame.syscall_number       = SYSCALL_close;
+        closeFrame.arg0                 = fdResult;
+        const uint64_t closeResult      = dispatcher_dispatch_syscall(&closeFrame);
+
+        constexpr uint32_t linux_s_ifmt = 0170000U;
+        constexpr uint32_t linux_s_ifreg = 0100000U;
+
+        const bool modeLooksRegular = (statBuffer.st_mode & linux_s_ifmt) == linux_s_ifreg;
+        const bool sizeReasonable   = statBuffer.st_size >= 0;
+        const bool blockSizeSet     = statBuffer.st_blksize > 0;
+
+        return fstatResult == 0 && statBuffer.st_nlink >= 1 && modeLooksRegular && sizeReasonable && blockSizeSet && badFdResult == LINUX_EBADF &&
+                        closeResult == 0;
 }
 
 static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
@@ -481,8 +791,8 @@ static void run_manager_tests(const char* managerName, ManagerT* manager, const 
 static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
         static const request_method_test_t<ProcessRequestManager> tests[] = {
-                        {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, nullptr},
-                        {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, nullptr},
+                        {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, custom_case_validate_exit_like},
+                        {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, custom_case_validate_exit_like},
                         {"HandleForkRequest", &ProcessRequestManager::HandleForkRequest, SYSCALL_fork, custom_case_stub_process_lifecycle},
                         {"HandleVforkRequest", &ProcessRequestManager::HandleVforkRequest, SYSCALL_vfork, nullptr},
                         {"HandleCloneRequest", &ProcessRequestManager::HandleCloneRequest, SYSCALL_clone, nullptr},
@@ -493,7 +803,7 @@ static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* s
                         {"HandleSet_tid_addressRequest", &ProcessRequestManager::HandleSet_tid_addressRequest, SYSCALL_set_tid_address, nullptr},
                         {"HandleGettidRequest", &ProcessRequestManager::HandleGettidRequest, SYSCALL_gettid, custom_case_validate_process_identity},
                         {"HandleGetpidRequest", &ProcessRequestManager::HandleGetpidRequest, SYSCALL_getpid, custom_case_validate_process_identity},
-                        {"HandleGetppidRequest", &ProcessRequestManager::HandleGetppidRequest, SYSCALL_getppid, nullptr},
+                        {"HandleGetppidRequest", &ProcessRequestManager::HandleGetppidRequest, SYSCALL_getppid, custom_case_validate_getppid},
                         {"HandleGetpgidRequest", &ProcessRequestManager::HandleGetpgidRequest, SYSCALL_getpgid, nullptr},
                         {"HandleGetpgrpRequest", &ProcessRequestManager::HandleGetpgrpRequest, SYSCALL_getpgrp, nullptr},
                         {"HandleSetpgidRequest", &ProcessRequestManager::HandleSetpgidRequest, SYSCALL_setpgid, nullptr},
@@ -507,7 +817,7 @@ static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* s
 static void test_scheduler_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
         static const request_method_test_t<SchedulerRequestManager> tests[] = {
-                        {"HandleSched_yieldRequest", &SchedulerRequestManager::HandleSched_yieldRequest, SYSCALL_sched_yield},
+                        {"HandleSched_yieldRequest", &SchedulerRequestManager::HandleSched_yieldRequest, SYSCALL_sched_yield, custom_case_validate_sched_yield},
                         {"HandleSched_getaffinityRequest", &SchedulerRequestManager::HandleSched_getaffinityRequest, SYSCALL_sched_getaffinity},
                         {"HandleGetcpuRequest", &SchedulerRequestManager::HandleGetcpuRequest, SYSCALL_getcpu},
         };
@@ -564,7 +874,7 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleWritevRequest", &VfsRequestManager::HandleWritevRequest, SYSCALL_writev},
                         {"HandlePreadvRequest", &VfsRequestManager::HandlePreadvRequest, SYSCALL_preadv},
                         {"HandlePwritevRequest", &VfsRequestManager::HandlePwritevRequest, SYSCALL_pwritev},
-                        {"HandleLseekRequest", &VfsRequestManager::HandleLseekRequest, SYSCALL_lseek},
+                        {"HandleLseekRequest", &VfsRequestManager::HandleLseekRequest, SYSCALL_lseek, custom_case_validate_lseek},
                         {"HandleGetcwdRequest", &VfsRequestManager::HandleGetcwdRequest, SYSCALL_getcwd},
                         {"HandleChdirRequest", &VfsRequestManager::HandleChdirRequest, SYSCALL_chdir},
                         {"HandleFchdirRequest", &VfsRequestManager::HandleFchdirRequest, SYSCALL_fchdir},
@@ -578,7 +888,7 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
                         {"HandleDup3Request", &VfsRequestManager::HandleDup3Request, SYSCALL_dup3},
                         {"HandleNewfstatatRequest", &VfsRequestManager::HandleNewfstatatRequest, SYSCALL_newfstatat},
                         {"HandleStatRequest", &VfsRequestManager::HandleStatRequest, SYSCALL_stat},
-                        {"HandleFstatRequest", &VfsRequestManager::HandleFstatRequest, SYSCALL_fstat},
+                        {"HandleFstatRequest", &VfsRequestManager::HandleFstatRequest, SYSCALL_fstat, custom_case_validate_fstat},
                         {"HandleLstatRequest", &VfsRequestManager::HandleLstatRequest, SYSCALL_lstat},
                         {"HandleRenameatRequest", &VfsRequestManager::HandleRenameatRequest, SYSCALL_renameat},
                         {"HandleRenameRequest", &VfsRequestManager::HandleRenameRequest, SYSCALL_rename},

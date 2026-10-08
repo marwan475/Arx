@@ -128,6 +128,40 @@ void Scheduler::InitializeBspProcessAndTask()
     }
 }
 
+bool Scheduler::RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId)
+{
+    if (queue == nullptr || queue->count == 0)
+    {
+        return false;
+    }
+
+    bool   removed  = false;
+    size_t original = queue->count;
+    size_t readPos  = queue->head;
+
+    queue->head = 0;
+    queue->tail = 0;
+    queue->count = 0;
+
+    for (size_t i = 0; i < original; ++i)
+    {
+        const uint64_t queuedProcess = queue->processIds[readPos];
+        readPos                      = (readPos + 1) % READY_QUEUE_CAPACITY;
+
+        if (queuedProcess == processId)
+        {
+            removed = true;
+            continue;
+        }
+
+        queue->processIds[queue->tail] = queuedProcess;
+        queue->tail                    = (queue->tail + 1) % READY_QUEUE_CAPACITY;
+        queue->count++;
+    }
+
+    return removed;
+}
+
 bool Scheduler::ScheduleProcess(uint64_t processId)
 {
     if (ResourceLayerImportCaps == nullptr)
@@ -151,7 +185,7 @@ bool Scheduler::ScheduleProcess(uint64_t processId)
 
     process_t* table   = processManager->GetProcesses();
     process_t* process = &table[processId];
-    if (!process->allocated)
+    if (!process->allocated || process->exited)
     {
         return false;
     }
@@ -221,7 +255,7 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
 
     process_t* table   = processManager->GetProcesses();
     process_t* process = &table[processId];
-    if (!process->allocated)
+    if (!process->allocated || process->exited)
     {
         return false;
     }
@@ -230,6 +264,21 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     if (firstTask == nullptr)
     {
         return false;
+    }
+
+    // Invariant: one process may be queued in at most one ready queue.
+    for (uint8_t otherCpu = 0; otherCpu < BOOT_SMP_MAX_CPUS; ++otherCpu)
+    {
+        ready_queue_t* otherQueue = &ReadyQueues[otherCpu];
+        size_t         cursor     = otherQueue->head;
+        for (size_t i = 0; i < otherQueue->count; ++i)
+        {
+            if (otherQueue->processIds[cursor] == processId)
+            {
+                return false;
+            }
+            cursor = (cursor + 1) % READY_QUEUE_CAPACITY;
+        }
     }
 
     ready_queue_t* queue = &ReadyQueues[cpuId];
@@ -257,16 +306,96 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
     }
 
     ready_queue_t* queue = &ReadyQueues[cpuId];
-    uint64_t       processId;
+    while (queue->count > 0)
+    {
+        const uint64_t processId = queue->processIds[queue->head];
+        queue->head              = (queue->head + 1) % READY_QUEUE_CAPACITY;
+        queue->count--;
 
-    if (queue->count == 0)
+        if (ScheduleProcess(processId))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus)
+{
+    if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr || ResourceLayerImportCaps->taskManager == nullptr)
     {
         return false;
     }
 
-    processId   = queue->processIds[queue->head];
-    queue->head = (queue->head + 1) % READY_QUEUE_CAPACITY;
-    queue->count--;
+    ProcessManager* processManager = ResourceLayerImportCaps->processManager;
+    TaskManager*    taskManager    = ResourceLayerImportCaps->taskManager;
+    const size_t    capacity       = processManager->GetCapacity();
+    if (processId >= capacity)
+    {
+        return false;
+    }
 
-    return ScheduleProcess(processId);
+    process_t* table   = processManager->GetProcesses();
+    process_t* process = &table[processId];
+    if (!process->allocated)
+    {
+        return false;
+    }
+
+    process->exited     = true;
+    process->exitStatus = exitStatus;
+
+    for (uint8_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
+    {
+        if (RemoveProcessFromQueue(&ReadyQueues[cpu], processId))
+        {
+            break;
+        }
+    }
+
+    // Best-effort teardown: free process tasks that are not currently running.
+    // Running-task teardown needs a dedicated context-switch-away path.
+    task_t* iter = process->tasks;
+    while (iter != nullptr)
+    {
+        task_t* next = iter->next;
+
+        bool isRunning = false;
+        for (uint8_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
+        {
+            if (taskManager->GetRunningTask(cpu) == iter)
+            {
+                isRunning = true;
+                break;
+            }
+        }
+
+        if (!isRunning)
+        {
+            if (iter->prev != nullptr)
+            {
+                iter->prev->next = iter->next;
+            }
+            else
+            {
+                process->tasks = iter->next;
+            }
+
+            if (iter->next != nullptr)
+            {
+                iter->next->prev = iter->prev;
+            }
+
+            iter->next = nullptr;
+            iter->prev = nullptr;
+            (void) taskManager->FreeTask(iter);
+        }
+
+        iter = next;
+    }
+
+    (void) processManager->TryReapExitedProcess(processId);
+
+    return true;
 }

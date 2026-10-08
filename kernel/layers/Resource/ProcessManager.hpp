@@ -54,6 +54,10 @@ struct process_t
 {
     bool               allocated;
     uint64_t           id;
+    bool               hasParent;
+    uint64_t           parentId;
+    bool               exited;
+    int32_t            exitStatus;
     virt_addr_space_t* addressSpace;
     void*              elfMetadata;
     task_t*            tasks;
@@ -84,6 +88,9 @@ public:
 
     process_t*       GetProcesses();
     const process_t* GetProcesses() const;
+
+    bool IsProcessRunning(const process_t* process) const;
+    bool TryReapExitedProcess(uint64_t processId);
 
     size_t GetCapacity() const;
 

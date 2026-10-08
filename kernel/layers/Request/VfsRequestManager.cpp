@@ -6,9 +6,111 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
-static bool is_obviously_invalid_user_pointer(const void* pointer)
+struct linux_timespec_t
 {
-    return (uintptr_t) pointer < 0x1000ULL;
+    int64_t tv_sec;
+    int64_t tv_nsec;
+};
+
+struct linux_stat_t
+{
+    uint64_t         st_dev;
+    uint64_t         st_ino;
+    uint64_t         st_nlink;
+    uint32_t         st_mode;
+    uint32_t         st_uid;
+    uint32_t         st_gid;
+    int32_t          pad0;
+    uint64_t         st_rdev;
+    int64_t          st_size;
+    int64_t          st_blksize;
+    int64_t          st_blocks;
+    linux_timespec_t st_atim;
+    linux_timespec_t st_mtim;
+    linux_timespec_t st_ctim;
+    int64_t          reserved[3];
+};
+
+constexpr uint32_t LINUX_S_IFREG = 0100000U;
+constexpr uint32_t LINUX_S_IFDIR = 0040000U;
+constexpr uint32_t LINUX_S_IFLNK = 0120000U;
+
+static uint32_t linux_mode_for_inode(const inode_t* inode)
+{
+    if (inode == nullptr)
+    {
+        return 0;
+    }
+
+    switch (inode->type)
+    {
+        case INODE_DIRECTORY:
+            return LINUX_S_IFDIR | 0755U;
+        case INODE_SYMLINK:
+            return LINUX_S_IFLNK | 0777U;
+        default:
+            return LINUX_S_IFREG | 0644U;
+    }
+}
+
+static bool resolve_open_start_path(VirtualFileSystem* virtualFileSystem, process_t* currentProcess, const arch_syscall_frame_t* frame, const char* path,
+                                    vfs_path_t* outStart, bool* outNonDirectoryDirfd)
+{
+    if (virtualFileSystem == nullptr || currentProcess == nullptr || frame == nullptr || path == nullptr || outStart == nullptr ||
+        outNonDirectoryDirfd == nullptr)
+    {
+        return false;
+    }
+
+    *outNonDirectoryDirfd = false;
+
+    vfs_path_t start = {};
+
+    if (path[0] == '/')
+    {
+        *outStart = start;
+        return true;
+    }
+
+    const int64_t dirfd = (int64_t) frame->arg0;
+    if (dirfd == LINUX_AT_FDCWD)
+    {
+        // CWD tracking is not implemented yet; treat AT_FDCWD as VFS root.
+        if (!virtualFileSystem->ResolvePath(start, "/", &start))
+        {
+            return false;
+        }
+
+        *outStart = start;
+        return true;
+    }
+
+    if (dirfd < 0)
+    {
+        return false;
+    }
+
+    const uint64_t fd = (uint64_t) dirfd;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return false;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return false;
+    }
+
+    file_t* baseFile = static_cast<file_t*>(descriptor->file);
+    if (baseFile->inode == nullptr || baseFile->inode->type != INODE_DIRECTORY)
+    {
+        *outNonDirectoryDirfd = true;
+        return true;
+    }
+
+    *outStart = baseFile->path;
+    return true;
 }
 
 
@@ -56,28 +158,27 @@ uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* fram
     }
 
     const char* path = (const char*) (uintptr_t) frame->arg1;
-    if (path == nullptr || is_obviously_invalid_user_pointer(path))
+    if (path == nullptr)
     {
         return LINUX_EFAULT;
     }
 
-    // Full relative openat semantics require per-process cwd tracking.
-    if (path[0] != '/')
+    vfs_path_t start            = {};
+    bool       nonDirectoryBase = false;
+    if (!resolve_open_start_path(LogicCaps->virtualFileSystem, currentProcess, frame, path, &start, &nonDirectoryBase))
     {
-        const int64_t dirfd = (int64_t) frame->arg0;
-        if (dirfd != LINUX_AT_FDCWD)
-        {
-            return LINUX_EBADF;
-        }
-
-        return LINUX_ENOSYS;
+        return LINUX_EBADF;
     }
 
-    vfs_path_t start = {};
+    if (nonDirectoryBase)
+    {
+        return LINUX_ENOTDIR;
+    }
+
     file_t*    file  = LogicCaps->virtualFileSystem->Open(start, path, frame->arg2);
     if (file == nullptr)
     {
-        return LINUX_EIO;
+        return LINUX_ENOENT;
     }
 
     int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE);
@@ -205,7 +306,7 @@ uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
     }
 
     void* buffer = (void*) (uintptr_t) frame->arg1;
-    if (buffer == nullptr || is_obviously_invalid_user_pointer(buffer))
+    if (buffer == nullptr)
     {
         return LINUX_EFAULT;
     }
@@ -252,7 +353,7 @@ uint64_t VfsRequestManager::HandleWriteRequest(const arch_syscall_frame_t* frame
     }
 
     const void* buffer = (const void*) (uintptr_t) frame->arg1;
-    if (buffer == nullptr || is_obviously_invalid_user_pointer(buffer))
+    if (buffer == nullptr)
     {
         return LINUX_EFAULT;
     }
@@ -300,8 +401,44 @@ uint64_t VfsRequestManager::HandlePwritevRequest(const arch_syscall_frame_t* fra
 
 uint64_t VfsRequestManager::HandleLseekRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    const int whence = (int) frame->arg2;
+    if (whence < 0 || whence > 2)
+    {
+        return LINUX_EINVAL;
+    }
+
+    file_t* file   = static_cast<file_t*>(descriptor->file);
+    int64_t offset = (int64_t) frame->arg1;
+    int64_t result = LogicCaps->virtualFileSystem->Seek(file, offset, whence);
+    return normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandleGetcwdRequest(const arch_syscall_frame_t* frame)
@@ -384,8 +521,60 @@ uint64_t VfsRequestManager::HandleStatRequest(const arch_syscall_frame_t* frame)
 
 uint64_t VfsRequestManager::HandleFstatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    linux_stat_t* statBuffer = (linux_stat_t*) (uintptr_t) frame->arg1;
+    if (statBuffer == nullptr)
+    {
+        return LINUX_EFAULT;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    if (file->inode == nullptr)
+    {
+        return LINUX_EIO;
+    }
+
+    linux_stat_t statData = {};
+    statData.st_ino       = file->inode->inodeNumber;
+    statData.st_dev       = 1;
+    statData.st_nlink     = 1;
+    statData.st_mode      = linux_mode_for_inode(file->inode);
+    statData.st_uid       = 0;
+    statData.st_gid       = 0;
+    statData.st_rdev      = 0;
+    statData.st_size      = (int64_t) file->inode->size;
+    statData.st_blksize   = 4096;
+    statData.st_blocks    = (int64_t) ((file->inode->size + 511ULL) / 512ULL);
+
+    *statBuffer = statData;
+    return 0;
 }
 
 uint64_t VfsRequestManager::HandleLstatRequest(const arch_syscall_frame_t* frame)

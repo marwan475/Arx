@@ -26,4 +26,9 @@ public:
     virt_addr_t    ReserveRegion(virt_addr_space_t* space, size_t size, virt_type_t type);
     void           FreeRegion(virt_addr_space_t* space, virt_addr_t addr);
     virt_region_t* FindRegion(virt_addr_space_t* space, virt_addr_t addr);
+
+    bool IsUserRangeAccessible(uintptr_t userAddress, size_t length, virt_addr_space_t* space);
+    bool CopyFromUser(void* kernelDestination, uintptr_t userSource, size_t length, virt_addr_space_t* space);
+    bool CopyToUser(uintptr_t userDestination, const void* kernelSource, size_t length, virt_addr_space_t* space);
+    bool CopyStringFromUser(char* kernelDestination, size_t destinationSize, uintptr_t userSource, virt_addr_space_t* space, size_t* outLength);
 };

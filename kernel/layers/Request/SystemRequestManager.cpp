@@ -3,6 +3,7 @@
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
 {
@@ -130,8 +131,19 @@ uint64_t SystemRequestManager::HandleUnameRequest(const arch_syscall_frame_t* fr
         return LINUX_EINVAL;
     }
 
-    linux_utsname_t* userUts = (linux_utsname_t*) (uintptr_t) frame->arg0;
-    if (userUts == nullptr)
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || ResourceCaps->virtualMemoryManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uintptr_t userUts = (uintptr_t) frame->arg0;
+    if (userUts == 0)
     {
         return LINUX_EFAULT;
     }
@@ -144,7 +156,11 @@ uint64_t SystemRequestManager::HandleUnameRequest(const arch_syscall_frame_t* fr
     copy_uts_field(utsData.machine, sizeof(utsData.machine), platform.arch == ARCH_AARCH64 ? "aarch64" : "x86_64");
     copy_uts_field(utsData.domainname, sizeof(utsData.domainname), "localdomain");
 
-    *userUts = utsData;
+    if (!ResourceCaps->virtualMemoryManager->CopyToUser(userUts, &utsData, sizeof(utsData), currentProcess->addressSpace))
+    {
+        return LINUX_EFAULT;
+    }
+
     return 0;
 }
 
@@ -155,8 +171,19 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
         return LINUX_EINVAL;
     }
 
-    linux_sysinfo_t* userSysinfo = (linux_sysinfo_t*) (uintptr_t) frame->arg0;
-    if (userSysinfo == nullptr)
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || ResourceCaps->virtualMemoryManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uintptr_t userSysinfo = (uintptr_t) frame->arg0;
+    if (userSysinfo == 0)
     {
         return LINUX_EFAULT;
     }
@@ -183,7 +210,11 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
     sysinfoData.freehigh        = 0;
     sysinfoData.mem_unit        = 1;
 
-    *userSysinfo = sysinfoData;
+    if (!ResourceCaps->virtualMemoryManager->CopyToUser(userSysinfo, &sysinfoData, sizeof(sysinfoData), currentProcess->addressSpace))
+    {
+        return LINUX_EFAULT;
+    }
+
     return 0;
 }
 

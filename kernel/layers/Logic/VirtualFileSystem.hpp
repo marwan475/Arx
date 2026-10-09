@@ -174,6 +174,13 @@ public:
     int64_t   StatNoFollow(const vfs_path_t& start, const char* path, inode_t** outInode);
     int64_t   Symlink(const vfs_path_t& start, const char* target, const char* linkPath);
     int64_t   Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize);
+    int64_t   Mkdir(const vfs_path_t& start, const char* path, uint32_t mode);
+    int64_t   Unlink(const vfs_path_t& start, const char* path, bool directory);
+    int64_t   Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath);
+    int64_t   Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink);
+    int64_t   Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device);
+    int64_t   TruncatePath(const vfs_path_t& start, const char* path, uint64_t size);
+    int64_t   TruncateFile(file_t* file, uint64_t size);
     file_t*   Open(const vfs_path_t& start, const char* path, uint64_t flags);
     int64_t   Read(file_t* file, void* buffer, uint64_t count);
     int64_t   Write(file_t* file, const void* buffer, uint64_t count);

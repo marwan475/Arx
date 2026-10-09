@@ -41,6 +41,12 @@ struct ResourceLayerFileSystemCaps
     int64_t (*ReadDirectory)(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry);
     int64_t (*Read)(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     int64_t (*Write)(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
+    int64_t (*Mkdir)(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode);
+    int64_t (*Unlink)(ResourceLayerFileSystemCaps* caps, const char* path, bool directory);
+    int64_t (*Rename)(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath);
+    int64_t (*Link)(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath, bool followSymlink);
+    int64_t (*Mknod)(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode, uint64_t device);
+    int64_t (*Truncate)(ResourceLayerFileSystemCaps* caps, const char* path, uint64_t size);
 };
 
 class ResourceFileSystem
@@ -57,6 +63,12 @@ public:
     int64_t          ReadDirectory(resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry);
     int64_t          Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     int64_t          Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
+    int64_t          Mkdir(const char* path, uint32_t mode);
+    int64_t          Unlink(const char* path, bool directory);
+    int64_t          Rename(const char* oldPath, const char* newPath);
+    int64_t          Link(const char* oldPath, const char* newPath, bool followSymlink);
+    int64_t          Mknod(const char* path, uint32_t mode, uint64_t device);
+    int64_t          Truncate(const char* path, uint64_t size);
 
 private:
     static ResourceFileSystem* FromCaps(ResourceLayerFileSystemCaps* caps);
@@ -69,6 +81,12 @@ private:
                                                resource_directory_entry_t* entry);
     static int64_t          ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     static int64_t          WriteThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
+    static int64_t          MkdirThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode);
+    static int64_t          UnlinkThunk(ResourceLayerFileSystemCaps* caps, const char* path, bool directory);
+    static int64_t          RenameThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath);
+    static int64_t          LinkThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath, bool followSymlink);
+    static int64_t          MknodThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode, uint64_t device);
+    static int64_t          TruncateThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint64_t size);
 
     InitRamFileSystemManager*   InitRamManager;
     ResourceLayerFileSystemCaps Caps;

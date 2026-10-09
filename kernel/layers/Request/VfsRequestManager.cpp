@@ -65,6 +65,8 @@ constexpr uint64_t LINUX_O_TRUNC  = 01000ULL;
 constexpr uint64_t LINUX_O_CLOEXEC = 02000000ULL;
 
 constexpr int64_t  LINUX_AT_SYMLINK_NOFOLLOW = 0x100;
+constexpr int64_t  LINUX_AT_REMOVEDIR        = 0x200;
+constexpr int64_t  LINUX_AT_SYMLINK_FOLLOW   = 0x400;
 constexpr int64_t  LINUX_AT_EMPTY_PATH       = 0x1000;
 constexpr int64_t  LINUX_AT_EACCESS          = 0x200;
 
@@ -658,14 +660,72 @@ uint64_t VfsRequestManager::HandleClose_rangeRequest(const arch_syscall_frame_t*
 
 uint64_t VfsRequestManager::HandleMkdiratRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t dirfd = (int64_t) frame->arg0;
+    const char*   path  = (const char*) (uintptr_t) frame->arg1;
+    const uint32_t mode = (uint32_t) frame->arg2;
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    char        cwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+    if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = cwdResolvedPath;
+    }
+
+    vfs_path_t start            = {};
+    bool       nonDirectoryBase = false;
+    if (effectivePath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, dirfd, &start, &nonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (nonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->Mkdir(start, effectivePath, mode));
 }
 
 uint64_t VfsRequestManager::HandleMkdirRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t mkdiratFrame = {};
+    mkdiratFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    mkdiratFrame.arg1                 = frame->arg0;
+    mkdiratFrame.arg2                 = frame->arg1;
+    return HandleMkdiratRequest(&mkdiratFrame);
 }
 
 uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
@@ -1370,20 +1430,93 @@ uint64_t VfsRequestManager::HandleGetdents64Request(const arch_syscall_frame_t* 
 
 uint64_t VfsRequestManager::HandleUnlinkatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t dirfd = (int64_t) frame->arg0;
+    const char*   path  = (const char*) (uintptr_t) frame->arg1;
+    const int64_t flags = (int64_t) frame->arg2;
+
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    if ((flags & ~LINUX_AT_REMOVEDIR) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    char        cwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+    if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = cwdResolvedPath;
+    }
+
+    vfs_path_t start            = {};
+    bool       nonDirectoryBase = false;
+    if (effectivePath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, dirfd, &start, &nonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (nonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    const bool removeDirectory = (flags & LINUX_AT_REMOVEDIR) != 0;
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->Unlink(start, effectivePath, removeDirectory));
 }
 
 uint64_t VfsRequestManager::HandleUnlinkRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t unlinkatFrame = {};
+    unlinkatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    unlinkatFrame.arg1                 = frame->arg0;
+    unlinkatFrame.arg2                 = 0;
+    return HandleUnlinkatRequest(&unlinkatFrame);
 }
 
 uint64_t VfsRequestManager::HandleRmdirRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t unlinkatFrame = {};
+    unlinkatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    unlinkatFrame.arg1                 = frame->arg0;
+    unlinkatFrame.arg2                 = (uint64_t) LINUX_AT_REMOVEDIR;
+    return HandleUnlinkatRequest(&unlinkatFrame);
 }
 
 uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame)
@@ -1873,14 +2006,102 @@ uint64_t VfsRequestManager::HandleLstatRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleRenameatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t olddirfd = (int64_t) frame->arg0;
+    const char*   oldpath  = (const char*) (uintptr_t) frame->arg1;
+    const int64_t newdirfd = (int64_t) frame->arg2;
+    const char*   newpath  = (const char*) (uintptr_t) frame->arg3;
+
+    if (is_obviously_invalid_user_pointer(oldpath) || is_obviously_invalid_user_pointer(newpath))
+    {
+        return LINUX_EFAULT;
+    }
+
+    char        oldCwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectiveOldPath = oldpath;
+    if (oldpath[0] != '/' && olddirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, oldpath, oldCwdResolvedPath, sizeof(oldCwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectiveOldPath = oldCwdResolvedPath;
+    }
+
+    char        newCwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectiveNewPath = newpath;
+    if (newpath[0] != '/' && newdirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, newpath, newCwdResolvedPath, sizeof(newCwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectiveNewPath = newCwdResolvedPath;
+    }
+
+    vfs_path_t oldStart            = {};
+    bool       oldNonDirectoryBase = false;
+    if (effectiveOldPath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, olddirfd, &oldStart, &oldNonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (oldNonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    vfs_path_t newStart            = {};
+    bool       newNonDirectoryBase = false;
+    if (effectiveNewPath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, newdirfd, &newStart, &newNonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (newNonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->Rename(oldStart, effectiveOldPath, newStart, effectiveNewPath));
 }
 
 uint64_t VfsRequestManager::HandleRenameRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t renameatFrame = {};
+    renameatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    renameatFrame.arg1                 = frame->arg0;
+    renameatFrame.arg2                 = (uint64_t) LINUX_AT_FDCWD;
+    renameatFrame.arg3                 = frame->arg1;
+    return HandleRenameatRequest(&renameatFrame);
 }
 
 uint64_t VfsRequestManager::HandleReadlinkatRequest(const arch_syscall_frame_t* frame)
@@ -2029,14 +2250,110 @@ uint64_t VfsRequestManager::HandleIoctlRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleLinkatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t olddirfd = (int64_t) frame->arg0;
+    const char*   oldpath  = (const char*) (uintptr_t) frame->arg1;
+    const int64_t newdirfd = (int64_t) frame->arg2;
+    const char*   newpath  = (const char*) (uintptr_t) frame->arg3;
+    const int64_t flags    = (int64_t) frame->arg4;
+
+    if (is_obviously_invalid_user_pointer(oldpath) || is_obviously_invalid_user_pointer(newpath))
+    {
+        return LINUX_EFAULT;
+    }
+
+    if ((flags & ~LINUX_AT_SYMLINK_FOLLOW) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    char        oldCwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectiveOldPath = oldpath;
+    if (oldpath[0] != '/' && olddirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, oldpath, oldCwdResolvedPath, sizeof(oldCwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectiveOldPath = oldCwdResolvedPath;
+    }
+
+    char        newCwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectiveNewPath = newpath;
+    if (newpath[0] != '/' && newdirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, newpath, newCwdResolvedPath, sizeof(newCwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectiveNewPath = newCwdResolvedPath;
+    }
+
+    vfs_path_t oldStart            = {};
+    bool       oldNonDirectoryBase = false;
+    if (effectiveOldPath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, olddirfd, &oldStart, &oldNonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (oldNonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    vfs_path_t newStart            = {};
+    bool       newNonDirectoryBase = false;
+    if (effectiveNewPath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, newdirfd, &newStart, &newNonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (newNonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    const bool followSymlink = (flags & LINUX_AT_SYMLINK_FOLLOW) != 0;
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->Link(oldStart, effectiveOldPath, newStart, effectiveNewPath, followSymlink));
 }
 
 uint64_t VfsRequestManager::HandleLinkRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t linkatFrame = {};
+    linkatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    linkatFrame.arg1                 = frame->arg0;
+    linkatFrame.arg2                 = (uint64_t) LINUX_AT_FDCWD;
+    linkatFrame.arg3                 = frame->arg1;
+    linkatFrame.arg4                 = 0;
+    return HandleLinkatRequest(&linkatFrame);
 }
 
 uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* frame)
@@ -2299,20 +2616,50 @@ uint64_t VfsRequestManager::HandleFchownatRequest(const arch_syscall_frame_t* fr
 
 uint64_t VfsRequestManager::HandleChownRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchownatFrame = {};
+    fchownatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    fchownatFrame.arg1                 = frame->arg0;
+    fchownatFrame.arg2                 = frame->arg1;
+    fchownatFrame.arg3                 = frame->arg2;
+    fchownatFrame.arg4                 = 0;
+    return HandleFchownatRequest(&fchownatFrame);
 }
 
 uint64_t VfsRequestManager::HandleFchownRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchownatFrame = {};
+    fchownatFrame.arg0                 = (uint64_t) frame->arg0;
+    fchownatFrame.arg1                 = (uint64_t) "";
+    fchownatFrame.arg2                 = frame->arg1;
+    fchownatFrame.arg3                 = frame->arg2;
+    fchownatFrame.arg4                 = (uint64_t) LINUX_AT_EMPTY_PATH;
+    return HandleFchownatRequest(&fchownatFrame);
 }
 
 uint64_t VfsRequestManager::HandleLchownRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchownatFrame = {};
+    fchownatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    fchownatFrame.arg1                 = frame->arg0;
+    fchownatFrame.arg2                 = frame->arg1;
+    fchownatFrame.arg3                 = frame->arg2;
+    fchownatFrame.arg4                 = (uint64_t) LINUX_AT_SYMLINK_NOFOLLOW;
+    return HandleFchownatRequest(&fchownatFrame);
 }
 
 uint64_t VfsRequestManager::HandleFchmodat2Request(const arch_syscall_frame_t* frame)
@@ -2323,20 +2670,47 @@ uint64_t VfsRequestManager::HandleFchmodat2Request(const arch_syscall_frame_t* f
 
 uint64_t VfsRequestManager::HandleFchmodatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchmodat2Frame = {};
+    fchmodat2Frame.arg0                 = frame->arg0;
+    fchmodat2Frame.arg1                 = frame->arg1;
+    fchmodat2Frame.arg2                 = frame->arg2;
+    fchmodat2Frame.arg3                 = 0;
+    return HandleFchmodat2Request(&fchmodat2Frame);
 }
 
 uint64_t VfsRequestManager::HandleChmodRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchmodat2Frame = {};
+    fchmodat2Frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    fchmodat2Frame.arg1                 = frame->arg0;
+    fchmodat2Frame.arg2                 = frame->arg1;
+    fchmodat2Frame.arg3                 = 0;
+    return HandleFchmodat2Request(&fchmodat2Frame);
 }
 
 uint64_t VfsRequestManager::HandleFchmodRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t fchmodat2Frame = {};
+    fchmodat2Frame.arg0                 = frame->arg0;
+    fchmodat2Frame.arg1                 = (uint64_t) "";
+    fchmodat2Frame.arg2                 = frame->arg1;
+    fchmodat2Frame.arg3                 = (uint64_t) LINUX_AT_EMPTY_PATH;
+    return HandleFchmodat2Request(&fchmodat2Frame);
 }
 
 uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame)
@@ -2445,32 +2819,172 @@ uint64_t VfsRequestManager::HandleFstatfsRequest(const arch_syscall_frame_t* fra
 
 uint64_t VfsRequestManager::HandleMknodatRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const int64_t dirfd = (int64_t) frame->arg0;
+    const char*   path  = (const char*) (uintptr_t) frame->arg1;
+    const uint32_t mode = (uint32_t) frame->arg2;
+    const uint64_t dev  = frame->arg3;
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    char        cwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+    if (path[0] != '/' && dirfd == LINUX_AT_FDCWD)
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, cwdResolvedPath, sizeof(cwdResolvedPath)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = cwdResolvedPath;
+    }
+
+    vfs_path_t start            = {};
+    bool       nonDirectoryBase = false;
+    if (effectivePath[0] != '/')
+    {
+        if (!resolve_relative_base_for_dirfd(currentProcess, dirfd, &start, &nonDirectoryBase))
+        {
+            return LINUX_EBADF;
+        }
+
+        if (nonDirectoryBase)
+        {
+            return LINUX_ENOTDIR;
+        }
+    }
+
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->Mknod(start, effectivePath, mode, dev));
 }
 
 uint64_t VfsRequestManager::HandleMknodRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t mknodatFrame = {};
+    mknodatFrame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
+    mknodatFrame.arg1                 = frame->arg0;
+    mknodatFrame.arg2                 = frame->arg1;
+    mknodatFrame.arg3                 = frame->arg2;
+    return HandleMknodatRequest(&mknodatFrame);
 }
 
 uint64_t VfsRequestManager::HandleTruncateRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const char* path = (const char*) (uintptr_t) frame->arg0;
+    if (is_obviously_invalid_user_pointer(path))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const int64_t length = (int64_t) frame->arg1;
+    if (length < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    char        effectivePathBuffer[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    const char* effectivePath = path;
+    if (path[0] != '/')
+    {
+        if (!LogicCaps->virtualFileSystem->JoinPath(currentProcess->cwdPath, path, effectivePathBuffer, sizeof(effectivePathBuffer)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+
+        effectivePath = effectivePathBuffer;
+    }
+
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->TruncatePath({}, effectivePath, (uint64_t) length));
 }
 
 uint64_t VfsRequestManager::HandleFtruncateRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+    if (currentProcess == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t fd = frame->arg0;
+    if (fd >= currentProcess->fileDescriptorCount || currentProcess->fileDescriptors == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    file_descriptor_t* descriptor = &currentProcess->fileDescriptors[fd];
+    if (descriptor->file == nullptr)
+    {
+        return LINUX_EBADF;
+    }
+
+    const int64_t length = (int64_t) frame->arg1;
+    if (length < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    return normalize_vfs_result(LogicCaps->virtualFileSystem->TruncateFile(file, (uint64_t) length));
 }
 
 uint64_t VfsRequestManager::HandlePipeRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arch_syscall_frame_t pipe2Frame = {};
+    pipe2Frame.arg0                 = frame->arg0;
+    pipe2Frame.arg1                 = 0;
+    return HandlePipe2Request(&pipe2Frame);
 }
 
 uint64_t VfsRequestManager::HandlePipe2Request(const arch_syscall_frame_t* frame)

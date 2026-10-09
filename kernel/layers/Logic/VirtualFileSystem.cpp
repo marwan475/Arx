@@ -71,6 +71,7 @@ constexpr int64_t VFS_ERR_NOTDIR = -20;
 constexpr int64_t VFS_ERR_INVAL  = -22;
 constexpr int64_t VFS_ERR_NOMEM  = -12;
 constexpr int64_t VFS_ERR_LOOP   = -40;
+constexpr int64_t VFS_ERR_NOSYS  = -38;
 
 static inode_type_t vfs_map_resource_node_type(resource_node_type_t type)
 {
@@ -1560,6 +1561,331 @@ int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, c
     const uint64_t toCopy    = bufferSize < targetLen ? bufferSize : targetLen;
     memcpy(buffer, linkTarget, (size_t) toCopy);
     return (int64_t) toCopy;
+}
+
+int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint32_t mode)
+{
+    if (path == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Mkdir == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectivePath[512] = {};
+    if (path[0] == '/')
+    {
+        if (strlen(path) + 1 > sizeof(effectivePath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectivePath, path, strlen(path) + 1);
+    }
+    else
+    {
+        char basePath[512] = {};
+        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    return caps->Mkdir(caps, effectivePath, mode);
+}
+
+int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, bool directory)
+{
+    if (path == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Unlink == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectivePath[512] = {};
+    if (path[0] == '/')
+    {
+        if (strlen(path) + 1 > sizeof(effectivePath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectivePath, path, strlen(path) + 1);
+    }
+    else
+    {
+        char basePath[512] = {};
+        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    return caps->Unlink(caps, effectivePath, directory);
+}
+
+int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath)
+{
+    if (oldPath == nullptr || newPath == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Rename == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectiveOldPath[512] = {};
+    if (oldPath[0] == '/')
+    {
+        if (strlen(oldPath) + 1 > sizeof(effectiveOldPath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectiveOldPath, oldPath, strlen(oldPath) + 1);
+    }
+    else
+    {
+        char oldBasePath[512] = {};
+        if (oldStart.dentry == nullptr || !BuildAbsolutePathFromDentry(oldStart.dentry, oldBasePath, sizeof(oldBasePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(oldBasePath, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    char effectiveNewPath[512] = {};
+    if (newPath[0] == '/')
+    {
+        if (strlen(newPath) + 1 > sizeof(effectiveNewPath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectiveNewPath, newPath, strlen(newPath) + 1);
+    }
+    else
+    {
+        char newBasePath[512] = {};
+        if (newStart.dentry == nullptr || !BuildAbsolutePathFromDentry(newStart.dentry, newBasePath, sizeof(newBasePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(newBasePath, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    return caps->Rename(caps, effectiveOldPath, effectiveNewPath);
+}
+
+int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink)
+{
+    if (oldPath == nullptr || newPath == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Link == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectiveOldPath[512] = {};
+    if (oldPath[0] == '/')
+    {
+        if (strlen(oldPath) + 1 > sizeof(effectiveOldPath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectiveOldPath, oldPath, strlen(oldPath) + 1);
+    }
+    else
+    {
+        char oldBasePath[512] = {};
+        if (oldStart.dentry == nullptr || !BuildAbsolutePathFromDentry(oldStart.dentry, oldBasePath, sizeof(oldBasePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(oldBasePath, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    char effectiveNewPath[512] = {};
+    if (newPath[0] == '/')
+    {
+        if (strlen(newPath) + 1 > sizeof(effectiveNewPath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectiveNewPath, newPath, strlen(newPath) + 1);
+    }
+    else
+    {
+        char newBasePath[512] = {};
+        if (newStart.dentry == nullptr || !BuildAbsolutePathFromDentry(newStart.dentry, newBasePath, sizeof(newBasePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(newBasePath, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    return caps->Link(caps, effectiveOldPath, effectiveNewPath, followSymlink);
+}
+
+int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device)
+{
+    if (path == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Mknod == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectivePath[512] = {};
+    if (path[0] == '/')
+    {
+        if (strlen(path) + 1 > sizeof(effectivePath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectivePath, path, strlen(path) + 1);
+    }
+    else
+    {
+        char basePath[512] = {};
+        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    return caps->Mknod(caps, effectivePath, mode, device);
+}
+
+int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* path, uint64_t size)
+{
+    if (path == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Truncate == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char effectivePath[512] = {};
+    if (path[0] == '/')
+    {
+        if (strlen(path) + 1 > sizeof(effectivePath))
+        {
+            return VFS_ERR_INVAL;
+        }
+        memcpy(effectivePath, path, strlen(path) + 1);
+    }
+    else
+    {
+        char basePath[512] = {};
+        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+
+        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
+        {
+            return VFS_ERR_INVAL;
+        }
+    }
+
+    const int64_t result = caps->Truncate(caps, effectivePath, size);
+    if (result == 0)
+    {
+        vfs_path_t resolved = {};
+        if (ResolvePath(start, path, &resolved) && resolved.dentry != nullptr && resolved.dentry->inode != nullptr)
+        {
+            resolved.dentry->inode->size = size;
+        }
+    }
+
+    return result;
+}
+
+int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
+{
+    if (file == nullptr || file->path.dentry == nullptr)
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+    if (caps == nullptr || caps->Truncate == nullptr)
+    {
+        return VFS_ERR_NOSYS;
+    }
+
+    char absolutePath[512] = {};
+    if (!BuildAbsolutePathFromDentry(file->path.dentry, absolutePath, sizeof(absolutePath)))
+    {
+        return VFS_ERR_INVAL;
+    }
+
+    const int64_t result = caps->Truncate(caps, absolutePath, size);
+    if (result == 0)
+    {
+        if (file->inode != nullptr)
+        {
+            file->inode->size = size;
+        }
+        if (file->offset > size)
+        {
+            file->offset = size;
+        }
+    }
+
+    return result;
 }
 
 file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint64_t flags)

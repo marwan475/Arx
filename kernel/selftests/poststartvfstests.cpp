@@ -490,6 +490,142 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
     }
 
     {
+        // The current initramfs backend is effectively read-only for namespace mutations.
+        constexpr int64_t VFS_ERR_NOENT = -2;
+        constexpr int64_t VFS_ERR_INVAL = -22;
+        constexpr int64_t VFS_ERR_ROFS  = -30;
+
+        const int64_t mkdirResult = vfs->Mkdir({}, "/tmp-poststart-vfs-mkdir", 0755);
+        if (mkdirResult != VFS_ERR_ROFS)
+        {
+            poststart_vfs_test_fail("Mkdir should report read-only filesystem on initramfs backend", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int64_t unlinkResult = vfs->Unlink({}, "/test.txt", false);
+        if (unlinkResult != VFS_ERR_ROFS)
+        {
+            poststart_vfs_test_fail("Unlink should report read-only filesystem on initramfs backend", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int64_t renameResult = vfs->Rename({}, "/test.txt", {}, "/test.txt.renamed");
+        if (renameResult != VFS_ERR_ROFS)
+        {
+            poststart_vfs_test_fail("Rename should report read-only filesystem on initramfs backend", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int64_t linkResult = vfs->Link({}, "/test.txt", {}, "/tmp-poststart-vfs-link", true);
+        if (linkResult != VFS_ERR_ROFS)
+        {
+            poststart_vfs_test_fail("Link should report read-only filesystem on initramfs backend", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        const int64_t mknodResult = vfs->Mknod({}, "/tmp-poststart-vfs-mknod", 0644, 0);
+        if (mknodResult != VFS_ERR_ROFS)
+        {
+            poststart_vfs_test_fail("Mknod should report read-only filesystem on initramfs backend", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+
+        file_t* sizeProbe = vfs->Open({}, "/test.txt", 0);
+        if (sizeProbe == nullptr || sizeProbe->inode == nullptr)
+        {
+            poststart_vfs_test_fail("Open should succeed for truncate feature probes", &fails);
+        }
+        else
+        {
+            const uint64_t currentSize = sizeProbe->inode->size;
+
+            const int64_t truncatePathSameSize = vfs->TruncatePath({}, "/test.txt", currentSize);
+            if (truncatePathSameSize != 0)
+            {
+                poststart_vfs_test_fail("TruncatePath should succeed when size is unchanged", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+
+            const int64_t truncatePathGrow = vfs->TruncatePath({}, "/test.txt", currentSize + 1);
+            if (truncatePathGrow != VFS_ERR_ROFS)
+            {
+                poststart_vfs_test_fail("TruncatePath should reject growth on initramfs backend", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+
+            const int64_t truncatePathMissing = vfs->TruncatePath({}, "/definitely-missing-poststart-vfs", 1);
+            if (truncatePathMissing != VFS_ERR_NOENT)
+            {
+                poststart_vfs_test_fail("TruncatePath should return missing-file error for absent path", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+
+            const int64_t truncateFileSameSize = vfs->TruncateFile(sizeProbe, currentSize);
+            if (truncateFileSameSize != 0)
+            {
+                poststart_vfs_test_fail("TruncateFile should succeed when size is unchanged", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+
+            const int64_t truncateFileGrow = vfs->TruncateFile(sizeProbe, currentSize + 1);
+            if (truncateFileGrow != VFS_ERR_ROFS)
+            {
+                poststart_vfs_test_fail("TruncateFile should reject growth on initramfs backend", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+
+            if (vfs->Close(sizeProbe) != 0)
+            {
+                poststart_vfs_test_fail("Close should succeed after truncate feature probes", &fails);
+            }
+            else
+            {
+                passes++;
+            }
+        }
+
+        const int64_t truncateNullFile = vfs->TruncateFile(nullptr, 0);
+        if (truncateNullFile != VFS_ERR_INVAL)
+        {
+            poststart_vfs_test_fail("TruncateFile should reject null file handle", &fails);
+        }
+        else
+        {
+            passes++;
+        }
+    }
+
+    {
         memset(&g_poststart_vfs_process_ctx, 0, sizeof(g_poststart_vfs_process_ctx));
         g_poststart_vfs_process_ctx.vfs            = vfs;
         g_poststart_vfs_process_ctx.processManager = processManager;

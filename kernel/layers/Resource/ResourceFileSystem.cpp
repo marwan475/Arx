@@ -20,6 +20,43 @@ struct resource_node_t
     uint64_t       size;
 };
 
+constexpr int64_t RESOURCE_ERR_NOENT = -2;
+constexpr int64_t RESOURCE_ERR_INVAL = -22;
+constexpr int64_t RESOURCE_ERR_ROFS  = -30;
+
+static bool normalize_runtime_path(const char* path, char* outPath, size_t outPathSize)
+{
+    if (path == nullptr || outPath == nullptr || outPathSize == 0)
+    {
+        return false;
+    }
+
+    while (path[0] == '/')
+    {
+        path++;
+    }
+
+    while (path[0] == '.' && path[1] == '/')
+    {
+        path += 2;
+    }
+
+    size_t len = strlen(path);
+    while (len > 0 && path[len - 1] == '/')
+    {
+        len--;
+    }
+
+    if (len + 1 > outPathSize)
+    {
+        return false;
+    }
+
+    memcpy(outPath, path, len);
+    outPath[len] = '\0';
+    return true;
+}
+
 static uint64_t resource_hash_path(const char* path, bool isDirectory)
 {
     uint64_t hash = 1469598103934665603ULL;
@@ -135,6 +172,12 @@ ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSyst
     Caps.ReadDirectory   = ReadDirectoryThunk;
     Caps.Read            = ReadThunk;
     Caps.Write           = WriteThunk;
+    Caps.Mkdir           = MkdirThunk;
+    Caps.Unlink          = UnlinkThunk;
+    Caps.Rename          = RenameThunk;
+    Caps.Link            = LinkThunk;
+    Caps.Mknod           = MknodThunk;
+    Caps.Truncate        = TruncateThunk;
 }
 
 ResourceLayerFileSystemCaps* ResourceFileSystem::GetCaps()
@@ -193,6 +236,42 @@ int64_t ResourceFileSystem::WriteThunk(ResourceLayerFileSystemCaps* caps, resour
 {
     ResourceFileSystem* self = FromCaps(caps);
     return self != nullptr ? self->Write(node, offset, buffer, size) : -1;
+}
+
+int64_t ResourceFileSystem::MkdirThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Mkdir(path, mode) : -1;
+}
+
+int64_t ResourceFileSystem::UnlinkThunk(ResourceLayerFileSystemCaps* caps, const char* path, bool directory)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Unlink(path, directory) : -1;
+}
+
+int64_t ResourceFileSystem::RenameThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Rename(oldPath, newPath) : -1;
+}
+
+int64_t ResourceFileSystem::LinkThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath, bool followSymlink)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Link(oldPath, newPath, followSymlink) : -1;
+}
+
+int64_t ResourceFileSystem::MknodThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode, uint64_t device)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Mknod(path, mode, device) : -1;
+}
+
+int64_t ResourceFileSystem::TruncateThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint64_t size)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Truncate(path, size) : -1;
 }
 
 resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* source)
@@ -470,4 +549,69 @@ int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const 
     uint64_t toWrite   = size < remaining ? size : remaining;
     memcpy(file->data + offset, buffer, toWrite);
     return (int64_t) toWrite;
+}
+
+int64_t ResourceFileSystem::Mkdir(const char* path, uint32_t mode)
+{
+    (void) path;
+    (void) mode;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Unlink(const char* path, bool directory)
+{
+    (void) path;
+    (void) directory;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Rename(const char* oldPath, const char* newPath)
+{
+    (void) oldPath;
+    (void) newPath;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Link(const char* oldPath, const char* newPath, bool followSymlink)
+{
+    (void) oldPath;
+    (void) newPath;
+    (void) followSymlink;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Mknod(const char* path, uint32_t mode, uint64_t device)
+{
+    (void) path;
+    (void) mode;
+    (void) device;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Truncate(const char* path, uint64_t size)
+{
+    if (InitRamManager == nullptr || path == nullptr)
+    {
+        return RESOURCE_ERR_INVAL;
+    }
+
+    char normalizedPath[512] = {};
+    if (!normalize_runtime_path(path, normalizedPath, sizeof(normalizedPath)) || normalizedPath[0] == '\0')
+    {
+        return RESOURCE_ERR_INVAL;
+    }
+
+    initramfs_archive_t* file = InitRamManager->find(normalizedPath);
+    if (file == nullptr)
+    {
+        return RESOURCE_ERR_NOENT;
+    }
+
+    if (size > file->size)
+    {
+        return RESOURCE_ERR_ROFS;
+    }
+
+    file->size = size;
+    return 0;
 }

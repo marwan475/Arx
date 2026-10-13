@@ -20,8 +20,8 @@ public:
 
 private:
     process_t* BeginMemoryOperation();
-    uint64_t EndMemoryOperation(process_t* process, uint64_t result);
+    uint64_t   EndMemoryOperation(process_t* process, uint64_t result);
 
-    ProcessManager*        ProcessManagerImport;
+    ProcessManager*       ProcessManagerImport;
     VirtualMemoryManager* VirtualMemoryManagerImport;
 };

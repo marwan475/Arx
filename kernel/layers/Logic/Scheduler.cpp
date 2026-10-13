@@ -16,10 +16,10 @@ Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
-        ReadyQueues[i].head = 0;
-        ReadyQueues[i].tail = 0;
+        ReadyQueues[i].head  = 0;
+        ReadyQueues[i].tail  = 0;
         ReadyQueues[i].count = 0;
-        SchedulingActive[i] = false;
+        SchedulingActive[i]  = false;
     }
 
     InitializeBspProcessAndTask();
@@ -139,8 +139,8 @@ bool Scheduler::RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId)
     size_t original = queue->count;
     size_t readPos  = queue->head;
 
-    queue->head = 0;
-    queue->tail = 0;
+    queue->head  = 0;
+    queue->tail  = 0;
     queue->count = 0;
 
     for (size_t i = 0; i < original; ++i)
@@ -202,7 +202,7 @@ bool Scheduler::ScheduleProcess(uint64_t processId)
         return false;
     }
 
-    process_t*        previousProcess      = processManager->GetRunningProcess(cpuId);
+    process_t*         previousProcess      = processManager->GetRunningProcess(cpuId);
     virt_addr_space_t* previousAddressSpace = platform.cpus[cpuId].address_space;
 
     if (!processManager->ActivateProcessAddressSpace(process))

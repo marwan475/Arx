@@ -77,8 +77,7 @@ private:
     static resource_node_t* GetRootNodeThunk(ResourceLayerFileSystemCaps* caps, resource_fs_t* filesystem);
     static bool             GetNodeInfoThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, resource_node_info_t* info);
     static resource_node_t* LookupThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, const char* name);
-    static int64_t          ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor,
-                                               resource_directory_entry_t* entry);
+    static int64_t          ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry);
     static int64_t          ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size);
     static int64_t          WriteThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size);
     static int64_t          MkdirThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode);

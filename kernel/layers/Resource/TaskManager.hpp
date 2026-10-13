@@ -55,6 +55,6 @@ private:
     void    UnlockManager() const;
 
     mutable spinlock_t ManagerLock;
-    task_t  Tasks[MAX_TASKS];
-    task_t* RunningTasks[BOOT_SMP_MAX_CPUS];
+    task_t             Tasks[MAX_TASKS];
+    task_t*            RunningTasks[BOOT_SMP_MAX_CPUS];
 };

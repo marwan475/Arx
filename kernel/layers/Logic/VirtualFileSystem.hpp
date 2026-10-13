@@ -192,14 +192,14 @@ public:
     int64_t   Close(file_t* file);
 
 private:
-    mount_t* FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
+    mount_t*  FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
     dentry_t* FindOverlayDentry(const dentry_t* parent, const char* name) const;
     bool      AddOverlayDentry(dentry_t* dentry);
 
-    ResourceLayerCaps* ResourceLayerImportCaps;
-    mutable spinlock_t DentryCacheLock;
-    khashp_t*          DentryCache;
-    mutable spinlock_t OverlayDentryLock;
+    ResourceLayerCaps*          ResourceLayerImportCaps;
+    mutable spinlock_t          DentryCacheLock;
+    khashp_t*                   DentryCache;
+    mutable spinlock_t          OverlayDentryLock;
     vfs_overlay_dentry_entry_t* OverlayDentryHead;
 
     vfs_namespace_t Namespace;

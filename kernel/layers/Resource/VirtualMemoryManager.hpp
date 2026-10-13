@@ -11,7 +11,7 @@ class VirtualMemoryManager
 {
 public:
     virt_addr_space_t* CreateUserAddressSpace();
-    void DestroyUserAddressSpace(virt_addr_space_t* space);
+    void               DestroyUserAddressSpace(virt_addr_space_t* space);
     // Transaction caller holds space->operation_lock.
     bool IsPageAvailable(virt_addr_space_t* space, uint64_t address);
     bool AllocateAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection, bool heap);

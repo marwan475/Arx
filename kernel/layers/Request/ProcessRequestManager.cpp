@@ -43,8 +43,7 @@ static void close_process_file_descriptors(process_t* process, VirtualFileSystem
 }
 } // namespace
 
-ProcessRequestManager::ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
-    : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
+ProcessRequestManager::ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps) : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
 {
 }
 
@@ -62,7 +61,7 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
         return LINUX_ESRCH;
     }
 
-    const int32_t status  = frame != nullptr ? (int32_t) frame->arg0 : 0;
+    const int32_t status = frame != nullptr ? (int32_t) frame->arg0 : 0;
 
     if (LogicCaps != nullptr && LogicCaps->virtualFileSystem != nullptr)
     {

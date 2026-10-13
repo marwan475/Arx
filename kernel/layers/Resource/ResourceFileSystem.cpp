@@ -219,8 +219,7 @@ resource_node_t* ResourceFileSystem::LookupThunk(ResourceLayerFileSystemCaps* ca
     return self != nullptr ? self->Lookup(directory, name) : nullptr;
 }
 
-int64_t ResourceFileSystem::ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor,
-                                               resource_directory_entry_t* entry)
+int64_t ResourceFileSystem::ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry)
 {
     ResourceFileSystem* self = FromCaps(caps);
     return self != nullptr ? self->ReadDirectory(directory, cursor, entry) : -1;
@@ -359,7 +358,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return node;
     }
 
-    const size_t archiveCount = directory->fs->initRamManager->GetArchiveCount();
+    const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
     bool         directoryFound = false;
     for (size_t i = 0; i < archiveCount; ++i)
     {
@@ -405,15 +404,15 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
         return -1;
     }
 
-    const char* basePath = directory->path != nullptr ? directory->path : "";
-    const size_t baseLen = strlen(basePath);
-    const size_t archiveCount = directory->fs->initRamManager->GetArchiveCount();
-    const uint64_t targetIndex = *cursor;
-    uint64_t currentIndex = 0;
+    const char*    basePath     = directory->path != nullptr ? directory->path : "";
+    const size_t   baseLen      = strlen(basePath);
+    const size_t   archiveCount = directory->fs->initRamManager->GetArchiveCount();
+    const uint64_t targetIndex  = *cursor;
+    uint64_t       currentIndex = 0;
 
     // Track discovered names to avoid duplicate directory entries from multiple descendants.
     const char* discoveredNames[1024] = {};
-    size_t discoveredCount = 0;
+    size_t      discoveredCount       = 0;
 
     for (size_t i = 0; i < archiveCount; ++i)
     {

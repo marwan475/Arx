@@ -65,8 +65,7 @@ static void copy_uts_field(char* destination, size_t destinationSize, const char
 }
 } // namespace
 
-SystemRequestManager::SystemRequestManager(ResourceLayerCaps* resourceLayerCaps)
-    : ResourceCaps(resourceLayerCaps)
+SystemRequestManager::SystemRequestManager(ResourceLayerCaps* resourceLayerCaps) : ResourceCaps(resourceLayerCaps)
 {
 }
 

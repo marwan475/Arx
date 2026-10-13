@@ -882,7 +882,8 @@ phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t 
 phys_addr_t arch_create_user_page_table(void)
 {
     void* root = pmm_alloc(PAGE_SIZE);
-    if (!root) return 0;
+    if (!root)
+        return 0;
     memset(root, 0, PAGE_SIZE);
     uint64_t* source = x86_64_table_from_pa(arch_get_pt());
     memcpy((uint64_t*) root + 256, source + 256, PAGE_SIZE / 2);
@@ -899,5 +900,6 @@ static void destroy_empty_user_tables(phys_addr_t table, unsigned depth, unsigne
 }
 void arch_destroy_user_page_table(phys_addr_t page_table)
 {
-    if (page_table && page_table != arch_get_pt()) destroy_empty_user_tables(page_table, 4, 256);
+    if (page_table && page_table != arch_get_pt())
+        destroy_empty_user_tables(page_table, 4, 256);
 }

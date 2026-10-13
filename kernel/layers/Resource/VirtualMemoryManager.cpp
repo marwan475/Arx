@@ -98,7 +98,7 @@ bool VirtualMemoryManager::IsUserRangeAccessible(uintptr_t userAddress, size_t l
     }
 
     const uintptr_t pageMask = static_cast<uintptr_t>(PAGE_SIZE - 1);
-    uintptr_t page           = userAddress & ~pageMask;
+    uintptr_t       page     = userAddress & ~pageMask;
     const uintptr_t lastPage = lastAddr & ~pageMask;
 
     while (true)
@@ -260,9 +260,9 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     }
 
     virt_region_t* region = FindRegion(space, address);
-    region->backing        = page;
-    region->protection     = protection;
-    region->heap_page      = heap;
+    region->backing       = page;
+    region->protection    = protection;
+    region->heap_page     = heap;
     ProtectPage(address, anonymous_page_flags(protection), space);
     return true;
 }
@@ -323,8 +323,8 @@ bool VirtualMemoryManager::WriteAnonymousUser(virt_addr_space_t* space, uint64_t
         const size_t   chunk  = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
         memcpy(static_cast<uint8_t*>(region->backing) + offset, bytes, chunk);
         address += chunk;
-        bytes   += chunk;
-        length  -= chunk;
+        bytes += chunk;
+        length -= chunk;
     }
 
     return true;

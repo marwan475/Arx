@@ -46,7 +46,7 @@ static int64_t vfs_file_read_stub(file_t* file, void* buffer, uint64_t count)
 
     if (file->inode == &g_lookup_symlink_inode)
     {
-        static const char target[] = "/dir/file";
+        static const char target[]  = "/dir/file";
         const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
         const uint64_t    toCopy    = count < targetLen ? count : targetLen;
         memcpy(buffer, target, (size_t) toCopy);
@@ -55,7 +55,7 @@ static int64_t vfs_file_read_stub(file_t* file, void* buffer, uint64_t count)
 
     if (file->inode == &g_lookup_symlink_to_dir_inode)
     {
-        static const char target[] = "/dir";
+        static const char target[]  = "/dir";
         const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
         const uint64_t    toCopy    = count < targetLen ? count : targetLen;
         memcpy(buffer, target, (size_t) toCopy);
@@ -64,7 +64,7 @@ static int64_t vfs_file_read_stub(file_t* file, void* buffer, uint64_t count)
 
     if (file->inode == &g_lookup_symlink_loop_inode)
     {
-        static const char target[] = "loop";
+        static const char target[]  = "loop";
         const uint64_t    targetLen = (uint64_t) (sizeof(target) - 1);
         const uint64_t    toCopy    = count < targetLen ? count : targetLen;
         memcpy(buffer, target, (size_t) toCopy);
@@ -485,8 +485,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         vfs_path_t symlinkDirResolved = {};
-        if (!vfs->ResolvePath(startPath, "/dirlink/file", &symlinkDirResolved) || symlinkDirResolved.dentry == nullptr ||
-            symlinkDirResolved.dentry->inode != &g_lookup_child_inode)
+        if (!vfs->ResolvePath(startPath, "/dirlink/file", &symlinkDirResolved) || symlinkDirResolved.dentry == nullptr || symlinkDirResolved.dentry->inode != &g_lookup_child_inode)
         {
             vfs_test_log_fail("ResolvePath should follow symlink target in intermediate components", &fails);
         }
@@ -524,8 +523,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         const int invocationsBeforeCreatedLinkResolve = g_lookup_invocations;
 
         vfs_path_t createdLinkResolved = {};
-        if (!vfs->ResolvePath(startPath, "/created-link", &createdLinkResolved) || createdLinkResolved.dentry == nullptr ||
-            createdLinkResolved.dentry->inode != &g_lookup_child_inode)
+        if (!vfs->ResolvePath(startPath, "/created-link", &createdLinkResolved) || createdLinkResolved.dentry == nullptr || createdLinkResolved.dentry->inode != &g_lookup_child_inode)
         {
             vfs_test_log_fail("ResolvePath should follow newly created symlink", &fails);
         }
@@ -534,8 +532,8 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
             passes++;
         }
 
-        char linkTargetBuffer[64] = {};
-        const int64_t readlinkResult = vfs->Readlink(startPath, "/created-link", linkTargetBuffer, sizeof(linkTargetBuffer));
+        char          linkTargetBuffer[64] = {};
+        const int64_t readlinkResult       = vfs->Readlink(startPath, "/created-link", linkTargetBuffer, sizeof(linkTargetBuffer));
         if (readlinkResult <= 0 || memcmp(linkTargetBuffer, "/dir/file", (size_t) readlinkResult) != 0)
         {
             vfs_test_log_fail("Readlink should return created symlink target", &fails);

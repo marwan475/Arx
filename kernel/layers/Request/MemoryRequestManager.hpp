@@ -14,6 +14,7 @@ public:
     uint64_t HandleMincoreRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleMadviseRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleBrkRequest(const arch_syscall_frame_t* frame);
+
 private:
     ResourceLayerCaps* ResourceCaps;
 };

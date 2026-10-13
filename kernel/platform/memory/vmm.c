@@ -510,7 +510,7 @@ bool vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr)
 
         virt_region_t* used  = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);
         virt_region_t* right = NULL;
-        const bool split    = addr > free->start && addr + PAGE_SIZE < free->end;
+        const bool     split = addr > free->start && addr + PAGE_SIZE < free->end;
         if (used != NULL && split)
         {
             right = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);

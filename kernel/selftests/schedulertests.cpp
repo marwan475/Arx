@@ -61,10 +61,8 @@ static void smp_scheduler_task(void* arg)
     }
 
     const unsigned long long actualProcessId = (current != nullptr) ? (unsigned long long) current->id : 0ULL;
-    kprintf("Arx kernel: smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex,
-            (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
-    KDEBUG("smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex,
-           (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
+    kprintf("Arx kernel: smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex, (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
+    KDEBUG("smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex, (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
 
     (void) ctx->taskManager->ExecuteTask(ctx->returnTask);
     for (;;)
@@ -74,8 +72,7 @@ static void smp_scheduler_task(void* arg)
 }
 } // namespace
 
-extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resourceLayerCapsPtr, unsigned long long cpuIdValue, unsigned long long* outPasses, unsigned long long* outFails,
-                                             unsigned long long* outFailMask)
+extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resourceLayerCapsPtr, unsigned long long cpuIdValue, unsigned long long* outPasses, unsigned long long* outFails, unsigned long long* outFailMask)
 {
     if (outPasses != nullptr)
     {
@@ -158,9 +155,9 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         return;
     }
 
-    static constexpr size_t SCHED_TEST_PROCESS_COUNT = 3;
-    process_t*              processes[SCHED_TEST_PROCESS_COUNT];
-    task_t*                 tasks[SCHED_TEST_PROCESS_COUNT];
+    static constexpr size_t      SCHED_TEST_PROCESS_COUNT = 3;
+    process_t*                   processes[SCHED_TEST_PROCESS_COUNT];
+    task_t*                      tasks[SCHED_TEST_PROCESS_COUNT];
     smp_scheduler_task_context_t contexts[SCHED_TEST_PROCESS_COUNT];
 
     memset(processes, 0, sizeof(processes));
@@ -238,8 +235,8 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         }
     }
 
-    size_t dispatchAttempts            = 0;
-    const size_t maxDispatchAttempts   = SCHED_TEST_PROCESS_COUNT + 8;
+    size_t       dispatchAttempts    = 0;
+    const size_t maxDispatchAttempts = SCHED_TEST_PROCESS_COUNT + 8;
     while (!abort)
     {
         size_t enteredCount = 0;

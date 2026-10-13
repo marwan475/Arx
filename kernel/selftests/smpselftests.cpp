@@ -27,37 +27,37 @@ typedef struct smp_test_totals
     unsigned long long fails;
 } smp_test_totals_t;
 
-static volatile unsigned long long g_smp_selftests_total_passes   = 0;
-static volatile unsigned long long g_smp_selftests_total_fails    = 0;
-static volatile unsigned long long g_smp_selftests_finished_cpus  = 0;
-static volatile unsigned long long g_smp_selftests_fail_mask      = 0;
+static volatile unsigned long long g_smp_selftests_total_passes  = 0;
+static volatile unsigned long long g_smp_selftests_total_fails   = 0;
+static volatile unsigned long long g_smp_selftests_finished_cpus = 0;
+static volatile unsigned long long g_smp_selftests_fail_mask     = 0;
 
 enum smp_fail_mask_bits
 {
-    SMP_FAIL_DISPATCHER_NULL            = 1ULL << 0,
-    SMP_FAIL_MANAGERS_MISSING           = 1ULL << 1,
-    SMP_FAIL_PIDVFS_MISSING_RUNNING     = 1ULL << 2,
-    SMP_FAIL_PIDVFS_MISSING_ADDR_SPACE  = 1ULL << 3,
-    SMP_FAIL_PIDVFS_CREATE_PROCESS      = 1ULL << 4,
-    SMP_FAIL_PIDVFS_CREATE_TASK         = 1ULL << 5,
-    SMP_FAIL_PIDVFS_ADD_TASK            = 1ULL << 6,
-    SMP_FAIL_PIDVFS_SET_RUNNING         = 1ULL << 7,
-    SMP_FAIL_PIDVFS_EXECUTE             = 1ULL << 8,
-    SMP_FAIL_PIDVFS_RESTORE_RUNNING     = 1ULL << 9,
-    SMP_FAIL_PIDVFS_TASK_BODY           = 1ULL << 10,
-    SMP_FAIL_PIDVFS_SLOT_LAYOUT         = 1ULL << 11,
+    SMP_FAIL_DISPATCHER_NULL           = 1ULL << 0,
+    SMP_FAIL_MANAGERS_MISSING          = 1ULL << 1,
+    SMP_FAIL_PIDVFS_MISSING_RUNNING    = 1ULL << 2,
+    SMP_FAIL_PIDVFS_MISSING_ADDR_SPACE = 1ULL << 3,
+    SMP_FAIL_PIDVFS_CREATE_PROCESS     = 1ULL << 4,
+    SMP_FAIL_PIDVFS_CREATE_TASK        = 1ULL << 5,
+    SMP_FAIL_PIDVFS_ADD_TASK           = 1ULL << 6,
+    SMP_FAIL_PIDVFS_SET_RUNNING        = 1ULL << 7,
+    SMP_FAIL_PIDVFS_EXECUTE            = 1ULL << 8,
+    SMP_FAIL_PIDVFS_RESTORE_RUNNING    = 1ULL << 9,
+    SMP_FAIL_PIDVFS_TASK_BODY          = 1ULL << 10,
+    SMP_FAIL_PIDVFS_SLOT_LAYOUT        = 1ULL << 11,
 
-    SMP_FAIL_SCHED_MISSING_MANAGERS     = 1ULL << 16,
-    SMP_FAIL_SCHED_MISSING_RUNNING      = 1ULL << 17,
-    SMP_FAIL_SCHED_MISSING_ADDR_SPACE   = 1ULL << 18,
-    SMP_FAIL_SCHED_CREATE_PROCESS       = 1ULL << 19,
-    SMP_FAIL_SCHED_CREATE_TASK          = 1ULL << 20,
-    SMP_FAIL_SCHED_ADD_TASK             = 1ULL << 21,
-    SMP_FAIL_SCHED_ENQUEUE              = 1ULL << 22,
-    SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED   = 1ULL << 23,
-    SMP_FAIL_SCHED_RUN_NEXT             = 1ULL << 24,
-    SMP_FAIL_SCHED_TASK_NOT_ENTERED     = 1ULL << 25,
-    SMP_FAIL_SCHED_PROCESS_MISMATCH     = 1ULL << 26,
+    SMP_FAIL_SCHED_MISSING_MANAGERS   = 1ULL << 16,
+    SMP_FAIL_SCHED_MISSING_RUNNING    = 1ULL << 17,
+    SMP_FAIL_SCHED_MISSING_ADDR_SPACE = 1ULL << 18,
+    SMP_FAIL_SCHED_CREATE_PROCESS     = 1ULL << 19,
+    SMP_FAIL_SCHED_CREATE_TASK        = 1ULL << 20,
+    SMP_FAIL_SCHED_ADD_TASK           = 1ULL << 21,
+    SMP_FAIL_SCHED_ENQUEUE            = 1ULL << 22,
+    SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED = 1ULL << 23,
+    SMP_FAIL_SCHED_RUN_NEXT           = 1ULL << 24,
+    SMP_FAIL_SCHED_TASK_NOT_ENTERED   = 1ULL << 25,
+    SMP_FAIL_SCHED_PROCESS_MISMATCH   = 1ULL << 26,
 };
 
 enum smp_pidvfs_task_fail_stage
@@ -137,7 +137,7 @@ static void smp_pid_vfs_task(void* arg)
     if (currentProcess == nullptr)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_CURRENT_PROCESS;
-        localFail = 1;
+        localFail      = 1;
     }
 
     if (!localFail)
@@ -146,7 +146,7 @@ static void smp_pid_vfs_task(void* arg)
         if (opened == nullptr)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_OPEN;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
@@ -156,7 +156,7 @@ static void smp_pid_vfs_task(void* arg)
         if (fd < 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_ADD_FD;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
@@ -167,7 +167,7 @@ static void smp_pid_vfs_task(void* arg)
         if (fileBytes <= 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_READ;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
@@ -178,11 +178,11 @@ static void smp_pid_vfs_task(void* arg)
         if (payloadLen == 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_PAYLOAD;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
-    uint64_t slotSize         = 16;
+    uint64_t       slotSize   = 16;
     const uint64_t cpuCount   = platform.cpu_count == 0 ? 1 : platform.cpu_count;
     const uint64_t defaultMin = slotSize * cpuCount;
     if ((uint64_t) fileBytes < defaultMin)
@@ -194,25 +194,25 @@ static void smp_pid_vfs_task(void* arg)
     if (!localFail && (slotSize == 0 || payloadLen > slotSize || slotOffset + (uint64_t) payloadLen > (uint64_t) fileBytes))
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SLOT_LAYOUT;
-        localFail = 1;
+        localFail      = 1;
     }
 
     if (!localFail && ctx->vfs->Seek(opened, (int64_t) slotOffset, 0) < 0)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SEEK_WRITE;
-        localFail = 1;
+        localFail      = 1;
     }
 
     if (!localFail && ctx->vfs->Write(opened, payload, (uint64_t) payloadLen) != (int64_t) payloadLen)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_WRITE;
-        localFail = 1;
+        localFail      = 1;
     }
 
     if (!localFail && ctx->vfs->Seek(opened, (int64_t) slotOffset, 0) < 0)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SEEK_VERIFY;
-        localFail = 1;
+        localFail      = 1;
     }
 
     if (!localFail)
@@ -221,7 +221,7 @@ static void smp_pid_vfs_task(void* arg)
         if (verifyBytes != (int64_t) payloadLen || memcmp(verify, payload, payloadLen) != 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_VERIFY;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
@@ -236,7 +236,7 @@ static void smp_pid_vfs_task(void* arg)
         if (ctx->vfs->Close(opened) != 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_CLOSE;
-            localFail = 1;
+            localFail      = 1;
         }
     }
 
@@ -252,9 +252,9 @@ static void smp_pid_vfs_task(void* arg)
 
 extern "C" void smp_selftests(void)
 {
-    const uint64_t cpuId = (uint64_t) arch_cpu_id();
-    smp_test_totals_t totals            = {};
-    unsigned long long localFailMask    = 0;
+    const uint64_t     cpuId             = (uint64_t) arch_cpu_id();
+    smp_test_totals_t  totals            = {};
+    unsigned long long localFailMask     = 0;
     ResourceLayerCaps* resourceLayerCaps = nullptr;
     LogicLayerCaps*    logicLayerCaps    = nullptr;
 
@@ -279,7 +279,6 @@ extern "C" void smp_selftests(void)
         }
         else
         {
-
             TaskManager*       taskManager    = resourceLayerCaps->taskManager;
             ProcessManager*    processManager = resourceLayerCaps->processManager;
             VirtualFileSystem* vfs            = logicLayerCaps->virtualFileSystem;
@@ -290,12 +289,12 @@ extern "C" void smp_selftests(void)
             unsigned long long passes = 0;
             unsigned long long fails  = 0;
 
-            task_t*            returnTask = taskManager->GetRunningTask((uint8_t) cpuId);
-            process_t*         originalRun = processManager->GetRunningProcess((uint8_t) cpuId);
-            virt_addr_space_t* activeSpace = platform.cpus[cpuId].address_space;
-            process_t*         process      = nullptr;
-            task_t*            task         = nullptr;
-            smp_pid_vfs_task_context_t ctx  = {};
+            task_t*                    returnTask  = taskManager->GetRunningTask((uint8_t) cpuId);
+            process_t*                 originalRun = processManager->GetRunningProcess((uint8_t) cpuId);
+            virt_addr_space_t*         activeSpace = platform.cpus[cpuId].address_space;
+            process_t*                 process     = nullptr;
+            task_t*                    task        = nullptr;
+            smp_pid_vfs_task_context_t ctx         = {};
 
             do
             {
@@ -429,8 +428,8 @@ extern "C" void smp_selftests(void)
             totals.passes += passes;
             totals.fails += fails;
 
-            unsigned long long schedulerPasses = 0;
-            unsigned long long schedulerFails  = 0;
+            unsigned long long schedulerPasses   = 0;
+            unsigned long long schedulerFails    = 0;
             unsigned long long schedulerFailMask = 0;
             run_smp_scheduler_selftest((void*) logicLayerCaps, (void*) resourceLayerCaps, (unsigned long long) cpuId, &schedulerPasses, &schedulerFails, &schedulerFailMask);
             if (schedulerFailMask & (1ULL << 0))

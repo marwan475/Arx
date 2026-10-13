@@ -85,7 +85,7 @@ extern "C"
     phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
     // Isolated user roots share only kernel-half tables. Destroy after removing user leaves.
     phys_addr_t arch_create_user_page_table(void);
-    void arch_destroy_user_page_table(phys_addr_t page_table);
+    void        arch_destroy_user_page_table(phys_addr_t page_table);
 
     typedef void (*arch_stack_entry_t)(void* arg);
     typedef void (*arch_task_entry_t)(void* arg);

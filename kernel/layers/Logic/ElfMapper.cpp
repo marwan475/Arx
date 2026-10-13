@@ -669,15 +669,16 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
     metadata->entryPoint       = metadata->loadBias + metadata->originalEntryPoint;
     metadata->executableLoaded = true;
     {
-    uint64_t heapEnd = 0;
-    for (uint64_t i = 0; i < metadata->segmentCount; ++i)
-    {
-        const auto& segment = metadata->segments[i];
-        uint64_t end = segment.mappedAddress + segment.memorySize;
-        if (end > heapEnd) heapEnd = end;
-    }
-    process->breakBase = align_up(heapEnd, PAGE_SIZE);
-    process->programBreak = process->breakBase;
+        uint64_t heapEnd = 0;
+        for (uint64_t i = 0; i < metadata->segmentCount; ++i)
+        {
+            const auto& segment = metadata->segments[i];
+            uint64_t    end     = segment.mappedAddress + segment.memorySize;
+            if (end > heapEnd)
+                heapEnd = end;
+        }
+        process->breakBase    = align_up(heapEnd, PAGE_SIZE);
+        process->programBreak = process->breakBase;
     }
 
     kfree(scratch);

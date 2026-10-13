@@ -1,8 +1,8 @@
 #include "layers/Request/MemoryRequestManager.hpp"
 
-#include "layers/Resource/ResourceLayerFactory.hpp"
-#include "layers/Resource/ProcessMemoryManager.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/ProcessMemoryManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
 
 namespace
 {

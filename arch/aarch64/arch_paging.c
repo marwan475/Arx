@@ -959,5 +959,11 @@ phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t 
 }
 
 // AArch64 isolated user-root lifecycle needs TTBR0/kernel sharing integration.
-phys_addr_t arch_create_user_page_table(void) { return 0; }
-void arch_destroy_user_page_table(phys_addr_t page_table) { (void) page_table; }
+phys_addr_t arch_create_user_page_table(void)
+{
+    return 0;
+}
+void arch_destroy_user_page_table(phys_addr_t page_table)
+{
+    (void) page_table;
+}

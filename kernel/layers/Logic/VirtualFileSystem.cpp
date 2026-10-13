@@ -35,18 +35,18 @@ static int64_t  vfs_resource_seek(file_t* file, int64_t offset, int whence);
 static int64_t  vfs_resource_readdir(file_t* file, directory_entry_t* entry);
 static void     vfs_resource_release(file_t* file);
 
-static int64_t  vfs_symlink_read(file_t* file, void* buffer, uint64_t count);
+static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count);
 
 static const inode_operations_t g_vfs_resource_inode_ops = {
         vfs_resource_lookup,
 };
 
 static const file_operations_t g_vfs_resource_file_ops = {
-    vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, vfs_resource_readdir, nullptr, nullptr, vfs_resource_release,
+        vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, vfs_resource_readdir, nullptr, nullptr, vfs_resource_release,
 };
 
 static const file_operations_t g_vfs_symlink_file_ops = {
-    nullptr, vfs_symlink_read, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, vfs_symlink_read, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
 
 struct vfs_symlink_private_t
@@ -61,8 +61,8 @@ struct vfs_resource_file_private_t
 
 struct vfs_overlay_dentry_entry_t
 {
-    dentry_t*                    dentry;
-    vfs_overlay_dentry_entry_t*  next;
+    dentry_t*                   dentry;
+    vfs_overlay_dentry_entry_t* next;
 };
 
 constexpr int64_t VFS_ERR_NOENT  = -2;
@@ -290,8 +290,8 @@ static int64_t vfs_resource_readdir(file_t* file, directory_entry_t* entry)
     }
 
     resource_directory_entry_t resourceEntry = {};
-    uint64_t cursor = file->offset;
-    const int64_t result = inodePrivate->caps->ReadDirectory(inodePrivate->caps, inodePrivate->backendNode, &cursor, &resourceEntry);
+    uint64_t                   cursor        = file->offset;
+    const int64_t              result        = inodePrivate->caps->ReadDirectory(inodePrivate->caps, inodePrivate->backendNode, &cursor, &resourceEntry);
     if (result <= 0)
     {
         return result;
@@ -299,7 +299,7 @@ static int64_t vfs_resource_readdir(file_t* file, directory_entry_t* entry)
 
     memcpy(filePrivate->direntName, resourceEntry.name, sizeof(filePrivate->direntName));
 
-    entry->name       = filePrivate->direntName;
+    entry->name        = filePrivate->direntName;
     entry->inodeNumber = resourceEntry.inodeNumber;
 
     switch (resourceEntry.type)
@@ -630,7 +630,7 @@ VirtualFileSystem::~VirtualFileSystem()
 
     spinlock_acquire(&OverlayDentryLock);
     vfs_overlay_dentry_entry_t* overlay = OverlayDentryHead;
-    OverlayDentryHead                  = nullptr;
+    OverlayDentryHead                   = nullptr;
     spinlock_release(&OverlayDentryLock);
 
     while (overlay != nullptr)
@@ -724,8 +724,8 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
         }
     }
 
-    entry->dentry = dentry;
-    entry->next   = OverlayDentryHead;
+    entry->dentry     = dentry;
+    entry->next       = OverlayDentryHead;
     OverlayDentryHead = entry;
     spinlock_release(&OverlayDentryLock);
     return true;
@@ -1074,7 +1074,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     }
 
     constexpr size_t VFS_MAX_SYMLINK_FOLLOWS = 16;
-    size_t           symlinkFollows           = 0;
+    size_t           symlinkFollows          = 0;
 
     const size_t pathLen = strlen(path);
     if (pathLen == 0)
@@ -1180,7 +1180,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
                 return false;
             }
 
-            const char* remainder = (saved == '\0') ? "" : p;
+            const char*  remainder = (saved == '\0') ? "" : p;
             const size_t targetLen = strlen(linkTarget);
             const size_t remainLen = strlen(remainder);
 
@@ -1326,7 +1326,7 @@ bool VirtualFileSystem::JoinPath(const char* base, const char* path, char* outPa
     size_t baseLen = strlen(base);
     if (baseLen == 0)
     {
-        base = "/";
+        base    = "/";
         baseLen = 1;
     }
 

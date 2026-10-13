@@ -15,8 +15,7 @@ extern "C"
 #include <platform.h>
 }
 
-SchedulerRequestManager::SchedulerRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
-    : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
+SchedulerRequestManager::SchedulerRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps) : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
 {
 }
 
@@ -58,7 +57,7 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
         return LINUX_ESRCH;
     }
 
-    const uint64_t setSize = frame->arg1;
+    const uint64_t  setSize = frame->arg1;
     const uintptr_t userSet = (uintptr_t) frame->arg2;
     if (userSet == 0)
     {
@@ -73,7 +72,7 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
 
     uint8_t affinityMaskBuffer[sizeof(uint64_t)] = {0};
 
-    uint64_t mask = 0;
+    uint64_t      mask     = 0;
     const uint8_t cpuCount = (uint8_t) ((platform.cpu_count > BOOT_SMP_MAX_CPUS) ? BOOT_SMP_MAX_CPUS : platform.cpu_count);
     for (uint8_t cpu = 0; cpu < cpuCount; ++cpu)
     {
@@ -89,8 +88,8 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
     if (setSize > requiredSetSize)
     {
         constexpr uint8_t zeroBuffer[16] = {0};
-        uint64_t remaining = setSize - requiredSetSize;
-        uintptr_t current  = userSet + requiredSetSize;
+        uint64_t          remaining      = setSize - requiredSetSize;
+        uintptr_t         current        = userSet + requiredSetSize;
         while (remaining > 0)
         {
             const uint64_t chunk = remaining > sizeof(zeroBuffer) ? sizeof(zeroBuffer) : remaining;

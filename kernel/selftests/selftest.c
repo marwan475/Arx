@@ -134,7 +134,7 @@ void selftest_case_begin(const char* test_name)
 
     if (g_case_result_count < SELFTEST_MAX_CASES)
     {
-        const unsigned long long idx = g_case_result_count;
+        const unsigned long long idx  = g_case_result_count;
         g_case_results[idx].test_name = test_name;
         g_case_results[idx].passes    = 0;
         g_case_results[idx].failures  = 0;
@@ -276,13 +276,11 @@ void selftest_print_summary(void)
             const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
             if (strcmp(name, "requestlayer_selftest") == 0)
             {
-                KDEBUG("[selftest] case detail: %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures,
-                       result);
+                KDEBUG("[selftest] case detail: %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
             }
             else
             {
-                KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures,
-                       result);
+                KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
             }
             if (g_case_results[i].failures != 0)
             {

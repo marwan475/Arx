@@ -94,8 +94,8 @@ public:
     bool       SetRunningProcess(uint8_t cpuId, process_t* process);
     process_t* GetCurrentProcess() const;
     process_t* AcquireCurrentMemoryProcess();
-    void ReleaseMemoryProcess(process_t* process);
-    uint64_t GetCurrentProgramBreak() const;
+    void       ReleaseMemoryProcess(process_t* process);
+    uint64_t   GetCurrentProgramBreak() const;
 
     process_t*       GetProcesses();
     const process_t* GetProcesses() const;
@@ -111,6 +111,6 @@ private:
     void       UnlockManager() const;
 
     mutable spinlock_t ManagerLock;
-    process_t  Processes[MAX_PROCESSES];
-    process_t* RunningProcesses[BOOT_SMP_MAX_CPUS];
+    process_t          Processes[MAX_PROCESSES];
+    process_t*         RunningProcesses[BOOT_SMP_MAX_CPUS];
 };

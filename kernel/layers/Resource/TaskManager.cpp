@@ -74,11 +74,11 @@ TaskManager::TaskManager()
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
         memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-        Tasks[i].allocated  = false;
-        Tasks[i].isUserTask = false;
-        Tasks[i].syscallActive = 0;
+        Tasks[i].allocated       = false;
+        Tasks[i].isUserTask      = false;
+        Tasks[i].syscallActive   = 0;
         Tasks[i].preemptionDepth = 0;
-        Tasks[i].id         = (uint64_t) i;
+        Tasks[i].id              = (uint64_t) i;
         memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
         Tasks[i].stack = nullptr;
         Tasks[i].next  = nullptr;
@@ -105,11 +105,11 @@ task_t* TaskManager::AllocateTaskUnlocked()
         if (!Tasks[i].allocated)
         {
             memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-            Tasks[i].allocated  = true;
-            Tasks[i].isUserTask = false;
-            Tasks[i].syscallActive = 0;
+            Tasks[i].allocated       = true;
+            Tasks[i].isUserTask      = false;
+            Tasks[i].syscallActive   = 0;
             Tasks[i].preemptionDepth = 0;
-            Tasks[i].id         = (uint64_t) i;
+            Tasks[i].id              = (uint64_t) i;
             memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
             Tasks[i].stack = nullptr;
             Tasks[i].next  = nullptr;
@@ -152,9 +152,9 @@ task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
         return nullptr;
     }
 
-    task->stack = allocatedStack;
-    task->isUserTask = false;
-    task->syscallActive = 0;
+    task->stack           = allocatedStack;
+    task->isUserTask      = false;
+    task->syscallActive   = 0;
     task->preemptionDepth = 0;
 
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
@@ -182,7 +182,7 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
         return nullptr;
     }
 
-    task->stack = allocatedStack;
+    task->stack                     = allocatedStack;
     task->isUserTask                = true;
     task->userLaunchContext.userRip = userRip;
     task->userLaunchContext.userRsp = userRsp;
@@ -287,11 +287,11 @@ bool TaskManager::ExecuteTask(task_t* task)
     }
 
     const uint64_t interruptState = task_save_and_disable_interrupts();
-    cpu_info_t* cpu_info = &platform.cpus[cpuId];
-    current->preemptionDepth = cpu_info->preemption_depth;
-    cpu_info->preemption_depth = task->preemptionDepth;
+    cpu_info_t*    cpu_info       = &platform.cpus[cpuId];
+    current->preemptionDepth      = cpu_info->preemption_depth;
+    cpu_info->preemption_depth    = task->preemptionDepth;
 #if defined(__x86_64__)
-    current->syscallActive = cpu_info->arch_info.syscall_ctx.active;
+    current->syscallActive                 = cpu_info->arch_info.syscall_ctx.active;
     cpu_info->arch_info.syscall_ctx.active = task->syscallActive;
 #endif
     if (task->isUserTask)

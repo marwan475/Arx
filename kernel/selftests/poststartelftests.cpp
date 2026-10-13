@@ -40,11 +40,11 @@ struct poststart_elf_test_context_t
     TaskManager* taskManager;
     task_t*      bspTask;
 
-    volatile int syscallProbeSeen;
-    volatile int syscallAbiValid;
-    volatile int exitSeen;
+    volatile int      syscallProbeSeen;
+    volatile int      syscallAbiValid;
+    volatile int      exitSeen;
     volatile uint64_t exitStatus;
-    volatile int hookArmed;
+    volatile int      hookArmed;
 };
 
 static poststart_elf_test_context_t g_poststart_elf_ctx = {};
@@ -207,8 +207,8 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
         uint32_t mxcsr = 0;
         __asm__ volatile("pushfq; popq %0" : "=r"(flags));
         __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
-        g_poststart_elf_ctx.syscallAbiValid = frame->arg0 == 0xA11E && frame->arg1 == 0xBEEF && frame->arg2 == 0xCDEF && frame->arg3 == 0xDEAD && frame->arg4 == 0xBABE && frame->arg5 == 0xFEED &&
-                                            (flags & (1ULL << 9)) != 0 && (flags & (1ULL << 10)) == 0 && mxcsr == 0x1f80 && platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active == 1;
+        g_poststart_elf_ctx.syscallAbiValid = frame->arg0 == 0xA11E && frame->arg1 == 0xBEEF && frame->arg2 == 0xCDEF && frame->arg3 == 0xDEAD && frame->arg4 == 0xBABE && frame->arg5 == 0xFEED && (flags & (1ULL << 9)) != 0 && (flags & (1ULL << 10)) == 0 && mxcsr == 0x1f80
+                                              && platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active == 1;
         // Raw syscalls preserve user SIMD state even when kernel C clobbers it.
         __asm__ volatile("pxor %%xmm0, %%xmm0; pxor %%xmm7, %%xmm7; pxor %%xmm15, %%xmm15" : : : "xmm0", "xmm7", "xmm15");
         g_poststart_elf_ctx.syscallProbeSeen = 1;
@@ -219,7 +219,7 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     if (frame->syscall_number == SELFTEST_SYSCALL_EXIT)
     {
-        g_poststart_elf_ctx.exitSeen = 1;
+        g_poststart_elf_ctx.exitSeen   = 1;
         g_poststart_elf_ctx.exitStatus = frame->arg0;
         kprintf("Arx kernel: poststart_elf_selftest syscall exit hit (status=%llu)\n", (unsigned long long) frame->arg0);
 
@@ -335,7 +335,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         for (uint64_t i = 0; i < metadata.segmentCount; ++i)
         {
             const elf_segment_metadata_t& segment = metadata.segments[i];
-            const uint64_t end = segment.mappedAddress + segment.memorySize;
+            const uint64_t                end     = segment.mappedAddress + segment.memorySize;
             if (end > executableEnd)
             {
                 executableEnd = end;

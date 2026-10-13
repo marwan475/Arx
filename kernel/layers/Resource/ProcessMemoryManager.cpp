@@ -5,8 +5,7 @@
 
 #include <klib/klib.h>
 
-ProcessMemoryManager::ProcessMemoryManager(ProcessManager* processManager, VirtualMemoryManager* virtualMemoryManager)
-    : ProcessManagerImport(processManager), VirtualMemoryManagerImport(virtualMemoryManager)
+ProcessMemoryManager::ProcessMemoryManager(ProcessManager* processManager, VirtualMemoryManager* virtualMemoryManager) : ProcessManagerImport(processManager), VirtualMemoryManagerImport(virtualMemoryManager)
 {
 }
 namespace
@@ -103,11 +102,11 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
         return EndMemoryOperation(process, static_cast<uint64_t>(-95));
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
-    length                                    = align_up(length, PAGE_SIZE);
-    address                                   = align_down(address, PAGE_SIZE);
-    const bool fixed                          = (flags & (0x10 | 0x100000)) != 0;
+    length                                     = align_up(length, PAGE_SIZE);
+    address                                    = align_down(address, PAGE_SIZE);
+    const bool fixed                           = (flags & (0x10 | 0x100000)) != 0;
 
     if (fixed)
     {
@@ -200,7 +199,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
         return static_cast<uint64_t>(-3);
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
@@ -211,8 +210,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
     // Preflight legacy mappings so an unsupported request changes no pages.
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
-        if (!owns_anonymous_page(virtualMemoryManager, space, page) &&
-            (virtualMemoryManager->FindRegion(space, page) != nullptr || virtualMemoryManager->VirtToPhys(page, space) != 0))
+        if (!owns_anonymous_page(virtualMemoryManager, space, page) && (virtualMemoryManager->FindRegion(space, page) != nullptr || virtualMemoryManager->VirtToPhys(page, space) != 0))
         {
             return EndMemoryOperation(process, static_cast<uint64_t>(-95));
         }
@@ -234,7 +232,7 @@ uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t l
         return static_cast<uint64_t>(-3);
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
@@ -267,7 +265,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
         return static_cast<uint64_t>(-3);
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
@@ -324,7 +322,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
         return static_cast<uint64_t>(-3);
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
@@ -376,7 +374,7 @@ uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
         return ProcessManagerImport != nullptr ? ProcessManagerImport->GetCurrentProgramBreak() : 0;
     }
 
-    virt_addr_space_t*     space                = process->addressSpace;
+    virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     const uint64_t        oldBreak             = process->programBreak;
     if (address == 0 || process->breakBase == 0 || address < process->breakBase || address > CANONICAL_USER_END)

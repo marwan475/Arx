@@ -6,6 +6,78 @@
 
 spinlock_t kprintf_lock = 0;
 
+// An empty range still requires its address to be inside the inclusive bounds.
+// Subtraction avoids overflow, including upper == UINT64_MAX.
+bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_t upper)
+{
+    return address >= lower && address <= upper && (length == 0 || length - 1 <= upper - address);
+}
+
+static bool validate_user_memory(const user_memory_access_t* access, uint64_t address, size_t length, bool write)
+{
+    if (access == NULL || access->space == NULL || !range_within_u64(address, length, CANONICAL_USER_BASE, CANONICAL_USER_END)) return false;
+    for (uint64_t page = align_down(address, PAGE_SIZE); length != 0 && page < address + length; page += PAGE_SIZE)
+    {
+        spinlock_acquire(&access->space->lock);
+        bool accessible = arch_user_page_accessible(page, access->space->pt, write);
+        spinlock_release(&access->space->lock);
+        if (!accessible) return false;
+    }
+    return true;
+}
+
+bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length)
+{
+    if (destination == NULL || !validate_user_memory(access, address, length, false)) return false;
+    uint8_t* output = destination;
+    while (length != 0)
+    {
+        size_t offset = address & (PAGE_SIZE - 1);
+        size_t chunk = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
+        phys_addr_t physical = vmm_virt_to_phys(align_down(address, PAGE_SIZE), access->space);
+        if (physical == 0) return false;
+        const uint8_t* page = (const uint8_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+        memcpy(output, page + offset, chunk);
+        output += chunk; address += chunk; length -= chunk;
+    }
+    return true;
+}
+
+bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length)
+{
+    if (source == NULL || !validate_user_memory(access, address, length, true)) return false;
+    const uint8_t* input = source;
+    while (length != 0)
+    {
+        size_t offset = address & (PAGE_SIZE - 1);
+        size_t chunk = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
+        phys_addr_t physical = vmm_virt_to_phys(align_down(address, PAGE_SIZE), access->space);
+        if (physical == 0) return false;
+        uint8_t* page = (uint8_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+        memcpy(page + offset, input, chunk);
+        input += chunk; address += chunk; length -= chunk;
+    }
+    return true;
+}
+
+bool safe_read_user(uint64_t address, void* destination, size_t length)
+{
+    user_memory_access_t access;
+    if (!begin_user_memory(&access)) return false;
+    bool result = safe_read_user_locked(&access, address, destination, length);
+    end_user_memory(&access);
+    return result;
+}
+
+bool safe_write_user(uint64_t address, const void* source, size_t length)
+{
+    user_memory_access_t access;
+    if (!begin_user_memory(&access)) return false;
+    bool result = safe_write_user_locked(&access, address, source, length);
+    end_user_memory(&access);
+    return result;
+}
+
 // klib printf only prints to qemu serial.
 // using printf library which uses our arch_serial_putchar()
 // In future will likely use this function to log to debug buffer for dmesg

@@ -92,6 +92,8 @@ ProcessManager::ProcessManager()
         Processes[i].breakBase           = 0;
         Processes[i].programBreak        = 0;
         Processes[i].memoryUsers         = 0;
+        memset(Processes[i].timerIntervalSeconds, 0, sizeof(Processes[i].timerIntervalSeconds));
+        memset(Processes[i].timerIntervalMicroseconds, 0, sizeof(Processes[i].timerIntervalMicroseconds));
         Processes[i].tasks               = nullptr;
         Processes[i].fileDescriptors     = nullptr;
         Processes[i].fileDescriptorCount = 0;
@@ -130,6 +132,8 @@ process_t* ProcessManager::AllocateProcessUnlocked()
             Processes[i].breakBase           = 0;
             Processes[i].programBreak        = 0;
             Processes[i].memoryUsers         = 0;
+            memset(Processes[i].timerIntervalSeconds, 0, sizeof(Processes[i].timerIntervalSeconds));
+            memset(Processes[i].timerIntervalMicroseconds, 0, sizeof(Processes[i].timerIntervalMicroseconds));
             Processes[i].tasks               = nullptr;
             Processes[i].fileDescriptors     = nullptr;
             Processes[i].fileDescriptorCount = 0;
@@ -855,13 +859,13 @@ size_t ProcessManager::GetCapacity() const
     return MAX_PROCESSES;
 }
 
-process_t* ProcessManager::AcquireCurrentMemoryProcess()
+process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)
 {
     LockManager();
     process_t* process = GetCurrentProcess();
     if (process && process->allocated && !process->exited && process->addressSpace)
     {
-        for (size_t i = 0; i < MAX_PROCESSES; ++i)
+        for (size_t i = 0; requireExclusive && i < MAX_PROCESSES; ++i)
             if (&Processes[i] != process && Processes[i].allocated && Processes[i].addressSpace == process->addressSpace)
             {
                 process = nullptr;

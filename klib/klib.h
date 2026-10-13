@@ -14,6 +14,16 @@
 #include <stdint.h>
 #include <terminal/terminal.h>
 
+struct process_t;
+struct virt_addr_space;
+
+typedef struct user_memory_access
+{
+    void* process_manager;
+    struct process_t* process;
+    struct virt_addr_space* space;
+} user_memory_access_t;
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -44,6 +54,20 @@ extern "C"
     {
         return x & ~(a - 1);
     }
+
+    // Inclusive bounds; validates address arithmetic, not mapping permissions.
+    bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_t upper);
+
+    // Safe current-process copies: validate userspace bounds and page permissions,
+    // pin the process, and serialize mapping changes for the complete copy.
+    bool safe_read_user(uint64_t address, void* destination, size_t length);
+    bool safe_write_user(uint64_t address, const void* source, size_t length);
+    // Multi-copy transactions. Pair every successful begin with end, and never
+    // retain the operation lock across a sleep or context switch.
+    bool begin_user_memory(user_memory_access_t* access);
+    void end_user_memory(user_memory_access_t* access);
+    bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length);
+    bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length);
 
     // memory
     void*     memset(void* dest, int value, size_t count);

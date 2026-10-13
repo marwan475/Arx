@@ -903,3 +903,29 @@ void arch_destroy_user_page_table(phys_addr_t page_table)
     if (page_table && page_table != arch_get_pt())
         destroy_empty_user_tables(page_table, 4, 256);
 }
+
+bool arch_user_page_accessible(virt_addr_t va, phys_addr_t page_table, bool write)
+{
+    if (va > CANONICAL_USER_END || !page_table || !x86_64_is_page_aligned(page_table) || !x86_64_is_pa_encodable(page_table))
+    {
+        return false;
+    }
+    phys_addr_t table = page_table;
+    for (int shift = 39; shift >= 12; shift -= 9)
+    {
+        const uint64_t entry = x86_64_table_from_pa(table)[(va >> shift) & X86_64_PT_INDEX_MASK];
+        if ((entry & (X86_64_PTE_PRESENT | X86_64_PTE_USER)) != (X86_64_PTE_PRESENT | X86_64_PTE_USER) || (write && (entry & X86_64_PTE_WRITABLE) == 0))
+        {
+            return false;
+        }
+        if (shift == 12)
+        {
+            return true;
+        }
+        if (!x86_64_decode_table_entry(entry, &table))
+        {
+            return false;
+        }
+    }
+    return false;
+}

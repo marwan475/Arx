@@ -76,6 +76,8 @@ TaskManager::TaskManager()
         memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
         Tasks[i].allocated       = false;
         Tasks[i].isUserTask      = false;
+        Tasks[i].sleepPending    = false;
+        Tasks[i].sleepBlocked    = false;
         Tasks[i].syscallActive   = 0;
         Tasks[i].preemptionDepth = 0;
         Tasks[i].id              = (uint64_t) i;
@@ -107,6 +109,8 @@ task_t* TaskManager::AllocateTaskUnlocked()
             memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
             Tasks[i].allocated       = true;
             Tasks[i].isUserTask      = false;
+            Tasks[i].sleepPending    = false;
+            Tasks[i].sleepBlocked    = false;
             Tasks[i].syscallActive   = 0;
             Tasks[i].preemptionDepth = 0;
             Tasks[i].id              = (uint64_t) i;
@@ -214,7 +218,7 @@ bool TaskManager::FreeTask(task_t* task)
         return false;
     }
 
-    if (!task->allocated)
+    if (!task->allocated || __atomic_load_n(&task->sleepPending, __ATOMIC_ACQUIRE))
     {
         UnlockManager();
         return false;
@@ -264,7 +268,7 @@ bool TaskManager::ExecuteTask(task_t* task)
         return false;
     }
 
-    if (!task->allocated)
+    if (!task->allocated || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
     {
         return false;
     }
@@ -323,6 +327,27 @@ bool TaskManager::ExecuteTask(task_t* task)
     RunningTasks[cpuId] = current;
     task_restore_interrupts(interruptState);
     return true;
+}
+
+bool TaskManager::MarkSleeping(task_t* task)
+{
+    LockManager();
+    bool result = task != nullptr && task == GetCurrentTask() && task->allocated && !task->sleepPending;
+    if (result)
+    {
+        __atomic_store_n(&task->sleepPending, true, __ATOMIC_RELEASE);
+        __atomic_store_n(&task->sleepBlocked, true, __ATOMIC_RELEASE);
+    }
+    UnlockManager();
+    return result;
+}
+
+void TaskManager::FinishSleeping(task_t* task)
+{
+    LockManager();
+    __atomic_store_n(&task->sleepBlocked, false, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->sleepPending, false, __ATOMIC_RELEASE);
+    UnlockManager();
 }
 
 task_t* TaskManager::GetRunningTask(uint8_t cpuId) const

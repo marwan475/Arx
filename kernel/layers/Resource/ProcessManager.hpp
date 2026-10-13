@@ -63,6 +63,8 @@ struct process_t
     uint64_t           breakBase;
     uint64_t           programBreak;
     uint32_t           memoryUsers;
+    int64_t            timerIntervalSeconds[3];
+    int64_t            timerIntervalMicroseconds[3];
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
     uint64_t           fileDescriptorCount;
@@ -93,7 +95,7 @@ public:
     process_t* GetRunningProcess(uint8_t cpuId) const;
     bool       SetRunningProcess(uint8_t cpuId, process_t* process);
     process_t* GetCurrentProcess() const;
-    process_t* AcquireCurrentMemoryProcess();
+    process_t* AcquireCurrentMemoryProcess(bool requireExclusive = true);
     void       ReleaseMemoryProcess(process_t* process);
     uint64_t   GetCurrentProgramBreak() const;
 

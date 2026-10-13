@@ -18,6 +18,8 @@ struct task_t
 
     bool                     allocated;
     bool                     isUserTask;
+    bool                     sleepPending;
+    bool                     sleepBlocked;
     uint64_t                 syscallActive;
     uint32_t                 preemptionDepth;
     uint64_t                 id;
@@ -39,6 +41,8 @@ public:
     task_t* CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
     bool    FreeTask(task_t* task);
     bool    ExecuteTask(task_t* task);
+    bool    MarkSleeping(task_t* task);
+    void    FinishSleeping(task_t* task);
 
     task_t* GetRunningTask(uint8_t cpuId) const;
     bool    SetRunningTask(uint8_t cpuId, task_t* task);

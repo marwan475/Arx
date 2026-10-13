@@ -83,6 +83,10 @@ extern "C"
 
     // Returns physical address for a mapped virtual address, or 0 if unmapped.
     phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
+    bool arch_user_page_accessible(virt_addr_t va, phys_addr_t page_table, bool write);
+
+    bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds);
+    bool arch_time_read_monotonic(uint64_t* nanoseconds);
     // Isolated user roots share only kernel-half tables. Destroy after removing user leaves.
     phys_addr_t arch_create_user_page_table(void);
     void        arch_destroy_user_page_table(phys_addr_t page_table);

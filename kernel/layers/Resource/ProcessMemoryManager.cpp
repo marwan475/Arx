@@ -12,7 +12,7 @@ namespace
 {
 static bool memory_range_end(uint64_t address, uint64_t length, uint64_t* outEnd)
 {
-    if (address > CANONICAL_USER_END || length > CANONICAL_USER_END + 1 - address)
+    if (!range_within_u64(address, length, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return false;
     }
@@ -279,7 +279,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
         return EndMemoryOperation(process, 0);
     }
 
-    if (vector > CANONICAL_USER_END || count > CANONICAL_USER_END + 1 - vector)
+    if (!range_within_u64(vector, count, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return EndMemoryOperation(process, static_cast<uint64_t>(-14));
     }

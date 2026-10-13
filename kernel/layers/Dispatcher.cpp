@@ -1,6 +1,7 @@
 #include "layers/Dispatcher.hpp"
 
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/ProcessManager.hpp"
 
 #include <platform.h>
 
@@ -447,4 +448,35 @@ extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
     }
 
     dispatcher->DispatchInterruptRequest(interrupt_number);
+}
+
+// C bridge for klib: resolve the current process here, keeping process ownership
+// out of VirtualMemoryManager and keeping C++ classes out of klib.c.
+extern "C" bool begin_user_memory(user_memory_access_t* access)
+{
+    if (access == nullptr) return false;
+    *access = {};
+    cpu_preemption_disable();
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* caps = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
+    ProcessManager* manager = caps != nullptr ? caps->processManager : nullptr;
+    process_t* process = manager != nullptr ? manager->AcquireCurrentMemoryProcess(false) : nullptr;
+    if (process == nullptr)
+    {
+        cpu_preemption_enable();
+        return false;
+    }
+    spinlock_acquire(&process->addressSpace->operation_lock);
+    access->process_manager = manager;
+    access->process = process;
+    access->space = process->addressSpace;
+    return true;
+}
+
+extern "C" void end_user_memory(user_memory_access_t* access)
+{
+    spinlock_release(&access->space->operation_lock);
+    static_cast<ProcessManager*>(access->process_manager)->ReleaseMemoryProcess(access->process);
+    *access = {};
+    cpu_preemption_enable();
 }

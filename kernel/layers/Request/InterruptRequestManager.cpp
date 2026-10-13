@@ -46,6 +46,8 @@ void InterruptRequestManager::HandleScheduleRequest()
     ProcessManager* processManager = resourceLayerCaps->processManager;
     Scheduler*      scheduler      = logicLayerCaps->scheduler;
 
+    scheduler->WakeSleepingTasks(cpuId);
+
     if (!scheduler->IsSchedulingActive())
     {
         return;

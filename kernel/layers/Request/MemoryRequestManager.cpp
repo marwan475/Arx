@@ -4,16 +4,18 @@
 #include "layers/Resource/ProcessMemoryManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
-namespace
+#include <klib/klib.h>
+
+extern "C"
 {
-static bool valid_user_range(uint64_t address, uint64_t length)
-{
-    return address <= 0x7fffffffffffULL && length <= 0x800000000000ULL - address;
+#include <memory/vmm.h>
 }
 
+namespace
+{
 static bool valid_mapping_length(uint64_t length)
 {
-    return length != 0 && length <= 0x7ffffffff000ULL;
+    return length != 0 && length <= align_down(CANONICAL_USER_END, PAGE_SIZE);
 }
 } // namespace
 
@@ -30,7 +32,7 @@ uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* fra
         return LINUX_EINVAL;
     }
 
-    if ((frame->arg3 & (0x10 | 0x100000)) != 0 && ((frame->arg0 & 4095) != 0 || !valid_user_range(frame->arg0, frame->arg1)))
+    if ((frame->arg3 & (0x10 | 0x100000)) != 0 && ((frame->arg0 & 4095) != 0 || !range_within_u64(frame->arg0, frame->arg1, CANONICAL_USER_BASE, CANONICAL_USER_END)))
     {
         return LINUX_EINVAL;
     }
@@ -45,7 +47,7 @@ uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* fra
 
 uint64_t MemoryRequestManager::HandleMunmapRequest(const arch_syscall_frame_t* frame)
 {
-    if (frame == nullptr || (frame->arg0 & 4095) != 0 || !valid_mapping_length(frame->arg1) || !valid_user_range(frame->arg0, frame->arg1))
+    if (frame == nullptr || (frame->arg0 & 4095) != 0 || !valid_mapping_length(frame->arg1) || !range_within_u64(frame->arg0, frame->arg1, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return LINUX_EINVAL;
     }
@@ -60,7 +62,7 @@ uint64_t MemoryRequestManager::HandleMunmapRequest(const arch_syscall_frame_t* f
 
 uint64_t MemoryRequestManager::HandleMprotectRequest(const arch_syscall_frame_t* frame)
 {
-    if (frame == nullptr || (frame->arg0 & 4095) != 0 || (frame->arg2 & ~7ULL) != 0 || !valid_user_range(frame->arg0, frame->arg1))
+    if (frame == nullptr || (frame->arg0 & 4095) != 0 || (frame->arg2 & ~7ULL) != 0 || !range_within_u64(frame->arg0, frame->arg1, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return LINUX_EINVAL;
     }
@@ -80,7 +82,7 @@ uint64_t MemoryRequestManager::HandleMincoreRequest(const arch_syscall_frame_t* 
         return LINUX_EINVAL;
     }
 
-    if (!valid_user_range(frame->arg0, frame->arg1))
+    if (!range_within_u64(frame->arg0, frame->arg1, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return static_cast<uint64_t>(-12);
     }
@@ -95,7 +97,7 @@ uint64_t MemoryRequestManager::HandleMincoreRequest(const arch_syscall_frame_t* 
 
 uint64_t MemoryRequestManager::HandleMadviseRequest(const arch_syscall_frame_t* frame)
 {
-    if (frame == nullptr || (frame->arg0 & 4095) != 0 || !valid_user_range(frame->arg0, frame->arg1) || frame->arg2 > 4)
+    if (frame == nullptr || (frame->arg0 & 4095) != 0 || !range_within_u64(frame->arg0, frame->arg1, CANONICAL_USER_BASE, CANONICAL_USER_END) || frame->arg2 > 4)
     {
         // MADV_FREE needs lazy discard and dirty-page tracking.
         return LINUX_EINVAL;

@@ -144,21 +144,17 @@ bool ElfMapper::IsSupportedMachine(uint16_t machine) const
 
 bool ElfMapper::ValidateUserspaceRange(uint64_t virtualAddress, uint64_t memorySize) const
 {
-    if (memorySize == 0)
-    {
-        return virtualAddress <= CANONICAL_USER_END;
-    }
-
-    if (AddWouldOverflow(virtualAddress, memorySize - 1))
+    if (!range_within_u64(virtualAddress, memorySize, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
         return false;
+    }
+
+    if (memorySize == 0)
+    {
+        return true;
     }
 
     const uint64_t inclusiveEnd = virtualAddress + (memorySize - 1);
-    if (virtualAddress < CANONICAL_USER_BASE || inclusiveEnd > CANONICAL_USER_END)
-    {
-        return false;
-    }
 
     const uint64_t alignedStart = align_down(virtualAddress, PAGE_SIZE);
     if (AddWouldOverflow(inclusiveEnd, 1))

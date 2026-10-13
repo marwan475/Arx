@@ -967,3 +967,19 @@ void arch_destroy_user_page_table(phys_addr_t page_table)
 {
     (void) page_table;
 }
+
+bool arch_user_page_accessible(virt_addr_t va, phys_addr_t page_table, bool write)
+{
+    (void) va; (void) page_table; (void) write;
+    return false; // Strict user copies await the AArch64 user-address-space backend.
+}
+bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds)
+{
+    (void) realtimeSeconds; (void) realtimeAvailable; (void) resolutionNanoseconds;
+    return false;
+}
+bool arch_time_read_monotonic(uint64_t* nanoseconds)
+{
+    (void) nanoseconds;
+    return false;
+}

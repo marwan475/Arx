@@ -337,6 +337,7 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
         return;
     }
 
+    cpu_preemption_disable();
     spinlock_acquire(&space->operation_lock);
     virt_region_t* region = space->user_used_regions;
     while (region != nullptr)
@@ -351,6 +352,7 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
     }
 
     spinlock_release(&space->operation_lock);
+    cpu_preemption_enable();
 }
 
 virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()

@@ -100,12 +100,14 @@ ProcessManager::ProcessManager()
 
 void ProcessManager::LockManager() const
 {
+    cpu_preemption_disable();
     spinlock_acquire((spinlock_t*) &ManagerLock);
 }
 
 void ProcessManager::UnlockManager() const
 {
     spinlock_release((spinlock_t*) &ManagerLock);
+    cpu_preemption_enable();
 }
 
 process_t* ProcessManager::AllocateProcessUnlocked()

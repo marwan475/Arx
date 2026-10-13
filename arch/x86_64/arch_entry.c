@@ -110,6 +110,9 @@ static void arch_enable_fp_simd(void)
     write_cr0(cr0);
 
     cr4 |= (1ull << 9) | (1ull << 10);
+    // FXSAVE supports the baseline x87/SSE ABI. Do not inherit firmware's
+    // OSXSAVE setting until per-task extended-state save/restore is implemented.
+    cr4 &= ~(1ull << 18);
     write_cr4(cr4);
 
     __asm__ volatile("fninit");

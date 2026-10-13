@@ -41,7 +41,9 @@ struct poststart_elf_test_context_t
     task_t*      bspTask;
 
     volatile int syscallProbeSeen;
+    volatile int syscallAbiValid;
     volatile int exitSeen;
+    volatile uint64_t exitStatus;
     volatile int hookArmed;
 };
 
@@ -201,6 +203,14 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     if (frame->syscall_number == SELFTEST_SYSCALL_PROBE)
     {
+        uint64_t flags = 0;
+        uint32_t mxcsr = 0;
+        __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+        __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
+        g_poststart_elf_ctx.syscallAbiValid = frame->arg0 == 0xA11E && frame->arg1 == 0xBEEF && frame->arg2 == 0xCDEF && frame->arg3 == 0xDEAD && frame->arg4 == 0xBABE && frame->arg5 == 0xFEED &&
+                                            (flags & (1ULL << 9)) != 0 && (flags & (1ULL << 10)) == 0 && mxcsr == 0x1f80 && platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active == 1;
+        // Raw syscalls preserve user SIMD state even when kernel C clobbers it.
+        __asm__ volatile("pxor %%xmm0, %%xmm0; pxor %%xmm7, %%xmm7; pxor %%xmm15, %%xmm15" : : : "xmm0", "xmm7", "xmm15");
         g_poststart_elf_ctx.syscallProbeSeen = 1;
         kprintf("Arx kernel: poststart_elf_selftest syscall probe hit (nr=%llu arg0=0x%llx)\n", (unsigned long long) frame->syscall_number, (unsigned long long) frame->arg0);
         *handled = true;
@@ -210,13 +220,12 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
     if (frame->syscall_number == SELFTEST_SYSCALL_EXIT)
     {
         g_poststart_elf_ctx.exitSeen = 1;
+        g_poststart_elf_ctx.exitStatus = frame->arg0;
         kprintf("Arx kernel: poststart_elf_selftest syscall exit hit (status=%llu)\n", (unsigned long long) frame->arg0);
 
         if (g_poststart_elf_ctx.taskManager != nullptr && g_poststart_elf_ctx.bspTask != nullptr)
         {
-            // x86 syscall entry masks IF; restore interrupts before switching
-            // back to BSP task because task context switch does not restore RFLAGS.
-            arch_enable_interrupts();
+            // ExecuteTask restores the destination task's IRQ/preemption state.
             (void) g_poststart_elf_ctx.taskManager->ExecuteTask(g_poststart_elf_ctx.bspTask);
         }
 
@@ -415,6 +424,12 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     if (!g_poststart_elf_ctx.exitSeen)
     {
         poststart_elf_test_fail("user ELF did not perform expected exit syscall", &fails);
+        goto cleanup;
+    }
+
+    if (!g_poststart_elf_ctx.syscallAbiValid || g_poststart_elf_ctx.exitStatus != 0)
+    {
+        poststart_elf_test_fail("Linux syscall register/FPU/interrupt ABI transition", &fails);
         goto cleanup;
     }
 

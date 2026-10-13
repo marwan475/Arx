@@ -55,10 +55,15 @@ process_t* ProcessMemoryManager::BeginMemoryOperation()
         return nullptr;
     }
 
+    cpu_preemption_disable();
     process_t* process = ProcessManagerImport->AcquireCurrentMemoryProcess();
     if (process != nullptr)
     {
         spinlock_acquire(&process->addressSpace->operation_lock);
+    }
+    else
+    {
+        cpu_preemption_enable();
     }
 
     return process;
@@ -68,6 +73,7 @@ uint64_t ProcessMemoryManager::EndMemoryOperation(process_t* process, uint64_t r
 {
     spinlock_release(&process->addressSpace->operation_lock);
     ProcessManagerImport->ReleaseMemoryProcess(process);
+    cpu_preemption_enable();
     return result;
 }
 

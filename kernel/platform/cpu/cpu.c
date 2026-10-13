@@ -50,3 +50,22 @@ __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* ar
     void* stack_top = (void*) ((uint8_t*) cpu->kernel_stack_base + cpu->kernel_stack_size);
     arch_set_stack(stack_top, entry, arg);
 }
+void cpu_preemption_disable(void)
+{
+    if (platform.cpus != NULL)
+    {
+        __atomic_add_fetch(&platform.cpus[arch_cpu_id()].preemption_depth, 1, __ATOMIC_RELAXED);
+    }
+}
+
+void cpu_preemption_enable(void)
+{
+    if (platform.cpus != NULL)
+    {
+        cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+        if (__atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) != 0)
+        {
+            __atomic_sub_fetch(&cpu->preemption_depth, 1, __ATOMIC_RELAXED);
+        }
+    }
+}

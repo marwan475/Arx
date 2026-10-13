@@ -2780,12 +2780,19 @@ static bool test_memory_brk(process_t* process)
 }
 
 
+static bool memory_case_result(bool result)
+{
+    cpu_preemption_enable();
+    return result;
+}
+
 static bool run_memory_case(bool (*test)(process_t*))
 {
+    cpu_preemption_disable();
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     if (dispatcher == nullptr || dispatcher->GetResourceLayerCaps() == nullptr)
     {
-        return memory_expect(false, "memory syscall fixture missing dispatcher");
+        return memory_case_result(memory_expect(false, "memory syscall fixture missing dispatcher"));
     }
 
     ResourceLayerCaps*     caps                 = dispatcher->GetResourceLayerCaps();
@@ -2793,25 +2800,25 @@ static bool run_memory_case(bool (*test)(process_t*))
     VirtualMemoryManager* virtualMemoryManager = caps->virtualMemoryManager;
     if (processManager == nullptr || virtualMemoryManager == nullptr)
     {
-        return memory_expect(false, "memory syscall fixture missing resource managers");
+        return memory_case_result(memory_expect(false, "memory syscall fixture missing resource managers"));
     }
 
     process_t*         previous = processManager->GetCurrentProcess();
     if (previous == nullptr || previous->addressSpace == nullptr)
     {
-        return memory_expect(false, "memory syscall fixture requires a restorable process");
+        return memory_case_result(memory_expect(false, "memory syscall fixture requires a restorable process"));
     }
     virt_addr_space_t* space    = virtualMemoryManager->CreateUserAddressSpace();
     if (space == nullptr)
     {
-        return memory_expect(false, "memory syscall isolated address-space fixture unavailable");
+        return memory_case_result(memory_expect(false, "memory syscall isolated address-space fixture unavailable"));
     }
 
     process_t* process = processManager->CreateProcess(space);
     if (process == nullptr)
     {
         virtualMemoryManager->DestroyUserAddressSpace(space);
-        return memory_expect(false, "memory syscall process fixture allocation failed");
+        return memory_case_result(memory_expect(false, "memory syscall process fixture allocation failed"));
     }
 
     // Synthetic executable boundary; the fixture needs no userspace ELF/runtime.
@@ -2846,7 +2853,7 @@ static bool run_memory_case(bool (*test)(process_t*))
     result &= memory_expect(processManager->FreeProcess(process), "memory syscall fixture process cleanup");
     result &= memory_expect(space->user_used_regions == nullptr, "memory syscall fixture releases all owned pages");
     virtualMemoryManager->DestroyUserAddressSpace(space);
-    return result;
+    return memory_case_result(result);
 }
 
 static bool custom_case_validate_mmap(const custom_case_ctx_t*)

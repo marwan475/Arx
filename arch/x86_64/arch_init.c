@@ -223,10 +223,10 @@ static void init_interrupts()
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
+extern void arch_x86_64_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1) __attribute__((noreturn));
+
 __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1)
 {
-    static const uint64_t USER_INITIAL_RFLAGS = (1ULL << 1) | (1ULL << 9);
-
     if (!is_low_half_user_va(user_rip) || !is_low_half_user_va(user_rsp))
     {
         kprintf("Arx kernel: arch_enter_user_mode rejected non-user VA rip=0x%llx rsp=0x%llx\n", (unsigned long long) user_rip, (unsigned long long) user_rsp);
@@ -238,23 +238,7 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
         kprintf("Arx kernel: arch_enter_user_mode rejected user rsp (expected rsp%%16 == 0 for ELF entry): 0x%llx\n", (unsigned long long) user_rsp);
         panic();
     }
-    uint64_t user_rflags = USER_INITIAL_RFLAGS;
-    uint64_t user_cs     = USER_CS;
-    uint64_t user_ss     = USER_SS;
-
-    arch_disable_interrupts();
-
-    __asm__ volatile("mov %[arg0], %%rdi\n"
-                     "mov %[arg1], %%rsi\n"
-                     "pushq %[ss]\n"
-                     "pushq %[rsp]\n"
-                     "pushq %[rflags]\n"
-                     "pushq %[cs]\n"
-                     "pushq %[rip]\n"
-                     "iretq\n"
-                     :
-                     : [arg0] "r"(arg0), [arg1] "r"(arg1), [ss] "r"(user_ss), [rsp] "r"(user_rsp), [rflags] "r"(user_rflags), [cs] "r"(user_cs), [rip] "r"(user_rip)
-                     : "rdi", "rsi", "memory");
+    arch_x86_64_enter_user_mode(user_rip, user_rsp, arg0, arg1);
 
     __builtin_unreachable();
 }

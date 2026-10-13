@@ -21,6 +21,12 @@
 extern uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled);
 extern uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
 
+_Static_assert(sizeof(arch_syscall_frame_t) == 96, "syscall frame size must match entry assembly");
+_Static_assert(offsetof(arch_syscall_frame_t, arg3) == 32, "R10 syscall argument offset");
+_Static_assert(offsetof(arch_info_t, syscall_ctx.active) - offsetof(arch_info_t, syscall_ctx) == 16, "syscall active GS offset");
+_Static_assert(offsetof(struct arch_task_context, rflags) == 64, "context RFLAGS offset");
+_Static_assert(offsetof(struct arch_task_context, fxState) == 80, "aligned FXSAVE context offset");
+
 static inline uint64_t rdmsr(uint32_t msr)
 {
     uint32_t low  = 0;
@@ -74,6 +80,7 @@ void arch_syscall_init(void)
 
     cpu_info->arch_info.syscall_ctx.kernel_rsp = read_rsp() & ~0xFULL;
     cpu_info->arch_info.syscall_ctx.user_rsp   = 0;
+    cpu_info->arch_info.syscall_ctx.active     = 0;
 
     const uint64_t star  = ((uint64_t) (USER_CS & ~0x3ULL) << 48) | ((uint64_t) KERNEL_CS << 32);
     const uint64_t lstar = (uint64_t) (uintptr_t) arch_x86_64_syscall_entry;
@@ -85,8 +92,9 @@ void arch_syscall_init(void)
     wrmsr(IA32_LSTAR, lstar);
     wrmsr(IA32_FMASK, fmask);
 
-    wrmsr(IA32_GS_BASE, 0);
-    wrmsr(IA32_KERNEL_GS_BASE, (uint64_t) (uintptr_t) &cpu_info->arch_info.syscall_ctx);
+    // Kernel mode always owns the per-CPU GS base. User entry/exit swap it.
+    wrmsr(IA32_GS_BASE, (uint64_t) (uintptr_t) &cpu_info->arch_info.syscall_ctx);
+    wrmsr(IA32_KERNEL_GS_BASE, 0);
 
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= IA32_EFER_SCE;

@@ -7,6 +7,25 @@ extern "C"
 #include <platform.h>
 }
 
+static uint64_t task_save_and_disable_interrupts()
+{
+    uint64_t flags = 0;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) : : "memory");
+#endif
+    return flags;
+}
+
+static void task_restore_interrupts(uint64_t flags)
+{
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" : : "r"(flags) : "memory");
+#endif
+}
 static void user_task_bootstrap_entry(void* arg)
 {
     task_t::user_launch_context_t* launchContext = static_cast<task_t::user_launch_context_t*>(arg);
@@ -57,6 +76,8 @@ TaskManager::TaskManager()
         memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
         Tasks[i].allocated  = false;
         Tasks[i].isUserTask = false;
+        Tasks[i].syscallActive = 0;
+        Tasks[i].preemptionDepth = 0;
         Tasks[i].id         = (uint64_t) i;
         memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
         Tasks[i].stack = nullptr;
@@ -67,12 +88,14 @@ TaskManager::TaskManager()
 
 void TaskManager::LockManager() const
 {
+    cpu_preemption_disable();
     spinlock_acquire((spinlock_t*) &ManagerLock);
 }
 
 void TaskManager::UnlockManager() const
 {
     spinlock_release((spinlock_t*) &ManagerLock);
+    cpu_preemption_enable();
 }
 
 task_t* TaskManager::AllocateTaskUnlocked()
@@ -84,6 +107,8 @@ task_t* TaskManager::AllocateTaskUnlocked()
             memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
             Tasks[i].allocated  = true;
             Tasks[i].isUserTask = false;
+            Tasks[i].syscallActive = 0;
+            Tasks[i].preemptionDepth = 0;
             Tasks[i].id         = (uint64_t) i;
             memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
             Tasks[i].stack = nullptr;
@@ -129,6 +154,8 @@ task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
 
     task->stack = allocatedStack;
     task->isUserTask = false;
+    task->syscallActive = 0;
+    task->preemptionDepth = 0;
 
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
     arch_init_context(&task->taskContext, stack_top, entry, arg);
@@ -259,7 +286,14 @@ bool TaskManager::ExecuteTask(task_t* task)
         return true;
     }
 
+    const uint64_t interruptState = task_save_and_disable_interrupts();
     cpu_info_t* cpu_info = &platform.cpus[cpuId];
+    current->preemptionDepth = cpu_info->preemption_depth;
+    cpu_info->preemption_depth = task->preemptionDepth;
+#if defined(__x86_64__)
+    current->syscallActive = cpu_info->arch_info.syscall_ctx.active;
+    cpu_info->arch_info.syscall_ctx.active = task->syscallActive;
+#endif
     if (task->isUserTask)
     {
         uint64_t next_stack_top = resolve_task_kernel_stack_top(task, cpu_info);
@@ -273,6 +307,10 @@ bool TaskManager::ExecuteTask(task_t* task)
     arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
 
     // We only reach here after another switch restores this task.
+    cpu_info->preemption_depth = current->preemptionDepth;
+#if defined(__x86_64__)
+    cpu_info->arch_info.syscall_ctx.active = current->syscallActive;
+#endif
     if (current->isUserTask)
     {
         uint64_t current_stack_top = resolve_task_kernel_stack_top(current, cpu_info);
@@ -283,6 +321,7 @@ bool TaskManager::ExecuteTask(task_t* task)
     }
 
     RunningTasks[cpuId] = current;
+    task_restore_interrupts(interruptState);
     return true;
 }
 

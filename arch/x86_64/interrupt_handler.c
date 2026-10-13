@@ -162,9 +162,10 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
-        // Kernel paths use non-preemptible spinlocks. Keep IPIs enabled during
-        // syscalls, but only schedule when the interrupted frame is userspace.
-        if ((reg->cs & 3) == 3)
+        // Bootstrap/kernel tasks still require timer dispatch. Defer only
+        // active syscalls and explicitly guarded critical sections.
+        const cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+        if (cpu->arch_info.syscall_ctx.active == 0 && __atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) == 0)
         {
             dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
         }

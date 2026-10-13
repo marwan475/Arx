@@ -9,6 +9,7 @@ extern arch_syscall_dispatch
 ; Must match arch_info.syscall_ctx layout in x86_64.h
 %define SYSCALL_CTX_KERNEL_RSP_OFFSET 0
 %define SYSCALL_CTX_USER_RSP_OFFSET 8
+%define SYSCALL_CTX_ACTIVE_OFFSET 16
 
 ; Must match USER_CS/USER_SS selectors in x86_64.h
 %define USER_CS_SELECTOR 0x1b
@@ -30,6 +31,7 @@ extern arch_syscall_dispatch
 
 arch_x86_64_syscall_entry:
     swapgs
+    lfence
     cld
 
     mov qword [gs:SYSCALL_CTX_USER_RSP_OFFSET], rsp
@@ -55,13 +57,23 @@ arch_x86_64_syscall_entry:
     ; C ABI: pass pointer to syscall frame in rdi.
     mov rdi, rsp
 
+    ; C may use SSE/x87 even for ordinary memory operations.
+    sub rsp, 512
+    fxsave64 [rsp]
+    fninit
+    ldmxcsr [rel syscall_kernel_mxcsr]
+
     ; The complete frame is on the kernel stack and rsp is 16-byte aligned.
     ; Permit TLB IPIs while the C handler takes memory-management locks.
+    mov qword [gs:SYSCALL_CTX_ACTIVE_OFFSET], 1
     sti
     call arch_syscall_dispatch
 
     ; Protect the return frame and swapgs transition until iretq restores IF.
     cli
+    mov qword [gs:SYSCALL_CTX_ACTIVE_OFFSET], 0
+    fxrstor64 [rsp]
+    add rsp, 512
     ; Keep return value in rax. Restore volatile arg registers for a clean user return.
     mov rdi, [rsp + SYSCALL_FRAME_ARG0_OFFSET]
     mov rsi, [rsp + SYSCALL_FRAME_ARG1_OFFSET]
@@ -74,3 +86,7 @@ arch_x86_64_syscall_entry:
 
     swapgs
     iretq
+
+section .rodata
+align 4
+syscall_kernel_mxcsr: dd 0x1f80

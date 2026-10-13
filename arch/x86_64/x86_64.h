@@ -229,6 +229,8 @@ struct arch_task_context
 
     uint64_t rip;
     uint64_t rsp;
+    uint64_t rflags;
+    uint8_t  fxState[512] __attribute__((aligned(16)));
 };
 
 typedef struct arch_info
@@ -246,6 +248,7 @@ typedef struct arch_info
     {
         uint64_t kernel_rsp;
         uint64_t user_rsp;
+        uint64_t active;
     } syscall_ctx;
     idt_description_t idt_desc;
     idt_entry_t       idt[NUM_IDT_ENTRIES];

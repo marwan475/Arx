@@ -18,6 +18,8 @@ struct task_t
 
     bool                     allocated;
     bool                     isUserTask;
+    uint64_t                 syscallActive;
+    uint32_t                 preemptionDepth;
     uint64_t                 id;
     struct arch_task_context taskContext;
     void*                    stack;

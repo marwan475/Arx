@@ -69,21 +69,30 @@ bool VirtualMemoryManager::IsUserRangeAccessible(uintptr_t userAddress, size_t l
         return true;
     }
 
-    const uintptr_t userBase = static_cast<uintptr_t>(CANONICAL_USER_BASE);
-    const uintptr_t userTop  = static_cast<uintptr_t>(CANONICAL_USER_END) + 1;
-
-    if (userAddress < userBase || userAddress >= userTop)
+    if (userAddress > (UINTPTR_MAX - (length - 1)))
     {
         return false;
     }
 
-    if (length > (userTop - userAddress))
+    const uintptr_t lastAddr   = userAddress + length - 1;
+    const uintptr_t userBase   = static_cast<uintptr_t>(CANONICAL_USER_BASE);
+    const uintptr_t userEnd    = static_cast<uintptr_t>(CANONICAL_USER_END);
+    const uintptr_t kernelBase = static_cast<uintptr_t>(CANONICAL_KERNEL_BASE);
+    const uintptr_t kernelEnd  = static_cast<uintptr_t>(CANONICAL_KERNEL_END);
+
+    const bool inUserRange   = (userAddress >= userBase) && (lastAddr <= userEnd);
+    const bool inKernelRange = (userAddress >= kernelBase) && (lastAddr <= kernelEnd);
+    if (!inUserRange && !inKernelRange)
     {
         return false;
+    }
+
+    if (inKernelRange)
+    {
+        return true;
     }
 
     const uintptr_t pageMask = static_cast<uintptr_t>(PAGE_SIZE - 1);
-    const uintptr_t lastAddr = userAddress + length - 1;
     uintptr_t page           = userAddress & ~pageMask;
     const uintptr_t lastPage = lastAddr & ~pageMask;
 

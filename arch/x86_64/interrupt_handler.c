@@ -162,7 +162,12 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
-        dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+        // Kernel paths use non-preemptible spinlocks. Keep IPIs enabled during
+        // syscalls, but only schedule when the interrupted frame is userspace.
+        if ((reg->cs & 3) == 3)
+        {
+            dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+        }
         return;
     }
 

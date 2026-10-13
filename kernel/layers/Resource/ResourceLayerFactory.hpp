@@ -4,6 +4,7 @@
 
 class PhysicalMemoryManager;
 class ProcessManager;
+class ProcessMemoryManager;
 class VirtualMemoryManager;
 class TaskManager;
 class InitRamFileSystemManager;
@@ -13,6 +14,7 @@ struct ResourceLayerCaps
     PhysicalMemoryManager*       physicalMemoryManager;
     ProcessManager*              processManager;
     VirtualMemoryManager*        virtualMemoryManager;
+    ProcessMemoryManager*        processMemoryManager;
     TaskManager*                 taskManager;
     InitRamFileSystemManager*    initRamFileSystemManager;
     ResourceLayerFileSystemCaps* fileSystemCaps;

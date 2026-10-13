@@ -55,8 +55,13 @@ arch_x86_64_syscall_entry:
     ; C ABI: pass pointer to syscall frame in rdi.
     mov rdi, rsp
 
+    ; The complete frame is on the kernel stack and rsp is 16-byte aligned.
+    ; Permit TLB IPIs while the C handler takes memory-management locks.
+    sti
     call arch_syscall_dispatch
 
+    ; Protect the return frame and swapgs transition until iretq restores IF.
+    cli
     ; Keep return value in rax. Restore volatile arg registers for a clean user return.
     mov rdi, [rsp + SYSCALL_FRAME_ARG0_OFFSET]
     mov rsi, [rsp + SYSCALL_FRAME_ARG1_OFFSET]

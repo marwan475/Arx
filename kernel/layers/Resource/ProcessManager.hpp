@@ -60,6 +60,9 @@ struct process_t
     int32_t            exitStatus;
     virt_addr_space_t* addressSpace;
     void*              elfMetadata;
+    uint64_t           breakBase;
+    uint64_t           programBreak;
+    uint32_t           memoryUsers;
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
     uint64_t           fileDescriptorCount;
@@ -90,6 +93,9 @@ public:
     process_t* GetRunningProcess(uint8_t cpuId) const;
     bool       SetRunningProcess(uint8_t cpuId, process_t* process);
     process_t* GetCurrentProcess() const;
+    process_t* AcquireCurrentMemoryProcess();
+    void ReleaseMemoryProcess(process_t* process);
+    uint64_t GetCurrentProgramBreak() const;
 
     process_t*       GetProcesses();
     const process_t* GetProcesses() const;

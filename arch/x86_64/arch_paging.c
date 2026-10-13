@@ -408,6 +408,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     if (!x86_64_is_pa_encodable(new_table_pa))
     {
         kprintf("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
+        pmm_free(new_table);
         return false;
     }
 
@@ -876,4 +877,27 @@ phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t 
     }
 
     return (pte & X86_64_PTE_ADDR_MASK) | (va & X86_64_PAGE_OFFSET_MASK);
+}
+
+phys_addr_t arch_create_user_page_table(void)
+{
+    void* root = pmm_alloc(PAGE_SIZE);
+    if (!root) return 0;
+    memset(root, 0, PAGE_SIZE);
+    uint64_t* source = x86_64_table_from_pa(arch_get_pt());
+    memcpy((uint64_t*) root + 256, source + 256, PAGE_SIZE / 2);
+    return hhdm_to_pa((uintptr_t) root, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+}
+static void destroy_empty_user_tables(phys_addr_t table, unsigned depth, unsigned entries)
+{
+    uint64_t* words = x86_64_table_from_pa(table);
+    if (depth > 1)
+        for (unsigned i = 0; i < entries; ++i)
+            if ((words[i] & X86_64_PTE_PRESENT) && !(words[i] & (1ULL << 7)))
+                destroy_empty_user_tables(words[i] & X86_64_PTE_ADDR_MASK, depth - 1, 512);
+    pmm_free(words);
+}
+void arch_destroy_user_page_table(phys_addr_t page_table)
+{
+    if (page_table && page_table != arch_get_pt()) destroy_empty_user_tables(page_table, 4, 256);
 }

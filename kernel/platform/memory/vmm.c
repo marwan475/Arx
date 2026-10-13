@@ -24,6 +24,7 @@ static virt_region_t* alloc_region_struct(metadata_pool_t* metadata_pool, size_t
     }
 
     (*metadata_count)++;
+    memset(region, 0, sizeof(*region));
     region->allocated = true;
     ILIST_NODE_INIT(region);
     return region;
@@ -275,9 +276,9 @@ void vmm_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, virt
 
 void vmm_switch_addr_space(virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    // Loading the local root does not mutate page tables. Taking the table lock
+    // in an interrupt handler could block the IPI needed by its current owner.
     arch_set_pt(space->pt);
-    spinlock_release(&space->lock);
 }
 
 phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space)
@@ -489,4 +490,86 @@ virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
 
     spinlock_release(&space->lock);
     return NULL;
+}
+
+// Caller holds operation_lock; the allocator lock protects the free/used lists.
+bool vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr)
+{
+    if (space == NULL || addr == 0 || (addr & (PAGE_SIZE - 1)) != 0 || addr > CANONICAL_USER_END - PAGE_SIZE + 1)
+    {
+        return false;
+    }
+
+    spinlock_acquire(&space->lock);
+    ILIST_FOR_EACH(free, space->user_free_regions)
+    {
+        if (addr < free->start || addr + PAGE_SIZE > free->end)
+        {
+            continue;
+        }
+
+        virt_region_t* used  = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);
+        virt_region_t* right = NULL;
+        const bool split    = addr > free->start && addr + PAGE_SIZE < free->end;
+        if (used != NULL && split)
+        {
+            right = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);
+        }
+
+        // Acquire all metadata before mutating the free interval.
+        if (used == NULL || (split && right == NULL))
+        {
+            if (used != NULL)
+            {
+                free_region_struct(&space->user_region_metadata_pool, used, &space->user_regions_count);
+            }
+
+            spinlock_release(&space->lock);
+            return false;
+        }
+
+        used->start = addr;
+        used->end   = addr + PAGE_SIZE;
+        used->size  = PAGE_SIZE;
+        used->type  = VIRT_ADDR_USER;
+        if (right != NULL)
+        {
+            right->start = used->end;
+            right->end   = free->end;
+            right->size  = right->end - right->start;
+            right->type  = VIRT_ADDR_USER;
+            if (free->next != NULL)
+            {
+                ILIST_INSERT_BEFORE(space->user_free_regions, free->next, right);
+            }
+            else
+            {
+                ILIST_APPEND(space->user_free_regions, right);
+            }
+
+            free->end = addr;
+        }
+        else if (addr == free->start)
+        {
+            free->start += PAGE_SIZE;
+        }
+        else
+        {
+            free->end = addr;
+        }
+
+        free->size = free->end - free->start;
+        if (free->size == 0)
+        {
+            remove_from_regions_list(free, &space->user_free_regions);
+            free_region_struct(&space->user_region_metadata_pool, free, &space->user_regions_count);
+        }
+
+        add_to_regions_list(used, &space->user_used_regions);
+        spinlock_release(&space->lock);
+        return true;
+    }
+
+    spinlock_release(&space->lock);
+    return false;
 }

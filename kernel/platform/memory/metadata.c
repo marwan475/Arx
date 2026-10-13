@@ -30,6 +30,7 @@ static bool metadata_pool_grow(metadata_pool_t* pool)
     chunk->data        = pmm_alloc(chunk_bytes);
     if (chunk->data == NULL)
     {
+        pmm_free(chunk);
         return false;
     }
 

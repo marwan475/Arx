@@ -4,6 +4,7 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
 {
@@ -13,6 +14,16 @@ extern "C"
 }
 
 extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
+
+#if defined(__x86_64__)
+static_assert(sizeof(arch_syscall_frame_t) == 96, "x86-64 syscall frame size must match entry assembly");
+static_assert(offsetof(arch_syscall_frame_t, arg0) == 8, "RDI syscall argument offset");
+static_assert(offsetof(arch_syscall_frame_t, arg1) == 16, "RSI syscall argument offset");
+static_assert(offsetof(arch_syscall_frame_t, arg2) == 24, "RDX syscall argument offset");
+static_assert(offsetof(arch_syscall_frame_t, arg3) == 32, "R10 syscall argument offset");
+static_assert(offsetof(arch_syscall_frame_t, arg4) == 40, "R8 syscall argument offset");
+static_assert(offsetof(arch_syscall_frame_t, arg5) == 48, "R9 syscall argument offset");
+#endif
 
 namespace
 {
@@ -2544,6 +2555,330 @@ static bool custom_case_validate_umask(const custom_case_ctx_t* ctx)
         return previousSecond == firstMask && previousRestore == secondMask;
 }
 
+// Included inside syscalltests.cpp's anonymous namespace.
+static VirtualMemoryManager* memory_vmm()
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    return dispatcher->GetResourceLayerCaps()->virtualMemoryManager;
+}
+
+static uint64_t memory_call(uint64_t number, uint64_t arg0 = 0, uint64_t arg1 = 0, uint64_t arg2 = 0, uint64_t arg3 = 0, uint64_t arg4 = 0, uint64_t arg5 = 0)
+{
+    arch_syscall_frame_t frame = {};
+    frame.syscall_number       = number;
+    frame.arg0                 = arg0;
+    frame.arg1                 = arg1;
+    frame.arg2                 = arg2;
+    frame.arg3                 = arg3;
+    frame.arg4                 = arg4;
+    frame.arg5                 = arg5;
+    return dispatcher_dispatch_syscall(&frame);
+}
+
+static uint64_t memory_map(uint64_t pages = 3, uint64_t address = 0, uint64_t flags = 0x22)
+{
+    return memory_call(SYSCALL_mmap, address, pages * PAGE_SIZE, 3, flags, UINT64_MAX);
+}
+
+static virt_region_t* memory_region(process_t* process, uint64_t address)
+{
+    return memory_vmm()->FindRegion(process->addressSpace, address);
+}
+
+static uint8_t* memory_bytes(process_t* process, uint64_t address)
+{
+    virt_region_t* region = memory_region(process, address);
+    return region != nullptr && region->backing != nullptr ? static_cast<uint8_t*>(region->backing) + (address & (PAGE_SIZE - 1)) : nullptr;
+}
+
+static uint64_t memory_pte(process_t* process, uint64_t address)
+{
+#if defined(__x86_64__)
+    uint64_t table = process->addressSpace->pt;
+    for (int shift = 39; shift >= 12; shift -= 9)
+    {
+        uint64_t* entries = reinterpret_cast<uint64_t*>(pa_to_hhdm(table, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset));
+        uint64_t entry   = entries[(address >> shift) & 511];
+        if ((entry & 1) == 0 || shift == 12)
+        {
+            return entry;
+        }
+
+        table = entry & 0x000ffffffffff000ULL;
+    }
+#endif
+    return 0;
+}
+static bool memory_expect(bool condition, const char* detail)
+{
+    if (!condition) selftest_record_failure_detail(detail);
+    return condition;
+}
+
+static size_t memory_pages_in_use()
+{
+    zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+    spinlock_acquire(&zone->lock);
+    const size_t usedPages = zone->used_pages;
+    spinlock_release(&zone->lock);
+    return usedPages;
+}
+
+static bool test_memory_mmap(process_t* process)
+{
+    bool ok = true;
+    uint64_t a = memory_map();
+    ok &= memory_expect(a == 0x10000 && memory_region(process, a), "mmap page-aligned placement");
+    if (static_cast<int64_t>(a) < 0) return false;
+    for (uint64_t p = a; p < a + 3 * PAGE_SIZE; p += PAGE_SIZE)
+        for (unsigned i = 0; i < PAGE_SIZE; ++i)
+            if (!memory_bytes(process, p) || memory_bytes(process, p)[i]) return memory_expect(false, "mmap zero initialization");
+    uint64_t b = memory_map(1);
+    ok &= memory_expect(b == a + 3 * PAGE_SIZE && memory_bytes(process, b) != memory_bytes(process, a), "mmap independent backing");
+    uint64_t fixed = 0x400000;
+    ok &= memory_expect(memory_map(1, fixed, 0x100022) == fixed, "mmap fixed noreplace");
+    ok &= memory_expect(memory_map(1, fixed, 0x100022) == static_cast<uint64_t>(-17), "mmap collision EEXIST");
+    if (memory_bytes(process, fixed)) *memory_bytes(process, fixed) = 0xA5;
+    ok &= memory_expect(memory_map(1, fixed, 0x32) == fixed && memory_bytes(process, fixed) && *memory_bytes(process, fixed) == 0, "mmap fixed replacement zeroes");
+    ok &= memory_expect(memory_map(1, 0x600123) == 0x600000, "mmap address hint");
+    ok &= memory_expect(memory_map(1, fixed) != fixed, "mmap occupied hint fallback");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, 0, 3, 0x22) == LINUX_EINVAL, "mmap zero length");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 8, 0x22) == LINUX_EINVAL, "mmap invalid protection");
+    ok &= memory_expect(memory_map(1, 0, 0x20) == LINUX_EINVAL && memory_map(1, 0, 0x80000022) == LINUX_EINVAL, "mmap invalid flags");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 0x22, 0, 1) == LINUX_EINVAL, "mmap offset alignment");
+    ok &= memory_expect(memory_map(1, fixed + 1, 0x32) == LINUX_EINVAL, "mmap fixed alignment");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, CANONICAL_KERNEL_BASE, PAGE_SIZE, 3, 0x32) == LINUX_EINVAL, "mmap rejects kernel address");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, UINT64_MAX, 3, 0x22) == LINUX_EINVAL, "mmap length overflow");
+    ok &= memory_expect(memory_map(1, 0, 0x21) == static_cast<uint64_t>(-95), "mmap shared explicitly unsupported");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, UINT64_MAX) == LINUX_EBADF, "mmap invalid fd");
+    memcpy(memory_bytes(process, a), "/test.txt", sizeof("/test.txt"));
+    uint64_t fd = memory_call(SYSCALL_open, a, 0);
+    ok &= memory_expect(static_cast<int64_t>(fd) >= 0, "mmap file fixture opens through real VFS");
+    if (static_cast<int64_t>(fd) >= 0)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, fd) == static_cast<uint64_t>(-95), "mmap file dependency reported");
+        ok &= memory_expect(memory_call(SYSCALL_close, fd) == 0, "mmap file fixture closes");
+    }
+    // Constrain the free interval to exercise address-space exhaustion safely.
+    uint64_t failStart = 0x1000000;
+    virt_region_t* free = process->addressSpace->user_free_regions;
+    while (free && !(free->start <= failStart && free->end > failStart)) free = free->next;
+    if (!free) return memory_expect(false, "mmap rollback fixture range");
+    uint64_t savedEnd = free->end; free->end = failStart + 2 * PAGE_SIZE; free->size = free->end - free->start;
+    ok &= memory_expect(memory_map(3, failStart, 0x32) == static_cast<uint64_t>(-12), "mmap allocation failure");
+    ok &= memory_expect(!memory_region(process, failStart) && !memory_vmm()->VirtToPhys(failStart, process->addressSpace), "mmap placement failure preserves mappings");
+    // Free-list coalescing may replace the original node.
+    for (virt_region_t* r = process->addressSpace->user_free_regions; r; r = r->next)
+        if (r->end == failStart + 2 * PAGE_SIZE) { r->end = savedEnd; r->size = r->end - r->start; break; }
+    return ok;
+}
+static bool test_memory_munmap(process_t* process)
+{
+    uint64_t a = memory_map(); if (static_cast<int64_t>(a) < 0) return false;
+    const size_t beforeUnmap = memory_pages_in_use();
+    bool ok = memory_expect(memory_call(SYSCALL_munmap, a + PAGE_SIZE, 1) == 0, "munmap middle page");
+    ok &= memory_expect(memory_pages_in_use() + 1 == beforeUnmap, "munmap releases physical middle page");
+    ok &= memory_expect(memory_region(process, a) && !memory_region(process, a + PAGE_SIZE) && memory_region(process, a + 2 * PAGE_SIZE), "munmap neighboring metadata intact");
+    ok &= memory_expect(!memory_vmm()->VirtToPhys(a + PAGE_SIZE, process->addressSpace), "munmap leaf cleared");
+    ok &= memory_expect(memory_call(SYSCALL_munmap, a, 3 * PAGE_SIZE) == 0 && !memory_region(process, a) && !memory_region(process, a + 2 * PAGE_SIZE), "munmap spanning regions and hole");
+    ok &= memory_expect(memory_pages_in_use() + 3 == beforeUnmap, "munmap releases all physical backing");
+    ok &= memory_expect(memory_call(SYSCALL_munmap, a, 3 * PAGE_SIZE) == 0, "munmap already unmapped");
+    ok &= memory_expect(memory_map(3, a, 0x100022) == a, "munmap reservation reusable");
+    ok &= memory_expect(memory_call(SYSCALL_munmap, a + 1, PAGE_SIZE) == LINUX_EINVAL && memory_call(SYSCALL_munmap, a, 0) == LINUX_EINVAL, "munmap invalid alignment and length");
+    return ok;
+}
+static bool test_memory_mprotect(process_t* process)
+{
+    uint64_t a = memory_map(); if (static_cast<int64_t>(a) < 0) return false;
+    bool ok = memory_expect(memory_call(SYSCALL_mprotect, a + PAGE_SIZE, PAGE_SIZE, 1) == 0, "mprotect read-only subrange");
+    ok &= memory_expect(memory_region(process, a)->protection == 3 && memory_region(process, a + PAGE_SIZE)->protection == 1 && !(memory_pte(process, a + PAGE_SIZE) & 2), "mprotect metadata and readonly PTE");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 5) == 0 && !(memory_pte(process, a) & (1ULL << 63)), "mprotect executable PTE");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 0) == 0 && !(memory_pte(process, a) & 4) && memory_region(process, a)->backing, "mprotect none denies user access retains backing");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 3) == 0 && (memory_pte(process, a) & 6) == 6 && (memory_pte(process, a) & (1ULL << 63)), "mprotect restores write and NX");
+    for (uint32_t protection = 0; protection < 8; ++protection)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_mprotect, a + 2 * PAGE_SIZE, PAGE_SIZE, protection) == 0 && memory_region(process, a + 2 * PAGE_SIZE)->protection == protection,
+                            "mprotect all valid protection combinations");
+    }
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 8) == LINUX_EINVAL && memory_call(SYSCALL_mprotect, a + 1, PAGE_SIZE, 1) == LINUX_EINVAL, "mprotect invalid flags/alignment");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, 0x400000, PAGE_SIZE, 1) == static_cast<uint64_t>(-12), "mprotect unmapped ENOMEM");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, CANONICAL_KERNEL_BASE, PAGE_SIZE, 1) == LINUX_EINVAL, "mprotect kernel address rejected");
+    void* legacyPage = pmm_alloc(PAGE_SIZE);
+    if (legacyPage == nullptr)
+    {
+        return memory_expect(false, "mprotect legacy mapping fixture allocation");
+    }
+    const phys_addr_t legacyPhysical = hhdm_to_pa(reinterpret_cast<uintptr_t>(legacyPage), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+    uint64_t legacyFlags = 0;
+    ARCH_PAGE_FLAGS_INIT(legacyFlags);
+    ARCH_PAGE_FLAG_SET_READ(legacyFlags);
+    ARCH_PAGE_FLAG_SET_WRITE(legacyFlags);
+    ARCH_PAGE_FLAG_SET_USER(legacyFlags);
+    memory_vmm()->MapPage(0x400000, legacyPhysical, legacyFlags, process->addressSpace);
+    ok &= memory_expect(memory_vmm()->VirtToPhys(0x400000, process->addressSpace) == legacyPhysical, "mprotect legacy mapping fixture maps");
+    ok &= memory_expect(memory_call(SYSCALL_mprotect, 0x400000, PAGE_SIZE, 1) == static_cast<uint64_t>(-95), "mprotect rejects untracked backing");
+    ok &= memory_expect(memory_call(SYSCALL_munmap, 0x400000, PAGE_SIZE) == static_cast<uint64_t>(-95), "munmap preserves untracked backing");
+    ok &= memory_expect(memory_map(1, 0x400000, 0x32) == static_cast<uint64_t>(-95), "mmap fixed preserves untracked backing");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, 0x400000, PAGE_SIZE, 4) == static_cast<uint64_t>(-95), "madvise rejects untracked discard");
+    memory_vmm()->UnmapPage(0x400000, process->addressSpace);
+    pmm_free(legacyPage);
+    return ok;
+}
+static bool test_memory_mincore(process_t* process)
+{
+    uint64_t a = memory_map(), vec = memory_map(2); if (static_cast<int64_t>(a) < 0 || static_cast<int64_t>(vec) < 0) return false;
+    *memory_bytes(process, vec + PAGE_SIZE - 2) = 0xA5;
+    *memory_bytes(process, vec + PAGE_SIZE + 2) = 0xA5;
+    memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 0);
+    bool ok = memory_expect(memory_call(SYSCALL_mincore, a, 2 * PAGE_SIZE + 1, vec + PAGE_SIZE - 1) == 0, "mincore multiple pages cross-buffer page");
+    ok &= memory_expect(*memory_bytes(process, vec + PAGE_SIZE - 1) == 1 && *memory_bytes(process, vec + PAGE_SIZE) == 1 && *memory_bytes(process, vec + PAGE_SIZE + 1) == 1, "mincore residency including PROT_NONE");
+    ok &= memory_expect(*memory_bytes(process, vec + PAGE_SIZE - 2) == 0xA5 && *memory_bytes(process, vec + PAGE_SIZE + 2) == 0xA5, "mincore exact vector length");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a + 1, PAGE_SIZE, vec) == LINUX_EINVAL, "mincore alignment");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a, PAGE_SIZE, reinterpret_cast<uint64_t>(&process)) == LINUX_EFAULT, "mincore rejects kernel output");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a, PAGE_SIZE, 0x400000) == LINUX_EFAULT, "mincore unmapped output");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, 0x400000, PAGE_SIZE, vec) == static_cast<uint64_t>(-12), "mincore unmapped source");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a, 0, 0) == 0, "mincore zero-length query");
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a, 3 * PAGE_SIZE, vec + 2 * PAGE_SIZE - 1) == LINUX_EFAULT, "mincore buffer crosses unmapped page");
+    memory_call(SYSCALL_mprotect, vec, PAGE_SIZE, 1);
+    ok &= memory_expect(memory_call(SYSCALL_mincore, a, PAGE_SIZE, vec) == LINUX_EFAULT, "mincore readonly output rejected");
+    return ok;
+}
+static bool test_memory_madvise(process_t* process)
+{
+    uint64_t a = memory_map(); if (static_cast<int64_t>(a) < 0) return false;
+    bool ok = true;
+    *memory_bytes(process, a) = 0xA5;
+    for (int advice = 0; advice <= 3; ++advice)
+        ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, advice) == 0 && *memory_bytes(process, a) == 0xA5, "madvise hint accepted preserves content");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, 4) == 0 && *memory_bytes(process, a) == 0, "madvise dontneed discards contents");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, a + 1, PAGE_SIZE, 0) == LINUX_EINVAL, "madvise alignment");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, 999) == LINUX_EINVAL && memory_call(SYSCALL_madvise, a, PAGE_SIZE, 8) == LINUX_EINVAL, "madvise invalid and unsupported FREE");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, 0x400000, PAGE_SIZE, 0) == static_cast<uint64_t>(-12), "madvise unmapped range");
+    memory_call(SYSCALL_munmap, a + PAGE_SIZE, PAGE_SIZE);
+    *memory_bytes(process, a) = 0xA5; *memory_bytes(process, a + 2 * PAGE_SIZE) = 0xA5;
+    ok &= memory_expect(memory_call(SYSCALL_madvise, a, 3 * PAGE_SIZE, 4) == static_cast<uint64_t>(-12) && *memory_bytes(process, a) == 0 && *memory_bytes(process, a + 2 * PAGE_SIZE) == 0, "madvise holes return ENOMEM and process mapped pages");
+    return ok;
+}
+static bool test_memory_brk(process_t* process)
+{
+    uint64_t base = process->breakBase;
+    bool ok = memory_expect(memory_call(SYSCALL_brk) == base, "brk initial query");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 1) == base + 1 && memory_bytes(process, base) && *memory_bytes(process, base) == 0, "brk grows zeroed page");
+    if (!memory_bytes(process, base)) return false;
+    *memory_bytes(process, base) = 0xA5;
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 2 * PAGE_SIZE + 17) == base + 2 * PAGE_SIZE + 17 && *memory_bytes(process, base) == 0xA5 && memory_bytes(process, base + 2 * PAGE_SIZE) && *memory_bytes(process, base + 2 * PAGE_SIZE) == 0, "brk page boundary and contents");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 7) == base + 7 && !memory_region(process, base + PAGE_SIZE) && memory_region(process, base), "brk shrink releases whole pages");
+    ok &= memory_expect(memory_call(SYSCALL_brk) == base + 7, "brk resized query");
+    *memory_bytes(process, base + 10) = 0x5A;
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 11) == base + 11 && *memory_bytes(process, base + 10) == 0x5A, "brk retained partial page regrowth");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 7) == base + 7, "brk restores small break");
+    ok &= memory_expect(memory_map(1, base + PAGE_SIZE, 0x100022) == base + PAGE_SIZE, "brk collision fixture");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base + 2 * PAGE_SIZE) == base + 7, "brk collision returns current break");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base - 1) == base + 7 && memory_call(SYSCALL_brk, CANONICAL_KERNEL_BASE) == base + 7, "brk invalid requests return current break");
+    ok &= memory_expect(memory_call(SYSCALL_brk, base) == base && !memory_region(process, base), "brk full shrink");
+    return ok;
+}
+
+
+static bool run_memory_case(bool (*test)(process_t*))
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    if (dispatcher == nullptr || dispatcher->GetResourceLayerCaps() == nullptr)
+    {
+        return memory_expect(false, "memory syscall fixture missing dispatcher");
+    }
+
+    ResourceLayerCaps*     caps                 = dispatcher->GetResourceLayerCaps();
+    ProcessManager*        processManager       = caps->processManager;
+    VirtualMemoryManager* virtualMemoryManager = caps->virtualMemoryManager;
+    if (processManager == nullptr || virtualMemoryManager == nullptr)
+    {
+        return memory_expect(false, "memory syscall fixture missing resource managers");
+    }
+
+    process_t*         previous = processManager->GetCurrentProcess();
+    if (previous == nullptr || previous->addressSpace == nullptr)
+    {
+        return memory_expect(false, "memory syscall fixture requires a restorable process");
+    }
+    virt_addr_space_t* space    = virtualMemoryManager->CreateUserAddressSpace();
+    if (space == nullptr)
+    {
+        return memory_expect(false, "memory syscall isolated address-space fixture unavailable");
+    }
+
+    process_t* process = processManager->CreateProcess(space);
+    if (process == nullptr)
+    {
+        virtualMemoryManager->DestroyUserAddressSpace(space);
+        return memory_expect(false, "memory syscall process fixture allocation failed");
+    }
+
+    // Synthetic executable boundary; the fixture needs no userspace ELF/runtime.
+    process->breakBase    = 0x800000;
+    process->programBreak = process->breakBase;
+    bool active          = processManager->SetRunningProcess(arch_cpu_id(), process);
+    bool result          = active;
+    if (active)
+    {
+        process_t* pinned = processManager->AcquireCurrentMemoryProcess();
+        result &= memory_expect(pinned == process, "memory syscall fixture pins current process");
+        if (pinned != nullptr)
+        {
+            result &= memory_expect(!processManager->FreeProcess(process), "memory syscall lifetime pin blocks teardown");
+            processManager->ReleaseMemoryProcess(pinned);
+        }
+        process_t* alias = processManager->CreateProcess(space);
+        result &= memory_expect(alias != nullptr, "memory syscall shared-root fixture creates alias");
+        if (alias != nullptr)
+        {
+            result &= memory_expect(memory_map(1) == LINUX_ESRCH, "memory syscall shared roots rejected before mutation");
+            result &= memory_expect(memory_call(SYSCALL_brk) == process->breakBase, "brk query remains current on unsupported shared root");
+            result &= memory_expect(processManager->FreeProcess(alias), "memory syscall shared-root fixture cleanup");
+        }
+        result &= test(process);
+    }
+    if (active)
+    {
+        result &= memory_expect(processManager->SetRunningProcess(arch_cpu_id(), previous), "memory syscall fixture restore process");
+    }
+
+    result &= memory_expect(processManager->FreeProcess(process), "memory syscall fixture process cleanup");
+    result &= memory_expect(space->user_used_regions == nullptr, "memory syscall fixture releases all owned pages");
+    virtualMemoryManager->DestroyUserAddressSpace(space);
+    return result;
+}
+
+static bool custom_case_validate_mmap(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_mmap);
+}
+
+static bool custom_case_validate_munmap(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_munmap);
+}
+
+static bool custom_case_validate_mprotect(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_mprotect);
+}
+
+static bool custom_case_validate_mincore(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_mincore);
+}
+
+static bool custom_case_validate_madvise(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_madvise);
+}
+
+static bool custom_case_validate_brk(const custom_case_ctx_t*)
+{
+    return run_memory_case(test_memory_brk);
+}
+
 static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
 {
         switch (syscallNumber)
@@ -2735,12 +3070,12 @@ static void test_time_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
 static void test_memory_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
         static const request_method_test_t<MemoryRequestManager> tests[] = {
-                        {"HandleMmapRequest", &MemoryRequestManager::HandleMmapRequest, SYSCALL_mmap},
-                        {"HandleMunmapRequest", &MemoryRequestManager::HandleMunmapRequest, SYSCALL_munmap},
-                        {"HandleMprotectRequest", &MemoryRequestManager::HandleMprotectRequest, SYSCALL_mprotect},
-                        {"HandleMincoreRequest", &MemoryRequestManager::HandleMincoreRequest, SYSCALL_mincore},
-                        {"HandleMadviseRequest", &MemoryRequestManager::HandleMadviseRequest, SYSCALL_madvise},
-                        {"HandleBrkRequest", &MemoryRequestManager::HandleBrkRequest, SYSCALL_brk},
+                        {"HandleMmapRequest", &MemoryRequestManager::HandleMmapRequest, SYSCALL_mmap, custom_case_validate_mmap},
+                        {"HandleMunmapRequest", &MemoryRequestManager::HandleMunmapRequest, SYSCALL_munmap, custom_case_validate_munmap},
+                        {"HandleMprotectRequest", &MemoryRequestManager::HandleMprotectRequest, SYSCALL_mprotect, custom_case_validate_mprotect},
+                        {"HandleMincoreRequest", &MemoryRequestManager::HandleMincoreRequest, SYSCALL_mincore, custom_case_validate_mincore},
+                        {"HandleMadviseRequest", &MemoryRequestManager::HandleMadviseRequest, SYSCALL_madvise, custom_case_validate_madvise},
+                        {"HandleBrkRequest", &MemoryRequestManager::HandleBrkRequest, SYSCALL_brk, custom_case_validate_brk},
         };
 
         run_manager_tests("memory", caps->memoryRequestManager, tests, stats);

@@ -77,6 +77,8 @@ void arch_syscall_init(void)
 
     const uint64_t star  = ((uint64_t) (USER_CS & ~0x3ULL) << 48) | ((uint64_t) KERNEL_CS << 32);
     const uint64_t lstar = (uint64_t) (uintptr_t) arch_x86_64_syscall_entry;
+    // Protect the user-to-kernel stack transition. Entry assembly enables
+    // interrupts once the syscall frame is safely on the kernel stack.
     const uint64_t fmask = RFLAGS_IF | RFLAGS_TF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC;
 
     wrmsr(IA32_STAR, star);

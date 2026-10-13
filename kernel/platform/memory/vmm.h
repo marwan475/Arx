@@ -29,6 +29,9 @@ typedef struct virt_region
     size_t         size;
     virt_type_t    type;
     bool           allocated; // used for metadata allocations
+    void*          backing; // Owned eager anonymous page; null for legacy reservations.
+    uint32_t       protection;
+    bool           heap_page;
     virt_region_t* next;
     virt_region_t* prev;
 } virt_region_t;
@@ -38,6 +41,7 @@ typedef struct virt_addr_space
     virt_type_t     type;
     phys_addr_t     pt;
     spinlock_t      lock;
+    spinlock_t      operation_lock; // Serializes process-visible memory transactions.
     virt_region_t*  kernel_free_regions;
     virt_region_t*  kernel_used_regions;
     metadata_pool_t kernel_region_metadata_pool;
@@ -67,5 +71,6 @@ phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space);
 virt_addr_t    vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_t type);
 void           vmm_free_region(virt_addr_space_t* space, virt_addr_t addr);
 virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr);
+bool vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr);
 
 #endif

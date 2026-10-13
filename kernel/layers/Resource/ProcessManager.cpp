@@ -1,4 +1,5 @@
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
 {
@@ -87,6 +88,7 @@ ProcessManager::ProcessManager()
         Processes[i].exitStatus          = 0;
         Processes[i].addressSpace        = nullptr;
         Processes[i].elfMetadata         = nullptr;
+            Processes[i].breakBase = 0; Processes[i].programBreak = 0; Processes[i].memoryUsers = 0;
         Processes[i].tasks               = nullptr;
         Processes[i].fileDescriptors     = nullptr;
         Processes[i].fileDescriptorCount = 0;
@@ -120,6 +122,7 @@ process_t* ProcessManager::AllocateProcessUnlocked()
             Processes[i].exitStatus          = 0;
             Processes[i].addressSpace        = nullptr;
             Processes[i].elfMetadata         = nullptr;
+            Processes[i].breakBase = 0; Processes[i].programBreak = 0; Processes[i].memoryUsers = 0;
             Processes[i].tasks               = nullptr;
             Processes[i].fileDescriptors     = nullptr;
             Processes[i].fileDescriptorCount = 0;
@@ -157,6 +160,29 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     memset(fileDescriptorTable, 0, sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
 
     LockManager();
+
+    // Shared roots currently have no per-process ownership model. Do not attach
+    // another process once syscall-owned pages exist in this address space.
+    for (size_t i = 0; i < MAX_PROCESSES; ++i)
+    {
+        if (Processes[i].allocated && Processes[i].addressSpace == addressSpace && Processes[i].memoryUsers != 0)
+        {
+            UnlockManager();
+            kfree(fileDescriptorTable);
+            return nullptr;
+        }
+    }
+    spinlock_acquire(&addressSpace->operation_lock);
+    bool hasAnonymousPages = false;
+    for (virt_region_t* r = addressSpace->user_used_regions; r; r = r->next)
+        if (r->backing) { hasAnonymousPages = true; break; }
+    spinlock_release(&addressSpace->operation_lock);
+    if (hasAnonymousPages)
+    {
+        UnlockManager();
+        kfree(fileDescriptorTable);
+        return nullptr;
+    }
 
     process_t* process = AllocateProcessUnlocked();
     if (process == nullptr)
@@ -209,11 +235,36 @@ bool ProcessManager::FreeProcess(process_t* process)
         return false;
     }
 
-    if (!process->allocated)
+    if (!process->allocated || process->memoryUsers)
     {
         UnlockManager();
         return false;
     }
+
+    if (process->addressSpace != nullptr && IsProcessRunning(process))
+    {
+        for (virt_region_t* region = process->addressSpace->user_used_regions; region != nullptr; region = region->next)
+        {
+            if (region->backing != nullptr)
+            {
+                UnlockManager();
+                return false;
+            }
+        }
+    }
+
+    // Pin the slot and reject new memory operations while teardown runs.
+    // Do not retain ManagerLock across page-table operations and IPI waits.
+    process->memoryUsers = 1;
+    const bool wasExited = process->exited;
+    process->exited = true;
+    virt_addr_space_t* addressSpace = process->addressSpace;
+    UnlockManager();
+    VirtualMemoryManager memory;
+    memory.ReleaseAnonymousPages(addressSpace);
+    LockManager();
+    process->memoryUsers = 0;
+    process->exited = wasExited;
 
     if (process->fileDescriptors != nullptr)
     {
@@ -694,17 +745,27 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
         return false;
     }
 
+    LockManager();
     if (process != nullptr)
     {
         if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
         {
+            UnlockManager();
             return false;
         }
 
         if (!process->allocated)
         {
+            UnlockManager();
             return false;
         }
+
+        if (process->exited && process->memoryUsers != 0)
+        {
+            UnlockManager();
+            return false;
+        }
+
     }
 
     RunningProcesses[cpuId] = process;
@@ -721,6 +782,7 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
         vmm_switch_addr_space(targetAddressSpace);
     }
 
+    UnlockManager();
     return true;
 }
 
@@ -781,4 +843,36 @@ bool ProcessManager::TryReapExitedProcess(uint64_t processId)
 size_t ProcessManager::GetCapacity() const
 {
     return MAX_PROCESSES;
+}
+
+
+process_t* ProcessManager::AcquireCurrentMemoryProcess()
+{
+    LockManager();
+    process_t* process = GetCurrentProcess();
+    if (process && process->allocated && !process->exited && process->addressSpace)
+    {
+        for (size_t i = 0; i < MAX_PROCESSES; ++i)
+            if (&Processes[i] != process && Processes[i].allocated && Processes[i].addressSpace == process->addressSpace)
+            { process = nullptr; break; }
+        if (process) process->memoryUsers++;
+    }
+    else process = nullptr;
+    UnlockManager();
+    return process;
+}
+void ProcessManager::ReleaseMemoryProcess(process_t* process)
+{
+    LockManager();
+    if (process && process->memoryUsers) process->memoryUsers--;
+    UnlockManager();
+}
+
+uint64_t ProcessManager::GetCurrentProgramBreak() const
+{
+    LockManager();
+    process_t* process = GetCurrentProcess();
+    const uint64_t result = process != nullptr && process->allocated ? process->programBreak : 0;
+    UnlockManager();
+    return result;
 }

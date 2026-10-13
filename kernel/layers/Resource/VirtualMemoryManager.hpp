@@ -10,6 +10,16 @@ extern "C"
 class VirtualMemoryManager
 {
 public:
+    virt_addr_space_t* CreateUserAddressSpace();
+    void DestroyUserAddressSpace(virt_addr_space_t* space);
+    // Transaction caller holds space->operation_lock.
+    bool IsPageAvailable(virt_addr_space_t* space, uint64_t address);
+    bool AllocateAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection, bool heap);
+    void ReleaseAnonymousPage(virt_addr_space_t* space, uint64_t address);
+    void ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection);
+    void DiscardAnonymousPage(virt_addr_space_t* space, uint64_t address);
+    bool WriteAnonymousUser(virt_addr_space_t* space, uint64_t address, const void* source, size_t length);
+    void ReleaseAnonymousPages(virt_addr_space_t* space);
     void MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space);
     void UnmapPage(virt_addr_t va, virt_addr_space_t* space);
 

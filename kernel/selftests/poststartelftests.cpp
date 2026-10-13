@@ -321,6 +321,25 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     elfMapped = true;
     passes++;
 
+    {
+        uint64_t executableEnd = 0;
+        for (uint64_t i = 0; i < metadata.segmentCount; ++i)
+        {
+            const elf_segment_metadata_t& segment = metadata.segments[i];
+            const uint64_t end = segment.mappedAddress + segment.memorySize;
+            if (end > executableEnd)
+            {
+                executableEnd = end;
+            }
+        }
+        if (process->breakBase != align_up(executableEnd, PAGE_SIZE) || process->programBreak != process->breakBase)
+        {
+            poststart_elf_test_fail("ELF initializes aligned program break", &fails);
+            goto cleanup;
+        }
+        passes++;
+    }
+
     process->elfMetadata = &metadata;
 
     if (!setup_user_stack(resourceCaps, process, stackPages, stackPageCount))

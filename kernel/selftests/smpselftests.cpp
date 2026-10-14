@@ -113,6 +113,7 @@ static size_t format_pid_payload(uint64_t pid, char* out, size_t outCapacity)
 static void smp_pid_vfs_task(void* arg)
 {
     smp_pid_vfs_task_context_t* ctx = (smp_pid_vfs_task_context_t*) arg;
+
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->returnTask == nullptr)
     {
         for (;;)
@@ -143,6 +144,7 @@ static void smp_pid_vfs_task(void* arg)
     if (!localFail)
     {
         opened = ctx->vfs->Open(start, "/test.txt", 0);
+
         if (opened == nullptr)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_OPEN;
@@ -153,6 +155,7 @@ static void smp_pid_vfs_task(void* arg)
     if (!localFail)
     {
         fd = ctx->processManager->AddFileDescriptor(currentProcess, (file_handle_t) opened, FD_FLAG_NONE);
+
         if (fd < 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_ADD_FD;
@@ -161,9 +164,11 @@ static void smp_pid_vfs_task(void* arg)
     }
 
     int64_t fileBytes = -1;
+
     if (!localFail)
     {
         fileBytes = ctx->vfs->Read(opened, probe, sizeof(probe));
+
         if (fileBytes <= 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_READ;
@@ -172,9 +177,11 @@ static void smp_pid_vfs_task(void* arg)
     }
 
     size_t payloadLen = 0;
+
     if (!localFail)
     {
         payloadLen = format_pid_payload(ctx->processId, payload, sizeof(payload));
+
         if (payloadLen == 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_PAYLOAD;
@@ -185,12 +192,14 @@ static void smp_pid_vfs_task(void* arg)
     uint64_t       slotSize   = 16;
     const uint64_t cpuCount   = platform.cpu_count == 0 ? 1 : platform.cpu_count;
     const uint64_t defaultMin = slotSize * cpuCount;
+
     if ((uint64_t) fileBytes < defaultMin)
     {
         slotSize = (uint64_t) fileBytes / cpuCount;
     }
 
     const uint64_t slotOffset = ctx->cpuId * slotSize;
+
     if (!localFail && (slotSize == 0 || payloadLen > slotSize || slotOffset + (uint64_t) payloadLen > (uint64_t) fileBytes))
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SLOT_LAYOUT;
@@ -218,6 +227,7 @@ static void smp_pid_vfs_task(void* arg)
     if (!localFail)
     {
         const int64_t verifyBytes = ctx->vfs->Read(opened, verify, (uint64_t) payloadLen);
+
         if (verifyBytes != (int64_t) payloadLen || memcmp(verify, payload, payloadLen) != 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_VERIFY;
@@ -244,6 +254,7 @@ static void smp_pid_vfs_task(void* arg)
     ctx->completed = 1;
 
     (void) ctx->taskManager->ExecuteTask(ctx->returnTask);
+
     for (;;)
     {
         arch_pause();
@@ -259,6 +270,7 @@ extern "C" void smp_selftests(void)
     LogicLayerCaps*    logicLayerCaps    = nullptr;
 
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         kprintf("Arx kernel: smp pid-vfs test skipped cpu=%u (dispatcher null)\n", (unsigned) cpuId);
@@ -270,6 +282,7 @@ extern "C" void smp_selftests(void)
     {
         resourceLayerCaps = dispatcher->GetResourceLayerCaps();
         logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+
         if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->taskManager == nullptr || resourceLayerCaps->processManager == nullptr || logicLayerCaps->virtualFileSystem == nullptr)
         {
             kprintf("Arx kernel: smp pid-vfs test skipped cpu=%u (missing managers)\n", (unsigned) cpuId);
@@ -327,6 +340,7 @@ extern "C" void smp_selftests(void)
                 }
 
                 process = processManager->CreateProcess(activeSpace);
+
                 if (process == nullptr)
                 {
                     fails++;
@@ -346,6 +360,7 @@ extern "C" void smp_selftests(void)
                 ctx.passed         = 0;
 
                 task = taskManager->CreateKernelTask(smp_pid_vfs_task, &ctx);
+
                 if (task == nullptr)
                 {
                     fails++;
@@ -395,10 +410,12 @@ extern "C" void smp_selftests(void)
                 {
                     fails++;
                     localFailMask |= SMP_FAIL_PIDVFS_TASK_BODY;
+
                     if (ctx.failStage == SMP_PIDVFS_TASK_FAIL_SLOT_LAYOUT)
                     {
                         localFailMask |= SMP_FAIL_PIDVFS_SLOT_LAYOUT;
                     }
+
                     kprintf("Arx kernel: smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
                     KDEBUG("smp pid-vfs FAIL cpu=%u completed=%d passed=%d\n", (unsigned) cpuId, ctx.completed, ctx.passed);
                     KDEBUG("smp pid-vfs FAIL cpu=%u task_fail_stage=%d\n", (unsigned) cpuId, (int) ctx.failStage);
@@ -432,32 +449,67 @@ extern "C" void smp_selftests(void)
             unsigned long long schedulerFails    = 0;
             unsigned long long schedulerFailMask = 0;
             run_smp_scheduler_selftest((void*) logicLayerCaps, (void*) resourceLayerCaps, (unsigned long long) cpuId, &schedulerPasses, &schedulerFails, &schedulerFailMask);
+
             if (schedulerFailMask & (1ULL << 0))
+            {
                 localFailMask |= SMP_FAIL_SCHED_MISSING_MANAGERS;
+            }
+
             if (schedulerFailMask & (1ULL << 1))
+            {
                 localFailMask |= SMP_FAIL_SCHED_MISSING_RUNNING;
+            }
+
             if (schedulerFailMask & (1ULL << 2))
+            {
                 localFailMask |= SMP_FAIL_SCHED_MISSING_ADDR_SPACE;
+            }
+
             if (schedulerFailMask & (1ULL << 3))
+            {
                 localFailMask |= SMP_FAIL_SCHED_CREATE_PROCESS;
+            }
+
             if (schedulerFailMask & (1ULL << 4))
+            {
                 localFailMask |= SMP_FAIL_SCHED_CREATE_TASK;
+            }
+
             if (schedulerFailMask & (1ULL << 5))
+            {
                 localFailMask |= SMP_FAIL_SCHED_ADD_TASK;
+            }
+
             if (schedulerFailMask & (1ULL << 6))
+            {
                 localFailMask |= SMP_FAIL_SCHED_ENQUEUE;
+            }
+
             if (schedulerFailMask & (1ULL << 7))
+            {
                 localFailMask |= SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED;
+            }
+
             if (schedulerFailMask & (1ULL << 8))
+            {
                 localFailMask |= SMP_FAIL_SCHED_RUN_NEXT;
+            }
+
             if (schedulerFailMask & (1ULL << 9))
+            {
                 localFailMask |= SMP_FAIL_SCHED_TASK_NOT_ENTERED;
+            }
+
             if (schedulerFailMask & (1ULL << 10))
+            {
                 localFailMask |= SMP_FAIL_SCHED_PROCESS_MISMATCH;
+            }
+
             totals.passes += schedulerPasses;
             totals.fails += schedulerFails;
         }
     }
+
     (void) __atomic_fetch_add(&g_smp_selftests_total_passes, totals.passes, __ATOMIC_RELAXED);
     (void) __atomic_fetch_add(&g_smp_selftests_total_fails, totals.fails, __ATOMIC_RELAXED);
     (void) __atomic_fetch_or(&g_smp_selftests_fail_mask, localFailMask, __ATOMIC_RELAXED);
@@ -467,6 +519,7 @@ extern "C" void smp_selftests(void)
 extern "C" void smp_selftests_wait_for_all_cpus(void)
 {
     const unsigned long long expected = (unsigned long long) platform.cpu_count;
+
     while (__atomic_load_n(&g_smp_selftests_finished_cpus, __ATOMIC_ACQUIRE) < expected)
     {
         arch_pause();
@@ -494,6 +547,7 @@ extern "C" void smp_selftests_get_totals(unsigned long long* out_passes, unsigne
 extern "C" void smp_selftests_kdebug_summary_details(void)
 {
     const unsigned long long mask = __atomic_load_n(&g_smp_selftests_fail_mask, __ATOMIC_RELAXED);
+
     if (mask == 0)
     {
         KDEBUG("smp summary detail: no failure mask bits set\n");
@@ -503,107 +557,242 @@ extern "C" void smp_selftests_kdebug_summary_details(void)
     KDEBUG("smp summary detail: fail_mask=0x%llx\n", mask);
 
     if (mask & SMP_FAIL_DISPATCHER_NULL)
+    {
         KDEBUG("smp summary detail: dispatcher null\n");
+    }
+
     if (mask & SMP_FAIL_MANAGERS_MISSING)
+    {
         KDEBUG("smp summary detail: managers missing\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_MISSING_RUNNING)
+    {
         KDEBUG("smp summary detail: pid-vfs missing running task\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_MISSING_ADDR_SPACE)
+    {
         KDEBUG("smp summary detail: pid-vfs missing address space\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_CREATE_PROCESS)
+    {
         KDEBUG("smp summary detail: pid-vfs create process failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_CREATE_TASK)
+    {
         KDEBUG("smp summary detail: pid-vfs create task failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_ADD_TASK)
+    {
         KDEBUG("smp summary detail: pid-vfs add task failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_SET_RUNNING)
+    {
         KDEBUG("smp summary detail: pid-vfs set running process failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_EXECUTE)
+    {
         KDEBUG("smp summary detail: pid-vfs execute task failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_RESTORE_RUNNING)
+    {
         KDEBUG("smp summary detail: pid-vfs restore running process failed\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_TASK_BODY)
+    {
         KDEBUG("smp summary detail: pid-vfs task body reported failure\n");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_SLOT_LAYOUT)
+    {
         KDEBUG("smp summary detail: pid-vfs slot layout/file size insufficient for cpu count\n");
+    }
 
     if (mask & SMP_FAIL_SCHED_MISSING_MANAGERS)
+    {
         KDEBUG("smp summary detail: scheduler managers missing\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_MISSING_RUNNING)
+    {
         KDEBUG("smp summary detail: scheduler missing running task\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_MISSING_ADDR_SPACE)
+    {
         KDEBUG("smp summary detail: scheduler missing address space\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_CREATE_PROCESS)
+    {
         KDEBUG("smp summary detail: scheduler create process failed\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_CREATE_TASK)
+    {
         KDEBUG("smp summary detail: scheduler create task failed\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_ADD_TASK)
+    {
         KDEBUG("smp summary detail: scheduler add task failed\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_ENQUEUE)
+    {
         KDEBUG("smp summary detail: scheduler enqueue failed\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED)
+    {
         KDEBUG("smp summary detail: scheduler dispatch attempts exhausted\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_RUN_NEXT)
+    {
         KDEBUG("smp summary detail: scheduler RunNextReadyProcess failed\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_TASK_NOT_ENTERED)
+    {
         KDEBUG("smp summary detail: scheduler test task not entered\n");
+    }
+
     if (mask & SMP_FAIL_SCHED_PROCESS_MISMATCH)
+    {
         KDEBUG("smp summary detail: scheduler process mismatch\n");
+    }
 }
 
 extern "C" void smp_selftests_record_failure_details(void)
 {
     const unsigned long long mask = __atomic_load_n(&g_smp_selftests_fail_mask, __ATOMIC_RELAXED);
+
     if (mask == 0)
     {
         return;
     }
 
     if (mask & SMP_FAIL_DISPATCHER_NULL)
+    {
         selftest_record_failure_detail("dispatcher null");
+    }
+
     if (mask & SMP_FAIL_MANAGERS_MISSING)
+    {
         selftest_record_failure_detail("managers missing");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_MISSING_RUNNING)
+    {
         selftest_record_failure_detail("pid-vfs missing running task");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_MISSING_ADDR_SPACE)
+    {
         selftest_record_failure_detail("pid-vfs missing address space");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_CREATE_PROCESS)
+    {
         selftest_record_failure_detail("pid-vfs create process failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_CREATE_TASK)
+    {
         selftest_record_failure_detail("pid-vfs create task failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_ADD_TASK)
+    {
         selftest_record_failure_detail("pid-vfs add task failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_SET_RUNNING)
+    {
         selftest_record_failure_detail("pid-vfs set running process failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_EXECUTE)
+    {
         selftest_record_failure_detail("pid-vfs execute task failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_RESTORE_RUNNING)
+    {
         selftest_record_failure_detail("pid-vfs restore running process failed");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_TASK_BODY)
+    {
         selftest_record_failure_detail("pid-vfs task body reported failure");
+    }
+
     if (mask & SMP_FAIL_PIDVFS_SLOT_LAYOUT)
+    {
         selftest_record_failure_detail("pid-vfs slot layout/file size insufficient for cpu count");
+    }
 
     if (mask & SMP_FAIL_SCHED_MISSING_MANAGERS)
+    {
         selftest_record_failure_detail("scheduler managers missing");
+    }
+
     if (mask & SMP_FAIL_SCHED_MISSING_RUNNING)
+    {
         selftest_record_failure_detail("scheduler missing running task");
+    }
+
     if (mask & SMP_FAIL_SCHED_MISSING_ADDR_SPACE)
+    {
         selftest_record_failure_detail("scheduler missing address space");
+    }
+
     if (mask & SMP_FAIL_SCHED_CREATE_PROCESS)
+    {
         selftest_record_failure_detail("scheduler create process failed");
+    }
+
     if (mask & SMP_FAIL_SCHED_CREATE_TASK)
+    {
         selftest_record_failure_detail("scheduler create task failed");
+    }
+
     if (mask & SMP_FAIL_SCHED_ADD_TASK)
+    {
         selftest_record_failure_detail("scheduler add task failed");
+    }
+
     if (mask & SMP_FAIL_SCHED_ENQUEUE)
+    {
         selftest_record_failure_detail("scheduler enqueue failed");
+    }
+
     if (mask & SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED)
+    {
         selftest_record_failure_detail("scheduler dispatch attempts exhausted");
+    }
+
     if (mask & SMP_FAIL_SCHED_RUN_NEXT)
+    {
         selftest_record_failure_detail("scheduler RunNextReadyProcess failed");
+    }
+
     if (mask & SMP_FAIL_SCHED_TASK_NOT_ENTERED)
+    {
         selftest_record_failure_detail("scheduler test task not entered");
+    }
+
     if (mask & SMP_FAIL_SCHED_PROCESS_MISMATCH)
+    {
         selftest_record_failure_detail("scheduler process mismatch");
+    }
 }

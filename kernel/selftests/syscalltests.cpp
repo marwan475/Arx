@@ -60,16 +60,20 @@ struct request_user_fixture_t
     ~request_user_fixture_t()
     {
         cpu_preemption_disable();
+
         if (space != nullptr)
         {
             spinlock_acquire(&space->operation_lock);
+
             for (size_t i = 0; i < count; ++i)
             {
                 vmm_unmap_page(pages[i], space);
                 vmm_free_region(space, pages[i]);
             }
+
             spinlock_release(&space->operation_lock);
         }
+
         request_user_fixtures[arch_cpu_id()] = previous;
         cpu_preemption_enable();
     }
@@ -77,15 +81,22 @@ struct request_user_fixture_t
     uint64_t Address(const void* buffer, size_t length)
     {
         const uint64_t source = (uint64_t) (uintptr_t) buffer;
+
         if (source < CANONICAL_KERNEL_BASE)
+        {
             return source;
+        }
+
         const size_t offset = source & (PAGE_SIZE - 1);
+
         if (space == nullptr || length == 0 || length > MAX_PAGES * PAGE_SIZE - offset)
         {
             valid = false;
             return 0;
         }
+
         const size_t pageCount = align_up(offset + length, PAGE_SIZE) / PAGE_SIZE;
+
         if (pageCount > MAX_PAGES - count)
         {
             valid = false;
@@ -102,34 +113,43 @@ struct request_user_fixture_t
         ARCH_PAGE_FLAG_SET_USER(flags);
         bool          mapped = true;
         const zone_t* zone   = &platform.cpus[arch_cpu_id()].numa_node->zone;
+
         for (size_t i = 0; i < pageCount; ++i)
         {
             const uint64_t kernelPage = align_down(source, PAGE_SIZE) + i * PAGE_SIZE;
             phys_addr_t    physical   = 0;
+
             if (zone->hhdm_present && kernelPage >= zone->hhdm_offset && (kernelPage - zone->hhdm_offset) / PAGE_SIZE < zone->max_pfn)
+            {
                 physical = kernelPage - zone->hhdm_offset;
+            }
             else
                 physical = vmm_virt_to_phys(kernelPage, space);
 
             const uint64_t userPage = base + i * PAGE_SIZE;
+
             if (physical == 0 || vmm_virt_to_phys(userPage, space) != 0 || !vmm_reserve_page_at(space, userPage))
             {
                 mapped = false;
                 break;
             }
+
             pages[count++] = userPage;
             vmm_map_page(userPage, physical, flags, space);
+
             if (vmm_virt_to_phys(userPage, space) != physical || !arch_user_page_accessible(userPage, space->pt, true))
             {
                 mapped = false;
                 break;
             }
         }
+
         spinlock_release(&space->operation_lock);
         cpu_preemption_enable();
         valid &= mapped;
         return mapped ? base + offset : 0;
     }
+
 };
 
 static uint64_t request_user_address(const void* buffer, size_t length)
@@ -150,11 +170,15 @@ struct request_process_state_t
     explicit request_process_state_t(uint64_t syscallNumber) : process(nullptr), exited(false), exitStatus(0), guardExit(syscallNumber == SYSCALL_exit || syscallNumber == SYSCALL_exit_group)
     {
         if (!guardExit)
+        {
             return;
+        }
+
         cpu_preemption_disable();
         Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
         ResourceLayerCaps* caps       = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
         process                       = caps != nullptr && caps->processManager != nullptr ? caps->processManager->GetCurrentProcess() : nullptr;
+
         if (process != nullptr)
         {
             exited     = process->exited;
@@ -169,9 +193,13 @@ struct request_process_state_t
             process->exited     = exited;
             process->exitStatus = exitStatus;
         }
+
         if (guardExit)
+        {
             cpu_preemption_enable();
+        }
     }
+
 };
 
 enum expected_result_kind_t
@@ -200,6 +228,7 @@ static void test_user_copy_fixture(requestlayer_stats_t* stats)
     uint32_t               copied      = 0;
     const uint64_t         user        = request_user_address(&original, sizeof(original));
     bool                   passed      = user != 0 && fixture.valid;
+
     if (passed)
     {
         passed &= safe_read_user(user, &copied, sizeof(copied)) && copied == original;
@@ -228,9 +257,11 @@ static void test_user_copy_fixture(requestlayer_stats_t* stats)
         passed &= !safe_write_user(user, &copied, sizeof(copied)) && original == replacement;
         passed &= safe_read_user(user, &copied, sizeof(copied)) && copied == replacement;
     }
+
     stats->total++;
     stats->implemented++;
     stats->customCaseUsed++;
+
     if (passed)
     {
         stats->implementedPass++;
@@ -284,12 +315,14 @@ static bool resolve_runtime_identity(uint64_t* outPid, uint64_t* outTid)
     }
 
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
     if (dispatcher == nullptr)
     {
         return false;
     }
 
     ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+
     if (resourceCaps == nullptr || resourceCaps->processManager == nullptr || resourceCaps->taskManager == nullptr)
     {
         return false;
@@ -297,6 +330,7 @@ static bool resolve_runtime_identity(uint64_t* outPid, uint64_t* outTid)
 
     process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
     task_t*    currentTask    = resourceCaps->taskManager->GetCurrentTask();
+
     if (currentProcess == nullptr || currentTask == nullptr)
     {
         return false;
@@ -316,6 +350,7 @@ static bool custom_case_validate_process_identity(const custom_case_ctx_t* ctx)
 
     uint64_t expectedPid = 0;
     uint64_t expectedTid = 0;
+
     if (!resolve_runtime_identity(&expectedPid, &expectedTid))
     {
         return false;
@@ -351,6 +386,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
     }
 
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
     if (dispatcher == nullptr)
     {
         return false;
@@ -358,12 +394,14 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
 
     ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicCaps    = dispatcher->GetLogicLayerCaps();
+
     if (resourceCaps == nullptr || resourceCaps->processManager == nullptr || logicCaps == nullptr || logicCaps->virtualFileSystem == nullptr)
     {
         return false;
     }
 
     process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return false;
@@ -371,12 +409,14 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
 
     vfs_path_t start = {};
     file_t*    file  = logicCaps->virtualFileSystem->Open(start, "/test.txt", 0);
+
     if (file == nullptr)
     {
         return false;
     }
 
     int64_t fd = resourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE);
+
     if (fd < 0)
     {
         (void) logicCaps->virtualFileSystem->Close(file);
@@ -384,6 +424,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
     }
 
     bool validationPass = false;
+
     if (ctx->syscallNumber == SYSCALL_read)
     {
         char                 readBuffer[32] = {};
@@ -394,6 +435,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
         syscallFrame.arg2                   = (uint64_t) sizeof(readBuffer);
 
         uint64_t readResult = dispatcher_dispatch_syscall(&syscallFrame);
+
         if ((int64_t) readResult >= 0)
         {
             arch_syscall_frame_t badFdFrame = syscallFrame;
@@ -409,12 +451,15 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
         const uint64_t    maxBytes                  = (uint64_t) (sizeof(payload) - 1);
 
         uint64_t testBytes = 0;
+
         if (logicCaps->virtualFileSystem->Seek(file, 0, 0) >= 0)
         {
             int64_t originalRead = logicCaps->virtualFileSystem->Read(file, original, maxBytes);
+
             if (originalRead > 0)
             {
                 testBytes = (uint64_t) originalRead;
+
                 if (testBytes > maxBytes)
                 {
                     testBytes = maxBytes;
@@ -431,6 +476,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
             syscallFrame.arg2                 = testBytes;
 
             uint64_t writeResult = dispatcher_dispatch_syscall(&syscallFrame);
+
             if (writeResult == testBytes)
             {
                 arch_syscall_frame_t badFdFrame = syscallFrame;
@@ -473,6 +519,7 @@ static bool custom_case_validate_pread64(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -517,6 +564,7 @@ static bool custom_case_validate_pwrite64(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -561,6 +609,7 @@ static bool custom_case_validate_readv(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -606,6 +655,7 @@ static bool custom_case_validate_writev(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -652,6 +702,7 @@ static bool custom_case_validate_preadv(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -698,6 +749,7 @@ static bool custom_case_validate_pwritev(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -751,6 +803,7 @@ static bool custom_case_validate_open(const custom_case_ctx_t* ctx)
     openFrame.arg2                 = 0;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -782,6 +835,7 @@ static bool custom_case_validate_creat(const custom_case_ctx_t* ctx)
     creatFrame.arg1                 = 0644;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&creatFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -815,6 +869,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     openatFrame.arg3                 = 0;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&openatFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -825,6 +880,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     closeFrame.arg0                 = fdResult;
 
     const uint64_t closeResult = dispatcher_dispatch_syscall(&closeFrame);
+
     if (closeResult != 0)
     {
         return false;
@@ -837,6 +893,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     rootDirFrame.arg2                 = 0;
 
     const uint64_t rootDirFd = dispatcher_dispatch_syscall(&rootDirFrame);
+
     if ((int64_t) rootDirFd < 0)
     {
         return false;
@@ -863,6 +920,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
 
     closeFrame.arg0                    = relativeFd;
     const uint64_t closeRelativeResult = dispatcher_dispatch_syscall(&closeFrame);
+
     if (closeRelativeResult != 0)
     {
         return false;
@@ -875,6 +933,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     regularFileFrame.arg2                 = 0;
 
     const uint64_t regularFd = dispatcher_dispatch_syscall(&regularFileFrame);
+
     if ((int64_t) regularFd < 0)
     {
         return false;
@@ -908,6 +967,7 @@ static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
     openFrame.arg2                 = 0;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -918,6 +978,7 @@ static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
     closeFrame.arg0                 = fdResult;
 
     const uint64_t firstClose = dispatcher_dispatch_syscall(&closeFrame);
+
     if (firstClose != 0)
     {
         return false;
@@ -940,6 +1001,7 @@ static bool custom_case_validate_close_range(const custom_case_ctx_t* ctx)
     openA.arg1                 = 0;
     openA.arg2                 = 0;
     const uint64_t fdA         = dispatcher_dispatch_syscall(&openA);
+
     if ((int64_t) fdA < 0)
     {
         return false;
@@ -947,6 +1009,7 @@ static bool custom_case_validate_close_range(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openB = openA;
     const uint64_t       fdB   = dispatcher_dispatch_syscall(&openB);
+
     if ((int64_t) fdB < 0)
     {
         return false;
@@ -977,6 +1040,7 @@ static bool custom_case_validate_close_range(const custom_case_ctx_t* ctx)
     // Validate CLOSE_RANGE_UNSHARE is accepted (no-op in current kernel model).
     const uint64_t fdC = dispatcher_dispatch_syscall(&openA);
     const uint64_t fdD = dispatcher_dispatch_syscall(&openB);
+
     if ((int64_t) fdC < 0 || (int64_t) fdD < 0)
     {
         return false;
@@ -1019,6 +1083,7 @@ static bool custom_case_validate_fcntl(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -1060,6 +1125,7 @@ static bool custom_case_validate_fcntl(const custom_case_ctx_t* ctx)
     const uint64_t closeOriginal    = dispatcher_dispatch_syscall(&closeFrame);
 
     uint64_t closeDup = LINUX_EBADF;
+
     if ((int64_t) dupFd >= 0)
     {
         closeFrame.arg0 = dupFd;
@@ -1082,6 +1148,7 @@ static bool custom_case_validate_dup(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) oldFd < 0)
     {
         return false;
@@ -1098,6 +1165,7 @@ static bool custom_case_validate_dup(const custom_case_ctx_t* ctx)
     const uint64_t closeOld         = dispatcher_dispatch_syscall(&closeFrame);
 
     uint64_t closeNew = LINUX_EBADF;
+
     if ((int64_t) newFd >= 0)
     {
         closeFrame.arg0 = newFd;
@@ -1120,12 +1188,14 @@ static bool custom_case_validate_dup2(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) oldFd < 0)
     {
         return false;
     }
 
     const uint64_t tmpFd = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) tmpFd < 0)
     {
         return false;
@@ -1163,12 +1233,14 @@ static bool custom_case_validate_dup3(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) oldFd < 0)
     {
         return false;
     }
 
     const uint64_t tmpFd = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) tmpFd < 0)
     {
         return false;
@@ -1210,6 +1282,7 @@ static bool custom_case_validate_ioctl(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -1242,24 +1315,28 @@ static bool custom_case_validate_getppid(const custom_case_ctx_t* ctx)
     }
 
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
     if (dispatcher == nullptr)
     {
         return false;
     }
 
     ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+
     if (resourceCaps == nullptr || resourceCaps->processManager == nullptr)
     {
         return false;
     }
 
     process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return false;
     }
 
     const uint64_t expectedPpid = currentProcess->hasParent ? currentProcess->parentId : 0;
+
     if (ctx->result != expectedPpid)
     {
         return false;
@@ -1336,6 +1413,7 @@ static bool custom_case_validate_sched_getaffinity(const custom_case_ctx_t* ctx)
     frame.arg2                 = request_user_address(mask, sizeof(mask));
 
     const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
+
     if (dispatchResult != sizeof(uint64_t))
     {
         return false;
@@ -1343,6 +1421,7 @@ static bool custom_case_validate_sched_getaffinity(const custom_case_ctx_t* ctx)
 
     uint64_t affinityMask = 0;
     memcpy(&affinityMask, mask, sizeof(affinityMask));
+
     if (affinityMask == 0)
     {
         return false;
@@ -1367,18 +1446,21 @@ static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
     }
 
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
     if (dispatcher == nullptr)
     {
         return false;
     }
 
     ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
+
     if (resourceCaps == nullptr || resourceCaps->processManager == nullptr)
     {
         return false;
     }
 
     process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return false;
@@ -1399,6 +1481,7 @@ static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t testFd          = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) testFd < 0)
     {
         return false;
@@ -1445,6 +1528,7 @@ static bool custom_case_validate_lseek(const custom_case_ctx_t* ctx)
     openFrame.arg2                 = 0;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -1490,6 +1574,7 @@ static bool custom_case_validate_getcwd(const custom_case_ctx_t* ctx)
     frame.arg1                 = sizeof(cwdBuffer);
 
     const uint64_t getcwdResult = dispatcher_dispatch_syscall(&frame);
+
     if (getcwdResult == 0 || getcwdResult >= sizeof(cwdBuffer))
     {
         return false;
@@ -1522,6 +1607,7 @@ static bool custom_case_validate_chdir(const custom_case_ctx_t* ctx)
     chdirRoot.syscall_number       = SYSCALL_chdir;
     chdirRoot.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t chdirRootResult = dispatcher_dispatch_syscall(&chdirRoot);
+
     if (chdirRootResult != 0)
     {
         return false;
@@ -1552,6 +1638,7 @@ static bool custom_case_validate_fchdir(const custom_case_ctx_t* ctx)
     openDir.arg1                 = 0;
     openDir.arg2                 = 0;
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+
     if ((int64_t) dirFd < 0)
     {
         return false;
@@ -1573,6 +1660,7 @@ static bool custom_case_validate_fchdir(const custom_case_ctx_t* ctx)
     openFile.arg1                 = 0;
     openFile.arg2                 = 0;
     const uint64_t fileFd         = dispatcher_dispatch_syscall(&openFile);
+
     if ((int64_t) fileFd < 0)
     {
         return false;
@@ -1631,6 +1719,7 @@ static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
     openFrame.arg2                 = 0;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fdResult < 0)
     {
         return false;
@@ -1883,6 +1972,7 @@ static bool custom_case_validate_symlinkat(const custom_case_ctx_t* ctx)
     openDir.syscall_number       = SYSCALL_open;
     openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+
     if ((int64_t) dirFd < 0)
     {
         return false;
@@ -1933,6 +2023,7 @@ static bool custom_case_validate_readlink(const custom_case_ctx_t* ctx)
     createFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     createFrame.arg1                 = request_user_address("/tmp-syscall-link-read", sizeof("/tmp-syscall-link-read"));
     const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
+
     if (createResult != 0)
     {
         return false;
@@ -1965,6 +2056,7 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
     openDir.syscall_number       = SYSCALL_open;
     openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+
     if ((int64_t) dirFd < 0)
     {
         return false;
@@ -1976,6 +2068,7 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
     createFrame.arg1                 = dirFd;
     createFrame.arg2                 = request_user_address("tmp-syscall-link-at-read", sizeof("tmp-syscall-link-at-read"));
     const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
+
     if (createResult != 0)
     {
         arch_syscall_frame_t closeDir = {};
@@ -2018,6 +2111,7 @@ static bool custom_case_validate_getdents64(const custom_case_ctx_t* ctx)
     openDir.syscall_number       = SYSCALL_open;
     openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
+
     if ((int64_t) dirFd < 0)
     {
         return false;
@@ -2077,6 +2171,7 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
     const uint64_t existsResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t execCheckFrame = frame;
+
     if (ctx->syscallNumber == SYSCALL_access)
     {
         execCheckFrame.arg1 = 1;
@@ -2085,9 +2180,11 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
     {
         execCheckFrame.arg2 = 1;
     }
+
     const uint64_t execCheckResult = dispatcher_dispatch_syscall(&execCheckFrame);
 
     arch_syscall_frame_t missingFrame = frame;
+
     if (ctx->syscallNumber == SYSCALL_access)
     {
         missingFrame.arg0 = request_user_address("/definitely-missing-selftest-file", sizeof("/definitely-missing-selftest-file"));
@@ -2096,9 +2193,11 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
     {
         missingFrame.arg1 = request_user_address("/definitely-missing-selftest-file", sizeof("/definitely-missing-selftest-file"));
     }
+
     const uint64_t missingResult = dispatcher_dispatch_syscall(&missingFrame);
 
     arch_syscall_frame_t badModeFrame = frame;
+
     if (ctx->syscallNumber == SYSCALL_access)
     {
         badModeFrame.arg1 = 8;
@@ -2107,9 +2206,11 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
     {
         badModeFrame.arg2 = 8;
     }
+
     const uint64_t badModeResult = dispatcher_dispatch_syscall(&badModeFrame);
 
     bool flagsResultOk = true;
+
     if (ctx->syscallNumber == SYSCALL_faccessat2)
     {
         arch_syscall_frame_t badFlagsFrame = frame;
@@ -2179,6 +2280,7 @@ static bool custom_case_validate_fstatfs(const custom_case_ctx_t* ctx)
     openFrame.syscall_number       = SYSCALL_open;
     openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -2520,6 +2622,7 @@ static bool custom_case_validate_truncate(const custom_case_ctx_t* ctx)
     statFrame.arg0                  = request_user_address("/test.txt", sizeof("/test.txt"));
     statFrame.arg1                  = request_user_address(&statBuffer, sizeof(statBuffer));
     const uint64_t statResult       = dispatcher_dispatch_syscall(&statFrame);
+
     if (statResult != 0)
     {
         return false;
@@ -2580,6 +2683,7 @@ static bool custom_case_validate_ftruncate(const custom_case_ctx_t* ctx)
     openFrame.syscall_number       = SYSCALL_open;
     openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
+
     if ((int64_t) fd < 0)
     {
         return false;
@@ -2591,6 +2695,7 @@ static bool custom_case_validate_ftruncate(const custom_case_ctx_t* ctx)
     fstatFrame.arg0                 = fd;
     fstatFrame.arg1                 = request_user_address(&statBuffer, sizeof(statBuffer));
     const uint64_t fstatResult      = dispatcher_dispatch_syscall(&fstatFrame);
+
     if (fstatResult != 0)
     {
         arch_syscall_frame_t closeFrame = {};
@@ -2697,10 +2802,12 @@ static uint64_t memory_pte(process_t* process, uint64_t address)
 {
 #if defined(__x86_64__)
     uint64_t table = process->addressSpace->pt;
+
     for (int shift = 39; shift >= 12; shift -= 9)
     {
         uint64_t* entries = reinterpret_cast<uint64_t*>(pa_to_hhdm(table, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset));
         uint64_t  entry   = entries[(address >> shift) & 511];
+
         if ((entry & 1) == 0 || shift == 12)
         {
             return entry;
@@ -2708,13 +2815,18 @@ static uint64_t memory_pte(process_t* process, uint64_t address)
 
         table = entry & 0x000ffffffffff000ULL;
     }
+
 #endif
     return 0;
 }
+
 static bool memory_expect(bool condition, const char* detail)
 {
     if (!condition)
+    {
         selftest_record_failure_detail(detail);
+    }
+
     return condition;
 }
 
@@ -2732,19 +2844,32 @@ static bool test_memory_mmap(process_t* process)
     bool     ok = true;
     uint64_t a  = memory_map();
     ok &= memory_expect(a == 0x10000 && memory_region(process, a), "mmap page-aligned placement");
+
     if (static_cast<int64_t>(a) < 0)
+    {
         return false;
+    }
+
     for (uint64_t p = a; p < a + 3 * PAGE_SIZE; p += PAGE_SIZE)
+
         for (unsigned i = 0; i < PAGE_SIZE; ++i)
+
             if (!memory_bytes(process, p) || memory_bytes(process, p)[i])
+            {
                 return memory_expect(false, "mmap zero initialization");
+            }
+
     uint64_t b = memory_map(1);
     ok &= memory_expect(b == a + 3 * PAGE_SIZE && memory_bytes(process, b) != memory_bytes(process, a), "mmap independent backing");
     uint64_t fixed = 0x400000;
     ok &= memory_expect(memory_map(1, fixed, 0x100022) == fixed, "mmap fixed noreplace");
     ok &= memory_expect(memory_map(1, fixed, 0x100022) == static_cast<uint64_t>(-17), "mmap collision EEXIST");
+
     if (memory_bytes(process, fixed))
+    {
         *memory_bytes(process, fixed) = 0xA5;
+    }
+
     ok &= memory_expect(memory_map(1, fixed, 0x32) == fixed && memory_bytes(process, fixed) && *memory_bytes(process, fixed) == 0, "mmap fixed replacement zeroes");
     ok &= memory_expect(memory_map(1, 0x600123) == 0x600000, "mmap address hint");
     ok &= memory_expect(memory_map(1, fixed) != fixed, "mmap occupied hint fallback");
@@ -2760,38 +2885,55 @@ static bool test_memory_mmap(process_t* process)
     memcpy(memory_bytes(process, a), "/test.txt", sizeof("/test.txt"));
     uint64_t fd = memory_call(SYSCALL_open, a, 0);
     ok &= memory_expect(static_cast<int64_t>(fd) >= 0, "mmap file fixture opens through real VFS");
+
     if (static_cast<int64_t>(fd) >= 0)
     {
         ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, fd) == static_cast<uint64_t>(-95), "mmap file dependency reported");
         ok &= memory_expect(memory_call(SYSCALL_close, fd) == 0, "mmap file fixture closes");
     }
+
     // Constrain the free interval to exercise address-space exhaustion safely.
     uint64_t       failStart = 0x1000000;
     virt_region_t* free      = process->addressSpace->user_free_regions;
+
     while (free && !(free->start <= failStart && free->end > failStart))
+    {
         free = free->next;
+    }
+
     if (!free)
+    {
         return memory_expect(false, "mmap rollback fixture range");
+    }
+
     uint64_t savedEnd = free->end;
     free->end         = failStart + 2 * PAGE_SIZE;
     free->size        = free->end - free->start;
     ok &= memory_expect(memory_map(3, failStart, 0x32) == static_cast<uint64_t>(-12), "mmap allocation failure");
     ok &= memory_expect(!memory_region(process, failStart) && !memory_vmm()->VirtToPhys(failStart, process->addressSpace), "mmap placement failure preserves mappings");
     // Free-list coalescing may replace the original node.
+
     for (virt_region_t* r = process->addressSpace->user_free_regions; r; r = r->next)
+
         if (r->end == failStart + 2 * PAGE_SIZE)
         {
             r->end  = savedEnd;
             r->size = r->end - r->start;
             break;
         }
+
     return ok;
 }
+
 static bool test_memory_munmap(process_t* process)
 {
     uint64_t a = memory_map();
+
     if (static_cast<int64_t>(a) < 0)
+    {
         return false;
+    }
+
     const size_t beforeUnmap = memory_pages_in_use();
     bool         ok          = memory_expect(memory_call(SYSCALL_munmap, a + PAGE_SIZE, 1) == 0, "munmap middle page");
     ok &= memory_expect(memory_pages_in_use() + 1 == beforeUnmap, "munmap releases physical middle page");
@@ -2804,28 +2946,37 @@ static bool test_memory_munmap(process_t* process)
     ok &= memory_expect(memory_call(SYSCALL_munmap, a + 1, PAGE_SIZE) == LINUX_EINVAL && memory_call(SYSCALL_munmap, a, 0) == LINUX_EINVAL, "munmap invalid alignment and length");
     return ok;
 }
+
 static bool test_memory_mprotect(process_t* process)
 {
     uint64_t a = memory_map();
+
     if (static_cast<int64_t>(a) < 0)
+    {
         return false;
+    }
+
     bool ok = memory_expect(memory_call(SYSCALL_mprotect, a + PAGE_SIZE, PAGE_SIZE, 1) == 0, "mprotect read-only subrange");
     ok &= memory_expect(memory_region(process, a)->protection == 3 && memory_region(process, a + PAGE_SIZE)->protection == 1 && !(memory_pte(process, a + PAGE_SIZE) & 2), "mprotect metadata and readonly PTE");
     ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 5) == 0 && !(memory_pte(process, a) & (1ULL << 63)), "mprotect executable PTE");
     ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 0) == 0 && !(memory_pte(process, a) & 4) && memory_region(process, a)->backing, "mprotect none denies user access retains backing");
     ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 3) == 0 && (memory_pte(process, a) & 6) == 6 && (memory_pte(process, a) & (1ULL << 63)), "mprotect restores write and NX");
+
     for (uint32_t protection = 0; protection < 8; ++protection)
     {
         ok &= memory_expect(memory_call(SYSCALL_mprotect, a + 2 * PAGE_SIZE, PAGE_SIZE, protection) == 0 && memory_region(process, a + 2 * PAGE_SIZE)->protection == protection, "mprotect all valid protection combinations");
     }
+
     ok &= memory_expect(memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 8) == LINUX_EINVAL && memory_call(SYSCALL_mprotect, a + 1, PAGE_SIZE, 1) == LINUX_EINVAL, "mprotect invalid flags/alignment");
     ok &= memory_expect(memory_call(SYSCALL_mprotect, 0x400000, PAGE_SIZE, 1) == static_cast<uint64_t>(-12), "mprotect unmapped ENOMEM");
     ok &= memory_expect(memory_call(SYSCALL_mprotect, CANONICAL_KERNEL_BASE, PAGE_SIZE, 1) == LINUX_EINVAL, "mprotect kernel address rejected");
     void* legacyPage = pmm_alloc(PAGE_SIZE);
+
     if (legacyPage == nullptr)
     {
         return memory_expect(false, "mprotect legacy mapping fixture allocation");
     }
+
     const phys_addr_t legacyPhysical = hhdm_to_pa(reinterpret_cast<uintptr_t>(legacyPage), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
     uint64_t          legacyFlags    = 0;
     ARCH_PAGE_FLAGS_INIT(legacyFlags);
@@ -2842,11 +2993,16 @@ static bool test_memory_mprotect(process_t* process)
     pmm_free(legacyPage);
     return ok;
 }
+
 static bool test_memory_mincore(process_t* process)
 {
     uint64_t a = memory_map(), vec = memory_map(2);
+
     if (static_cast<int64_t>(a) < 0 || static_cast<int64_t>(vec) < 0)
+    {
         return false;
+    }
+
     *memory_bytes(process, vec + PAGE_SIZE - 2) = 0xA5;
     *memory_bytes(process, vec + PAGE_SIZE + 2) = 0xA5;
     memory_call(SYSCALL_mprotect, a, PAGE_SIZE, 0);
@@ -2863,15 +3019,24 @@ static bool test_memory_mincore(process_t* process)
     ok &= memory_expect(memory_call(SYSCALL_mincore, a, PAGE_SIZE, vec) == LINUX_EFAULT, "mincore readonly output rejected");
     return ok;
 }
+
 static bool test_memory_madvise(process_t* process)
 {
     uint64_t a = memory_map();
+
     if (static_cast<int64_t>(a) < 0)
+    {
         return false;
+    }
+
     bool ok                   = true;
     *memory_bytes(process, a) = 0xA5;
+
     for (int advice = 0; advice <= 3; ++advice)
+    {
         ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, advice) == 0 && *memory_bytes(process, a) == 0xA5, "madvise hint accepted preserves content");
+    }
+
     ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, 4) == 0 && *memory_bytes(process, a) == 0, "madvise dontneed discards contents");
     ok &= memory_expect(memory_call(SYSCALL_madvise, a + 1, PAGE_SIZE, 0) == LINUX_EINVAL, "madvise alignment");
     ok &= memory_expect(memory_call(SYSCALL_madvise, a, PAGE_SIZE, 999) == LINUX_EINVAL && memory_call(SYSCALL_madvise, a, PAGE_SIZE, 8) == LINUX_EINVAL, "madvise invalid and unsupported FREE");
@@ -2882,13 +3047,18 @@ static bool test_memory_madvise(process_t* process)
     ok &= memory_expect(memory_call(SYSCALL_madvise, a, 3 * PAGE_SIZE, 4) == static_cast<uint64_t>(-12) && *memory_bytes(process, a) == 0 && *memory_bytes(process, a + 2 * PAGE_SIZE) == 0, "madvise holes return ENOMEM and process mapped pages");
     return ok;
 }
+
 static bool test_memory_brk(process_t* process)
 {
     uint64_t base = process->breakBase;
     bool     ok   = memory_expect(memory_call(SYSCALL_brk) == base, "brk initial query");
     ok &= memory_expect(memory_call(SYSCALL_brk, base + 1) == base + 1 && memory_bytes(process, base) && *memory_bytes(process, base) == 0, "brk grows zeroed page");
+
     if (!memory_bytes(process, base))
+    {
         return false;
+    }
+
     *memory_bytes(process, base) = 0xA5;
     ok &= memory_expect(memory_call(SYSCALL_brk, base + 2 * PAGE_SIZE + 17) == base + 2 * PAGE_SIZE + 17 && *memory_bytes(process, base) == 0xA5 && memory_bytes(process, base + 2 * PAGE_SIZE) && *memory_bytes(process, base + 2 * PAGE_SIZE) == 0, "brk page boundary and contents");
     ok &= memory_expect(memory_call(SYSCALL_brk, base + 7) == base + 7 && !memory_region(process, base + PAGE_SIZE) && memory_region(process, base), "brk shrink releases whole pages");
@@ -2913,6 +3083,7 @@ static bool run_memory_case(bool (*test)(process_t*))
 {
     cpu_preemption_disable();
     Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
     if (dispatcher == nullptr || dispatcher->GetResourceLayerCaps() == nullptr)
     {
         return memory_case_result(memory_expect(false, "memory syscall fixture missing dispatcher"));
@@ -2921,23 +3092,28 @@ static bool run_memory_case(bool (*test)(process_t*))
     ResourceLayerCaps*    caps                 = dispatcher->GetResourceLayerCaps();
     ProcessManager*       processManager       = caps->processManager;
     VirtualMemoryManager* virtualMemoryManager = caps->virtualMemoryManager;
+
     if (processManager == nullptr || virtualMemoryManager == nullptr)
     {
         return memory_case_result(memory_expect(false, "memory syscall fixture missing resource managers"));
     }
 
     process_t* previous = processManager->GetCurrentProcess();
+
     if (previous == nullptr || previous->addressSpace == nullptr)
     {
         return memory_case_result(memory_expect(false, "memory syscall fixture requires a restorable process"));
     }
+
     virt_addr_space_t* space = virtualMemoryManager->CreateUserAddressSpace();
+
     if (space == nullptr)
     {
         return memory_case_result(memory_expect(false, "memory syscall isolated address-space fixture unavailable"));
     }
 
     process_t* process = processManager->CreateProcess(space);
+
     if (process == nullptr)
     {
         virtualMemoryManager->DestroyUserAddressSpace(space);
@@ -2949,25 +3125,31 @@ static bool run_memory_case(bool (*test)(process_t*))
     process->programBreak = process->breakBase;
     bool active           = processManager->SetRunningProcess(arch_cpu_id(), process);
     bool result           = active;
+
     if (active)
     {
         process_t* pinned = processManager->AcquireCurrentMemoryProcess();
         result &= memory_expect(pinned == process, "memory syscall fixture pins current process");
+
         if (pinned != nullptr)
         {
             result &= memory_expect(!processManager->FreeProcess(process), "memory syscall lifetime pin blocks teardown");
             processManager->ReleaseMemoryProcess(pinned);
         }
+
         process_t* alias = processManager->CreateProcess(space);
         result &= memory_expect(alias != nullptr, "memory syscall shared-root fixture creates alias");
+
         if (alias != nullptr)
         {
             result &= memory_expect(memory_map(1) == LINUX_ESRCH, "memory syscall shared roots rejected before mutation");
             result &= memory_expect(memory_call(SYSCALL_brk) == process->breakBase, "brk query remains current on unsupported shared root");
             result &= memory_expect(processManager->FreeProcess(alias), "memory syscall shared-root fixture cleanup");
         }
+
         result &= test(process);
     }
+
     if (active)
     {
         result &= memory_expect(processManager->SetRunningProcess(arch_cpu_id(), previous), "memory syscall fixture restore process");
@@ -3041,6 +3223,7 @@ static expected_result_kind_t expected_kind_for_syscall(uint64_t syscallNumber)
 static bool validate_linux_behavior(uint64_t syscallNumber, uint64_t result)
 {
     const expected_result_kind_t expectedKind = expected_kind_for_syscall(syscallNumber);
+
     if (expectedKind == EXPECT_NONNEG)
     {
         return (int64_t) result >= 0;
@@ -3080,6 +3263,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
         request_user_fixture_t  userFixture;
         arch_syscall_frame_t    frame = {};
         frame.syscall_number          = tests[index].syscallNumber;
+
         if (tests[index].customValidator == nullptr)
         {
             // Non-custom tests get deterministic synthetic args.
@@ -3099,11 +3283,15 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
         stats->total++;
 
         const bool unavailable = result == LINUX_ENOSYS;
+
         if (unavailable)
         {
             stats->unimplemented++;
+
             if (!(runUnavailableCustom && tests[index].customValidator != nullptr))
+            {
                 continue;
+            }
         }
         else
             stats->implemented++;
@@ -3117,20 +3305,33 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
             const bool traceWait = strcmp(managerName, "time") == 0 || strcmp(managerName, "event") == 0 || strcmp(managerName, "sync") == 0 || strcmp(managerName,"signal") == 0;
             uint64_t started = 0, finished = 0;
             const bool haveStart = traceWait && arch_time_read_monotonic(&started);
-            if (traceWait) KDEBUG("[selftest] running %s::%s\n", managerName, tests[index].name);
+
+            if (traceWait)
+            {
+                KDEBUG("[selftest] running %s::%s\n", managerName, tests[index].name);
+            }
+
             const bool passed = tests[index].customValidator(&customCtx) && userFixture.valid;
+
             if (traceWait)
             {
                 if (haveStart && arch_time_read_monotonic(&finished) && finished >= started)
                     KDEBUG("[selftest] finished %s::%s elapsed=%llu ms result=%s\n", managerName, tests[index].name,
                         (unsigned long long) ((finished - started) / 1000000), passed ? "PASS" : "FAIL");
-                else KDEBUG("[selftest] finished %s::%s result=%s (clock unavailable)\n", managerName, tests[index].name, passed ? "PASS" : "FAIL");
+                else
+                {
+                    KDEBUG("[selftest] finished %s::%s result=%s (clock unavailable)\n", managerName, tests[index].name, passed ? "PASS" : "FAIL");
+                }
             }
+
             if (passed)
             {
                 stats->customCasePass++;
+
                 if (!unavailable)
+                {
                     stats->implementedPass++;
+                }
             }
             else
             {
@@ -3139,6 +3340,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
                 selftest_record_failure_detail(tests[index].name);
                 kprintf("Arx kernel: requestlayer_selftest custom FAIL %s::%s got=%lld\n", managerName, tests[index].name, (long long) result);
             }
+
             continue;
         }
 
@@ -3194,36 +3396,49 @@ static void test_scheduler_manager(RequestLayerCaps* caps, requestlayer_stats_t*
 static void time_fixture_store(process_t* process, uint64_t address, const void* source, size_t length)
 {
     const uint8_t* bytes = static_cast<const uint8_t*>(source);
+
     for (size_t i = 0; i < length; ++i)
+    {
         *memory_bytes(process, address + i) = bytes[i];
+    }
 }
 
 static void time_fixture_load(process_t* process, uint64_t address, void* destination, size_t length)
 {
     uint8_t* bytes = static_cast<uint8_t*>(destination);
+
     for (size_t i = 0; i < length; ++i)
+    {
         bytes[i] = *memory_bytes(process, address + i);
+    }
 }
 
 static bool test_time_clock(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
+
     if (static_cast<int64_t>(base) < 0)
+    {
         return memory_expect(false, "time fixture mapping");
+    }
+
     uint64_t     output                         = base + PAGE_SIZE - 8;
     const size_t outputSize                     = number == SYSCALL_time ? 8 : 16;
     *memory_bytes(process, output - 1)          = 0xa5;
     *memory_bytes(process, output + outputSize) = 0xa5;
     time_timespec_t value                       = {};
     uint64_t        result                      = number == SYSCALL_time ? memory_call(number, output) : number == SYSCALL_gettimeofday ? memory_call(number, output, base + 64) : memory_call(number, 1, output);
+
     if (result == LINUX_ENOSYS)
     {
         kprintf("Arx kernel: time selftest clock unavailable syscall=%llu\n", (unsigned long long) number);
         return memory_expect(number == SYSCALL_time || number == SYSCALL_gettimeofday, "monotonic clock unavailable; inspect boot clock diagnostic");
     }
+
     bool ok = memory_expect(number == SYSCALL_time ? static_cast<int64_t>(result) >= 0 : result == 0, "time dispatcher success");
     ok &= memory_expect(*memory_bytes(process, output - 1) == 0xa5 && *memory_bytes(process, output + outputSize) == 0xa5, "time writes exact ABI size");
     time_fixture_load(process, output, &value, number == SYSCALL_time ? 8 : 16);
+
     if (number == SYSCALL_time)
     {
         ok &= memory_expect(result == static_cast<uint64_t>(value.seconds), "time return matches optional seconds output");
@@ -3232,6 +3447,7 @@ static bool test_time_clock(process_t* process, uint64_t number)
     else
     {
         ok &= memory_expect(value.seconds >= 0 && value.nanoseconds >= 0 && value.nanoseconds < (number == SYSCALL_gettimeofday ? 1000000 : 1000000000), "normalized time ABI");
+
         if (number == SYSCALL_gettimeofday)
         {
             int32_t timezone[2] = {-1, -1};
@@ -3243,8 +3459,11 @@ static bool test_time_clock(process_t* process, uint64_t number)
         {
             ok &= memory_expect(memory_call(number, 2, output) == LINUX_EINVAL && memory_call(number, UINT64_MAX, output) == LINUX_EINVAL, "unsupported clock IDs");
             ok &= memory_expect(memory_call(number, 1, 0) == (number == SYSCALL_clock_getres ? 0 : LINUX_EFAULT), "clock nullable output semantics");
+
             if (number == SYSCALL_clock_getres)
+            {
                 ok &= memory_expect(value.seconds > 0 || value.nanoseconds > 0, "clock positive resolution");
+            }
             else
             {
                 time_timespec_t next;
@@ -3254,6 +3473,7 @@ static bool test_time_clock(process_t* process, uint64_t number)
             }
         }
     }
+
     auto call_output = [number](uint64_t pointer) { return number == SYSCALL_time || number == SYSCALL_gettimeofday ? memory_call(number, pointer) : memory_call(number, 1, pointer); };
     ok &= memory_expect(call_output(CANONICAL_KERNEL_BASE) == LINUX_EFAULT && call_output(0x400000) == LINUX_EFAULT, "time rejects kernel and unmapped output");
     *memory_bytes(process, base + 2 * PAGE_SIZE - 4) = 0xa5;
@@ -3286,6 +3506,7 @@ static void sleep_peer_entry(void* argument)
     process_t* current            = context->processManager->GetCurrentProcess();
     // Leave no ready entry referring to this deliberately suspended test peer.
     context->scheduler->KillProcess(current->id, 0);
+
     for (;;)
     {
         // Only the hardware timer may mark the sleeper ready in this peer.
@@ -3297,8 +3518,12 @@ static void sleep_peer_entry(void* argument)
 static bool test_time_sleep(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
+
     if (static_cast<int64_t>(base) < 0)
+    {
         return memory_expect(false, "sleep fixture mapping");
+    }
+
     uint64_t        input   = base + PAGE_SIZE - 8;
     auto            call    = [number](uint64_t pointer, uint64_t clock = 1, uint64_t flags = 0) { return number == SYSCALL_nanosleep ? memory_call(number, pointer, CANONICAL_KERNEL_BASE) : memory_call(number, clock, flags, pointer, CANONICAL_KERNEL_BASE); };
     bool            ok      = memory_expect(call(0) == LINUX_EFAULT && call(CANONICAL_KERNEL_BASE) == LINUX_EFAULT && call(base + 2 * PAGE_SIZE - 8) == LINUX_EFAULT, "sleep invalid request buffers");
@@ -3312,28 +3537,41 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     ResourceLayerCaps*   resources   = dispatcher->GetResourceLayerCaps();
     Scheduler*           scheduler   = dispatcher->GetLogicLayerCaps()->scheduler;
     time_timespec_t clockProbe;
+
     if (resources->timeManager == nullptr || resources->timeManager->ReadClock(1, &clockProbe) != 0)
     {
         // Retain failure reporting without creating a runnable peer that a
         // missing clock cannot park/wake the current task to exercise.
         return memory_expect(false, "sleep requires monotonic clock; inspect boot clock diagnostic");
     }
+
     sleep_peer_context_t peerContext = {scheduler, resources->processManager, resources->taskManager, process, resources->taskManager->GetCurrentTask(), false, false, false};
     virt_addr_space_t*   peerSpace   = resources->virtualMemoryManager->CreateUserAddressSpace();
     process_t*           peerProcess = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
     task_t*              peerTask    = resources->taskManager->CreateKernelTask(sleep_peer_entry, &peerContext);
     bool                 peerReady   = peerProcess != nullptr && peerTask != nullptr && resources->processManager->AddTask(peerProcess, peerTask) && scheduler->EnqueueProcess(arch_cpu_id(), peerProcess->id);
     ok &= memory_expect(peerReady, "sleep runnable peer fixture");
+
     if (!peerReady)
     {
         if (peerTask != nullptr)
+        {
             resources->taskManager->FreeTask(peerTask);
+        }
+
         if (peerProcess != nullptr)
+        {
             resources->processManager->FreeProcess(peerProcess);
+        }
+
         if (peerSpace != nullptr)
+        {
             resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
+        }
+
         return false;
     }
+
     request = {0, 100000000};
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(memory_call(SYSCALL_clock_gettime, 1, base + 64) == 0, "sleep monotonic start");
@@ -3342,8 +3580,12 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     ok &= memory_expect(call(input) == 0, "scheduler sleep and ignore remainder on success");
     ok &= memory_expect(peerContext.entered && peerContext.protectedLifetime && peerContext.blockedDispatch, "sleep lets a peer run while protecting and blocking the sleeper");
     // If the clock failed before switching, remove the still-queued peer too.
+
     if (!peerContext.entered)
+    {
         scheduler->KillProcess(peerProcess->id, 0);
+    }
+
     bool releasedTask    = !peerTask->allocated || resources->taskManager->FreeTask(peerTask);
     bool releasedProcess = !peerProcess->allocated || resources->processManager->FreeProcess(peerProcess);
     ok &= memory_expect(releasedTask && releasedProcess, "sleep peer cleanup");
@@ -3357,23 +3599,27 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     ok &= memory_expect(call(input) == static_cast<uint64_t>(-75), "sleep rejects unrepresentable duration");
     request = {0, 0};
     time_fixture_store(process, input, &request, sizeof(request));
+
     if (number == SYSCALL_clock_nanosleep)
     {
         ok &= memory_expect(call(input, 1, 1) == 0 && call(input, 0, 1) == 0, "absolute past deadlines return immediately");
         ok &= memory_expect(call(input, 2) == LINUX_EINVAL && call(input, 1, 2) == LINUX_EINVAL, "sleep unsupported clock and flags");
         request = after;
         request.nanoseconds += 1000000;
+
         if (request.nanoseconds >= 1000000000)
         {
             ++request.seconds;
             request.nanoseconds -= 1000000000;
         }
+
         time_fixture_store(process, input, &request, sizeof(request));
         ok &= memory_expect(call(input, 1, 1) == 0, "absolute monotonic sleep");
         memory_call(SYSCALL_clock_gettime, 1, base + 64);
         time_fixture_load(process, base + 64, &after, sizeof(after));
         ok &= memory_expect(after.seconds > request.seconds || (after.seconds == request.seconds && after.nanoseconds >= request.nanoseconds), "absolute sleep reaches deadline");
     }
+
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
     request = {0, 0};
     time_fixture_store(process, input, &request, sizeof(request));
@@ -3386,22 +3632,29 @@ static bool test_time_sleep(process_t* process, uint64_t number)
 static bool test_time_timer(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
+
     if (static_cast<int64_t>(base) < 0)
+    {
         return memory_expect(false, "timer fixture mapping");
+    }
+
     uint64_t         input   = base + PAGE_SIZE - 8;
     uint64_t         output  = base + 64;
     bool             ok      = true;
     time_itimerval_t request = {{2, 123}, {0, 0}}, value = {};
+
     for (unsigned which = 0; which < 3; ++which)
     {
         ok &= memory_expect(memory_call(SYSCALL_getitimer, which, output) == 0, "new process timer query");
         time_fixture_load(process, output, &value, sizeof(value));
         ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0 && value.value.seconds == 0 && value.value.microseconds == 0, "new process timers disarmed");
     }
+
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, output) == 0 && memory_call(SYSCALL_getitimer, 0, output) == 0, "disarmed timer stores interval");
     time_fixture_load(process, output, &value, sizeof(value));
     ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds == 0, "disarmed interval roundtrip");
+
     if (number == SYSCALL_alarm)
     {
         ok &= memory_expect(memory_call(number, 1) == LINUX_ENOSYS && memory_call(number, 0) == 0, "alarm arming unsupported and cancellation succeeds");
@@ -3410,6 +3663,7 @@ static bool test_time_timer(process_t* process, uint64_t number)
         ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0, "alarm cancellation clears real timer interval");
         return ok;
     }
+
     ok &= memory_expect(memory_call(SYSCALL_getitimer, 3, output) == LINUX_EINVAL && memory_call(SYSCALL_setitimer, UINT64_MAX, input) == LINUX_EINVAL, "timer selector validation");
     ok &= memory_expect(memory_call(SYSCALL_getitimer, 0, CANONICAL_KERNEL_BASE) == LINUX_EFAULT && memory_call(SYSCALL_setitimer, 0, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "timer kernel buffers rejected");
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, base + 2 * PAGE_SIZE - 4) == LINUX_EFAULT, "timer invalid old-value output");
@@ -3439,9 +3693,15 @@ template <uint64_t Number> static bool custom_case_validate_time(const custom_ca
             [](process_t* process)
             {
                 if (Number == SYSCALL_nanosleep || Number == SYSCALL_clock_nanosleep)
+                {
                     return test_time_sleep(process, Number);
+                }
+
                 if (Number == SYSCALL_getitimer || Number == SYSCALL_setitimer || Number == SYSCALL_alarm)
+                {
                     return test_time_timer(process, Number);
+                }
+
                 return test_time_clock(process, Number);
             });
 }
@@ -3571,8 +3831,10 @@ static void event_peer_entry(void* argument)
         uint64_t               user  = fixture.Address(&value, sizeof(value));
         context->result              = memory_call(context->read ? SYSCALL_read : SYSCALL_write, context->descriptor, user, sizeof(value));
     }
+
     process_t* current = context->resources->processManager->GetCurrentProcess();
     context->scheduler->KillProcess(current->id, 0);
+
     for (;;)
     {
         context->scheduler->RunNextReadyProcess(arch_cpu_id());
@@ -3593,12 +3855,14 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
     file_t*              sharedFile       = nullptr;
     uint64_t             referencesBefore = 0;
     bool                 ready            = peer != nullptr && task != nullptr;
+
     if (ready)
     {
         FileDescriptorGuard guard(process);
         file_descriptor_t*  source = resources->processManager->GetFileDescriptor(process, fd);
         file_t*             file   = source != nullptr ? static_cast<file_t*>(source->file) : nullptr;
         ready                      = file != nullptr && vfs->Retain(file);
+
         if (ready)
         {
             sharedFile = file;
@@ -3606,26 +3870,41 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
             referencesBefore = file->refCount - 1;
             spinlock_release_preempt(&file->refLock);
             int64_t shared = resources->processManager->AddFileDescriptor(peer, file, 0, VirtualFileSystem::ReleaseFileHandle);
+
             if (shared < 0)
+            {
                 vfs->Close(file);
+            }
             else
                 context.descriptor = (uint64_t) shared;
             ready = shared >= 0;
         }
     }
+
     ready   = ready && resources->processManager->AddTask(peer, task) && scheduler->EnqueueProcess(arch_cpu_id(), peer->id);
     bool ok = memory_expect(ready, "event runnable producer/consumer fixture");
+
     if (ready)
     {
         ok &= wait();
         ok &= memory_expect(context.entered && context.protectedLifetime && context.result == 8, "event wake executes peer and protects parked task/process");
     }
+
     if (peer != nullptr)
+    {
         scheduler->KillProcess(peer->id, 0);
+    }
+
     if (task != nullptr && task->allocated)
+    {
         ok &= memory_expect(resources->taskManager->FreeTask(task), "event peer task cleanup");
+    }
+
     if (peer != nullptr && peer->allocated)
+    {
         ok &= memory_expect(resources->processManager->FreeProcess(peer), "event peer process cleanup");
+    }
+
     if (sharedFile != nullptr)
     {
         spinlock_acquire_preempt(&sharedFile->refLock);
@@ -3633,19 +3912,31 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
         spinlock_release_preempt(&sharedFile->refLock);
         ok &= memory_expect(releasedReference, "process teardown releases shared eventfd reference");
     }
+
     if (space != nullptr)
+    {
         resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+    }
+
     return ok;
 }
 
 static bool test_event_counter(process_t* process, uint64_t number)
 {
     const uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     uint64_t fd = number == SYSCALL_eventfd ? memory_call(number, 3) : memory_call(number, 3, 04000 | 02000000);
+
     if ((int64_t) fd < 0)
+    {
         return memory_expect(false, "eventfd creates descriptor");
+    }
+
     bool ok = memory_expect(memory_call(SYSCALL_fcntl, fd, 1) == (number == SYSCALL_eventfd2 ? 1ULL : 0ULL), "eventfd CLOEXEC descriptor flag");
     ok &= memory_expect(memory_call(SYSCALL_fcntl, fd, 4, 2 | 04000) == 0, "eventfd nonblocking status through fcntl");
     ok &= memory_expect(memory_call(SYSCALL_fcntl, fd, 4, 04000) == 0 && memory_call(SYSCALL_fcntl, fd, 3) == (2 | 04000), "eventfd SETFL preserves access mode");
@@ -3673,6 +3964,7 @@ static bool test_event_counter(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_write, fd, base, 8) == 8, "eventfd shared-reference setup");
     uint64_t duplicate = memory_call(SYSCALL_dup, fd);
     ok &= memory_expect((int64_t) duplicate >= 0 && memory_call(SYSCALL_close, fd) == 0, "eventfd dup survives original close");
+
     if ((int64_t) duplicate >= 0)
     {
         fd = duplicate;
@@ -3680,6 +3972,7 @@ static bool test_event_counter(process_t* process, uint64_t number)
         time_fixture_load(process, output, &value, sizeof(value));
         ok &= memory_expect(value == 7, "eventfd duplicate value");
     }
+
     ok &= memory_expect(memory_call(SYSCALL_lseek, fd, 123, 0) == 0, "eventfd no-op seek");
     uint64_t vector[2] = {base, 8};
     time_fixture_store(process, base + 128, vector, sizeof(vector));
@@ -3704,11 +3997,13 @@ static bool test_event_counter(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_read, fd, output, 8) == 8, "eventfd readonly failure preserves counter");
     ok &= memory_expect(memory_call(SYSCALL_write, fd, CANONICAL_KERNEL_BASE, 8) == LINUX_EFAULT && memory_call(SYSCALL_write, fd, base + 2 * PAGE_SIZE - 4, 8) == LINUX_EFAULT, "eventfd invalid input buffers");
     ok &= memory_expect(memory_call(SYSCALL_close, fd) == 0, "eventfd final close");
+
     if (number == SYSCALL_eventfd2)
     {
         ok &= memory_expect(memory_call(number, 0, 2) == LINUX_EINVAL, "eventfd2 invalid flags");
         uint64_t semaphore = memory_call(number, 2, 1 | 04000);
         ok &= memory_expect((int64_t) semaphore >= 0, "eventfd2 semaphore creation");
+
         if ((int64_t) semaphore >= 0)
         {
             ok &= memory_expect(memory_call(SYSCALL_read, semaphore, base, 8) == 8, "eventfd semaphore first read");
@@ -3717,6 +4012,7 @@ static bool test_event_counter(process_t* process, uint64_t number)
             memory_call(SYSCALL_close, semaphore);
         }
     }
+
     Dispatcher*          dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     ProcessManager*      processes  = dispatcher->GetResourceLayerCaps()->processManager;
     process_file_limit_t old = {}, limit = {0, process->fileLimit.maximum};
@@ -3731,8 +4027,12 @@ static bool test_event_wait(process_t* process, uint64_t number)
     const bool     select  = number == SYSCALL_select || number == SYSCALL_pselect6;
     const bool     precise = number == SYSCALL_ppoll || number == SYSCALL_pselect6;
     const uint64_t base    = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     const uint64_t  input    = base + PAGE_SIZE - 4;
     const uint64_t  timeout  = base + 256;
     time_timespec_t duration = {};
@@ -3743,8 +4043,12 @@ static bool test_event_wait(process_t* process, uint64_t number)
     events->Notify();
     bool     sequenceOk = memory_expect(events->Wait(oldSequence) == 0, "event arriving before park prevents sleeping");
     uint64_t fd         = memory_call(SYSCALL_eventfd2, 0, 04000);
+
     if ((int64_t) fd < 0)
+    {
         return false;
+    }
+
     auto           call    = [&]() -> uint64_t { return select ? memory_call(number, fd + 1, input, base + 64, base + 128, timeout) : precise ? memory_call(number, input, 1, timeout) : memory_call(number, input, 1, 0); };
     event_pollfd_t pollfd  = {(int32_t) fd, 1, 0xffff};
     uint64_t       readSet = 1ULL << fd, writeSet = 0, exceptSet = 0;
@@ -3761,6 +4065,7 @@ static bool test_event_wait(process_t* process, uint64_t number)
     };
     prepare();
     bool ok = sequenceOk && memory_expect(call() == 0, "event readiness zero timeout on empty counter");
+
     if (!select)
     {
         event_pollfd_t actual;
@@ -3782,14 +4087,20 @@ static bool test_event_wait(process_t* process, uint64_t number)
         time_fixture_store(process, input, &invalid, sizeof(invalid));
         ok &= memory_expect(memory_call(number, process->fileDescriptorCount, input, 0, 0, timeout) == LINUX_EBADF, "select invalid descriptor is EBADF");
     }
+
     uint64_t value = 9;
     time_fixture_store(process, base, &value, sizeof(value));
     memory_call(SYSCALL_write, fd, base, 8);
     writeSet = select ? 1ULL << fd : 0;
+
     if (!select)
+    {
         pollfd.events = 1 | 4;
+    }
+
     prepare();
     ok &= memory_expect(call() == (select ? 2ULL : 1ULL), "event counter read/write readiness and select ready-bit count");
+
     if (select)
     {
         ProcessManager*      processes = dispatcher->GetResourceLayerCaps()->processManager;
@@ -3799,16 +4110,19 @@ static bool test_event_wait(process_t* process, uint64_t number)
         ok &= memory_expect(call() == 2, "select continues monitoring existing descriptors above a lowered soft limit");
         processes->ChangeFileLimit(process, &original, nullptr);
     }
+
     memory_call(SYSCALL_read, fd, base, 8);
     writeSet      = 0;
     pollfd.events = 1;
     memcpy(memory_bytes(process, base + 640), "/test.txt", sizeof("/test.txt"));
     uint64_t regular = memory_call(SYSCALL_open, base + 640, 0);
     ok &= memory_expect((int64_t) regular >= 0, "event regular-file fixture opens");
+
     if ((int64_t) regular >= 0)
     {
         memory_call(SYSCALL_lseek, regular, 0, 2);
         uint64_t ready;
+
         if (select)
         {
             uint64_t bit = 1ULL << regular;
@@ -3822,9 +4136,11 @@ static bool test_event_wait(process_t* process, uint64_t number)
             time_fixture_store(process, input, &filePoll, sizeof(filePoll));
             ready = precise ? memory_call(number, input, 1, timeout) : memory_call(number, input, 1, 0);
         }
+
         ok &= memory_expect(ready == (select ? 2ULL : 1ULL), "regular file remains readable/writable at EOF");
         memory_call(SYSCALL_close, regular);
     }
+
     prepare();
     ok &= event_with_peer(process, fd, false,
                           [&]()
@@ -3835,6 +4151,7 @@ static bool test_event_wait(process_t* process, uint64_t number)
                           });
     memory_call(SYSCALL_read, fd, base, 8);
     prepare();
+
     if (precise)
     {
         uint64_t mask = 0;
@@ -3854,12 +4171,16 @@ static bool test_event_wait(process_t* process, uint64_t number)
         time_fixture_store(process, timeout, &duration, sizeof(duration));
         ok &= memory_expect(call() == LINUX_EINVAL, "event invalid timespec nanoseconds");
     }
+
     duration = {};
     time_fixture_store(process, timeout, &duration, sizeof(duration));
     uint64_t invalidPointer = select ? memory_call(number, 1, CANONICAL_KERNEL_BASE, 0, 0, timeout) : precise ? memory_call(number, CANONICAL_KERNEL_BASE, 1, timeout) : memory_call(number, CANONICAL_KERNEL_BASE, 1, 0);
     ok &= memory_expect(invalidPointer == LINUX_EFAULT, "event invalid user input");
+
     if (select)
+    {
         ok &= memory_expect(memory_call(number, UINT64_MAX, 0, 0, 0, timeout) == LINUX_EINVAL, "select negative nfds");
+    }
     else
         ok &= memory_expect((precise ? memory_call(number, 0, process->fileLimit.current + 1, timeout) : memory_call(number, 0, process->fileLimit.current + 1, 0)) == LINUX_EINVAL, "poll count constrained by descriptor limit");
     prepare();
@@ -3870,10 +4191,12 @@ static bool test_event_wait(process_t* process, uint64_t number)
     duration = {0, select && !precise ? 1000 : 1000000};
     time_fixture_store(process, timeout, &duration, sizeof(duration));
     time_timespec_t now;
+
     if (dispatcher->GetResourceLayerCaps()->timeManager->ReadClock(1, &now) == 0)
     {
         uint64_t result = select ? memory_call(number, 0, 0, 0, 0, timeout) : precise ? memory_call(number, 0, 0, timeout) : memory_call(number, 0, 0, 1);
         ok &= memory_expect(result == 0, "event finite empty wait expires");
+
         if (select || precise)
         {
             time_fixture_load(process, timeout, &duration, sizeof(duration));
@@ -3889,15 +4212,23 @@ static bool test_event_wait(process_t* process, uint64_t number)
 static bool test_event_epoll(process_t* process, uint64_t number)
 {
     const uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     const uint64_t input  = base + PAGE_SIZE - 4; // Packed event crosses a page.
     const uint64_t output = base + 128;
     const bool     legacy = number == SYSCALL_epoll_create;
     const uint64_t epfd   = legacy ? memory_call(number, 1) : memory_call(SYSCALL_epoll_create1, 02000000);
     const uint64_t fd     = memory_call(SYSCALL_eventfd2, 0, 04000);
+
     if (!memory_expect((int64_t) epfd >= 0 && (int64_t) fd >= 0, "epoll fixture descriptors"))
+    {
         return false;
+    }
+
     bool ok = memory_expect(memory_call(SYSCALL_fcntl, epfd, 1) == (legacy ? 0ULL : 1ULL), "epoll creation CLOEXEC flag");
     ok &= memory_expect(memory_call(SYSCALL_epoll_create, 0) == LINUX_EINVAL && memory_call(SYSCALL_epoll_create, UINT64_MAX) == LINUX_EINVAL && memory_call(SYSCALL_epoll_create1, 04000) == LINUX_EINVAL, "epoll creation argument validation");
     event_epoll_event_t event = {EVENT_POLL_IN, 0xfedcba9876543210ULL}, actual = {};
@@ -3911,15 +4242,18 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     ok &= memory_expect(control(0, fd) == LINUX_EINVAL && control(1, UINT64_MAX) == LINUX_EBADF && control(1, epfd) == LINUX_EINVAL, "epoll operation/fd/self validation");
     ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, epfd, 3, fd, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "epoll bad event input");
     const uint32_t unsupportedModes[] = {0x80000000U, 0x40000000U, 0x20000000U, 0x10000000U};
+
     for (uint32_t unsupported : unsupportedModes)
     {
         event.events = EVENT_POLL_IN | unsupported;
         time_fixture_store(process, input, &event, sizeof(event));
         ok &= memory_expect(control(3, fd) == LINUX_EOPNOTSUPP, "epoll unsupported ET/ONESHOT/WAKEUP/EXCLUSIVE rejected");
     }
+
     event = {EVENT_POLL_IN, 0xfedcba9876543210ULL};
     time_fixture_store(process, input, &event, sizeof(event));
     const uint64_t other = memory_call(SYSCALL_epoll_create1, 0);
+
     if ((int64_t) other >= 0)
     {
         ok &= memory_expect(control(1, other) == LINUX_EOPNOTSUPP, "nested epoll explicitly unsupported");
@@ -3929,6 +4263,7 @@ static bool test_event_epoll(process_t* process, uint64_t number)
         ok &= memory_expect(false, "second epoll fixture");
     memcpy(memory_bytes(process, base + 640), "/test.txt", sizeof("/test.txt"));
     const uint64_t regular = memory_call(SYSCALL_open, base + 640, 0);
+
     if ((int64_t) regular >= 0)
     {
         ok &= memory_expect(control(1, regular) == (uint64_t) -1, "epoll rejects synchronous regular files with EPERM");
@@ -3962,6 +4297,7 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     time_fixture_store(process, input, &event, sizeof(event));
     ok &= memory_expect(control(1, fd) == 0, "epoll re-add after DEL");
     const uint64_t duplicate = memory_call(SYSCALL_dup, fd);
+
     if ((int64_t) duplicate >= 0)
     {
         event.data = 2;
@@ -3976,8 +4312,12 @@ static bool test_event_epoll(process_t* process, uint64_t number)
         ok &= memory_expect(memory_call(SYSCALL_close, fd) == 0 && wait(2, 0) == 2, "epoll original registration survives close while dup remains");
         const uint64_t replacement = memory_call(SYSCALL_eventfd2, 0, 04000);
         ok &= memory_expect(replacement == fd && control(2, replacement) == LINUX_ENOENT, "epoll fd reuse cannot address old open file registration");
+
         if ((int64_t) replacement >= 0)
+        {
             memory_call(SYSCALL_close, replacement);
+        }
+
         ok &= memory_expect(memory_call(SYSCALL_close, duplicate) == 0 && wait(2, 0) == 0, "epoll final source close removes all weak registrations");
     }
     else
@@ -3985,23 +4325,33 @@ static bool test_event_epoll(process_t* process, uint64_t number)
         ok &= memory_expect(false, "epoll dup fixture");
         memory_call(SYSCALL_close, fd);
     }
+
     const uint64_t source = memory_call(SYSCALL_eventfd2, 0, 04000);
+
     if ((int64_t) source >= 0)
     {
         time_fixture_store(process, input, &event, sizeof(event));
         const bool registered = control(1, source) == 0;
         ok &= memory_expect(registered, "epoll blocking source registration");
+
         if (registered)
+        {
             ok &= event_with_peer(process, source, false, [&]() { return memory_expect(wait(1, UINT64_MAX) == 1, "parked epoll wait wakes on real peer write"); });
+        }
+
         memory_call(SYSCALL_read, source, base, 8);
         time_timespec_t now;
         Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
         TimeManager*    clock      = dispatcher->GetResourceLayerCaps()->timeManager;
+
         if (clock != nullptr && clock->ReadClock(1, &now) == 0)
+        {
             ok &= memory_expect(wait(1, 1) == 0, "epoll finite timeout expires");
+        }
         else
             kprintf("Arx kernel: epoll finite timeout selftest unavailable without monotonic clock\n");
         const uint64_t alias = memory_call(SYSCALL_dup, epfd);
+
         if ((int64_t) alias >= 0)
         {
             ok &= memory_expect(memory_call(SYSCALL_close, epfd) == 0 && memory_call(SYSCALL_epoll_wait, alias, output, 1, 0) == 0, "epoll duplicated instance survives original close");
@@ -4012,6 +4362,7 @@ static bool test_event_epoll(process_t* process, uint64_t number)
             ok &= memory_expect(false, "epoll instance dup fixture");
             memory_call(SYSCALL_close, epfd);
         }
+
         ok &= memory_expect(memory_call(SYSCALL_close, source) == 0, "epoll instance/source cleanup");
     }
     else
@@ -4019,6 +4370,7 @@ static bool test_event_epoll(process_t* process, uint64_t number)
         ok &= memory_expect(false, "epoll blocking source fixture");
         memory_call(SYSCALL_close, epfd);
     }
+
     ok &= memory_expect(memory_call(SYSCALL_epoll_wait, UINT64_MAX, output, 1, 0) == LINUX_EBADF && memory_call(SYSCALL_epoll_wait, UINT64_MAX, output, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_epoll_wait, UINT64_MAX, output, UINT64_MAX, 0) == LINUX_EINVAL, "epoll wait fd/maxevents validation");
     Dispatcher*          dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     ProcessManager*      processes  = dispatcher->GetResourceLayerCaps()->processManager;
@@ -4040,7 +4392,10 @@ template <uint64_t Number> static bool custom_case_validate_event(const custom_c
             [](process_t* process)
             {
                 if (Number == SYSCALL_epoll_create || Number == SYSCALL_epoll_create1 || Number == SYSCALL_epoll_ctl || Number == SYSCALL_epoll_wait)
+                {
                     return test_event_epoll(process, Number);
+                }
+
                 return Number == SYSCALL_eventfd || Number == SYSCALL_eventfd2 ? test_event_counter(process, Number) : test_event_wait(process, Number);
             });
 }
@@ -4069,23 +4424,29 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
     };
 
     if (caps->eventRequestManager != nullptr)
+
         for (const auto& test : tests)
+
             if ((caps->eventRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
                 selftest_record_failure_detail("event handler null-frame validation");
             }
+
     EventRequestManager unavailable(nullptr, nullptr);
+
     for (const auto& test : tests)
     {
         arch_syscall_frame_t frame = {};
         frame.syscall_number       = test.syscallNumber;
+
         if ((unavailable.*(test.method))(&frame) != LINUX_ENOSYS)
         {
             stats->implementedFail++;
             selftest_record_failure_detail("event missing dependency handling");
         }
     }
+
     run_manager_tests("event", caps->eventRequestManager, tests, stats, true, true);
 }
 
@@ -4120,11 +4481,17 @@ static void futex_peer_entry(void* argument)
     ProcessManager* processes = context->resources->processManager;
     process_t* original = processes->GetCurrentProcess();
     context->wrongProcess = UINT64_MAX;
+
     if (processes->SetRunningProcess(arch_cpu_id(), context->isolated))
     {
         context->wrongProcess = memory_call(SYSCALL_futex, context->address, 129, 1);
-        if (!processes->SetRunningProcess(arch_cpu_id(), original)) panic();
+
+        if (!processes->SetRunningProcess(arch_cpu_id(), original))
+        {
+            panic();
+        }
     }
+
     cpu_preemption_enable();
     context->wrongBits = context->selective ? memory_call(SYSCALL_futex, context->address, 138, 1, 0, 0, ~context->bits) : 0;
     context->result = context->selective
@@ -4136,7 +4503,12 @@ static void futex_peer_entry(void* argument)
 static bool test_sync_futex(process_t* process)
 {
     const uint64_t base = memory_map(2);
-    if ((int64_t) base < 0) return false;
+
+    if ((int64_t) base < 0)
+    {
+        return false;
+    }
+
     const uint64_t address = base + PAGE_SIZE - 4;
     const uint64_t timeout = base + 64;
     uint32_t word = 7;
@@ -4165,6 +4537,7 @@ static bool test_sync_futex(process_t* process)
     ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
     Scheduler* scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
     time_timespec_t now;
+
     if (resources->timeManager != nullptr && resources->timeManager->ReadClock(1, &now) == 0)
     {
         duration = {0, 1000000};
@@ -4175,22 +4548,36 @@ static bool test_sync_futex(process_t* process)
         ok &= memory_expect(memory_call(SYSCALL_futex, address, 137, 7, timeout, 0, 1) == (uint64_t) -110, "futex bitset absolute past deadline");
         ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 8, timeout) == (uint64_t) -11, "futex mismatch wins over expired timeout");
         ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0, "futex timeout removes waiter");
+
         if (resources->timeManager->ReadClock(0, &now) == 0)
+        {
             ok &= memory_expect(memory_call(SYSCALL_futex, address, 137 | 256, 7, timeout, 0, 1) == (uint64_t) -110, "futex bitset realtime absolute past deadline");
+        }
+
         duration = {INT64_MAX, 0};
         time_fixture_store(process, timeout, &duration, sizeof(duration));
         ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 7, timeout) == LINUX_EOVERFLOW, "futex unrepresentable timeout");
     }
-    else kprintf("Arx kernel: futex timeout selftests unavailable without monotonic clock\n");
+    else
+    {
+        kprintf("Arx kernel: futex timeout selftests unavailable without monotonic clock\n");
+    }
 
     virt_addr_space_t* isolatedSpace = resources->virtualMemoryManager->CreateUserAddressSpace();
     process_t* isolated = isolatedSpace != nullptr ? resources->processManager->CreateProcess(isolatedSpace) : nullptr;
+
     if (isolated == nullptr)
     {
-        if (isolatedSpace != nullptr) resources->virtualMemoryManager->DestroyUserAddressSpace(isolatedSpace);
+        if (isolatedSpace != nullptr)
+        {
+            resources->virtualMemoryManager->DestroyUserAddressSpace(isolatedSpace);
+        }
+
         return memory_expect(false, "futex private-key process isolation fixture");
     }
+
     const uint32_t waitOperations[] = {128U, 137U};
+
     for (uint32_t operation : waitOperations)
     {
         futex_peer_context_t context = {scheduler, resources, resources->taskManager->GetCurrentTask(), address, 2, operation == 137, false, false, UINT64_MAX, UINT64_MAX, UINT64_MAX, isolated, UINT64_MAX};
@@ -4198,6 +4585,7 @@ static bool test_sync_futex(process_t* process)
         const bool added = peer != nullptr && resources->processManager->AddTask(process, peer);
         const bool ready = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
         ok &= memory_expect(ready, "futex runnable sibling task fixture");
+
         if (ready)
         {
             // Same process/address space: FUTEX_PRIVATE keys must not match a
@@ -4206,18 +4594,40 @@ static bool test_sync_futex(process_t* process)
             const uint64_t result = memory_call(SYSCALL_futex, address, operation, 7, 0, 0, mask);
             ok &= memory_expect(result == 0 && context.entered && context.protectedTask
                 && context.wrongAddress == 0 && context.wrongProcess == 0 && context.result == 1, "futex real parked wait/peer wake, process isolation and task lifetime");
-            if (operation == 137) ok &= memory_expect(context.wrongBits == 0, "futex bitset filters wakeups");
+
+            if (operation == 137)
+            {
+                ok &= memory_expect(context.wrongBits == 0, "futex bitset filters wakeups");
+            }
         }
+
         if (added)
         {
-            if (peer->prev != nullptr) peer->prev->next = peer->next;
-            else process->tasks = peer->next;
-            if (peer->next != nullptr) peer->next->prev = peer->prev;
+            if (peer->prev != nullptr)
+            {
+                peer->prev->next = peer->next;
+            }
+            else
+            {
+                process->tasks = peer->next;
+            }
+
+            if (peer->next != nullptr)
+            {
+                peer->next->prev = peer->prev;
+            }
+
             peer->next = peer->prev = nullptr;
         }
-        if (peer != nullptr) ok &= memory_expect(resources->taskManager->FreeTask(peer), "futex peer cleanup");
+
+        if (peer != nullptr)
+        {
+            ok &= memory_expect(resources->taskManager->FreeTask(peer), "futex peer cleanup");
+        }
+
         ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0, "futex wake removes waiter exactly once");
     }
+
     ok &= memory_expect(resources->processManager->FreeProcess(isolated), "futex private-key process cleanup");
     resources->virtualMemoryManager->DestroyUserAddressSpace(isolatedSpace);
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
@@ -4230,7 +4640,12 @@ static bool test_sync_futex(process_t* process)
 static bool test_sync_robust(process_t* process, uint64_t number)
 {
     const uint64_t base = memory_map(2);
-    if ((int64_t) base < 0) return false;
+
+    if ((int64_t) base < 0)
+    {
+        return false;
+    }
+
     const uint64_t headAddress = base + PAGE_SIZE - 4;
     const uint64_t lengthAddress = base + 64;
     bool ok = memory_expect(memory_call(SYSCALL_set_robust_list, 0, 24) == 0, "robust empty-list clearing");
@@ -4282,9 +4697,11 @@ static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
     };
 
     SyncRequestManager unavailable(nullptr, nullptr);
+
     for (const auto& test : tests)
     {
         arch_syscall_frame_t frame = {};
+
         if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS
             || (caps->syncRequestManager != nullptr && (caps->syncRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
@@ -4292,6 +4709,7 @@ static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
             selftest_record_failure_detail("sync missing dependency/null-frame validation");
         }
     }
+
     run_manager_tests("sync", caps->syncRequestManager, tests, stats, true, true);
 }
 
@@ -4321,28 +4739,50 @@ template <typename Wait> static bool signal_with_peer(process_t* process,uint64_
     signal_peer_context_t context={resources,scheduler,process,robustHead,UINT64_MAX};
     task_t* peer=resources->taskManager->CreateKernelTask(signal_peer_entry,&context);
     bool added=peer != nullptr && resources->processManager->AddTask(process,peer);
+
     if (added && robustWord != 0)
     {
         uint32_t owned=0x80000000U|(uint32_t) peer->id;
         time_fixture_store(process,robustWord,&owned,4);
     }
+
     const bool ready=added && scheduler->EnqueueProcess(arch_cpu_id(),process->id);
     bool ok=memory_expect(ready,"signal/owner-death runnable peer fixture");
-    if (ready) ok &= wait(peer->id) && memory_expect(context.result==0,"signal/robust peer syscall succeeds");
+
+    if (ready) ok &= wait(peer->id)
+    {
+        && memory_expect(context.result==0,"signal/robust peer syscall succeeds");
+    }
+
     if (added)
     {
         if (peer->prev != nullptr) peer->prev->next=peer->next; else process->tasks=peer->next;
-        if (peer->next != nullptr) peer->next->prev=peer->prev;
+
+        if (peer->next != nullptr)
+        {
+            peer->next->prev=peer->prev;
+        }
+
         peer->next=peer->prev=nullptr;
     }
-    if (peer != nullptr) ok &= memory_expect(resources->taskManager->FreeTask(peer),"signal peer retirement cleanup");
+
+    if (peer != nullptr)
+    {
+        ok &= memory_expect(resources->taskManager->FreeTask(peer),"signal peer retirement cleanup");
+    }
+
     return ok;
 }
 
 static bool test_signal_case(process_t* process,uint64_t number)
 {
     const uint64_t base=memory_map(6);
-    if ((int64_t) base<0) return false;
+
+    if ((int64_t) base<0)
+    {
+        return false;
+    }
+
     auto dispatcher=static_cast<Dispatcher*>(platform.dispacher);
     auto signals=dispatcher->GetLogicLayerCaps()->signalManager;
     auto resources=dispatcher->GetResourceLayerCaps();
@@ -4352,6 +4792,7 @@ static bool test_signal_case(process_t* process,uint64_t number)
     signal_action_t action={base+512,0x14000004,base+768,0}; // RESTORER|RESTART|SIGINFO
     time_fixture_store(process,input,&action,sizeof(action));
     ok &= memory_expect(memory_call(SYSCALL_rt_sigaction,10,input,0,8)==0,"signal handler action install");
+
     if (number==SYSCALL_rt_sigaction)
     {
         signal_action_t queried={};
@@ -4406,6 +4847,7 @@ static bool test_signal_case(process_t* process,uint64_t number)
         ok &= memory_expect(memory_call(SYSCALL_rt_sigaction,10,input,0,8)==0 && send(10)==0 && (pending_signals(process,task)&512)==0,"ignored signal discards pending instances");
         auto space=resources->virtualMemoryManager->CreateUserAddressSpace();
         process_t* victim=space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
+
         if (victim != nullptr)
         {
             process_credentials_t previous=process->credentials;
@@ -4416,14 +4858,22 @@ static bool test_signal_case(process_t* process,uint64_t number)
             process->credentials=previous;
             ok &= memory_expect(resources->processManager->FreeProcess(victim),"signal permission target cleanup");
         }
-        else ok &= memory_expect(false,"signal permission target fixture");
-        if (space != nullptr) resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+        else
+        {
+            ok &= memory_expect(false,"signal permission target fixture");
+        }
+
+        if (space != nullptr)
+        {
+            resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+        }
     }
     else if (number==SYSCALL_pause)
     {
         ok &= signal_with_peer(process,0,0,[&](uint64_t) { return memory_expect(memory_call(number)==(uint64_t) -4,"pause returns EINTR from real peer signal"); });
         __atomic_store_n(&process->signalPending,0ULL,__ATOMIC_RELEASE);
         time_timespec_t now;
+
         if (resources->timeManager->ReadClock(1,&now)==0)
         {
             time_timespec_t duration={1,0},remaining={};
@@ -4485,6 +4935,7 @@ static bool test_signal_case(process_t* process,uint64_t number)
         ok &= memory_expect(died==0xc0000000U,"robust exit publishes OWNER_DIED with WAITERS preserved");
 #endif
     }
+
     return ok;
 }
 
@@ -4515,9 +4966,11 @@ static void test_signal_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
             {"HandlePauseRequest", &SignalRequestManager::HandlePauseRequest, SYSCALL_pause, custom_case_validate_signal<SYSCALL_pause>},
     };
     SignalRequestManager unavailable(nullptr,nullptr);
+
     for (const auto& test: tests)
     {
         arch_syscall_frame_t frame={};
+
         if ((unavailable.*test.method)(&frame)!=LINUX_ENOSYS
             || (caps->signalRequestManager != nullptr && (caps->signalRequestManager->*test.method)(nullptr)!=LINUX_EINVAL))
         {
@@ -4525,6 +4978,7 @@ static void test_signal_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
             selftest_record_failure_detail("signal null-frame/missing-dependency validation");
         }
     }
+
     run_manager_tests("signal", caps->signalRequestManager, tests, stats, true, true);
 }
 
@@ -4547,6 +5001,7 @@ static bool test_credential_identity(process_t* process, uint64_t number)
     const uint64_t fs    = group ? SYSCALL_setfsgid : SYSCALL_setfsuid;
     bool           ok    = memory_expect(memory_call(SYSCALL_getuid) == 0 && memory_call(SYSCALL_geteuid) == 0, "credential fixture starts with controlled root IDs");
     ok &= memory_expect(memory_call(SYSCALL_setresgid, 200, 201, 202) == 0 && memory_call(SYSCALL_setresuid, 100, 0, 102) == 0, "credential privileged fixture setup");
+
     if (number == SYSCALL_getuid || number == SYSCALL_geteuid || number == SYSCALL_getgid || number == SYSCALL_getegid)
     {
         uint64_t expected = number == SYSCALL_getuid ? 100 : number == SYSCALL_geteuid ? 0 : number == SYSCALL_getgid ? 200 : 201;
@@ -4555,11 +5010,16 @@ static bool test_credential_identity(process_t* process, uint64_t number)
         expected = number == SYSCALL_getuid || number == SYSCALL_getgid ? 11 : 12;
         return ok && memory_expect(memory_call(number) == expected, "credential scalar getter returns updated value");
     }
+
     if (number == SYSCALL_getresuid || number == SYSCALL_getresgid)
     {
         uint64_t base = memory_map(2);
+
         if ((int64_t) base < 0)
+        {
             return false;
+        }
+
         const uint64_t output               = base + PAGE_SIZE - 2;
         *memory_bytes(process, output - 1)  = 0xa5;
         *memory_bytes(process, output + 12) = 0xa5;
@@ -4580,23 +5040,33 @@ static bool test_credential_identity(process_t* process, uint64_t number)
         ok &= memory_expect(memory_call(number, output, output + 4, output + 8) == LINUX_EFAULT, "getres readonly cross-page output");
         return ok;
     }
+
     if (number == set)
     {
         ok &= memory_expect(memory_call(number, (1ULL << 32) | 17) == 0, "set ID privileged transition and 32-bit argument decoding");
         ok &= credential_expect_identity(group, 17, 17, 17, 17);
+
         if (group)
+        {
             ok &= memory_expect(memory_call(SYSCALL_setuid, 1000) == 0, "drop group-management privilege");
+        }
+
         ok &= memory_expect(memory_call(number, 99) == (uint64_t) -1, "unprivileged set ID denied");
         ok &= credential_expect_identity(group, 17, 17, 17, 17);
         ok &= memory_expect(memory_call(number, none) == LINUX_EINVAL && memory_call(number, 17) == 0, "set ID rejects reserved ID and accepts own ID");
         return ok;
     }
+
     if (number == re)
     {
         ok &= memory_expect(memory_call(number, 100, group ? 201 : 0) == 0, "setre privileged arbitrary real ID");
         ok &= memory_expect(memory_call(res, 100, 101, 102) == 0, "setre distinct unprivileged IDs");
+
         if (group)
+        {
             ok &= memory_expect(memory_call(SYSCALL_setuid, 1000) == 0, "drop setregid privilege");
+        }
+
         ok &= memory_expect(memory_call(number, none, 100) == 0, "setre effective-to-real transition");
         ok &= credential_expect_identity(group, 100, 100, 102, 100);
         ok &= memory_expect(memory_call(number, 102, none) == (uint64_t) -1, "setre real ID cannot use saved-only ID");
@@ -4607,31 +5077,42 @@ static bool test_credential_identity(process_t* process, uint64_t number)
         ok &= credential_expect_identity(group, 102, 100, 100, 100);
         return ok;
     }
+
     if (number == res)
     {
         ok &= memory_expect(memory_call(fs, 333) == (group ? 201U : 0U), "setres fixture overrides filesystem ID");
         ok &= memory_expect(memory_call(number, none, none, none) == 0, "setres sentinel no-op");
         ok &= credential_expect_identity(group, group ? 200 : 100, group ? 201 : 0, group ? 202 : 102, 333);
         ok &= memory_expect(memory_call(number, 100, 101, 102) == 0, "setres privileged arbitrary IDs");
+
         if (group)
+        {
             ok &= memory_expect(memory_call(SYSCALL_setuid, 1000) == 0, "drop setresgid privilege");
+        }
+
         ok &= memory_expect(memory_call(number, 102, 100, 101) == 0, "setres unprivileged permutation");
         ok &= credential_expect_identity(group, 102, 100, 101, 100);
         ok &= memory_expect(memory_call(number, none, 999, none) == (uint64_t) -1, "setres unprivileged arbitrary ID denied");
         ok &= credential_expect_identity(group, 102, 100, 101, 100);
         return ok;
     }
+
     if (number == fs)
     {
         ok &= memory_expect(memory_call(number, 333) == (group ? 201U : 0U), "setfs privileged change returns previous ID");
         ok &= credential_expect_identity(group, group ? 200 : 100, group ? 201 : 0, group ? 202 : 102, 333);
         ok &= memory_expect(memory_call(res, 100, 101, 102) == 0, "setfs unprivileged fixture setup");
+
         if (group)
+        {
             ok &= memory_expect(memory_call(SYSCALL_setuid, 1000) == 0, "drop setfsgid privilege");
+        }
+
         ok &= memory_expect(memory_call(number, 102) == 101 && memory_call(number, 999) == 102 && memory_call(number, UINT64_MAX) == 102, "setfs saved ID allowed, arbitrary and invalid IDs silently refused");
         ok &= credential_expect_identity(group, 100, 101, 102, 102);
         return ok;
     }
+
     return false;
 }
 
@@ -4639,8 +5120,12 @@ static bool test_credential_groups(process_t* process, uint64_t number)
 {
     (void) number;
     uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     const uint64_t output     = base + PAGE_SIZE - 8;
     const uint32_t input[]    = {10, 1, 10, 0, UINT32_MAX - 1};
     const uint32_t expected[] = {0, 1, 10, 10, UINT32_MAX - 1};
@@ -4667,6 +5152,7 @@ static bool test_credential_groups(process_t* process, uint64_t number)
     virt_addr_space_t*    space      = memory->CreateUserAddressSpace();
     process_t*            child      = space != nullptr ? processes->CreateProcess(space) : nullptr;
     ok &= memory_expect(child != nullptr, "credential child inheritance fixture");
+
     if (child != nullptr)
     {
         ok &= memory_expect(memcmp(&child->credentials, &process->credentials, sizeof(process_credentials_t)) == 0 && child->supplementaryGroups == original && original->references == 2, "child inherits IDs and retains immutable group backing");
@@ -4675,22 +5161,33 @@ static bool test_credential_groups(process_t* process, uint64_t number)
         ok &= memory_expect(processes->FreeProcess(child), "credential child group cleanup");
         process_t* reused = processes->AllocateProcess();
         ok &= memory_expect(reused != nullptr && reused->supplementaryGroups == nullptr && reused->credentials.user.effective == 0 && reused->credentials.group.real == 0, "credential slot reuse clears inherited state");
+
         if (reused != nullptr)
+        {
             ok &= memory_expect(processes->FreeProcess(reused), "credential reused-slot cleanup");
+        }
     }
+
     if (space != nullptr)
+    {
         memory->DestroyUserAddressSpace(space);
+    }
 
     const uint32_t maximum = ProcessManager::MAX_SUPPLEMENTARY_GROUPS;
     uint64_t       large   = memory_map(maximum * sizeof(uint32_t) / PAGE_SIZE);
+
     if ((int64_t) large >= 0)
     {
         for (uint32_t offset = 0; offset < maximum; offset += PAGE_SIZE / sizeof(uint32_t))
         {
             uint32_t* page = reinterpret_cast<uint32_t*>(memory_bytes(process, large + offset * sizeof(uint32_t)));
+
             for (uint32_t i = 0; i < PAGE_SIZE / sizeof(uint32_t); ++i)
+            {
                 page[i] = maximum - offset - i;
+            }
         }
+
         ok &= memory_expect(memory_call(SYSCALL_setgroups, maximum, large) == 0 && memory_call(SYSCALL_getgroups, maximum, large) == maximum, "group list supports full 65536-entry Linux bound");
         uint32_t first = 0, last = 0;
         time_fixture_load(process, large, &first, sizeof(first));
@@ -4715,14 +5212,22 @@ template <uint64_t Number> static bool custom_case_validate_credential(const cus
                 Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
                 ProcessManager* processes  = dispatcher->GetResourceLayerCaps()->processManager;
                 process_t*      locked     = processes->AcquireCurrentCredentials();
+
                 if (locked == nullptr)
+                {
                     return memory_expect(false, "credential isolated fixture state");
+                }
+
                 // Only the disposable fixture is privileged. The harness's credentials
                 // are retained separately and restored after the preliminary probes.
                 locked->credentials = {};
                 processes->ReleaseCredentials(locked);
+
                 if (memory_call(SYSCALL_setgroups, 0, 0) != 0)
+                {
                     return false;
+                }
+
                 return Number == SYSCALL_getgroups || Number == SYSCALL_setgroups ? test_credential_groups(process, Number) : test_credential_identity(process, Number);
             });
 }
@@ -4751,37 +5256,51 @@ static void test_credential_manager(RequestLayerCaps* caps, requestlayer_stats_t
     Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     ProcessManager* processes  = dispatcher->GetResourceLayerCaps()->processManager;
     process_t*      process    = processes->AcquireCurrentCredentials();
+
     if (process == nullptr)
     {
         stats->implementedFail++;
         selftest_record_failure_detail("credential selftests require harness process");
         return;
     }
+
     const process_credentials_t original       = process->credentials;
     process_group_list_t*       originalGroups = process->supplementaryGroups;
+
     if (originalGroups != nullptr)
+    {
         __atomic_add_fetch(&originalGroups->references, 1U, __ATOMIC_RELAXED);
+    }
+
     processes->ReleaseCredentials(process);
+
     if (caps->credentialRequestManager != nullptr)
+
         for (const auto& test : tests)
+
             if ((caps->credentialRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
                 selftest_record_failure_detail("credential handler null-frame validation");
             }
+
     CredentialRequestManager unavailable(nullptr, nullptr);
+
     for (const auto& test : tests)
     {
         arch_syscall_frame_t frame = {};
         frame.syscall_number       = test.syscallNumber;
+
         if ((unavailable.*(test.method))(&frame) != LINUX_ENOSYS)
         {
             stats->implementedFail++;
             selftest_record_failure_detail("credential missing dependency handling");
         }
     }
+
     run_manager_tests("credential", caps->credentialRequestManager, tests, stats, true);
     process = processes->AcquireCurrentCredentials();
+
     if (process != nullptr)
     {
         process_group_list_t* discarded = process->supplementaryGroups;
@@ -4802,14 +5321,23 @@ static bool test_system_tls(process_t* process)
 {
 #if defined(__x86_64__)
     uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     Dispatcher*  dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     TaskManager* tasks      = dispatcher->GetResourceLayerCaps()->taskManager;
     uint64_t     savedFs = 0, savedGs = 0;
+
     if (!tasks->GetCurrentTlsBase(false, &savedFs) || !tasks->GetCurrentTlsBase(true, &savedGs))
+    {
         return false;
+    }
+
     bool ok = true;
+
     for (uint64_t gs = 0; gs < 2; ++gs)
     {
         const uint64_t set   = gs ? 0x1001 : 0x1002;
@@ -4828,6 +5356,7 @@ static bool test_system_tls(process_t* process)
         ok &= memory_expect(memory_call(SYSCALL_arch_prctl, get, 0) == LINUX_EFAULT, "arch_prctl rejects null output");
         ok &= memory_expect(memory_call(SYSCALL_arch_prctl, set, 0) == 0, "arch_prctl permits zero base");
     }
+
     ok &= memory_expect(memory_call(SYSCALL_arch_prctl, 0) == LINUX_EINVAL, "arch_prctl invalid operation");
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
     ok &= memory_expect(memory_call(SYSCALL_arch_prctl, 0x1003, base) == LINUX_EFAULT, "arch_prctl readonly output");
@@ -4843,13 +5372,21 @@ static bool test_system_tls(process_t* process)
 static bool test_system_name(process_t* process)
 {
     uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     Dispatcher*  dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     TaskManager* tasks      = dispatcher->GetResourceLayerCaps()->taskManager;
     char         saved[16] = {}, name[16] = {};
+
     if (!tasks->GetCurrentName(saved))
+    {
         return false;
+    }
+
     const char input[] = "abcdefghijklmnopq";
     time_fixture_store(process, base, input, sizeof(input));
     bool ok = memory_expect(memory_call(SYSCALL_prctl, 15, base) == 0, "prctl sets name");
@@ -4873,8 +5410,12 @@ static bool test_system_name(process_t* process)
 static bool test_system_limits(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     const uint64_t       output   = base + PAGE_SIZE - 8;
     process_file_limit_t original = {}, actual = {};
     bool                 ok = memory_expect(memory_call(SYSCALL_getrlimit, 7, output) == 0, "getrlimit cross-page snapshot");
@@ -4882,6 +5423,7 @@ static bool test_system_limits(process_t* process, uint64_t number)
     ok &= memory_expect(original.current == 1024 && original.maximum == ProcessManager::MAX_FILE_DESCRIPTORS, "getrlimit default limits");
     process_file_limit_t next = {2, original.maximum};
     time_fixture_store(process, base, &next, sizeof(next));
+
     if (number == SYSCALL_prlimit64)
     {
         ok &= memory_expect(memory_call(number, process->id, 7, base, output) == 0, "prlimit64 current PID exchange");
@@ -4933,28 +5475,39 @@ static bool test_system_limits(process_t* process, uint64_t number)
 static bool test_system_info(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
+
     if ((int64_t) base < 0)
+    {
         return false;
+    }
+
     const size_t   length                   = number == SYSCALL_uname ? 390 : 112;
     const uint64_t output                   = base + PAGE_SIZE - 32;
     *memory_bytes(process, output - 1)      = 0xa5;
     *memory_bytes(process, output + length) = 0xa5;
     uint64_t result                         = memory_call(number, output);
     bool     ok                             = memory_expect(memory_call(number, 0) == LINUX_EFAULT, "system info rejects null output");
+
     if (number == SYSCALL_sysinfo && result == LINUX_ENOSYS)
     {
         kprintf("Arx kernel: sysinfo selftest clock unavailable; successful snapshot requires monotonic clock\n");
         return ok && memory_expect(*memory_bytes(process, output) == 0, "unavailable sysinfo does not fabricate a snapshot");
     }
+
     ok &= memory_expect(result == 0, "system info cross-page output");
     ok &= memory_expect(*memory_bytes(process, output - 1) == 0xa5 && *memory_bytes(process, output + length) == 0xa5, "system info writes exact ABI size");
     uint8_t data[390] = {};
     time_fixture_load(process, output, data, length);
+
     if (number == SYSCALL_uname)
     {
         ok &= memory_expect(strcmp((char*) data, "Arx") == 0 && strcmp((char*) data + 65, "arx-kernel") == 0, "uname identity fields");
+
         for (size_t field = 0; field < 6; ++field)
+        {
             ok &= memory_expect(data[field * 65 + 64] == 0, "uname fields are NUL terminated");
+        }
+
 #if defined(__x86_64__)
         ok &= memory_expect(strcmp((char*) data + 4 * 65, "x86_64") == 0, "uname target architecture");
 #else
@@ -4979,6 +5532,7 @@ static bool test_system_info(process_t* process, uint64_t number)
         ok &= memory_expect(tasks > 0 && tasks <= TaskManager::MAX_TASKS, "sysinfo counts allocated tasks");
         ok &= memory_expect(data[82] == 0 && data[83] == 0 && data[84] == 0 && data[108] == 0 && data[111] == 0, "sysinfo zeroes ABI padding");
     }
+
     ok &= memory_expect(memory_call(number, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "system info rejects kernel output");
     ok &= memory_expect(memory_call(number, base + 2 * PAGE_SIZE - length + 1) == LINUX_EFAULT, "system info rejects partly unmapped output");
     memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
@@ -4992,13 +5546,25 @@ template <uint64_t Number> static bool custom_case_validate_system(const custom_
             [](process_t* process)
             {
                 if (Number == SYSCALL_arch_prctl)
+                {
                     return test_system_tls(process);
+                }
+
                 if (Number == SYSCALL_prctl)
+                {
                     return test_system_name(process);
+                }
+
                 if (Number == SYSCALL_uname || Number == SYSCALL_sysinfo)
+                {
                     return test_system_info(process, Number);
+                }
+
                 if (Number == SYSCALL_getrlimit || Number == SYSCALL_setrlimit || Number == SYSCALL_prlimit64)
+                {
                     return test_system_limits(process, Number);
+                }
+
                 if (Number == SYSCALL_getrandom)
                     return memory_expect(memory_call(Number, 0, 0, 0) == LINUX_ENOSYS && memory_call(Number, 0, 16, 1) == LINUX_ENOSYS && memory_call(Number, 0, 16, 8) == LINUX_EINVAL && memory_call(Number, 0, 16, 6) == LINUX_EINVAL,
                                          "getrandom rejects invalid flags and reports missing entropy subsystem");
@@ -5021,12 +5587,15 @@ static void test_system_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
     };
 
     if (caps->systemRequestManager != nullptr)
+
         for (const auto& test : tests)
+
             if ((caps->systemRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
                 selftest_record_failure_detail("system handler null-frame validation");
             }
+
     run_manager_tests("system", caps->systemRequestManager, tests, stats, true);
 }
 
@@ -5053,6 +5622,7 @@ static void test_socket_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
 
     run_manager_tests("socket", caps->socketRequestManager, tests, stats);
 }
+
 } // namespace
 
 extern "C" void launch_syscall_selftests(void* requestLayerCaps)
@@ -5062,6 +5632,7 @@ extern "C" void launch_syscall_selftests(void* requestLayerCaps)
     selftest_case_begin("requestlayer_selftest");
 
     RequestLayerCaps* caps = static_cast<RequestLayerCaps*>(requestLayerCaps);
+
     if (caps == nullptr)
     {
         stats.implementedFail++;

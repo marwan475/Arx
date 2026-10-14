@@ -36,6 +36,7 @@ static uint64_t pmm_alloc_from_region(zone_t* zone, size_t page_count)
             return allocated_pfn;
         }
     }
+
     return PMM_INVALID_PFN;
 }
 
@@ -74,18 +75,21 @@ static void buddy_seed_region(zone_t* zone, size_t region_index)
 
     // For an order to be valid its block size must be less than or equal to remaining pages
     // and the start pfn must be aligned to the block size
+
     while (remaining_pages > 0)
     {
         size_t order = MAX_ORDER;
 
         // on while loop exit the order is valid
         // goal is to find largest valid order
+
         while (order > 0)
         {
             if (order_size(order) <= remaining_pages && is_aligned_to_order(start_pfn, order))
             {
                 break;
             }
+
             order--;
         }
 
@@ -152,10 +156,12 @@ void pmm_init(struct boot_info* boot_info)
                 zone->regions[zone->region_count].page_count = end_pfn - start_pfn;
                 zone->total_pages += end_pfn - start_pfn;
                 zone->region_count++;
+
                 if (zone->min_pfn == 0 || start_pfn < zone->min_pfn)
                 {
                     zone->min_pfn = start_pfn;
                 }
+
                 if (end_pfn > zone->max_pfn)
                 {
                     zone->max_pfn = end_pfn;
@@ -176,6 +182,7 @@ void pmm_init(struct boot_info* boot_info)
     size_t buddy_metadata_pages = buddy_metadata_size / PAGE_SIZE;
 
     uint64_t buddy_metadata_pfn = pmm_alloc_from_region(zone, buddy_metadata_pages);
+
     if (buddy_metadata_pfn == PMM_INVALID_PFN)
     {
         error_logger("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
@@ -198,6 +205,7 @@ void pmm_init(struct boot_info* boot_info)
 
     uint8_t num_cpus                 = platform.cpu_count;
     platform.numa_nodes[0].cpu_count = num_cpus;
+
     for (uint8_t i = 0; i < num_cpus; i++)
     {
         platform.cpus[i].numa_node = &platform.numa_nodes[0];
@@ -208,6 +216,7 @@ void pmm_init(struct boot_info* boot_info)
 static page_t* remove_block_from_free_list(zone_t* zone, size_t order)
 {
     free_list_t* free_list = &zone->buddy_free_lists[order];
+
     if (free_list->head == NULL)
     {
         return NULL;
@@ -242,6 +251,7 @@ static uint64_t buddy_alloc(zone_t* zone, size_t order)
 {
     size_t original_order = order;
     // find first order with free blocks that can satisfy request
+
     while (order <= MAX_ORDER && zone->buddy_free_lists[order].head == NULL)
     {
         order++;
@@ -253,6 +263,7 @@ static uint64_t buddy_alloc(zone_t* zone, size_t order)
     }
 
     page_t* block = remove_block_from_free_list(zone, order);
+
     if (block == NULL)
     {
         return PMM_INVALID_PFN;
@@ -289,6 +300,7 @@ static page_t* merge_block(zone_t* zone, page_t* block)
     ILIST_REMOVE(zone->buddy_free_lists[buddy->order].head, buddy);
 
     // merge block and buddy
+
     if (buddy_pfn < block->pfn)
     {
         buddy->order++;
@@ -309,10 +321,12 @@ static void buddy_free(zone_t* zone, uint64_t pfn)
     while (order < MAX_ORDER)
     {
         page_t* merged = merge_block(zone, block);
+
         if (merged == NULL)
         {
             break;
         }
+
         block = merged;
         order = block->order;
     }
@@ -323,6 +337,7 @@ static void buddy_free(zone_t* zone, uint64_t pfn)
 void* pmm_alloc(size_t size)
 {
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+
     if (cpu->numa_node == NULL)
     {
         return NULL;
@@ -341,6 +356,7 @@ void* pmm_alloc(size_t size)
     }
 
     size_t order = 0;
+
     while (order <= MAX_ORDER && order_size(order) * PAGE_SIZE < size)
     {
         order++;
@@ -372,6 +388,7 @@ void* pmm_alloc(size_t size)
 void pmm_free(void* addr)
 {
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+
     if (cpu->numa_node == NULL)
     {
         return;

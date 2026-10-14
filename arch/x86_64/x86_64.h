@@ -573,6 +573,7 @@ DECL_ISR(255)
 
 #ifdef __cplusplus
 }
+
 #endif
 
 // Shared x86 register and TSS primitives.

@@ -68,6 +68,7 @@ static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
     for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++)
     {
         virt_addr_t va = align_down(candidates[i], PAGE_SIZE);
+
         if (vmm_virt_to_phys(va, platform.cpus[arch_cpu_id()].address_space) == 0 && vmm_virt_to_phys(va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) == 0)
         {
             *va_out = va;
@@ -81,10 +82,12 @@ static bool vmm_test_find_unmapped_window(virt_addr_t* va_out)
 static size_t vmm_test_count_regions(virt_region_t* head)
 {
     size_t count = 0;
+
     for (virt_region_t* it = head; it != NULL; it = it->next)
     {
         count++;
     }
+
     return count;
 }
 
@@ -97,6 +100,7 @@ static virt_region_t* vmm_test_find_region_by_start(virt_region_t* head, virt_ad
             return it;
         }
     }
+
     return NULL;
 }
 
@@ -111,6 +115,7 @@ static void vmm_test(void)
     selftest_case_begin("vmm_test");
 
     void* range_block_va = pmm_alloc(PAGE_SIZE * 2ULL);
+
     if (range_block_va == NULL)
     {
         vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
@@ -125,6 +130,7 @@ static void vmm_test(void)
     phys_addr_t page_b_pa = page_a_pa + PAGE_SIZE;
 
     virt_addr_t test_va = 0;
+
     if (!vmm_test_find_unmapped_window(&test_va))
     {
         vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
@@ -132,6 +138,7 @@ static void vmm_test(void)
         selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
+
     passes++;
 
     uint64_t map_flags = 0;
@@ -141,16 +148,21 @@ static void vmm_test(void)
 
 #if defined(__x86_64__)
     const virt_addr_t invalid_addresses[] = {0x0000800000000000ULL, 0xffff000000000000ULL};
+
     for (size_t i = 0; i < sizeof(invalid_addresses) / sizeof(invalid_addresses[0]); ++i)
     {
         if (vmm_map_page(invalid_addresses[i], page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space) || vmm_virt_to_phys(invalid_addresses[i], platform.cpus[arch_cpu_id()].address_space) != 0)
+        {
             vmm_test_log_fail("accepted a noncanonical address", &failures);
+        }
         else
             passes++;
     }
+
 #endif
 
     vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa)
     {
         vmm_test_log_fail("map_page translation mismatch", &failures);
@@ -161,6 +173,7 @@ static void vmm_test(void)
     }
 
     vmm_protect_page(test_va, map_flags, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa)
     {
         vmm_test_log_fail("protect_page changed physical mapping", &failures);
@@ -171,6 +184,7 @@ static void vmm_test(void)
     }
 
     vmm_map_range(test_va, page_a_pa, PAGE_SIZE * 2ULL, map_flags, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != page_b_pa)
     {
         vmm_test_log_fail("map_range translation mismatch", &failures);
@@ -181,6 +195,7 @@ static void vmm_test(void)
     }
 
     vmm_protect_range(test_va, PAGE_SIZE * 2ULL, map_flags, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != page_b_pa)
     {
         vmm_test_log_fail("protect_range changed physical mapping", &failures);
@@ -191,6 +206,7 @@ static void vmm_test(void)
     }
 
     vmm_unmap_page(test_va, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != 0)
     {
         vmm_test_log_fail("unmap_page did not clear mapping", &failures);
@@ -203,6 +219,7 @@ static void vmm_test(void)
     vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);
 
     vmm_unmap_range(test_va, PAGE_SIZE * 2ULL, platform.cpus[arch_cpu_id()].address_space);
+
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != 0 || vmm_virt_to_phys(test_va + PAGE_SIZE, platform.cpus[arch_cpu_id()].address_space) != 0)
     {
         vmm_test_log_fail("unmap_range did not clear mappings", &failures);
@@ -219,6 +236,7 @@ static void vmm_test(void)
     const size_t reserve_size_aligned = align_up(reserve_size, PAGE_SIZE);
 
     virt_addr_t reserved = vmm_reserve_region(platform.cpus[arch_cpu_id()].address_space, reserve_size, VIRT_ADDR_KERNEL);
+
     if (reserved == 0)
     {
         vmm_test_log_fail("reserve_region returned 0 for kernel allocation", &failures);
@@ -238,6 +256,7 @@ static void vmm_test(void)
     }
 
     virt_region_t* used_reserved = vmm_test_find_region_by_start(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions, reserved);
+
     if (used_reserved == NULL)
     {
         vmm_test_log_fail("reserved region not found in kernel used list", &failures);
@@ -261,6 +280,7 @@ static void vmm_test(void)
     }
 
     const size_t kernel_used_after_reserve = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
+
     if (kernel_used_after_reserve != (kernel_used_before + 1))
     {
         vmm_test_log_fail("kernel used list count did not increase after reserve", &failures);
@@ -291,6 +311,7 @@ static void vmm_test(void)
     }
 
     const size_t kernel_used_after_free = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
+
     if (kernel_used_after_free != kernel_used_before)
     {
         vmm_test_log_fail("kernel used list count did not restore after free", &failures);
@@ -301,6 +322,7 @@ static void vmm_test(void)
     }
 
     const size_t kernel_free_after_free = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions);
+
     if (kernel_free_after_free != kernel_free_before)
     {
         vmm_test_log_fail("kernel free list count did not restore after free", &failures);
@@ -386,6 +408,7 @@ static void pmm_test(void)
         size_t actual    = pow2pages * PAGE_SIZE;
 
         void* ptr = pmm_alloc(req);
+
         if (ptr == NULL)
         {
             pmm_test_log_fail("scenario allocation returned NULL", &failures);
@@ -446,12 +469,14 @@ static void pmm_test(void)
             }
 
             bool overlap = !(allocs[i].pa_end <= allocs[j].pa_start || allocs[j].pa_end <= allocs[i].pa_start);
+
             if (overlap)
             {
                 pmm_test_log_fail("allocation ranges overlap", &failures);
             }
         }
     }
+
     passes++;
 
     for (size_t i = 0; i < PMM_TEST_SCENARIOS; i++)
@@ -481,13 +506,16 @@ static void pmm_test(void)
     for (size_t round = 0; round < 64; round++)
     {
         size_t n = 0;
+
         while (n < PMM_TEST_MAX_PTRS)
         {
             void* ptr = pmm_alloc(PAGE_SIZE);
+
             if (ptr == NULL)
             {
                 break;
             }
+
             exhaust_ptrs[n++] = ptr;
         }
 
@@ -515,16 +543,20 @@ static void pmm_test(void)
             break;
         }
     }
+
     passes++;
 
     size_t exhausted_count = 0;
+
     while (exhausted_count < PMM_TEST_MAX_PTRS)
     {
         void* ptr = pmm_alloc(PAGE_SIZE);
+
         if (ptr == NULL)
         {
             break;
         }
+
         exhaust_ptrs[exhausted_count++] = ptr;
     }
 
@@ -574,6 +606,7 @@ static void heap_test(void)
     size_t passes   = 0;
 
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+
     if (cpu->numa_node == NULL)
     {
         selftest_case_begin("heap_test");
@@ -628,6 +661,7 @@ static void heap_test(void)
     for (size_t i = 0; i < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); i++)
     {
         odd_ptrs[i] = heap_alloc(heap, odd_sizes[i]);
+
         if (odd_ptrs[i] == NULL)
         {
             heap_test_log_fail("odd-size allocation returned NULL", &failures);
@@ -635,6 +669,7 @@ static void heap_test(void)
     }
 
     bool odd_unique = true;
+
     for (size_t i = 0; i < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); i++)
     {
         for (size_t j = i + 1; j < (sizeof(odd_ptrs) / sizeof(odd_ptrs[0])); j++)
@@ -668,9 +703,11 @@ static void heap_test(void)
     {
         heap_free(heap, odd_ptrs[i]);
     }
+
     passes++;
 
     void* reuse_a = heap_alloc(heap, 32);
+
     if (reuse_a == NULL)
     {
         heap_test_log_fail("reuse probe first alloc failed", &failures);
@@ -678,6 +715,7 @@ static void heap_test(void)
     else
     {
         void* reuse_b = heap_alloc(heap, 32);
+
         if (reuse_b == NULL)
         {
             heap_test_log_fail("reuse probe second alloc failed", &failures);
@@ -707,10 +745,12 @@ static void heap_test(void)
     for (size_t i = 0; i < 300; i++)
     {
         stress_ptrs[i] = heap_alloc(heap, 64);
+
         if (stress_ptrs[i] == NULL)
         {
             break;
         }
+
         stress_count++;
     }
 
@@ -727,6 +767,7 @@ static void heap_test(void)
     {
         heap_free(heap, stress_ptrs[i]);
     }
+
     passes++;
 
     selftest_case_end("heap_test", (unsigned long long) passes, (unsigned long long) failures);

@@ -105,8 +105,12 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
         platform.bsp_id = 0;
 #if defined(__x86_64__)
         struct boot_smp_cpu_info** cpus = (struct boot_smp_cpu_info**) boot_info->smp.cpus;
+
         for (size_t i = 0; i < platform.cpu_count; ++i)
+        {
             platform.cpus[i].hardware_id = cpus[i]->lapic_id;
+        }
+
 #endif
     }
     else
@@ -162,6 +166,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
                 waiting_for_other_cpus = true;
                 break;
             }
+
             waiting_for_other_cpus = false;
         }
     }
@@ -193,6 +198,7 @@ void platform_init_complete(void* arg)
     // Platform initialization complete
 
     __atomic_fetch_add(&platform.cpus_initialized, 1, __ATOMIC_ACQ_REL);
+
     while (__atomic_load_n(&platform.cpus_initialized, __ATOMIC_ACQUIRE) < platform.cpu_count)
     {
         arch_pause();

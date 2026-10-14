@@ -31,6 +31,7 @@ size_t normalizePathStart(const uint8_t* name, size_t nameLen)
 
     return start;
 }
+
 } // namespace
 
 InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress) : ArchiveCount(0)
@@ -132,6 +133,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
     reset();
 
     offset = 0;
+
     while (offset + CPIO_HEADER_SIZE <= initramfsSize)
     {
         const uint8_t* header;
@@ -168,6 +170,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         }
 
         nameEndOffset = offset + CPIO_HEADER_SIZE + nameSize;
+
         if (nameEndOffset > initramfsSize)
         {
             return false;
@@ -177,12 +180,14 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         nameLen = (size_t) (nameSize - 1);
 
         dataOffset = align_up(nameEndOffset, 4);
+
         if (dataOffset > initramfsSize || fileSize > (initramfsSize - dataOffset))
         {
             return false;
         }
 
         nextOffset = align_up(dataOffset + fileSize, 4);
+
         if (nextOffset > initramfsSize)
         {
             return false;
@@ -209,6 +214,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
             archive = &Archives[ArchiveCount];
 
             path = (char*) kmalloc(normalizedLen + 1);
+
             if (path == nullptr)
             {
                 return false;
@@ -234,6 +240,7 @@ initramfs_archive_t* InitRamFileSystemManager::find(const char* path)
     for (size_t i = 0; i < ArchiveCount; i++)
     {
         initramfs_archive_t* iter = &Archives[i];
+
         if (iter->path != nullptr && stringEquals(iter->path, path))
         {
             return iter;

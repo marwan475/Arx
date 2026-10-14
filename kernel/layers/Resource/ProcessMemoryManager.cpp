@@ -8,6 +8,7 @@
 ProcessMemoryManager::ProcessMemoryManager(ProcessManager* processManager, VirtualMemoryManager* virtualMemoryManager) : ProcessManagerImport(processManager), VirtualMemoryManagerImport(virtualMemoryManager)
 {
 }
+
 namespace
 {
 static bool memory_range_end(uint64_t address, uint64_t length, uint64_t* outEnd)
@@ -30,6 +31,7 @@ static bool owns_anonymous_page(VirtualMemoryManager* virtualMemoryManager, virt
 static bool memory_range_available(VirtualMemoryManager* virtualMemoryManager, virt_addr_space_t* space, uint64_t address, uint64_t length)
 {
     uint64_t end = 0;
+
     if (address == 0 || !memory_range_end(address, length, &end))
     {
         return false;
@@ -45,6 +47,7 @@ static bool memory_range_available(VirtualMemoryManager* virtualMemoryManager, v
 
     return true;
 }
+
 } // namespace
 
 process_t* ProcessMemoryManager::BeginMemoryOperation()
@@ -56,6 +59,7 @@ process_t* ProcessMemoryManager::BeginMemoryOperation()
 
     cpu_preemption_disable();
     process_t* process = ProcessManagerImport->AcquireCurrentMemoryProcess();
+
     if (process != nullptr)
     {
         spinlock_acquire(&process->addressSpace->operation_lock);
@@ -80,6 +84,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
 {
     (void) offset;
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
@@ -140,6 +145,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
         }
 
         // MAP_FIXED replacement is destructive. Failure removes only the new range.
+
         for (uint64_t page = address; page < address + length; page += PAGE_SIZE)
         {
             virtualMemoryManager->ReleaseAnonymousPage(space, page);
@@ -148,9 +154,11 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
     else if (!memory_range_available(virtualMemoryManager, space, address, length))
     {
         address = 0;
+
         for (virt_region_t* region = space->user_free_regions; region != nullptr && address == 0; region = region->next)
         {
             uint64_t candidate = align_up(region->start < 0x10000 ? 0x10000 : region->start, PAGE_SIZE);
+
             while (candidate < region->end && length <= region->end - candidate)
             {
                 if (memory_range_available(virtualMemoryManager, space, candidate, length))
@@ -170,6 +178,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
     }
 
     uint64_t page = address;
+
     for (; page < address + length; page += PAGE_SIZE)
     {
         if (!virtualMemoryManager->AllocateAnonymousPage(space, page, protection, false))
@@ -194,6 +203,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
 uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t length)
 {
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
@@ -202,12 +212,14 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
     virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
+
     if (!memory_range_end(address, length, &end))
     {
         return EndMemoryOperation(process, LINUX_EINVAL);
     }
 
     // Preflight legacy mappings so an unsupported request changes no pages.
+
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
         if (!owns_anonymous_page(virtualMemoryManager, space, page) && (virtualMemoryManager->FindRegion(space, page) != nullptr || virtualMemoryManager->VirtToPhys(page, space) != 0))
@@ -227,6 +239,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
 uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t length, uint32_t protection)
 {
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
@@ -235,6 +248,7 @@ uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t l
     virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
+
     if (!memory_range_end(address, length, &end))
     {
         return EndMemoryOperation(process, LINUX_ENOMEM);
@@ -260,6 +274,7 @@ uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t l
 uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uint64_t length, uint64_t vector)
 {
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
@@ -268,12 +283,14 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
+
     if (!memory_range_end(address, length, &end))
     {
         return EndMemoryOperation(process, LINUX_ENOMEM);
     }
 
     const uint64_t count = (end - address) / PAGE_SIZE;
+
     if (count == 0)
     {
         return EndMemoryOperation(process, 0);
@@ -287,6 +304,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     for (uint64_t page = align_down(vector, PAGE_SIZE); page < vector + count; page += PAGE_SIZE)
     {
         virt_region_t* region = virtualMemoryManager->FindRegion(space, page);
+
         if (region == nullptr || region->backing == nullptr || (region->protection & 2) == 0)
         {
             return EndMemoryOperation(process, LINUX_EFAULT);
@@ -302,10 +320,12 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     }
 
     const user_memory_access_t access = {nullptr, nullptr, space};
+
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
         // Eager pages, including PROT_NONE pages, retain resident physical backing.
         const uint8_t resident = owns_anonymous_page(virtualMemoryManager, space, page) || virtualMemoryManager->VirtToPhys(page, space) != 0 ? 1 : 0;
+
         if (!safe_write_user_locked(&access, vector++, &resident, sizeof(resident)))
         {
             return EndMemoryOperation(process, LINUX_EFAULT);
@@ -318,6 +338,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
 uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t length, int advice)
 {
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
@@ -326,12 +347,14 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
     virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     uint64_t              end                  = 0;
+
     if (!memory_range_end(address, length, &end))
     {
         return EndMemoryOperation(process, LINUX_EINVAL);
     }
 
     // DONTNEED on an untracked mapping cannot preserve its backing semantics.
+
     if (advice == 4)
     {
         for (uint64_t page = address; page < end; page += PAGE_SIZE)
@@ -344,9 +367,11 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
     }
 
     uint64_t result = 0;
+
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
         virt_region_t* region = virtualMemoryManager->FindRegion(space, page);
+
         if (region == nullptr || region->backing == nullptr)
         {
             if (virtualMemoryManager->VirtToPhys(page, space) == 0)
@@ -370,6 +395,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
 uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
 {
     process_t* process = BeginMemoryOperation();
+
     if (process == nullptr)
     {
         return ProcessManagerImport != nullptr ? ProcessManagerImport->GetCurrentProgramBreak() : 0;
@@ -378,6 +404,7 @@ uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
     virt_addr_space_t*    space                = process->addressSpace;
     VirtualMemoryManager* virtualMemoryManager = VirtualMemoryManagerImport;
     const uint64_t        oldBreak             = process->programBreak;
+
     if (address == 0 || process->breakBase == 0 || address < process->breakBase || address > CANONICAL_USER_END)
     {
         return EndMemoryOperation(process, oldBreak);
@@ -385,6 +412,7 @@ uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
 
     const uint64_t oldEnd = align_up(oldBreak, PAGE_SIZE);
     const uint64_t newEnd = align_up(address, PAGE_SIZE);
+
     if (newEnd > oldEnd)
     {
         if (!memory_range_available(virtualMemoryManager, space, oldEnd, newEnd - oldEnd))
@@ -393,6 +421,7 @@ uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
         }
 
         uint64_t page = oldEnd;
+
         for (; page < newEnd; page += PAGE_SIZE)
         {
             if (!virtualMemoryManager->AllocateAnonymousPage(space, page, 3, true))
@@ -416,6 +445,7 @@ uint64_t ProcessMemoryManager::ResizeProcessBreak(uint64_t address)
         for (uint64_t page = newEnd; page < oldEnd; page += PAGE_SIZE)
         {
             virt_region_t* region = virtualMemoryManager->FindRegion(space, page);
+
             if (region != nullptr && region->backing != nullptr)
             {
                 virtualMemoryManager->ReleaseAnonymousPage(space, page);

@@ -29,6 +29,7 @@ static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t
     *writeCursor += sizeof(uint64_t);
     return true;
 }
+
 } // namespace
 
 process_t* FileDescriptorGuard::Active[BOOT_SMP_MAX_CPUS] = {};
@@ -39,18 +40,30 @@ FileDescriptorGuard::FileDescriptorGuard(process_t* process) : Process(process),
     const uint8_t cpu = arch_cpu_id();
     Previous          = Active[cpu];
     Owner             = process != nullptr && Previous != process;
+
     if (Owner)
+    {
         spinlock_acquire(&process->fileDescriptorLock);
+    }
+
     if (process != nullptr)
+    {
         Active[cpu] = process;
+    }
 }
 
 FileDescriptorGuard::~FileDescriptorGuard()
 {
     if (Process != nullptr)
+    {
         Active[arch_cpu_id()] = Previous;
+    }
+
     if (Owner)
+    {
         spinlock_release(&Process->fileDescriptorLock);
+    }
+
     cpu_preemption_enable();
 }
 
@@ -148,6 +161,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     }
 
     file_descriptor_t* fileDescriptorTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
+
     if (fileDescriptorTable == nullptr)
     {
         return nullptr;
@@ -159,6 +173,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
 
     // Shared roots currently have no per-process ownership model. Do not attach
     // another process once syscall-owned pages exist in this address space.
+
     for (size_t i = 0; i < MAX_PROCESSES; ++i)
     {
         if (Processes[i].allocated && Processes[i].addressSpace == addressSpace && Processes[i].memoryUsers != 0)
@@ -168,15 +183,20 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
             return nullptr;
         }
     }
+
     spinlock_acquire(&addressSpace->operation_lock);
     bool hasAnonymousPages = false;
+
     for (virt_region_t* r = addressSpace->user_used_regions; r; r = r->next)
+
         if (r->backing)
         {
             hasAnonymousPages = true;
             break;
         }
+
     spinlock_release(&addressSpace->operation_lock);
+
     if (hasAnonymousPages)
     {
         UnlockManager();
@@ -185,6 +205,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     }
 
     process_t* process = AllocateProcessUnlocked();
+
     if (process == nullptr)
     {
         UnlockManager();
@@ -202,6 +223,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     process->cwdPath[0] = '/';
 
     const uint8_t currentCpu = arch_cpu_id();
+
     if (currentCpu < BOOT_SMP_MAX_CPUS && RunningProcesses[currentCpu] != nullptr)
     {
         process->hasParent = true;
@@ -210,8 +232,12 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
         spinlock_acquire(&parent->credentialLock);
         process->credentials         = parent->credentials;
         process->supplementaryGroups = parent->supplementaryGroups;
+
         if (process->supplementaryGroups != nullptr)
+        {
             __atomic_add_fetch(&process->supplementaryGroups->references, 1U, __ATOMIC_RELAXED);
+        }
+
         spinlock_release(&parent->credentialLock);
     }
     else
@@ -249,6 +275,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
         UnlockManager();
         return false;
     }
+
     for (task_t* task = process->tasks; task != nullptr; task = task->next)
     {
         if (task->allocated)
@@ -295,10 +322,15 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     if (descriptorsToFree != nullptr)
     {
         for (uint64_t fd = 0; fd < descriptorCountToFree; ++fd)
+
             if (descriptorsToFree[fd].file != nullptr && descriptorsToFree[fd].release != nullptr)
+            {
                 descriptorsToFree[fd].release(descriptorsToFree[fd].file);
+            }
+
         kfree(descriptorsToFree);
     }
+
     ReleaseGroupList(groupsToFree);
 
     return true;
@@ -347,7 +379,10 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
 file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
 {
     if (process == nullptr || process->fileDescriptors == nullptr || fd >= process->fileDescriptorCount)
+    {
         return nullptr;
+    }
+
     file_descriptor_t* descriptor = &process->fileDescriptors[fd];
     return descriptor->file != nullptr ? descriptor : nullptr;
 }
@@ -355,6 +390,7 @@ file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_
 bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex)
 {
     FileDescriptorGuard descriptors(process);
+
     if (process == nullptr || requiredIndex >= process->fileLimit.current)
     {
         return false;
@@ -390,12 +426,17 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
         {
             return false;
         }
+
         newCount *= 2ULL;
     }
 
     if (newCount > SIZE_MAX / sizeof(file_descriptor_t))
+    {
         return false;
+    }
+
     file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
+
     if (newTable == nullptr)
     {
         return false;
@@ -417,6 +458,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
 int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t))
 {
     FileDescriptorGuard descriptors(process);
+
     if (process == nullptr || file == nullptr)
     {
         return -1;
@@ -439,8 +481,12 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
     }
 
     const uint64_t growFrom = process->fileDescriptorCount;
+
     if (growFrom >= process->fileLimit.current)
+    {
         return (int64_t) LINUX_EMFILE;
+    }
+
     if (!EnsureFileDescriptorCapacity(process, growFrom))
     {
         return (int64_t) LINUX_ENOMEM;
@@ -471,11 +517,13 @@ process_t* ProcessManager::AcquireCurrentCredentials()
     process_t* process = GetCurrentProcess();
     // A running process cannot be freed. Keep preemption disabled until the
     // credential lock is released; no user copies or manager-lock calls inside.
+
     if (process == nullptr || !process->allocated || process->reclaiming)
     {
         cpu_preemption_enable();
         return nullptr;
     }
+
     spinlock_acquire(&process->credentialLock);
     return process;
 }
@@ -489,41 +537,63 @@ void ProcessManager::ReleaseCredentials(process_t* process)
 process_group_list_t* ProcessManager::CreateGroupList(const uint32_t* ids, uint32_t count)
 {
     if (count == 0 || count > MAX_SUPPLEMENTARY_GROUPS || ids == nullptr)
+    {
         return nullptr;
+    }
+
     // Full Linux-sized lists exceed the slab allocator's maximum object size.
     process_group_list_t* groups = static_cast<process_group_list_t*>(pmm_alloc(sizeof(process_group_list_t) + count * sizeof(uint32_t)));
+
     if (groups != nullptr)
     {
         groups->references = 1;
         groups->count      = count;
         memcpy(groups->ids, ids, count * sizeof(uint32_t));
     }
+
     return groups;
 }
 
 void ProcessManager::ReleaseGroupList(process_group_list_t* groups)
 {
     if (groups != nullptr && __atomic_sub_fetch(&groups->references, 1U, __ATOMIC_ACQ_REL) == 0)
+    {
         pmm_free(groups);
+    }
 }
 
 uint64_t ProcessManager::ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous)
 {
     FileDescriptorGuard descriptors(process);
+
     if (process == nullptr)
+    {
         return LINUX_ESRCH;
+    }
+
     if (proposed != nullptr)
     {
         if (proposed->current > proposed->maximum)
+        {
             return LINUX_EINVAL;
+        }
+
         // Capability authorization for hard-limit increases is not implemented.
+
         if (proposed->maximum > process->fileLimit.maximum)
             return (uint64_t) -1; // EPERM
     }
+
     if (previous != nullptr)
+    {
         *previous = process->fileLimit;
+    }
+
     if (proposed != nullptr)
+    {
         process->fileLimit = *proposed;
+    }
+
     return 0;
 }
 
@@ -581,42 +651,50 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
     if (layout->argc > 0)
     {
         argvPointers = (uint64_t*) kmalloc(sizeof(uint64_t) * (size_t) layout->argc);
+
         if (argvPointers == nullptr)
         {
             return false;
         }
+
         memset(argvPointers, 0, sizeof(uint64_t) * (size_t) layout->argc);
     }
 
     if (layout->envc > 0)
     {
         envpPointers = (uint64_t*) kmalloc(sizeof(uint64_t) * (size_t) layout->envc);
+
         if (envpPointers == nullptr)
         {
             if (argvPointers != nullptr)
             {
                 kfree(argvPointers);
             }
+
             return false;
         }
+
         memset(envpPointers, 0, sizeof(uint64_t) * (size_t) layout->envc);
     }
 
     for (uint64_t i = layout->argc; i > 0; --i)
     {
         const char* argumentString = layout->argv[i - 1];
+
         if (argumentString == nullptr)
         {
             goto fail;
         }
 
         const uint64_t argumentLength = (uint64_t) strlen(argumentString) + 1;
+
         if (stackCursor < layout->stackBase + argumentLength)
         {
             goto fail;
         }
 
         stackCursor -= argumentLength;
+
         if (!copy_to_process_virtual(process->addressSpace, stackCursor, argumentString, argumentLength))
         {
             goto fail;
@@ -628,18 +706,21 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
     for (uint64_t i = layout->envc; i > 0; --i)
     {
         const char* environmentString = layout->envp[i - 1];
+
         if (environmentString == nullptr)
         {
             goto fail;
         }
 
         const uint64_t environmentLength = (uint64_t) strlen(environmentString) + 1;
+
         if (stackCursor < layout->stackBase + environmentLength)
         {
             goto fail;
         }
 
         stackCursor -= environmentLength;
+
         if (!copy_to_process_virtual(process->addressSpace, stackCursor, environmentString, environmentLength))
         {
             goto fail;
@@ -664,10 +745,12 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
     }
 
     stackCursor = align_down(stackCursor - metadataByteCount, 16);
+
     if (stackCursor < layout->stackBase)
     {
         goto fail;
     }
+
     writeCursor = stackCursor;
 
     if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->argc))
@@ -720,9 +803,11 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
     {
         kfree(envpPointers);
     }
+
     return true;
 
 fail:
+
     if (argvPointers != nullptr)
     {
         kfree(argvPointers);
@@ -732,6 +817,7 @@ fail:
     {
         kfree(envpPointers);
     }
+
     return false;
 }
 
@@ -786,6 +872,7 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
     }
 
     LockManager();
+
     if (process != nullptr)
     {
         if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
@@ -805,10 +892,12 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
             UnlockManager();
             return false;
         }
+
         process->ownerCpu = cpuId;
     }
 
     // Claim execution under the same manager lock used by teardown.
+
     for (size_t other = 0; process != nullptr && other < BOOT_SMP_MAX_CPUS; ++other)
     {
         if (other != cpuId && RunningProcesses[other] == process)
@@ -817,6 +906,7 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
             return false;
         }
     }
+
     __atomic_store_n(&RunningProcesses[cpuId], process, __ATOMIC_RELEASE);
 
     if (process != nullptr && process->addressSpace != nullptr && cpuId == arch_cpu_id())
@@ -871,6 +961,7 @@ bool ProcessManager::TryReapExitedProcess(uint64_t processId)
     }
 
     process_t* process = &Processes[processId];
+
     if (!process->allocated)
     {
         return false;
@@ -898,8 +989,16 @@ process_t* ProcessManager::AcquireProcess(uint64_t id)
 {
     LockManager();
     process_t* process = id < MAX_PROCESSES ? &Processes[id] : nullptr;
-    if (process == nullptr || !process->allocated || process->reclaiming) process = nullptr;
-    else ++process->memoryUsers;
+
+    if (process == nullptr || !process->allocated || process->reclaiming)
+    {
+        process = nullptr;
+    }
+    else
+    {
+        ++process->memoryUsers;
+    }
+
     UnlockManager();
     return process;
 }
@@ -908,27 +1007,37 @@ process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)
 {
     LockManager();
     process_t* process = GetCurrentProcess();
+
     if (process && process->allocated && !process->exited && process->addressSpace)
     {
         for (size_t i = 0; requireExclusive && i < MAX_PROCESSES; ++i)
+
             if (&Processes[i] != process && Processes[i].allocated && Processes[i].addressSpace == process->addressSpace)
             {
                 process = nullptr;
                 break;
             }
+
         if (process)
+        {
             process->memoryUsers++;
+        }
     }
     else
         process = nullptr;
     UnlockManager();
     return process;
 }
+
 void ProcessManager::ReleaseMemoryProcess(process_t* process)
 {
     LockManager();
+
     if (process && process->memoryUsers)
+    {
         process->memoryUsers--;
+    }
+
     UnlockManager();
 }
 

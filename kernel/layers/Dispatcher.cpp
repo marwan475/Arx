@@ -60,7 +60,12 @@ extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64
 {
     Dispatcher* dispatcher=static_cast<Dispatcher*>(platform.dispacher);
     LogicLayerCaps* logic=dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
-    if (logic == nullptr || logic->signalManager == nullptr) return result;
+
+    if (logic == nullptr || logic->signalManager == nullptr)
+    {
+        return result;
+    }
+
     const bool restartable=(frame->syscall_number == SYSCALL_futex && frame->arg3 == 0)
         || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write;
     return logic->signalManager->Deliver(frame,result,restartable);
@@ -76,6 +81,7 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
     }
 
     RequestLayerCaps* caps = GetRequestLayerCaps();
+
     if (caps == nullptr)
     {
         return (uint64_t) -38;
@@ -434,6 +440,7 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
 void Dispatcher::DispatchInterruptRequest(uint64_t interruptNumber) const
 {
     RequestLayerCaps* caps = GetRequestLayerCaps();
+
     if (caps == nullptr || caps->interruptRequestManager == nullptr)
     {
         return;
@@ -445,6 +452,7 @@ void Dispatcher::DispatchInterruptRequest(uint64_t interruptNumber) const
 extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame)
 {
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         return (uint64_t) -38;
@@ -453,19 +461,25 @@ extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* fram
     const uint64_t     result    = dispatcher->DispatchSyscall(frame);
     ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logic     = dispatcher->GetLogicLayerCaps();
+
     if (resources != nullptr && resources->processManager != nullptr && resources->taskManager != nullptr)
     {
         process_t* process = resources->processManager->GetCurrentProcess();
         task_t*    task    = resources->taskManager->GetCurrentTask();
+
         if (process != nullptr && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && task != nullptr && task->isUserTask && logic != nullptr && logic->scheduler != nullptr)
+        {
             logic->scheduler->ExitCurrentTask();
+        }
     }
+
     return result;
 }
 
 extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
 {
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         return;
@@ -479,18 +493,23 @@ extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
 extern "C" bool begin_user_memory(user_memory_access_t* access)
 {
     if (access == nullptr)
+    {
         return false;
+    }
+
     *access = {};
     cpu_preemption_disable();
     Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     ResourceLayerCaps* caps       = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
     ProcessManager*    manager    = caps != nullptr ? caps->processManager : nullptr;
     process_t*         process    = manager != nullptr ? manager->AcquireCurrentMemoryProcess(false) : nullptr;
+
     if (process == nullptr)
     {
         cpu_preemption_enable();
         return false;
     }
+
     spinlock_acquire(&process->addressSpace->operation_lock);
     access->process_manager = manager;
     access->process         = process;

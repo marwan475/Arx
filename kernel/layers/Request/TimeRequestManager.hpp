@@ -13,6 +13,7 @@ public:
     explicit TimeRequestManager(ResourceLayerCaps* resourceLayerCaps = nullptr, LogicLayerCaps* logicLayerCaps = nullptr) : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
     {
     }
+
     uint64_t HandleTimeRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleGettimeofdayRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleClock_gettimeRequest(const arch_syscall_frame_t* frame);

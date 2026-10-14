@@ -98,6 +98,7 @@ static void gdt_init()
     memset(&cpu_info->arch_info.tss, 0, sizeof(cpu_info->arch_info.tss));
 
     uint64_t kernel_stack_top = 0;
+
     if (cpu_info->kernel_stack_base != NULL && cpu_info->kernel_stack_size != 0)
     {
         kernel_stack_top = (uint64_t) (uintptr_t) ((uint8_t*) cpu_info->kernel_stack_base + cpu_info->kernel_stack_size);
@@ -229,6 +230,7 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
         kprintf("Arx kernel: arch_enter_user_mode rejected user rsp (expected rsp%%16 == 0 for ELF entry): 0x%llx\n", (unsigned long long) user_rsp);
         panic();
     }
+
     arch_x86_64_enter_user_mode(user_rip, user_rsp, arg0, arg1);
 
     __builtin_unreachable();
@@ -241,6 +243,7 @@ static bool init_arch_acpi()
     uacpi_table       madt_table;
 
     status = acpi_get_madt(&madt, &madt_table);
+
     if (status != UACPI_STATUS_OK)
     {
         error_logger("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
@@ -248,6 +251,7 @@ static bool init_arch_acpi()
     }
 
     status = arch_acpi_init(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         uacpi_table_unref(&madt_table);
@@ -265,11 +269,13 @@ bool arch_init(void)
 {
     // Cache-type bits select architectural PAT index 3 (UC). Reject an
     // incompatible boot PAT rather than reinterpret live boot mappings.
+
     if (((x86_read_msr(0x277) >> 24) & 0xFF) != 0)
     {
         kprintf("Arx kernel: boot PAT index 3 must be UC\n");
         return false;
     }
+
     if ((uint64_t) arch_cpu_id() == platform.bsp_id)
     {
         if (!init_arch_acpi())

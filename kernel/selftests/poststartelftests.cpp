@@ -88,12 +88,14 @@ static bool setup_user_stack(ResourceLayerCaps* resourceCaps, process_t* process
     for (uint64_t i = 0; i < pageCount; ++i)
     {
         const uint64_t pageVirtualAddress = stackStart + (i * PAGE_SIZE);
+
         if (virtualMemoryManager->VirtToPhys(pageVirtualAddress, process->addressSpace) != 0)
         {
             return false;
         }
 
         void* pageBuffer = physicalMemoryManager->Alloc(PAGE_SIZE);
+
         if (pageBuffer == nullptr)
         {
             return false;
@@ -161,6 +163,7 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
     for (uint64_t segmentIndex = 0; segmentIndex < metadata->segmentCount; ++segmentIndex)
     {
         const elf_segment_metadata_t& segment = metadata->segments[segmentIndex];
+
         if (!segment.mapped || segment.memorySize == 0)
         {
             continue;
@@ -172,6 +175,7 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
         for (uint64_t pageAddress = mapStart; pageAddress < mapEnd; pageAddress += PAGE_SIZE)
         {
             const phys_addr_t pagePhysicalAddress = virtualMemoryManager->VirtToPhys(pageAddress, process->addressSpace);
+
             if (pagePhysicalAddress == 0)
             {
                 continue;
@@ -184,6 +188,7 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
         }
     }
 }
+
 } // namespace
 
 #if defined(__x86_64__)
@@ -235,6 +240,7 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     return 0;
 }
+
 #endif
 
 extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps)
@@ -290,16 +296,19 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     {
         vfs_path_t start = {};
         file             = logicCaps->virtualFileSystem->Open(start, "/test_syscall_exit.elf", 0);
+
         if (file == nullptr)
         {
             poststart_elf_test_fail("failed to open /test_syscall_exit.elf", &fails);
             goto cleanup;
         }
+
         passes++;
     }
 
     {
         virt_addr_space_t* currentSpace = platform.cpus[arch_cpu_id()].address_space;
+
         if (currentSpace == nullptr)
         {
             poststart_elf_test_fail("missing current address space", &fails);
@@ -307,11 +316,13 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         }
 
         process = resourceCaps->processManager->CreateProcess(currentSpace);
+
         if (process == nullptr)
         {
             poststart_elf_test_fail("failed to create process", &fails);
             goto cleanup;
         }
+
         passes++;
     }
 
@@ -320,6 +331,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         poststart_elf_test_fail("ReadElf failed", &fails);
         goto cleanup;
     }
+
     passes++;
 
     if (!logicCaps->elfMapper->LoadExecutable(process, file, &metadata))
@@ -327,25 +339,30 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         poststart_elf_test_fail("LoadExecutable failed", &fails);
         goto cleanup;
     }
+
     elfMapped = true;
     passes++;
 
     {
         uint64_t executableEnd = 0;
+
         for (uint64_t i = 0; i < metadata.segmentCount; ++i)
         {
             const elf_segment_metadata_t& segment = metadata.segments[i];
             const uint64_t                end     = segment.mappedAddress + segment.memorySize;
+
             if (end > executableEnd)
             {
                 executableEnd = end;
             }
         }
+
         if (process->breakBase != align_up(executableEnd, PAGE_SIZE) || process->programBreak != process->breakBase)
         {
             poststart_elf_test_fail("ELF initializes aligned program break", &fails);
             goto cleanup;
         }
+
         passes++;
     }
 
@@ -356,6 +373,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         poststart_elf_test_fail("failed to map user stack", &fails);
         goto cleanup;
     }
+
     stackMapped = true;
     passes++;
 
@@ -369,18 +387,22 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         emptyLayout.auxv                            = emptyAuxv;
         emptyLayout.auxvCount                       = 2;
         uint64_t emptyRsp                           = 0;
+
         if (!resourceCaps->processManager->BuildUserInitialStack(process, &emptyLayout, &emptyRsp) || (emptyRsp & 15) != 0)
         {
             poststart_elf_test_fail("empty initial stack is not aligned", &fails);
             goto cleanup;
         }
+
         const phys_addr_t physical = resourceCaps->virtualMemoryManager->VirtToPhys(emptyRsp, process->addressSpace);
         const uint64_t*   words    = (const uint64_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+
         if (physical == 0 || words[0] != 0 || words[1] != 0 || words[2] != 0 || words[3] != AUXV_AT_PAGESZ || words[4] != PAGE_SIZE || words[5] != AUXV_AT_NULL || words[6] != 0)
         {
             poststart_elf_test_fail("empty initial stack metadata bytes are incorrect", &fails);
             goto cleanup;
         }
+
         passes++;
     }
 
@@ -406,14 +428,17 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         poststart_elf_test_fail("failed to build argc/argv/envp/auxv user stack with ProcessManager", &fails);
         goto cleanup;
     }
+
     passes++;
 
     userTask = resourceCaps->taskManager->CreateUserBootstrapTask(metadata.entryPoint, userRsp, 0, 0);
+
     if (userTask == nullptr)
     {
         poststart_elf_test_fail("failed to create user bootstrap task", &fails);
         goto cleanup;
     }
+
     passes++;
 
     if (!resourceCaps->processManager->AddTask(process, userTask))
@@ -421,6 +446,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
         poststart_elf_test_fail("failed to attach user task to process", &fails);
         goto cleanup;
     }
+
     passes++;
 
     memset(&g_poststart_elf_ctx, 0, sizeof(g_poststart_elf_ctx));

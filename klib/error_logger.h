@@ -37,6 +37,7 @@ bool error_logger_read(const error_log_buffer_t* buffer, size_t index, char* mes
 
 #ifdef __cplusplus
 }
+
 #endif
 
 #endif

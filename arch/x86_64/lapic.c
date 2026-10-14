@@ -21,18 +21,23 @@ void lapic_init(void)
     }
 
     uint64_t apic_base_msr = x86_read_msr(IA32_APIC_BASE_MSR);
+
     if (apic_base_msr & (1ULL << 10))
     {
         kprintf("Arx kernel: x2APIC mode is unsupported\n");
         panic();
     }
+
     apic_base_msr |= IA32_APIC_BASE_ENABLE;
     x86_write_msr(IA32_APIC_BASE_MSR, apic_base_msr);
 
     phys_addr_t lapic_pa = align_down(cpu_info->arch_info.acpi_lapic_base_addr, PAGE_SIZE);
     virt_addr_t lapic_va = vmm_map_direct_mmio_page(lapic_pa, cpu_info->address_space);
+
     if (lapic_va == 0)
+    {
         panic();
+    }
 
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
@@ -65,6 +70,7 @@ bool lapic_timer_calibrate(void)
 {
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     uint64_t start, finish;
+
     if (!cpu->arch_info.acpi_has_lapic || cpu->arch_info.acpi_lapic_base_addr == 0
         || !arch_time_read_monotonic(&start))
         return false;
@@ -83,12 +89,19 @@ bool lapic_timer_calibrate(void)
     const uint32_t first = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
     finish = start;
     // A bounded loop must restore timer delivery even if HPET stops advancing.
+
     for (unsigned attempts = 0; measured && attempts < 1000000; ++attempts)
     {
         measured = arch_time_read_monotonic(&finish);
-        if (!measured || finish < start || finish - start >= 10000000ULL) break;
+
+        if (!measured || finish < start || finish - start >= 10000000ULL)
+        {
+            break;
+        }
+
         arch_pause();
     }
+
     const uint32_t last = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
     const uint64_t elapsed = finish >= start ? finish - start : 0;
     const uint64_t ticks = first >= last ? (uint64_t) first - last : 0;
@@ -107,7 +120,11 @@ bool lapic_timer_calibrate(void)
         KDEBUG("cpu %u LAPIC timer calibrated: previous period~%llu us, target=10000 us, count=%u\n",
             (unsigned) arch_cpu_id(), (unsigned long long) old_microseconds, (unsigned) initial);
     }
-    else error_logger("cpu %u LAPIC calibration failed; retaining bootstrap timer", (unsigned) arch_cpu_id());
+    else
+    {
+        error_logger("cpu %u LAPIC calibration failed; retaining bootstrap timer", (unsigned) arch_cpu_id());
+    }
+
     return measured;
 }
 
@@ -142,6 +159,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
     }
 
     cpu_info_t* target_cpu_info = &platform.cpus[target_cpu_id];
+
     if (!target_cpu_info->arch_info.acpi_has_lapic)
     {
         kprintf("Arx kernel: send_ipi rejected target cpu %u without LAPIC\n", (unsigned) target_cpu_id);
@@ -149,6 +167,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
     }
 
     spinlock_acquire(&target_cpu_info->ipi_lock);
+
     if (request_data != NULL)
     {
         target_cpu_info->ipi_request_data      = *((const ipi_request_data_t*) request_data);

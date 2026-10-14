@@ -31,11 +31,15 @@ Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
     InitializeBspProcessAndTask();
     // Allocate idle contexts before timer dispatch can enter with IF cleared.
     // Switching away from exit never needs allocation or a TLB wait.
+
     for (size_t i = 0; i < platform.cpu_count; ++i)
     {
         IdleTasks[i] = ResourceLayerImportCaps->taskManager->CreateKernelTask(IdleEntry, this);
+
         if (IdleTasks[i] == nullptr)
+        {
             panic();
+        }
     }
 }
 
@@ -55,10 +59,12 @@ void Scheduler::IdleEntry(void* argument)
 {
     Scheduler*    scheduler = static_cast<Scheduler*>(argument);
     const uint8_t cpuId     = arch_cpu_id();
+
     for (;;)
     {
         scheduler->ReapExitedProcesses();
         scheduler->WakeSleepingTasks(cpuId);
+
         if (!scheduler->RunNextReadyProcess(cpuId))
         {
             // Periodic timer interrupts recheck deadlines even with no ready task.
@@ -75,11 +81,15 @@ void Scheduler::IdleEntry(void* argument)
 void Scheduler::WakeSleepingTasks(uint8_t cpuId)
 {
     if (cpuId != arch_cpu_id() || cpuId >= BOOT_SMP_MAX_CPUS)
+    {
         return;
+    }
+
     uint64_t now            = 0;
     bool     clockAvailable = arch_time_read_monotonic(&now);
     LockQueues();
     size_t* link = &SleepHeads[cpuId];
+
     while (*link != NO_SLEEPER)
     {
         sleep_entry_t& entry   = SleepQueue[*link];
@@ -87,6 +97,7 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
         const bool     changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
         const bool     timed   = entry.deadline != UINT64_MAX;
         const bool interrupted = pending_signals(entry.process, entry.task) != 0;
+
         if ((timed && !clockAvailable) || exited || interrupted || changed || (timed && entry.deadline <= now))
         {
             *link         = entry.next;
@@ -98,18 +109,22 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
         else
             link = &entry.next;
     }
+
     UnlockQueues();
 }
 
 void Scheduler::WakeSignalWaiters(process_t* process)
 {
     LockQueues();
+
     for (uint8_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
     {
         size_t* link = &SleepHeads[cpu];
+
         while (*link != NO_SLEEPER)
         {
             sleep_entry_t& entry = SleepQueue[*link];
+
             if (entry.process == process && pending_signals(process, entry.task) != 0)
             {
                 *link = entry.next;
@@ -118,20 +133,28 @@ void Scheduler::WakeSignalWaiters(process_t* process)
                 entry.result = (uint64_t) -4;
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
             }
-            else link = &entry.next;
+            else
+            {
+                link = &entry.next;
+            }
         }
     }
+
     UnlockQueues();
 }
 
 void Scheduler::ReapExitedProcesses()
 {
     ProcessManager* manager = ResourceLayerImportCaps->processManager;
+
     for (size_t i = 0; i < manager->GetCapacity(); ++i)
     {
         process_t* process = &manager->GetProcesses()[i];
+
         if (process->allocated && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE))
+        {
             (void) KillProcess(i, 0, true);
+        }
     }
 }
 
@@ -140,8 +163,12 @@ void Scheduler::ReapExitedProcesses()
     const uint8_t cpuId = arch_cpu_id();
     TaskManager*  tasks = ResourceLayerImportCaps->taskManager;
     cpu_preemption_disable();
+
     if (IdleTasks[cpuId] == nullptr)
+    {
         panic();
+    }
+
     tasks->CleanupCurrentTask();
     tasks->MarkDying(tasks->GetCurrentTask());
     (void) ResourceLayerImportCaps->processManager->SetRunningProcess(cpuId, nullptr);
@@ -160,21 +187,30 @@ uint64_t Scheduler::SleepUntil(uint64_t monotonicDeadline)
 uint64_t Scheduler::WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline)
 {
     if (sequence == nullptr)
+    {
         return static_cast<uint64_t>(-22);
+    }
+
     return Sleep(monotonicDeadline, sequence, expected);
 }
 
 void Scheduler::WakeEventWaiters(const uint64_t* sequence)
 {
     if (sequence == nullptr)
+    {
         return;
+    }
+
     LockQueues();
+
     for (size_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
     {
         size_t* link = &SleepHeads[cpu];
+
         while (*link != NO_SLEEPER)
         {
             sleep_entry_t& entry = SleepQueue[*link];
+
             if (entry.sequence == sequence && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence)
             {
                 *link         = entry.next;
@@ -187,23 +223,41 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
                 link = &entry.next;
         }
     }
+
     UnlockQueues();
 }
 
 uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, uint64_t expected)
 {
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
+    {
         return 0;
+    }
+
     uint64_t now = 0;
+
     if (monotonicDeadline != UINT64_MAX && !arch_time_read_monotonic(&now))
+    {
         return static_cast<uint64_t>(-38);
+    }
+
     if (monotonicDeadline <= now)
+    {
         return 0;
+    }
+
     if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr || ResourceLayerImportCaps->taskManager == nullptr || IdleAddressSpace == nullptr)
+    {
         return static_cast<uint64_t>(-38);
+    }
+
     const uint8_t cpuId = arch_cpu_id();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
+    {
         return static_cast<uint64_t>(-22);
+    }
+
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
     TaskManager*    taskManager    = ResourceLayerImportCaps->taskManager;
     // This guard transfers with the suspended task; it does not guard the idle
@@ -211,21 +265,28 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     cpu_preemption_disable();
     task_t*    task    = taskManager->GetCurrentTask();
     process_t* process = processManager->AcquireCurrentMemoryProcess(false);
+
     if (task == nullptr || process == nullptr || task->id >= SLEEP_QUEUE_CAPACITY)
     {
         if (process != nullptr)
+        {
             processManager->ReleaseMemoryProcess(process);
+        }
+
         cpu_preemption_enable();
         return static_cast<uint64_t>(-3);
     }
+
     if (IdleTasks[cpuId] == nullptr || !taskManager->MarkSleeping(task))
     {
         processManager->ReleaseMemoryProcess(process);
         cpu_preemption_enable();
         return static_cast<uint64_t>(-12);
     }
+
     LockQueues();
     // Close the readiness-scan/parking race under the wakeup queue lock.
+
     if (pending_signals(process, task) != 0)
     {
         UnlockQueues();
@@ -234,6 +295,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         cpu_preemption_enable();
         return (uint64_t) -4;
     }
+
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
     {
         UnlockQueues();
@@ -242,6 +304,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         cpu_preemption_enable();
         return 0;
     }
+
     sleep_entry_t& entry   = SleepQueue[task->id];
     entry.process          = process;
     entry.task             = task;
@@ -253,14 +316,22 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     entry.waiting          = true;
     entry.dispatched       = false;
     size_t* link           = &SleepHeads[cpuId];
+
     while (*link != NO_SLEEPER && SleepQueue[*link].deadline <= monotonicDeadline)
+    {
         link = &SleepQueue[*link].next;
+    }
+
     entry.next = *link;
     *link      = task->id;
     // A blocked task is not a normal ready process. Runnable siblings may be
     // enqueued again by the scheduler independently of this sleeping task.
+
     for (uint8_t queuedCpu = 0; queuedCpu < BOOT_SMP_MAX_CPUS; ++queuedCpu)
+    {
         RemoveProcessFromQueue(&ReadyQueues[queuedCpu], process->id);
+    }
+
     UnlockQueues();
     (void) EnqueueProcess(cpuId, process->id);
 
@@ -271,14 +342,22 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     // A wake switches to this exact task and restores its guarded syscall frame.
     processManager->ActivateProcessAddressSpace(process);
     LockQueues();
+
     if (entry.waiting)
     {
         link = &SleepHeads[cpuId];
+
         while (*link != NO_SLEEPER && *link != task->id)
+        {
             link = &SleepQueue[*link].next;
+        }
+
         if (*link == task->id)
+        {
             *link = entry.next;
+        }
     }
+
     uint64_t result = switched ? entry.result : static_cast<uint64_t>(-3);
     entry.task      = nullptr;
     entry.process   = nullptr;
@@ -301,6 +380,7 @@ void Scheduler::ActivateScheduling()
 bool Scheduler::IsSchedulingActive() const
 {
     const uint8_t cpuId = arch_cpu_id();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
         return false;
@@ -325,6 +405,7 @@ void Scheduler::InitializeBspProcessAndTask()
     TaskManager*    taskManager    = ResourceLayerImportCaps->taskManager;
 
     uint8_t cpuId = arch_cpu_id();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
         return;
@@ -332,6 +413,7 @@ void Scheduler::InitializeBspProcessAndTask()
 
     process_t* runningProcess = processManager->GetRunningProcess(cpuId);
     task_t*    runningTask    = taskManager->GetRunningTask(cpuId);
+
     if (runningProcess != nullptr && runningTask != nullptr)
     {
         return;
@@ -339,15 +421,18 @@ void Scheduler::InitializeBspProcessAndTask()
 
     bool       createdProcess = false;
     process_t* process        = runningProcess;
+
     if (process == nullptr)
     {
         virt_addr_space_t* currentSpace = platform.cpus[cpuId].address_space;
+
         if (currentSpace == nullptr)
         {
             return;
         }
 
         process = processManager->CreateProcess(currentSpace);
+
         if (process == nullptr)
         {
             return;
@@ -357,25 +442,30 @@ void Scheduler::InitializeBspProcessAndTask()
     }
 
     task_t* task = runningTask;
+
     if (task == nullptr)
     {
         task = taskManager->AllocateTask();
+
         if (task == nullptr)
         {
             if (createdProcess)
             {
                 processManager->FreeProcess(process);
             }
+
             return;
         }
 
         if (!processManager->AddTask(process, task))
         {
             taskManager->FreeTask(task);
+
             if (createdProcess)
             {
                 processManager->FreeProcess(process);
             }
+
             return;
         }
     }
@@ -386,6 +476,7 @@ void Scheduler::InitializeBspProcessAndTask()
         {
             taskManager->FreeTask(task);
         }
+
         if (createdProcess)
         {
             processManager->FreeProcess(process);
@@ -404,6 +495,7 @@ bool Scheduler::RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId)
     uint64_t saved[READY_QUEUE_CAPACITY];
     size_t   original = queue->count;
     size_t   readPos  = queue->head;
+
     for (size_t i = 0; i < original; ++i)
     {
         saved[i] = queue->processIds[readPos];
@@ -447,6 +539,7 @@ bool Scheduler::ScheduleProcess(uint64_t processId)
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
 
     size_t count = processManager->GetCapacity();
+
     if (processId >= count)
     {
         return false;
@@ -454,6 +547,7 @@ bool Scheduler::ScheduleProcess(uint64_t processId)
 
     process_t* table   = processManager->GetProcesses();
     process_t* process = &table[processId];
+
     if (!process->allocated || process->exited)
     {
         return false;
@@ -467,6 +561,7 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
     TaskManager*    taskManager    = ResourceLayerImportCaps->taskManager;
     uint8_t         cpuId          = arch_cpu_id();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
         return false;
@@ -474,24 +569,31 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
 
     cpu_preemption_disable();
     LockQueues();
+
     if (!process->allocated || (process->exited && (task == nullptr || !task->sleepPending)))
     {
         UnlockQueues();
         cpu_preemption_enable();
         return false;
     }
+
     if (task == nullptr)
     {
         task = processManager->GetTasks(process);
+
         while (task != nullptr && task->sleepPending)
+        {
             task = task->next;
+        }
     }
+
     if (task == nullptr || !taskManager->RetainForDispatch(task))
     {
         UnlockQueues();
         cpu_preemption_enable();
         return false;
     }
+
     process_t*         previousProcess      = processManager->GetRunningProcess(cpuId);
     virt_addr_space_t* previousAddressSpace = platform.cpus[cpuId].address_space;
 
@@ -509,7 +611,9 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
     if (processManager->GetRunningProcess(cpuId) != previousProcess)
     {
         if (previousProcess != nullptr)
+        {
             (void) processManager->ActivateProcessAddressSpace(previousProcess);
+        }
         else
             (void) processManager->SetRunningProcess(cpuId, nullptr);
     }
@@ -517,6 +621,7 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
     if (platform.cpus[cpuId].address_space != previousAddressSpace)
     {
         platform.cpus[cpuId].address_space = previousAddressSpace;
+
         if (previousAddressSpace != nullptr)
         {
             vmm_switch_addr_space(previousAddressSpace);
@@ -546,6 +651,7 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
 
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
     size_t          count          = processManager->GetCapacity();
+
     if (processId >= count)
     {
         return false;
@@ -554,6 +660,7 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     process_t* table   = processManager->GetProcesses();
     process_t* process = &table[processId];
     LockQueues();
+
     if (!process->allocated || process->exited || (process->ownerCpu >= 0 && process->ownerCpu != cpuId))
     {
         UnlockQueues();
@@ -561,8 +668,12 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     }
 
     task_t* firstTask = processManager->GetTasks(process);
+
     while (firstTask != nullptr && __atomic_load_n(&firstTask->sleepPending, __ATOMIC_ACQUIRE))
+    {
         firstTask = firstTask->next;
+    }
+
     if (firstTask == nullptr)
     {
         UnlockQueues();
@@ -572,6 +683,7 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     // Invariant: one process may be queued in at most one ready queue.
     // Suspended syscall contexts stay on their owner CPU, including runnable
     // siblings selected through the process queue.
+
     for (size_t i = 0; i < SLEEP_QUEUE_CAPACITY; ++i)
     {
         if (SleepQueue[i].process == process && SleepQueue[i].task != nullptr && SleepQueue[i].cpuId != cpuId)
@@ -580,10 +692,12 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
             return false;
         }
     }
+
     for (uint8_t otherCpu = 0; otherCpu < BOOT_SMP_MAX_CPUS; ++otherCpu)
     {
         ready_queue_t* otherQueue = &ReadyQueues[otherCpu];
         size_t         cursor     = otherQueue->head;
+
         for (size_t i = 0; i < otherQueue->count; ++i)
         {
             if (otherQueue->processIds[cursor] == processId)
@@ -591,11 +705,13 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
                 UnlockQueues();
                 return false;
             }
+
             cursor = (cursor + 1) % READY_QUEUE_CAPACITY;
         }
     }
 
     ready_queue_t* queue = &ReadyQueues[cpuId];
+
     if (queue->count >= READY_QUEUE_CAPACITY)
     {
         UnlockQueues();
@@ -625,9 +741,11 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
     LockQueues();
     // Awakened tasks have their own slots, so a full process ready queue cannot
     // drop a wakeup. Resume the precise task that blocked inside the syscall.
+
     for (size_t i = 0; i < SLEEP_QUEUE_CAPACITY; ++i)
     {
         sleep_entry_t& entry = SleepQueue[i];
+
         if (entry.task != nullptr && entry.cpuId == cpuId && !entry.waiting && !entry.dispatched)
         {
             process_t* process = entry.process;
@@ -635,17 +753,21 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
             entry.dispatched   = true;
             UnlockQueues();
             bool executed = ScheduleTask(process, task);
+
             if (!executed)
             {
                 LockQueues();
                 entry.dispatched = false;
                 UnlockQueues();
             }
+
             cpu_preemption_enable();
             return executed;
         }
     }
+
     ready_queue_t* queue = &ReadyQueues[cpuId];
+
     while (queue->count > 0)
     {
         const uint64_t processId = queue->processIds[queue->head];
@@ -658,6 +780,7 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
             cpu_preemption_enable();
             return true;
         }
+
         LockQueues();
     }
 
@@ -676,37 +799,55 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
     TaskManager*    taskManager    = ResourceLayerImportCaps->taskManager;
     const size_t    capacity       = processManager->GetCapacity();
+
     if (processId >= capacity)
     {
         return false;
     }
 
     process_t* process = processManager->AcquireProcess(processId);
-    if (process == nullptr) return false;
+
+    if (process == nullptr)
+    {
+        return false;
+    }
+
     LockQueues();
+
     if (process->retirementActive || (onlyIfExited && !process->exited))
     {
         UnlockQueues();
         processManager->ReleaseMemoryProcess(process);
         return false;
     }
+
     process->retirementActive = true;
 
     if (!onlyIfExited)
+    {
         process->exitStatus = exitStatus;
+    }
+
     __atomic_store_n(&process->exited, true, __ATOMIC_RELEASE);
 
     for (uint8_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
     {
         RemoveProcessFromQueue(&ReadyQueues[cpu], processId);
     }
+
     // Mark before unlocking so new dispatch claims cannot start. Cleanup may
     // touch user memory and wake futexes; no scheduler lock may span it.
-    for (task_t* task = process->tasks; task != nullptr; task = task->next) taskManager->MarkDying(task);
+
+    for (task_t* task = process->tasks; task != nullptr; task = task->next)
+    {
+        taskManager->MarkDying(task);
+    }
+
     UnlockQueues();
     void*   retiredStacks[TaskManager::MAX_TASKS];
     size_t  retiredCount = 0;
     task_t* iter         = process->tasks;
+
     while (iter != nullptr)
     {
         task_t* next = iter->next;
@@ -717,10 +858,14 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         // the same lock used when attaching a newly allocated task slot.
         const bool cleaned = taskManager->CleanupRetiredTask(iter);
         LockQueues();
+
         if (cleaned && taskManager->FreeTask(iter, &retired))
         {
             if (retired != nullptr)
+            {
                 retiredStacks[retiredCount++] = retired;
+            }
+
             if (previous != nullptr)
             {
                 previous->next = next;
@@ -735,6 +880,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
                 next->prev = previous;
             }
         }
+
         UnlockQueues();
 
         iter = next;
@@ -746,11 +892,18 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a
     // timer handler can finish their short queue transaction and accept IPIs.
+
     for (size_t i = 0; i < retiredCount; ++i)
+    {
         TaskManager::ReleaseTaskStack(retiredStacks[i]);
+    }
+
     processManager->ReleaseMemoryProcess(process);
+
     if (reap)
+    {
         (void) processManager->TryReapExitedProcess(processId);
+    }
 
     return true;
 }

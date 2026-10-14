@@ -115,9 +115,11 @@ bool ElfMapper::ReadExactAt(file_t* file, uint64_t offset, void* buffer, uint64_
     }
 
     uint64_t bytesRead = 0;
+
     while (bytesRead < size)
     {
         int64_t result = file->operations->Read(file, (uint8_t*) buffer + bytesRead, size - bytesRead);
+
         if (result <= 0)
         {
             (void) file->operations->Seek(file, (int64_t) originalOffset, 0);
@@ -157,12 +159,14 @@ bool ElfMapper::ValidateUserspaceRange(uint64_t virtualAddress, uint64_t memoryS
     const uint64_t inclusiveEnd = virtualAddress + (memorySize - 1);
 
     const uint64_t alignedStart = align_down(virtualAddress, PAGE_SIZE);
+
     if (AddWouldOverflow(inclusiveEnd, 1))
     {
         return false;
     }
 
     const uint64_t alignedEndExclusive = align_up(inclusiveEnd + 1, PAGE_SIZE);
+
     if (alignedStart < CANONICAL_USER_BASE)
     {
         return false;
@@ -275,6 +279,7 @@ bool ElfMapper::ValidateHeader(const elf64_header_t& header, uint64_t fileSize) 
     }
 
     const uint64_t tableSize = (uint64_t) header.programHeaderEntrySize * (uint64_t) header.programHeaderCount;
+
     if (tableSize > fileSize - header.programHeaderOffset)
     {
         return false;
@@ -288,6 +293,7 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
     const uint64_t tableSize = (uint64_t) header.programHeaderEntrySize * (uint64_t) header.programHeaderCount;
 
     elf64_program_header_t* headers = (elf64_program_header_t*) kmalloc((size_t) tableSize);
+
     if (headers == nullptr)
     {
         return false;
@@ -300,6 +306,7 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
     }
 
     uint64_t loadSegmentCount = 0;
+
     for (uint16_t i = 0; i < header.programHeaderCount; ++i)
     {
         if (headers[i].type == ELF_PH_TYPE_LOAD)
@@ -315,6 +322,7 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
     }
 
     elf_segment_metadata_t* segments = (elf_segment_metadata_t*) kmalloc(sizeof(elf_segment_metadata_t) * (size_t) loadSegmentCount);
+
     if (segments == nullptr)
     {
         kfree(headers);
@@ -324,6 +332,7 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
     memset(segments, 0, sizeof(elf_segment_metadata_t) * (size_t) loadSegmentCount);
 
     uint64_t outIndex = 0;
+
     for (uint16_t i = 0; i < header.programHeaderCount; ++i)
     {
         if (headers[i].type != ELF_PH_TYPE_LOAD)
@@ -377,12 +386,14 @@ bool ElfMapper::ReadElf(file_t* file, elf_metadata_t* metadata)
     memset(metadata, 0, sizeof(*metadata));
 
     const uint64_t fileSize = file->inode->size;
+
     if (fileSize < sizeof(elf64_header_t))
     {
         return false;
     }
 
     elf64_header_t header = {};
+
     if (!ReadExactAt(file, 0, &header, sizeof(header)))
     {
         return false;
@@ -455,6 +466,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
     };
 
     uint64_t maxPageCount = 0;
+
     for (uint64_t i = 0; i < metadata->segmentCount; ++i)
     {
         elf_segment_metadata_t& segment = metadata->segments[i];
@@ -467,10 +479,12 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         }
 
         uint64_t mappedAddress = 0;
+
         if (AddWouldOverflow(metadata->loadBias, segment.virtualAddress))
         {
             return false;
         }
+
         mappedAddress = metadata->loadBias + segment.virtualAddress;
 
         if (AddWouldOverflow(mappedAddress, segment.memorySize - 1))
@@ -491,23 +505,28 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
     }
 
     mapped_page_state_t* mappedPages = nullptr;
+
     if (maxPageCount > 0)
     {
         mappedPages = (mapped_page_state_t*) kmalloc(sizeof(mapped_page_state_t) * (size_t) maxPageCount);
+
         if (mappedPages == nullptr)
         {
             return false;
         }
+
         memset(mappedPages, 0, sizeof(mapped_page_state_t) * (size_t) maxPageCount);
     }
 
     uint8_t* scratch = (uint8_t*) kmalloc(PAGE_SIZE);
+
     if (scratch == nullptr)
     {
         if (mappedPages != nullptr)
         {
             kfree(mappedPages);
         }
+
         return false;
     }
 
@@ -552,6 +571,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         for (uint64_t pageAddress = mapStart; pageAddress < mapEnd; pageAddress += PAGE_SIZE)
         {
             int64_t existingIndex = findMappedPageIndex(pageAddress);
+
             if (existingIndex >= 0)
             {
                 mappedPages[(uint64_t) existingIndex].combinedFlags |= segment.flags;
@@ -564,6 +584,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             }
 
             void* pageBuffer = physicalMemoryManager->Alloc(PAGE_SIZE);
+
             if (pageBuffer == nullptr)
             {
                 goto fail;
@@ -578,6 +599,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             ARCH_PAGE_FLAG_SET_USER(pageFlags);
 
             const phys_addr_t pagePhysicalAddress = (phys_addr_t) hhdm_to_pa((uintptr_t) pageBuffer, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+
             if (!virtualMemoryManager->MapPage(pageAddress, pagePhysicalAddress, pageFlags, process->addressSpace))
             {
                 physicalMemoryManager->Free(pageBuffer);
@@ -606,6 +628,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
 
             const uint64_t pageAddress = align_down(destination, PAGE_SIZE);
             int64_t        pageIndex   = findMappedPageIndex(pageAddress);
+
             if (pageIndex < 0)
             {
                 goto fail;
@@ -620,6 +643,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
 
         uint64_t zeroDestination = mappedAddress + segment.fileSize;
         uint64_t zeroSize        = segment.memorySize - segment.fileSize;
+
         while (zeroSize > 0)
         {
             const uint64_t pageOffset = zeroDestination & (PAGE_SIZE - 1);
@@ -627,6 +651,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
 
             const uint64_t pageAddress = align_down(zeroDestination, PAGE_SIZE);
             int64_t        pageIndex   = findMappedPageIndex(pageAddress);
+
             if (pageIndex < 0)
             {
                 goto fail;
@@ -665,18 +690,24 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
     metadata->executableLoaded = true;
     {
         uint64_t heapEnd = 0;
+
         for (uint64_t i = 0; i < metadata->segmentCount; ++i)
         {
             const auto& segment = metadata->segments[i];
             uint64_t    end     = segment.mappedAddress + segment.memorySize;
+
             if (end > heapEnd)
+            {
                 heapEnd = end;
+            }
         }
+
         process->breakBase    = align_up(heapEnd, PAGE_SIZE);
         process->programBreak = process->breakBase;
     }
 
     kfree(scratch);
+
     if (mappedPages != nullptr)
     {
         kfree(mappedPages);
@@ -685,9 +716,11 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
     return true;
 
 fail:
+
     for (uint64_t pageIndex = 0; pageIndex < mappedPageCount; ++pageIndex)
     {
         virtualMemoryManager->UnmapPage(mappedPages[pageIndex].virtualAddress, process->addressSpace);
+
         if (mappedPages[pageIndex].pagePointer != nullptr)
         {
             physicalMemoryManager->Free(mappedPages[pageIndex].pagePointer);
@@ -702,6 +735,7 @@ fail:
     metadata->executableLoaded = false;
 
     kfree(scratch);
+
     if (mappedPages != nullptr)
     {
         kfree(mappedPages);

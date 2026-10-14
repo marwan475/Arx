@@ -9,6 +9,7 @@ extern "C"
 #include <klib/khashl/khashp.h>
 #ifdef __cplusplus
 }
+
 #endif
 
 #include <klib/spinlock.h>

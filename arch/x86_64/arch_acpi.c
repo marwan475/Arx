@@ -5,10 +5,17 @@
 static uacpi_status madt_next_entry(uacpi_u8** cursor, uacpi_u8* table_end, struct acpi_entry_hdr** out_entry)
 {
     if (*cursor + sizeof(struct acpi_entry_hdr) > table_end)
+    {
         return UACPI_STATUS_NOT_FOUND;
+    }
+
     struct acpi_entry_hdr* entry = (struct acpi_entry_hdr*) *cursor;
+
     if (entry->length < sizeof(*entry) || *cursor + entry->length > table_end)
+    {
         return UACPI_STATUS_INVALID_TABLE_LENGTH;
+    }
+
     *out_entry = entry;
     *cursor += entry->length;
     return UACPI_STATUS_OK;
@@ -36,6 +43,7 @@ static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_la
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;
+
     while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
         if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC_ADDRESS_OVERRIDE)
@@ -51,6 +59,7 @@ static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_la
             lapic_base_addr = lapic_override->address;
         }
     }
+
     if (walk_status != UACPI_STATUS_NOT_FOUND)
     {
         return walk_status;
@@ -74,6 +83,7 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
     }
 
     status = get_lapic_base_addr(madt, &lapic_base_addr);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
@@ -94,6 +104,7 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;
+
     while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
         if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC)
@@ -110,7 +121,10 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
             for (size_t logical = 0; logical < platform.cpu_count; ++logical)
             {
                 if (platform.cpus[logical].hardware_id != lapic->id)
+                {
                     continue;
+                }
+
                 platform.cpus[logical].arch_info.acpi_has_lapic       = 1;
                 platform.cpus[logical].arch_info.acpi_lapic_base_addr = lapic_base_addr;
                 platform.cpus[logical].arch_info.acpi_processor_uid   = lapic->uid;
@@ -121,6 +135,7 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
             lapic_count++;
         }
     }
+
     if (walk_status != UACPI_STATUS_NOT_FOUND)
     {
         return walk_status;
@@ -155,6 +170,7 @@ static uacpi_status get_ioapic_from_madt(struct acpi_madt* madt, struct acpi_mad
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;
+
     while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
         if (entry->type == ACPI_MADT_ENTRY_TYPE_IOAPIC)
@@ -169,6 +185,7 @@ static uacpi_status get_ioapic_from_madt(struct acpi_madt* madt, struct acpi_mad
             return UACPI_STATUS_OK;
         }
     }
+
     if (walk_status != UACPI_STATUS_NOT_FOUND)
     {
         *out_ioapic = NULL;
@@ -209,6 +226,7 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;
+
     while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
         if (entry->type == ACPI_MADT_ENTRY_TYPE_INTERRUPT_SOURCE_OVERRIDE)
@@ -238,6 +256,7 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
             }
         }
     }
+
     if (walk_status != UACPI_STATUS_NOT_FOUND)
     {
         return walk_status;
@@ -252,18 +271,21 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt)
     uacpi_status             status;
 
     status = get_lapics_from_madt(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
     }
 
     status = get_ioapic_from_madt(madt, &ioapic);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
     }
 
     status = get_iso_overrides_from_madt(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;

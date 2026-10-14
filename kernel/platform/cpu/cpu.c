@@ -44,6 +44,7 @@ __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* ar
     if (cpu->kernel_stack_base == NULL)
     {
         void* region = vmalloc(CPU_KERNEL_STACK_SIZE + PAGE_SIZE);
+
         if (region == NULL)
         {
             error_logger("Arx kernel: failed to allocate kernel stack for CPU %d\n", arch_cpu_id());
@@ -58,6 +59,7 @@ __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* ar
     void* stack_top = (void*) ((uint8_t*) cpu->kernel_stack_base + cpu->kernel_stack_size);
     arch_set_stack(stack_top, entry, arg);
 }
+
 void cpu_preemption_disable(void)
 {
     if (platform.cpus != NULL)
@@ -71,6 +73,7 @@ void cpu_preemption_enable(void)
     if (platform.cpus != NULL)
     {
         cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+
         if (__atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) != 0)
         {
             __atomic_sub_fetch(&cpu->preemption_depth, 1, __ATOMIC_RELAXED);

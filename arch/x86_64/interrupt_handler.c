@@ -15,12 +15,14 @@ static void blue_screen(void)
     }
 
     size_t bytes_per_pixel = fb->pitch / fb->width;
+
     if (bytes_per_pixel == 0)
     {
         bytes_per_pixel = 4;
     }
 
     uint32_t pixel = 0;
+
     if (fb->blue_mask_size >= 32)
     {
         pixel = 0xFFFFFFFFu;
@@ -35,9 +37,11 @@ static void blue_screen(void)
     for (size_t y = 0; y < fb->height; y++)
     {
         uint8_t* row = base + (y * fb->pitch);
+
         for (size_t x = 0; x < fb->width; x++)
         {
             uint8_t* px = row + (x * bytes_per_pixel);
+
             for (size_t b = 0; b < bytes_per_pixel; b++)
             {
                 px[b] = (uint8_t) ((pixel >> (8 * b)) & 0xFFu);
@@ -83,6 +87,7 @@ static void ipi_invalidate_tlb(const ipi_request_data_t* req)
     else if (req->tlb_invalidation.requires_page_flush)
     {
         const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
+
         for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
         {
             x86_64_invlpg(va);
@@ -106,6 +111,7 @@ static void ipi_broadcast_exception(void)
         }
 
         cpu_info_t* target_cpu_info = &platform.cpus[cpu_id];
+
         if (!__atomic_load_n(&target_cpu_info->initialized, __ATOMIC_ACQUIRE) || !target_cpu_info->arch_info.acpi_has_lapic)
         {
             continue;
@@ -157,10 +163,12 @@ static void handle_ipi(registers_t* reg)
 static void handle_interrupt(registers_t* reg)
 {
     // Spurious delivery has no in-service bit and must not receive an EOI.
+
     if (reg->interrupt_number == 0xFF)
     {
         return;
     }
+
     if (reg->interrupt_number >= 32)
     {
         lapic_eoi();
@@ -170,18 +178,22 @@ static void handle_interrupt(registers_t* reg)
     {
         // Maintain the 32-bit HPET epoch even without sleepers or clock syscalls.
         // This uses no scheduler locks and must run even while dispatch is deferred.
+
         if (arch_cpu_id() == platform.bsp_id)
         {
             uint64_t now;
             (void) arch_time_read_monotonic(&now);
         }
+
         // Bootstrap/kernel tasks still require timer dispatch. Defer only
         // active syscalls and explicitly guarded critical sections.
         const cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+
         if (cpu->arch_info.syscall_ctx.active == 0 && __atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) == 0)
         {
             dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
         }
+
         return;
     }
 
@@ -211,6 +223,7 @@ extern void arch_signal_interrupt(registers_t* reg, void* floating);
 void ISRHANDLER(registers_t* reg, void* floating)
 {
     handle_interrupt(reg);
+
     if ((reg->cs & 3) == 3)
     {
         // The user frame/FPU image are on the kernel stack. Permit IPIs while

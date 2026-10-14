@@ -58,6 +58,7 @@ static void poststart_vfs_test_fail(const char* message, unsigned long long* fai
 static void poststart_vfs_process_file_task(void* arg)
 {
     poststart_vfs_process_test_context_t* ctx = static_cast<poststart_vfs_process_test_context_t*>(arg);
+
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->bspTask == nullptr)
     {
         if (ctx != nullptr)
@@ -65,6 +66,7 @@ static void poststart_vfs_process_file_task(void* arg)
             ctx->taskFailed  = 1;
             ctx->taskReached = 1;
         }
+
         for (;;)
         {
             arch_pause();
@@ -74,10 +76,12 @@ static void poststart_vfs_process_file_task(void* arg)
     ctx->taskReached = 1;
 
     process_t* currentProcess = ctx->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -86,10 +90,12 @@ static void poststart_vfs_process_file_task(void* arg)
 
     vfs_path_t start  = {};
     file_t*    opened = ctx->vfs->Open(start, "/test.txt", 0);
+
     if (opened == nullptr)
     {
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -98,11 +104,13 @@ static void poststart_vfs_process_file_task(void* arg)
 
     const int64_t assignedFd = ctx->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(opened), FD_FLAG_NONE);
     ctx->assignedFd          = assignedFd;
+
     if (assignedFd < 0)
     {
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -111,6 +119,7 @@ static void poststart_vfs_process_file_task(void* arg)
 
     char          original[128] = {};
     const int64_t originalBytes = ctx->vfs->Read(opened, original, sizeof(original));
+
     if (originalBytes <= 0)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -118,6 +127,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -126,6 +136,7 @@ static void poststart_vfs_process_file_task(void* arg)
 
     static const char replacement[]  = "Arx VFS writable test payload\n";
     const uint64_t    replacementLen = (uint64_t) (sizeof(replacement) - 1);
+
     if ((uint64_t) originalBytes < replacementLen)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -133,6 +144,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -146,6 +158,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -153,6 +166,7 @@ static void poststart_vfs_process_file_task(void* arg)
     }
 
     const int64_t writeBytes = ctx->vfs->Write(opened, replacement, replacementLen);
+
     if (writeBytes != (int64_t) replacementLen)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -160,6 +174,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -173,6 +188,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -181,6 +197,7 @@ static void poststart_vfs_process_file_task(void* arg)
 
     char          verify[128] = {};
     const int64_t verifyBytes = ctx->vfs->Read(opened, verify, replacementLen);
+
     if (verifyBytes != (int64_t) replacementLen || memcmp(verify, replacement, replacementLen) != 0)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -188,6 +205,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -201,6 +219,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -208,6 +227,7 @@ static void poststart_vfs_process_file_task(void* arg)
     }
 
     const int64_t restoreBytes = ctx->vfs->Write(opened, original, (uint64_t) originalBytes);
+
     if (restoreBytes != originalBytes)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -215,6 +235,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -228,6 +249,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -236,6 +258,7 @@ static void poststart_vfs_process_file_task(void* arg)
 
     char          restored[128] = {};
     const int64_t restoredBytes = ctx->vfs->Read(opened, restored, (uint64_t) originalBytes);
+
     if (restoredBytes != originalBytes || memcmp(restored, original, (size_t) originalBytes) != 0)
     {
         currentProcess->fileDescriptors[assignedFd].file  = nullptr;
@@ -243,6 +266,7 @@ static void poststart_vfs_process_file_task(void* arg)
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -262,6 +286,7 @@ static void poststart_vfs_process_file_task(void* arg)
     }
 
     ctx->taskManager->ExecuteTask(ctx->bspTask);
+
     for (;;)
     {
         arch_pause();
@@ -271,6 +296,7 @@ static void poststart_vfs_process_file_task(void* arg)
 static void poststart_vfs_two_process_sync_task(void* arg)
 {
     poststart_vfs_two_process_sync_context_t* ctx = static_cast<poststart_vfs_two_process_sync_context_t*>(arg);
+
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->bspTask == nullptr || ctx->payload == nullptr || ctx->payloadLen == 0)
     {
         if (ctx != nullptr)
@@ -288,10 +314,12 @@ static void poststart_vfs_two_process_sync_task(void* arg)
     ctx->reached = 1;
 
     process_t* currentProcess = ctx->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         ctx->failed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -300,10 +328,12 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
     vfs_path_t start  = {};
     file_t*    opened = ctx->vfs->Open(start, "/test.txt", 0);
+
     if (opened == nullptr)
     {
         ctx->failed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -311,11 +341,13 @@ static void poststart_vfs_two_process_sync_task(void* arg)
     }
 
     const int64_t fd = ctx->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(opened), FD_FLAG_NONE);
+
     if (fd < 0)
     {
         (void) ctx->vfs->Close(opened);
         ctx->failed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
+
         for (;;)
         {
             arch_pause();
@@ -331,6 +363,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
+
             for (;;)
             {
                 arch_pause();
@@ -338,6 +371,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
         }
 
         const int64_t writeBytes = ctx->vfs->Write(opened, ctx->payload, ctx->payloadLen);
+
         if (writeBytes != (int64_t) ctx->payloadLen)
         {
             currentProcess->fileDescriptors[fd].file  = nullptr;
@@ -345,6 +379,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
+
             for (;;)
             {
                 arch_pause();
@@ -358,6 +393,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
+
             for (;;)
             {
                 arch_pause();
@@ -366,6 +402,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
         char          verify[64]  = {};
         const int64_t verifyBytes = ctx->vfs->Read(opened, verify, ctx->payloadLen);
+
         if (verifyBytes != (int64_t) ctx->payloadLen || memcmp(verify, ctx->payload, ctx->payloadLen) != 0)
         {
             currentProcess->fileDescriptors[fd].file  = nullptr;
@@ -373,6 +410,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
+
             for (;;)
             {
                 arch_pause();
@@ -396,6 +434,7 @@ static void poststart_vfs_two_process_sync_task(void* arg)
     }
 
     ctx->taskManager->ExecuteTask(ctx->bspTask);
+
     for (;;)
     {
         arch_pause();
@@ -418,6 +457,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps    = static_cast<LogicLayerCaps*>(logicLayerCaps);
+
     if (resourceCaps == nullptr || resourceCaps->processManager == nullptr || resourceCaps->taskManager == nullptr)
     {
         poststart_vfs_test_fail("missing resource managers", &fails);
@@ -438,6 +478,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
     {
         vfs_path_t start    = {};
         vfs_path_t resolved = {};
+
         if (!vfs->ResolvePath(start, "/test.c", &resolved) || resolved.dentry == nullptr || resolved.dentry->inode == nullptr)
         {
             poststart_vfs_test_fail("ResolvePath should find mounted initramfs file /test.c", &fails);
@@ -448,15 +489,18 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         file_t* opened = vfs->Open(start, "/test.c", 0);
+
         if (opened == nullptr)
         {
             poststart_vfs_test_fail("Open should open mounted initramfs file /test.c", &fails);
             goto done;
         }
+
         passes++;
 
         char          buffer[16] = {};
         const int64_t readResult = vfs->Read(opened, buffer, sizeof(buffer) - 1);
+
         if (readResult <= 0)
         {
             poststart_vfs_test_fail("Read should return bytes from mounted initramfs file", &fails);
@@ -469,6 +513,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         if (readResult > 0)
         {
             buffer[(readResult < (int64_t) (sizeof(buffer) - 1)) ? readResult : (int64_t) (sizeof(buffer) - 1)] = '\0';
+
             if (readResult < 8 || memcmp(buffer, "#include", 8) != 0)
             {
                 poststart_vfs_test_fail("Read should begin with expected initramfs test.c prefix", &fails);
@@ -496,6 +541,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         constexpr int64_t VFS_ERR_ROFS  = -30;
 
         const int64_t mkdirResult = vfs->Mkdir({}, "/tmp-poststart-vfs-mkdir", 0755);
+
         if (mkdirResult != VFS_ERR_ROFS)
         {
             poststart_vfs_test_fail("Mkdir should report read-only filesystem on initramfs backend", &fails);
@@ -506,6 +552,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         const int64_t unlinkResult = vfs->Unlink({}, "/test.txt", false);
+
         if (unlinkResult != VFS_ERR_ROFS)
         {
             poststart_vfs_test_fail("Unlink should report read-only filesystem on initramfs backend", &fails);
@@ -516,6 +563,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         const int64_t renameResult = vfs->Rename({}, "/test.txt", {}, "/test.txt.renamed");
+
         if (renameResult != VFS_ERR_ROFS)
         {
             poststart_vfs_test_fail("Rename should report read-only filesystem on initramfs backend", &fails);
@@ -526,6 +574,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         const int64_t linkResult = vfs->Link({}, "/test.txt", {}, "/tmp-poststart-vfs-link", true);
+
         if (linkResult != VFS_ERR_ROFS)
         {
             poststart_vfs_test_fail("Link should report read-only filesystem on initramfs backend", &fails);
@@ -536,6 +585,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         const int64_t mknodResult = vfs->Mknod({}, "/tmp-poststart-vfs-mknod", 0644, 0);
+
         if (mknodResult != VFS_ERR_ROFS)
         {
             poststart_vfs_test_fail("Mknod should report read-only filesystem on initramfs backend", &fails);
@@ -546,6 +596,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         file_t* sizeProbe = vfs->Open({}, "/test.txt", 0);
+
         if (sizeProbe == nullptr || sizeProbe->inode == nullptr)
         {
             poststart_vfs_test_fail("Open should succeed for truncate feature probes", &fails);
@@ -555,6 +606,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             const uint64_t currentSize = sizeProbe->inode->size;
 
             const int64_t truncatePathSameSize = vfs->TruncatePath({}, "/test.txt", currentSize);
+
             if (truncatePathSameSize != 0)
             {
                 poststart_vfs_test_fail("TruncatePath should succeed when size is unchanged", &fails);
@@ -565,6 +617,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             const int64_t truncatePathGrow = vfs->TruncatePath({}, "/test.txt", currentSize + 1);
+
             if (truncatePathGrow != VFS_ERR_ROFS)
             {
                 poststart_vfs_test_fail("TruncatePath should reject growth on initramfs backend", &fails);
@@ -575,6 +628,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             const int64_t truncatePathMissing = vfs->TruncatePath({}, "/definitely-missing-poststart-vfs", 1);
+
             if (truncatePathMissing != VFS_ERR_NOENT)
             {
                 poststart_vfs_test_fail("TruncatePath should return missing-file error for absent path", &fails);
@@ -585,6 +639,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             const int64_t truncateFileSameSize = vfs->TruncateFile(sizeProbe, currentSize);
+
             if (truncateFileSameSize != 0)
             {
                 poststart_vfs_test_fail("TruncateFile should succeed when size is unchanged", &fails);
@@ -595,6 +650,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             const int64_t truncateFileGrow = vfs->TruncateFile(sizeProbe, currentSize + 1);
+
             if (truncateFileGrow != VFS_ERR_ROFS)
             {
                 poststart_vfs_test_fail("TruncateFile should reject growth on initramfs backend", &fails);
@@ -615,6 +671,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         const int64_t truncateNullFile = vfs->TruncateFile(nullptr, 0);
+
         if (truncateNullFile != VFS_ERR_INVAL)
         {
             poststart_vfs_test_fail("TruncateFile should reject null file handle", &fails);
@@ -640,6 +697,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         currentSpace = platform.cpus[arch_cpu_id()].address_space;
+
         if (currentSpace == nullptr)
         {
             poststart_vfs_test_fail("missing current address space for process VFS test", &fails);
@@ -647,6 +705,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         process = processManager->CreateProcess(currentSpace);
+
         if (process == nullptr)
         {
             poststart_vfs_test_fail("failed to create process for VFS process test", &fails);
@@ -654,6 +713,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         task = taskManager->CreateKernelTask(poststart_vfs_process_file_task, &g_poststart_vfs_process_ctx);
+
         if (task == nullptr)
         {
             poststart_vfs_test_fail("failed to create process VFS task", &fails);
@@ -687,6 +747,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         passes++;
 
     process_cleanup:
+
         if (task != nullptr)
         {
             taskManager->FreeTask(task);
@@ -738,6 +799,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         {
             vfs_path_t start    = {};
             file_t*    baseline = vfs->Open(start, "/test.txt", 0);
+
             if (baseline == nullptr)
             {
                 poststart_vfs_test_fail("failed to open /test.txt baseline for two-process sync test", &fails);
@@ -745,6 +807,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             syncOriginalBytes = vfs->Read(baseline, syncOriginal, sizeof(syncOriginal));
+
             if (syncOriginalBytes <= 0)
             {
                 poststart_vfs_test_fail("failed to read baseline /test.txt bytes for sync test", &fails);
@@ -760,6 +823,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         }
 
         currentSpace = platform.cpus[arch_cpu_id()].address_space;
+
         if (currentSpace == nullptr)
         {
             poststart_vfs_test_fail("missing current address space for two-process sync test", &fails);
@@ -768,6 +832,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
         processA = processManager->CreateProcess(currentSpace);
         processB = processManager->CreateProcess(currentSpace);
+
         if (processA == nullptr || processB == nullptr)
         {
             poststart_vfs_test_fail("failed to create two processes for VFS sync test", &fails);
@@ -776,6 +841,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
         taskA = taskManager->CreateKernelTask(poststart_vfs_two_process_sync_task, &g_poststart_vfs_sync_ctx_a);
         taskB = taskManager->CreateKernelTask(poststart_vfs_two_process_sync_task, &g_poststart_vfs_sync_ctx_b);
+
         if (taskA == nullptr || taskB == nullptr)
         {
             poststart_vfs_test_fail("failed to create two tasks for VFS sync test", &fails);
@@ -836,6 +902,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         {
             vfs_path_t start     = {};
             file_t*    finalOpen = vfs->Open(start, "/test.txt", 0);
+
             if (finalOpen == nullptr)
             {
                 poststart_vfs_test_fail("failed to open /test.txt for final sync verification", &fails);
@@ -845,6 +912,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             char           finalVerify[64] = {};
             const uint64_t expectedLen     = g_poststart_vfs_sync_ctx_a.payloadLen;
             const int64_t  finalRead       = vfs->Read(finalOpen, finalVerify, expectedLen);
+
             if (finalRead != (int64_t) expectedLen)
             {
                 poststart_vfs_test_fail("final sync verification read failed", &fails);
@@ -854,6 +922,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
             const bool matchesA = memcmp(finalVerify, payloadA, expectedLen) == 0;
             const bool matchesB = memcmp(finalVerify, payloadB, expectedLen) == 0;
+
             if (!matchesA && !matchesB)
             {
                 poststart_vfs_test_fail("final /test.txt content is not one of expected sync payloads", &fails);
@@ -862,6 +931,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
             }
 
             // Restore the original bytes captured before the interleaving sync rounds.
+
             if (vfs->Seek(finalOpen, 0, 0) < 0)
             {
                 poststart_vfs_test_fail("failed to seek for /test.txt restore after sync test", &fails);
@@ -886,6 +956,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
         passes++;
 
     sync_cleanup:
+
         if (taskA != nullptr)
         {
             taskManager->FreeTask(taskA);

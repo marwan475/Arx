@@ -30,6 +30,7 @@ void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
     uint64_t aligned_len = align_up((uint64_t) len + offset, PAGE_SIZE);
 
     virt_addr_t va = vmm_reserve_region(platform.cpus[arch_cpu_id()].address_space, aligned_len, VIRT_ADDR_KERNEL);
+
     if (va == 0)
     {
         return NULL;
@@ -54,7 +55,9 @@ void uacpi_kernel_unmap(void* addr, uacpi_size len)
 void uacpi_kernel_log(uacpi_log_level level, const uacpi_char* text)
 {
     if (level == UACPI_LOG_ERROR || level == UACPI_LOG_WARN)
+    {
         error_logger("uACPI[%u]: %s", (unsigned) level, (const char*) text);
+    }
     else
         kprintf("uACPI[%u]: %s", (unsigned) level, (const char*) text);
 }
@@ -69,6 +72,7 @@ uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
     }
 
     status = uacpi_table_find_by_signature(ACPI_MADT_SIGNATURE, out_table);
+
     if (status != UACPI_STATUS_OK)
     {
         *out_madt = NULL;
@@ -89,6 +93,7 @@ uacpi_status acpi_get_mcfg(struct acpi_mcfg** out_mcfg, uacpi_table* out_table)
     }
 
     status = uacpi_table_find_by_signature(ACPI_MCFG_SIGNATURE, out_table);
+
     if (status != UACPI_STATUS_OK)
     {
         *out_mcfg = NULL;
@@ -113,6 +118,7 @@ void acpi_init(phys_addr_t rsdp_address)
     uacpi_early_table_buffer = pmm_alloc(ACPI_EARLY_TABLE_BUFFER_SIZE);
 
     status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
+
     if (status != UACPI_STATUS_OK)
     {
         error_logger("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);

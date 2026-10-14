@@ -105,6 +105,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     selftest_case_begin("task_selftest");
 
     ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
+
     if (caps == nullptr || caps->taskManager == nullptr)
     {
         fails++;
@@ -117,9 +118,11 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
 
     originalRunningTask = manager->GetRunningTask(cpuId);
     bspTask             = originalRunningTask;
+
     if (bspTask == nullptr)
     {
         surrogateTask = manager->AllocateTask();
+
         if (surrogateTask == nullptr)
         {
             fails++;
@@ -141,12 +144,14 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     }
 
     g_task_test_ctx.manager = manager;
+
     if (manager->FreeTask(bspTask))
     {
         fails++;
         selftest_record_failure_detail("FreeTask reclaimed the running task");
         goto cleanup;
     }
+
     passes++;
     g_task_test_ctx.taskA      = nullptr;
     g_task_test_ctx.taskB      = nullptr;
@@ -202,6 +207,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     }
 
 cleanup:
+
     if (surrogateTask != nullptr)
     {
         manager->SetRunningTask(cpuId, originalRunningTask);
@@ -211,6 +217,7 @@ cleanup:
     {
         manager->FreeTask(taskA);
     }
+
     if (taskB != nullptr)
     {
         manager->FreeTask(taskB);

@@ -31,6 +31,7 @@ static void selftest_append_detail(char* dst, const char* src)
     }
 
     const size_t dstLen = strlen(dst);
+
     if (dstLen >= (SELFTEST_DETAIL_MAX - 1))
     {
         return;
@@ -38,10 +39,12 @@ static void selftest_append_detail(char* dst, const char* src)
 
     size_t srcIndex = 0;
     size_t dstIndex = dstLen;
+
     while (src[srcIndex] != '\0' && dstIndex < (SELFTEST_DETAIL_MAX - 1))
     {
         dst[dstIndex++] = src[srcIndex++];
     }
+
     dst[dstIndex] = '\0';
 }
 
@@ -164,6 +167,7 @@ void selftest_record_failure_detail(const char* detail)
     }
 
     char* dst = g_case_fail_details[g_current_case_idx];
+
     if (dst[0] != '\0')
     {
         selftest_append_detail(dst, "; ");
@@ -195,6 +199,7 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
     }
 
     (void) __atomic_fetch_add(&g_selftest_ctx.tests_ran, 1ULL, __ATOMIC_RELAXED);
+
     if (failures == 0)
     {
         (void) __atomic_fetch_add(&g_selftest_ctx.tests_passed, 1ULL, __ATOMIC_RELAXED);
@@ -203,6 +208,7 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
     {
         (void) __atomic_fetch_add(&g_selftest_ctx.tests_failed, 1ULL, __ATOMIC_RELAXED);
         unsigned long long slot = __atomic_fetch_add(&g_failed_case_count, 1ULL, __ATOMIC_RELAXED);
+
         if (slot < SELFTEST_MAX_FAILED_CASES)
         {
             g_failed_case_names[slot] = test_name;
@@ -230,9 +236,11 @@ void selftest_print_summary(void)
     kprintf(" tests passed: %llu\n", testsPassed);
     kprintf(" tests failed: %llu\n", testsFailed);
     kprintf(" overall     : %s\n", testsFailed == 0 ? "PASS" : "FAIL");
+
     if (failedPrint > 0)
     {
         kprintf(" failed cases:\n");
+
         for (unsigned long long i = 0; i < failedPrint; i++)
         {
             kprintf("  - %s\n", g_failed_case_names[i]);
@@ -242,10 +250,12 @@ void selftest_print_summary(void)
     if (g_case_result_count > 0)
     {
         kprintf(" case details:\n");
+
         for (unsigned long long i = 0; i < g_case_result_count; i++)
         {
             const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
             const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
+
             if (strcmp(name, "requestlayer_selftest") == 0)
             {
                 kprintf("  - %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
@@ -254,6 +264,7 @@ void selftest_print_summary(void)
             {
                 kprintf("  - %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
             }
+
             if (g_case_results[i].failures != 0)
             {
                 const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";
@@ -261,9 +272,11 @@ void selftest_print_summary(void)
             }
         }
     }
+
     kprintf("========================================\n\n");
 
     KDEBUG("[selftest] summary: ran=%llu pass=%llu fail=%llu overall=%s\n", testsRan, testsPassed, testsFailed, testsFailed == 0 ? "PASS" : "FAIL");
+
     if (failedPrint > 0)
     {
         for (unsigned long long i = 0; i < failedPrint; i++)
@@ -278,6 +291,7 @@ void selftest_print_summary(void)
         {
             const char* name   = g_case_results[i].test_name ? g_case_results[i].test_name : "unknown";
             const char* result = g_case_results[i].failures == 0 ? "PASS" : "FAIL";
+
             if (strcmp(name, "requestlayer_selftest") == 0)
             {
                 KDEBUG("[selftest] case detail: %s | implemented=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
@@ -286,6 +300,7 @@ void selftest_print_summary(void)
             {
                 KDEBUG("[selftest] case detail: %s | pass=%llu fail=%llu => %s\n", name, g_case_results[i].passes, g_case_results[i].failures, result);
             }
+
             if (g_case_results[i].failures != 0)
             {
                 const char* detail = g_case_fail_details[i][0] != '\0' ? g_case_fail_details[i] : "no detail";

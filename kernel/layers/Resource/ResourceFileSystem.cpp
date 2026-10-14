@@ -42,6 +42,7 @@ static bool normalize_runtime_path(const char* path, char* outPath, size_t outPa
     }
 
     size_t len = strlen(path);
+
     while (len > 0 && path[len - 1] == '/')
     {
         len--;
@@ -102,6 +103,7 @@ static bool path_starts_with_component(const char* path, const char* prefix)
     }
 
     const size_t prefixLen = strlen(prefix);
+
     if (prefixLen == 0)
     {
         return true;
@@ -141,6 +143,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
     }
 
     resource_node_t* node = (resource_node_t*) kmalloc(sizeof(resource_node_t));
+
     if (node == nullptr)
     {
         return nullptr;
@@ -153,6 +156,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
 
     const char* safePath = path != nullptr ? path : "";
     node->path           = kstrdup(safePath);
+
     if (node->path == nullptr)
     {
         kfree(node);
@@ -281,12 +285,14 @@ resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* sourc
     }
 
     InitRamFileSystemManager* manager = source != nullptr ? (InitRamFileSystemManager*) source : InitRamManager;
+
     if (manager == nullptr)
     {
         return nullptr;
     }
 
     resource_fs_t* fs = (resource_fs_t*) kmalloc(sizeof(resource_fs_t));
+
     if (fs == nullptr)
     {
         return nullptr;
@@ -333,6 +339,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
     const size_t fullLen   = hasPrefix ? (baseLen + 1 + nameLen) : nameLen;
 
     char* fullPath = (char*) kmalloc(fullLen + 1);
+
     if (fullPath == nullptr)
     {
         return nullptr;
@@ -348,9 +355,11 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
     {
         memcpy(fullPath, name, nameLen);
     }
+
     fullPath[fullLen] = '\0';
 
     initramfs_archive_t* file = directory->fs->initRamManager->find(fullPath);
+
     if (file != nullptr)
     {
         resource_node_t* node = make_node(directory->fs, fullPath, false, file->size);
@@ -360,9 +369,11 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
 
     const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
     bool         directoryFound = false;
+
     for (size_t i = 0; i < archiveCount; ++i)
     {
         const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+
         if (archive == nullptr || archive->path == nullptr)
         {
             continue;
@@ -374,6 +385,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         }
 
         const size_t fullPathLen = strlen(fullPath);
+
         if (strlen(archive->path) > fullPathLen && archive->path[fullPathLen] == '/')
         {
             directoryFound = true;
@@ -417,18 +429,21 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
     for (size_t i = 0; i < archiveCount; ++i)
     {
         const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+
         if (archive == nullptr || archive->path == nullptr)
         {
             continue;
         }
 
         const char* path = archive->path;
+
         if (baseLen > 0)
         {
             if (memcmp(path, basePath, baseLen) != 0 || path[baseLen] != '/')
             {
                 continue;
             }
+
             path += baseLen + 1;
         }
 
@@ -438,6 +453,7 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
         }
 
         const char* separator = nullptr;
+
         for (const char* p = path; *p != '\0'; ++p)
         {
             if (*p == '/')
@@ -446,7 +462,9 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
                 break;
             }
         }
+
         const size_t nameLen = separator != nullptr ? (size_t) (separator - path) : strlen(path);
+
         if (nameLen == 0 || nameLen >= sizeof(entry->name))
         {
             continue;
@@ -470,6 +488,7 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
             entry->type          = separator != nullptr ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
 
             char fullPath[512] = {};
+
             if (baseLen > 0)
             {
                 memcpy(fullPath, basePath, baseLen);
@@ -505,6 +524,7 @@ int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* b
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
+
     if (file == nullptr)
     {
         return -1;
@@ -534,6 +554,7 @@ int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const 
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
+
     if (file == nullptr)
     {
         return -1;
@@ -595,12 +616,14 @@ int64_t ResourceFileSystem::Truncate(const char* path, uint64_t size)
     }
 
     char normalizedPath[512] = {};
+
     if (!normalize_runtime_path(path, normalizedPath, sizeof(normalizedPath)) || normalizedPath[0] == '\0')
     {
         return RESOURCE_ERR_INVAL;
     }
 
     initramfs_archive_t* file = InitRamManager->find(normalizedPath);
+
     if (file == nullptr)
     {
         return RESOURCE_ERR_NOENT;

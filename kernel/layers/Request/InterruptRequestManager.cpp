@@ -18,19 +18,23 @@ InterruptRequestManager::InterruptRequestManager()
 void InterruptRequestManager::HandleScheduleRequest()
 {
     const uint8_t cpuId = arch_cpu_id();
+
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
         return;
     }
 
     ScheduleTickCounters[cpuId]++;
+
     if (ScheduleTickCounters[cpuId] < SCHEDULE_TICK_INTERVAL)
     {
         return;
     }
+
     ScheduleTickCounters[cpuId] = 0;
 
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         return;
@@ -38,6 +42,7 @@ void InterruptRequestManager::HandleScheduleRequest()
 
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
+
     if (logicLayerCaps == nullptr || logicLayerCaps->scheduler == nullptr || resourceLayerCaps == nullptr || resourceLayerCaps->processManager == nullptr)
     {
         return;
@@ -54,12 +59,17 @@ void InterruptRequestManager::HandleScheduleRequest()
     }
 
     process_t* currentProcess = processManager->GetCurrentProcess();
+
     if (currentProcess != nullptr && currentProcess->exited && resourceLayerCaps->taskManager != nullptr)
     {
         task_t* currentTask = resourceLayerCaps->taskManager->GetCurrentTask();
+
         if (currentTask != nullptr && currentTask->isUserTask)
+        {
             scheduler->ExitCurrentTask();
+        }
     }
+
     if (currentProcess != nullptr)
     {
         (void) scheduler->EnqueueProcess(cpuId, currentProcess->id);

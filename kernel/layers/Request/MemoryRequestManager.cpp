@@ -17,6 +17,7 @@ static bool valid_mapping_length(uint64_t length)
 {
     return length != 0 && length <= align_down(CANONICAL_USER_END, PAGE_SIZE);
 }
+
 } // namespace
 
 uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* frame)
@@ -27,6 +28,7 @@ uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* fra
     }
 
     const uint64_t supportedFlags = 0x100000 | 0x10 | 0x20 | 3;
+
     if ((frame->arg3 & ~supportedFlags) != 0 || (frame->arg3 & 3) == 0)
     {
         return LINUX_EINVAL;

@@ -13,6 +13,7 @@ extern "C"
 {
 #include <memory/vmm.h>
 }
+
 #endif
 
 using file_handle_t = void*;
@@ -117,7 +118,11 @@ struct process_t
 
 inline uint64_t pending_signals(const process_t* process, const task_t* task)
 {
-    if (process == nullptr || task == nullptr) return 0;
+    if (process == nullptr || task == nullptr)
+    {
+        return 0;
+    }
+
     return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE))
         & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE)
         & ~__atomic_load_n(&process->signalIgnored, __ATOMIC_ACQUIRE);

@@ -74,6 +74,7 @@ static int64_t vfs_file_read_stub(file_t* file, void* buffer, uint64_t count)
     g_file_read_invocations++;
 
     char* out = static_cast<char*>(buffer);
+
     if (count > 0)
     {
         out[0] = 'X';
@@ -173,6 +174,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
     selftest_case_begin("vfs_selftest");
 
     LogicLayerCaps* logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
+
     if (logicCaps == nullptr)
     {
         vfs_test_log_fail("missing virtual file system", &fails);
@@ -319,6 +321,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
             vfs_test_log_fail("CacheDentry failed for mountpoint", &fails);
             goto done;
         }
+
         g_lookup_invocations = 0;
 
         if (!vfs->CacheDentry(&binTest) || !vfs->CacheDentry(&homeTest))
@@ -341,6 +344,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
 
         const uint32_t hashA1 = vfs->HashDentryKey(binTest.parent, binTest.name);
         const uint32_t hashA2 = vfs->HashDentryKey(binTest.parent, binTest.name);
+
         if (hashA1 != hashA2)
         {
             vfs_test_log_fail("HashDentryKey is not deterministic", &fails);
@@ -360,6 +364,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         dentry_t* foundBinTest = vfs->FindDentry(&binDir, "test");
+
         if (foundBinTest != &binTest)
         {
             vfs_test_log_fail("FindDentry failed to find /bin/test", &fails);
@@ -370,6 +375,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         dentry_t* foundHomeTest = vfs->FindDentry(&homeDir, "test");
+
         if (foundHomeTest != &homeTest)
         {
             vfs_test_log_fail("FindDentry failed to disambiguate same name across parents", &fails);
@@ -398,6 +404,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         dentry_t* lookupMissResolved = vfs->Lookup(&root, "from-backend");
+
         if (lookupMissResolved == nullptr)
         {
             vfs_test_log_fail("Lookup should resolve cache miss through inode Lookup", &fails);
@@ -426,6 +433,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         dentry_t* lookupHit = vfs->Lookup(&root, "from-backend");
+
         if (lookupHit != lookupMissResolved)
         {
             vfs_test_log_fail("Lookup should return cached dentry on second query", &fails);
@@ -449,6 +457,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         startPath.dentry     = &root;
 
         vfs_path_t resolvedAbsolute = {};
+
         if (!vfs->ResolvePath(startPath, "/dir/file", &resolvedAbsolute) || resolvedAbsolute.dentry == nullptr)
         {
             vfs_test_log_fail("ResolvePath should resolve absolute paths", &fails);
@@ -469,12 +478,14 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
 
         const int  invocationsAfterAbsolute = g_lookup_invocations;
         vfs_path_t resolvedRelative         = {};
+
         if (!vfs->ResolvePath(startPath, "dir/file", &resolvedRelative) || resolvedRelative.dentry != resolvedAbsolute.dentry)
         {
             vfs_test_log_fail("ResolvePath relative and absolute should converge on same cached dentry", &fails);
         }
 
         vfs_path_t symlinkResolved = {};
+
         if (!vfs->ResolvePath(startPath, "/link", &symlinkResolved) || symlinkResolved.dentry == nullptr || symlinkResolved.dentry->inode != &g_lookup_child_inode)
         {
             vfs_test_log_fail("ResolvePath should follow symlink target for final component", &fails);
@@ -485,6 +496,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         vfs_path_t symlinkDirResolved = {};
+
         if (!vfs->ResolvePath(startPath, "/dirlink/file", &symlinkDirResolved) || symlinkDirResolved.dentry == nullptr || symlinkDirResolved.dentry->inode != &g_lookup_child_inode)
         {
             vfs_test_log_fail("ResolvePath should follow symlink target in intermediate components", &fails);
@@ -495,12 +507,14 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         vfs_path_t loopResolved = {};
+
         if (vfs->ResolvePath(startPath, "/loop", &loopResolved))
         {
             vfs_test_log_fail("ResolvePath should fail on symlink loops after max-follow bound", &fails);
         }
 
         const int64_t symlinkCreateResult = vfs->Symlink(startPath, "/dir/file", "/created-link");
+
         if (symlinkCreateResult != 0)
         {
             vfs_test_log_fail("Symlink should create a new symlink dentry", &fails);
@@ -511,6 +525,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         const int64_t symlinkDuplicateResult = vfs->Symlink(startPath, "/dir/file", "/created-link");
+
         if (symlinkDuplicateResult >= 0)
         {
             vfs_test_log_fail("Symlink should fail when link path already exists", &fails);
@@ -523,6 +538,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         const int invocationsBeforeCreatedLinkResolve = g_lookup_invocations;
 
         vfs_path_t createdLinkResolved = {};
+
         if (!vfs->ResolvePath(startPath, "/created-link", &createdLinkResolved) || createdLinkResolved.dentry == nullptr || createdLinkResolved.dentry->inode != &g_lookup_child_inode)
         {
             vfs_test_log_fail("ResolvePath should follow newly created symlink", &fails);
@@ -534,6 +550,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
 
         char          linkTargetBuffer[64] = {};
         const int64_t readlinkResult       = vfs->Readlink(startPath, "/created-link", linkTargetBuffer, sizeof(linkTargetBuffer));
+
         if (readlinkResult <= 0 || memcmp(linkTargetBuffer, "/dir/file", (size_t) readlinkResult) != 0)
         {
             vfs_test_log_fail("Readlink should return created symlink target", &fails);
@@ -553,6 +570,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         vfs_path_t missingPath = {};
+
         if (vfs->ResolvePath(startPath, "/missing/path", &missingPath))
         {
             vfs_test_log_fail("ResolvePath should fail on missing path components", &fails);
@@ -563,6 +581,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         vfs_path_t mountedPath = {};
+
         if (!vfs->ResolvePath(startPath, "/mnt/inside", &mountedPath) || mountedPath.mount != &childMount || mountedPath.dentry == nullptr)
         {
             vfs_test_log_fail("ResolvePath should descend into mounted filesystem root", &fails);
@@ -576,6 +595,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         vfs_path_t mountedStart = {};
         mountedStart.mount      = &childMount;
         mountedStart.dentry     = &mountedRootDentry;
+
         if (!vfs->ResolvePath(mountedStart, "..", &backToParent) || backToParent.mount != &rootMount || backToParent.dentry != &root)
         {
             vfs_test_log_fail("ResolvePath '..' should cross back to parent mount namespace", &fails);
@@ -589,6 +609,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         g_file_read_invocations    = 0;
         g_file_release_invocations = 0;
         file_t* opened             = vfs->Open(startPath, "/dir/file", 0x1234);
+
         if (opened == nullptr)
         {
             vfs_test_log_fail("Open should create file object for resolvable path", &fails);
@@ -626,6 +647,7 @@ extern "C" void run_vfs_selftests(void* logicLayerCaps)
         }
 
         char readBuffer[2] = {0, 0};
+
         if (opened == nullptr || vfs->Read(opened, readBuffer, 1) != 1)
         {
             vfs_test_log_fail("Read should dispatch to file operations Read", &fails);

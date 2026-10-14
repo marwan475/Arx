@@ -18,6 +18,7 @@ namespace
 static void close_process_file_descriptors(process_t* process, VirtualFileSystem* virtualFileSystem)
 {
     FileDescriptorGuard descriptors(process);
+
     if (process == nullptr || virtualFileSystem == nullptr)
     {
         return;
@@ -31,6 +32,7 @@ static void close_process_file_descriptors(process_t* process, VirtualFileSystem
     for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
     {
         file_descriptor_t* descriptor = &process->fileDescriptors[fd];
+
         if (descriptor->file == nullptr)
         {
             continue;
@@ -42,6 +44,7 @@ static void close_process_file_descriptors(process_t* process, VirtualFileSystem
         (void) virtualFileSystem->Close(file);
     }
 }
+
 } // namespace
 
 ProcessRequestManager::ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps) : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
@@ -57,6 +60,7 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
     task_t*    currentTask    = ResourceCaps->taskManager->GetCurrentTask();
+
     if (currentProcess == nullptr || currentTask == nullptr)
     {
         return LINUX_ESRCH;
@@ -71,6 +75,7 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
     }
 
     // Kernel test callers return to their harness on the existing context.
+
     if (!currentTask->isUserTask)
     {
         currentProcess->exitStatus = status;
@@ -87,6 +92,7 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
     __atomic_store_n(&currentProcess->exited, true, __ATOMIC_RELEASE);
 
     // User-task exit should not return to userspace.
+
     if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
     {
         LogicCaps->scheduler->ExitCurrentTask();
@@ -163,6 +169,7 @@ uint64_t ProcessRequestManager::HandleGettidRequest(const arch_syscall_frame_t* 
     }
 
     task_t* currentTask = ResourceCaps->taskManager->GetCurrentTask();
+
     if (currentTask == nullptr)
     {
         return LINUX_ESRCH;
@@ -181,6 +188,7 @@ uint64_t ProcessRequestManager::HandleGetpidRequest(const arch_syscall_frame_t* 
     }
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return LINUX_ESRCH;
@@ -199,6 +207,7 @@ uint64_t ProcessRequestManager::HandleGetppidRequest(const arch_syscall_frame_t*
     }
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return LINUX_ESRCH;

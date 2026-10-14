@@ -99,18 +99,21 @@ static inode_t* vfs_wrap_resource_node(filesystem_t* filesystem, ResourceLayerFi
     }
 
     resource_node_info_t info = {};
+
     if (!caps->GetNodeInfo(caps, backendNode, &info))
     {
         return nullptr;
     }
 
     vfs_resource_inode_private_t* inodePrivate = (vfs_resource_inode_private_t*) kmalloc(sizeof(vfs_resource_inode_private_t));
+
     if (inodePrivate == nullptr)
     {
         return nullptr;
     }
 
     inode_t* inode = (inode_t*) kmalloc(sizeof(inode_t));
+
     if (inode == nullptr)
     {
         kfree(inodePrivate);
@@ -150,12 +153,14 @@ static inode_t* vfs_resource_lookup(inode_t* directory, const char* name)
     }
 
     vfs_resource_inode_private_t* directoryPrivate = (vfs_resource_inode_private_t*) directory->privateData;
+
     if (directoryPrivate->caps == nullptr || directoryPrivate->caps->Lookup == nullptr)
     {
         return nullptr;
     }
 
     resource_node_t* child = directoryPrivate->caps->Lookup(directoryPrivate->caps, directoryPrivate->backendNode, name);
+
     if (child == nullptr)
     {
         return nullptr;
@@ -172,6 +177,7 @@ static int64_t vfs_resource_open(file_t* file)
     }
 
     vfs_resource_file_private_t* filePrivate = (vfs_resource_file_private_t*) kmalloc(sizeof(vfs_resource_file_private_t));
+
     if (filePrivate == nullptr)
     {
         return -1;
@@ -190,12 +196,14 @@ static int64_t vfs_resource_read(file_t* file, void* buffer, uint64_t count)
     }
 
     vfs_resource_inode_private_t* inodePrivate = (vfs_resource_inode_private_t*) file->inode->privateData;
+
     if (inodePrivate->caps == nullptr || inodePrivate->caps->Read == nullptr)
     {
         return -1;
     }
 
     int64_t readResult = inodePrivate->caps->Read(inodePrivate->caps, inodePrivate->backendNode, file->offset, buffer, count);
+
     if (readResult > 0)
     {
         file->offset += (uint64_t) readResult;
@@ -212,12 +220,14 @@ static int64_t vfs_resource_write(file_t* file, const void* buffer, uint64_t cou
     }
 
     vfs_resource_inode_private_t* inodePrivate = (vfs_resource_inode_private_t*) file->inode->privateData;
+
     if (inodePrivate->caps == nullptr || inodePrivate->caps->Write == nullptr)
     {
         return -1;
     }
 
     int64_t writeResult = inodePrivate->caps->Write(inodePrivate->caps, inodePrivate->backendNode, file->offset, buffer, count);
+
     if (writeResult > 0)
     {
         file->offset += (uint64_t) writeResult;
@@ -234,6 +244,7 @@ static int64_t vfs_resource_seek(file_t* file, int64_t offset, int whence)
     }
 
     uint64_t base = 0;
+
     if (whence == 0)
     {
         base = 0;
@@ -248,6 +259,7 @@ static int64_t vfs_resource_seek(file_t* file, int64_t offset, int whence)
         {
             return -1;
         }
+
         base = file->inode->size;
     }
     else
@@ -278,12 +290,14 @@ static int64_t vfs_resource_readdir(file_t* file, directory_entry_t* entry)
     }
 
     vfs_resource_file_private_t* filePrivate = (vfs_resource_file_private_t*) file->privateData;
+
     if (filePrivate == nullptr)
     {
         return -1;
     }
 
     vfs_resource_inode_private_t* inodePrivate = (vfs_resource_inode_private_t*) file->inode->privateData;
+
     if (inodePrivate->caps == nullptr || inodePrivate->caps->ReadDirectory == nullptr)
     {
         return -1;
@@ -292,6 +306,7 @@ static int64_t vfs_resource_readdir(file_t* file, directory_entry_t* entry)
     resource_directory_entry_t resourceEntry = {};
     uint64_t                   cursor        = file->offset;
     const int64_t              result        = inodePrivate->caps->ReadDirectory(inodePrivate->caps, inodePrivate->backendNode, &cursor, &resourceEntry);
+
     if (result <= 0)
     {
         return result;
@@ -334,12 +349,14 @@ static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count)
     }
 
     vfs_symlink_private_t* symlink = (vfs_symlink_private_t*) file->inode->privateData;
+
     if (symlink->target == nullptr)
     {
         return -1;
     }
 
     const uint64_t targetLen = (uint64_t) strlen(symlink->target);
+
     if (file->offset >= targetLen)
     {
         return 0;
@@ -423,6 +440,7 @@ static int vfs_dentry_cache_eq_fn(const void* key1, const void* key2, uint32_t k
 static bool vfs_file_ref_acquire(file_t* file)
 {
     spinlock_acquire_preempt(&file->refLock);
+
     if (file->refCount == 0)
     {
         spinlock_release_preempt(&file->refLock);
@@ -437,6 +455,7 @@ static bool vfs_file_ref_acquire(file_t* file)
 static bool vfs_file_ref_release(file_t* file, bool* isLastReference)
 {
     spinlock_acquire_preempt(&file->refLock);
+
     if (file->refCount == 0)
     {
         spinlock_release_preempt(&file->refLock);
@@ -483,12 +502,14 @@ static bool vfs_read_symlink_target(dentry_t* dentry, char* outTarget, size_t ou
     linkFile.offset = 0;
 
     const int64_t readResult = dentry->inode->fileOps->Read(&linkFile, outTarget, outTargetSize - 1);
+
     if (readResult <= 0)
     {
         return false;
     }
 
     const size_t used = (size_t) readResult;
+
     if (used >= outTargetSize)
     {
         return false;
@@ -506,12 +527,14 @@ static bool vfs_split_parent_and_leaf(const char* path, char* parentOut, size_t 
     }
 
     const size_t originalLen = strlen(path);
+
     if (originalLen == 0)
     {
         return false;
     }
 
     size_t len = originalLen;
+
     while (len > 1 && path[len - 1] == '/')
     {
         len--;
@@ -523,6 +546,7 @@ static bool vfs_split_parent_and_leaf(const char* path, char* parentOut, size_t 
     }
 
     size_t lastSlash = SIZE_MAX;
+
     for (size_t i = 0; i < len; ++i)
     {
         if (path[i] == '/')
@@ -567,6 +591,7 @@ static bool vfs_split_parent_and_leaf(const char* path, char* parentOut, size_t 
     }
 
     const size_t leafLen = len - (lastSlash + 1);
+
     if (leafLen == 0 || leafLen + 1 > leafOutSize)
     {
         return false;
@@ -604,6 +629,7 @@ VirtualFileSystem::~VirtualFileSystem()
         {
             dentry_t* dentry = nullptr;
             khp_get_val(DentryCache, k, &dentry);
+
             if (dentry == nullptr)
             {
                 continue;
@@ -622,6 +648,7 @@ VirtualFileSystem::~VirtualFileSystem()
                 kfree(dentry);
             }
         }
+
         spinlock_release_preempt(&DentryCacheLock);
 
         khp_destroy(DentryCache);
@@ -637,6 +664,7 @@ VirtualFileSystem::~VirtualFileSystem()
     {
         vfs_overlay_dentry_entry_t* next = overlay->next;
         dentry_t*                   d    = overlay->dentry;
+
         if (d != nullptr)
         {
             if (d->ownedName != nullptr)
@@ -648,14 +676,17 @@ VirtualFileSystem::~VirtualFileSystem()
             if (d->inode != nullptr)
             {
                 vfs_symlink_private_t* symlinkPrivate = (vfs_symlink_private_t*) d->inode->privateData;
+
                 if (symlinkPrivate != nullptr)
                 {
                     if (symlinkPrivate->target != nullptr)
                     {
                         kfree(symlinkPrivate->target);
                     }
+
                     kfree(symlinkPrivate);
                 }
+
                 kfree(d->inode);
             }
 
@@ -675,9 +706,11 @@ dentry_t* VirtualFileSystem::FindOverlayDentry(const dentry_t* parent, const cha
     }
 
     spinlock_acquire_preempt(&OverlayDentryLock);
+
     for (vfs_overlay_dentry_entry_t* entry = OverlayDentryHead; entry != nullptr; entry = entry->next)
     {
         dentry_t* dentry = entry->dentry;
+
         if (dentry == nullptr || dentry->name == nullptr)
         {
             continue;
@@ -702,15 +735,18 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
     }
 
     vfs_overlay_dentry_entry_t* entry = (vfs_overlay_dentry_entry_t*) kmalloc(sizeof(vfs_overlay_dentry_entry_t));
+
     if (entry == nullptr)
     {
         return false;
     }
 
     spinlock_acquire_preempt(&OverlayDentryLock);
+
     for (vfs_overlay_dentry_entry_t* it = OverlayDentryHead; it != nullptr; it = it->next)
     {
         dentry_t* existing = it->dentry;
+
         if (existing == nullptr || existing->name == nullptr)
         {
             continue;
@@ -795,30 +831,35 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     }
 
     ResourceLayerFileSystemCaps* caps = ResourceLayerImportCaps->fileSystemCaps;
+
     if (caps->MountFilesystem == nullptr || caps->GetRootNode == nullptr)
     {
         return false;
     }
 
     resource_fs_t* backendFs = caps->MountFilesystem(caps, filesystemType, source);
+
     if (backendFs == nullptr)
     {
         return false;
     }
 
     resource_node_t* backendRoot = caps->GetRootNode(caps, backendFs);
+
     if (backendRoot == nullptr)
     {
         return false;
     }
 
     vfs_resource_filesystem_private_t* fsPrivate = (vfs_resource_filesystem_private_t*) kmalloc(sizeof(vfs_resource_filesystem_private_t));
+
     if (fsPrivate == nullptr)
     {
         return false;
     }
 
     filesystem_t* filesystem = (filesystem_t*) kmalloc(sizeof(filesystem_t));
+
     if (filesystem == nullptr)
     {
         kfree(fsPrivate);
@@ -833,15 +874,18 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     filesystem->privateData = fsPrivate;
 
     inode_t* rootInode = vfs_wrap_resource_node(filesystem, caps, backendRoot);
+
     if (rootInode == nullptr)
     {
         kfree(filesystem);
         kfree(fsPrivate);
         return false;
     }
+
     filesystem->rootInode = rootInode;
 
     dentry_t* rootDentry = (dentry_t*) kmalloc(sizeof(dentry_t));
+
     if (rootDentry == nullptr)
     {
         kfree(rootInode->privateData);
@@ -864,6 +908,7 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
         {
             kfree(rootDentry->ownedName);
         }
+
         kfree(rootDentry);
         kfree(rootInode->privateData);
         kfree(rootInode);
@@ -873,6 +918,7 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     }
 
     mount_t* rootMount = (mount_t*) kmalloc(sizeof(mount_t));
+
     if (rootMount == nullptr)
     {
         return false;
@@ -915,9 +961,11 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
     }
 
     char* duplicatedName = nullptr;
+
     if (dentry->ownedName == nullptr)
     {
         duplicatedName = kstrdup(dentry->name);
+
         if (duplicatedName == nullptr)
         {
             return false;
@@ -932,13 +980,16 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
 
     int     absent = 0;
     khint_t k      = khp_put(DentryCache, &key, &absent);
+
     if (k == khp_end(DentryCache))
     {
         spinlock_release_preempt(&DentryCacheLock);
+
         if (duplicatedName != nullptr)
         {
             kfree(duplicatedName);
         }
+
         return false;
     }
 
@@ -947,10 +998,12 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
         dentry_t* existing = nullptr;
         khp_get_val(DentryCache, k, &existing);
         spinlock_release_preempt(&DentryCacheLock);
+
         if (duplicatedName != nullptr)
         {
             kfree(duplicatedName);
         }
+
         return existing == dentry;
     }
 
@@ -963,10 +1016,12 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
 
     khp_set_val(DentryCache, k, &dentry);
     spinlock_release_preempt(&DentryCacheLock);
+
     if (duplicatedName != nullptr)
     {
         kfree(duplicatedName);
     }
+
     return true;
 }
 
@@ -978,6 +1033,7 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
     }
 
     dentry_t* overlay = FindOverlayDentry(parent, name);
+
     if (overlay != nullptr)
     {
         return overlay;
@@ -1021,24 +1077,28 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
     }
 
     dentry_t* cached = FindDentry(parent, name);
+
     if (cached != nullptr)
     {
         return cached;
     }
 
     inode_t* directory = parent->inode;
+
     if (directory->inodeOps == nullptr || directory->inodeOps->Lookup == nullptr)
     {
         return nullptr;
     }
 
     inode_t* childInode = directory->inodeOps->Lookup(directory, name);
+
     if (childInode == nullptr)
     {
         return nullptr;
     }
 
     dentry_t* dentry = (dentry_t*) kmalloc(sizeof(dentry_t));
+
     if (dentry == nullptr)
     {
         return nullptr;
@@ -1058,6 +1118,7 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
             dentry->ownedName = nullptr;
             dentry->name      = nullptr;
         }
+
         kfree(dentry);
         return FindDentry(parent, name);
     }
@@ -1068,6 +1129,7 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
 bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result)
 {
     // TODO: Enforce trailing '/' directory requirement once open/create semantics land.
+
     if (result == nullptr || path == nullptr)
     {
         return false;
@@ -1077,6 +1139,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     size_t           symlinkFollows          = 0;
 
     const size_t pathLen = strlen(path);
+
     if (pathLen == 0)
     {
         *result = start;
@@ -1084,12 +1147,14 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     }
 
     char* work = kstrdup(path);
+
     if (work == nullptr)
     {
         return false;
     }
 
     vfs_path_t cur = start;
+
     if (work[0] == '/')
     {
         if (Namespace.rootMount == nullptr || Namespace.rootMount->root == nullptr)
@@ -1109,6 +1174,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     }
 
     char* p = work;
+
     while (*p != '\0')
     {
         while (*p == '/')
@@ -1122,6 +1188,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
         }
 
         char* component = p;
+
         while (*p != '\0' && *p != '/')
         {
             p++;
@@ -1151,6 +1218,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
             {
                 cur.dentry = cur.dentry->parent;
             }
+
             *p = saved;
             continue;
         }
@@ -1159,6 +1227,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
 
         dentry_t* next = Lookup(cur.dentry, component);
         *p             = saved;
+
         if (next == nullptr)
         {
             kfree(work);
@@ -1174,6 +1243,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
             }
 
             char linkTarget[512] = {};
+
             if (!vfs_read_symlink_target(next, linkTarget, sizeof(linkTarget)))
             {
                 kfree(work);
@@ -1185,6 +1255,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
             const size_t remainLen = strlen(remainder);
 
             char* replacement = (char*) kmalloc(targetLen + remainLen + 1);
+
             if (replacement == nullptr)
             {
                 kfree(work);
@@ -1219,6 +1290,7 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
         }
 
         mount_t* childMount = FindChildMount(cur.mount, next);
+
         if (childMount != nullptr && childMount->root != nullptr)
         {
             cur.mount  = childMount;
@@ -1258,6 +1330,7 @@ bool VirtualFileSystem::BuildAbsolutePathFromDentry(const dentry_t* dentry, char
     size_t          depth     = 0;
 
     const dentry_t* current = dentry;
+
     while (current != nullptr && current->parent != nullptr)
     {
         if (depth >= (sizeof(nodes) / sizeof(nodes[0])))
@@ -1270,6 +1343,7 @@ bool VirtualFileSystem::BuildAbsolutePathFromDentry(const dentry_t* dentry, char
     }
 
     size_t writePos = 0;
+
     if (writePos >= outPathSize)
     {
         return false;
@@ -1280,12 +1354,14 @@ bool VirtualFileSystem::BuildAbsolutePathFromDentry(const dentry_t* dentry, char
     for (size_t i = depth; i > 0; --i)
     {
         const char* component = nodes[i - 1]->name;
+
         if (component == nullptr)
         {
             return false;
         }
 
         const size_t componentLen = strlen(component);
+
         if (writePos + componentLen + 1 >= outPathSize)
         {
             return false;
@@ -1314,6 +1390,7 @@ bool VirtualFileSystem::JoinPath(const char* base, const char* path, char* outPa
     if (path[0] == '/')
     {
         const size_t pathLen = strlen(path);
+
         if (pathLen + 1 > outPathSize)
         {
             return false;
@@ -1324,6 +1401,7 @@ bool VirtualFileSystem::JoinPath(const char* base, const char* path, char* outPa
     }
 
     size_t baseLen = strlen(base);
+
     if (baseLen == 0)
     {
         base    = "/";
@@ -1331,6 +1409,7 @@ bool VirtualFileSystem::JoinPath(const char* base, const char* path, char* outPa
     }
 
     const size_t pathLen = strlen(path);
+
     if (base[baseLen - 1] == '/')
     {
         if (baseLen + pathLen + 1 > outPathSize)
@@ -1366,6 +1445,7 @@ int64_t VirtualFileSystem::StatNoFollow(const vfs_path_t& start, const char* pat
     if (strcmp(path, "/") == 0)
     {
         vfs_path_t resolvedRoot = {};
+
         if (!ResolvePath({}, "/", &resolvedRoot) || resolvedRoot.dentry == nullptr || resolvedRoot.dentry->inode == nullptr)
         {
             return VFS_ERR_NOENT;
@@ -1377,24 +1457,28 @@ int64_t VirtualFileSystem::StatNoFollow(const vfs_path_t& start, const char* pat
 
     char parentPath[512] = {};
     char leafName[256]   = {};
+
     if (!vfs_split_parent_and_leaf(path, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
     {
         return VFS_ERR_INVAL;
     }
 
     vfs_path_t parentStart = start;
+
     if (parentPath[0] == '/')
     {
         parentStart = {};
     }
 
     vfs_path_t resolvedParent = {};
+
     if (!ResolvePath(parentStart, parentPath, &resolvedParent) || resolvedParent.dentry == nullptr || resolvedParent.dentry->inode == nullptr)
     {
         return VFS_ERR_NOENT;
     }
 
     dentry_t* targetDentry = nullptr;
+
     if (strcmp(leafName, "/") == 0)
     {
         targetDentry = resolvedParent.dentry;
@@ -1422,18 +1506,21 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
 
     char parentPath[512] = {};
     char leafName[256]   = {};
+
     if (!vfs_split_parent_and_leaf(linkPath, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
     {
         return VFS_ERR_INVAL;
     }
 
     vfs_path_t parentStart = start;
+
     if (parentPath[0] == '/')
     {
         parentStart = {};
     }
 
     vfs_path_t parentResolved = {};
+
     if (!ResolvePath(parentStart, parentPath, &parentResolved) || parentResolved.dentry == nullptr || parentResolved.dentry->inode == nullptr)
     {
         return VFS_ERR_NOENT;
@@ -1445,12 +1532,14 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     }
 
     vfs_symlink_private_t* symlinkPrivate = (vfs_symlink_private_t*) kmalloc(sizeof(vfs_symlink_private_t));
+
     if (symlinkPrivate == nullptr)
     {
         return VFS_ERR_NOMEM;
     }
 
     symlinkPrivate->target = kstrdup(target);
+
     if (symlinkPrivate->target == nullptr)
     {
         kfree(symlinkPrivate);
@@ -1458,6 +1547,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     }
 
     inode_t* inode = (inode_t*) kmalloc(sizeof(inode_t));
+
     if (inode == nullptr)
     {
         kfree(symlinkPrivate->target);
@@ -1476,6 +1566,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     inode->ioLock      = 0;
 
     dentry_t* newDentry = (dentry_t*) kmalloc(sizeof(dentry_t));
+
     if (newDentry == nullptr)
     {
         kfree(inode);
@@ -1491,6 +1582,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     newDentry->cacheOwnedAllocation = true;
 
     newDentry->ownedName = kstrdup(leafName);
+
     if (newDentry->ownedName == nullptr)
     {
         kfree(newDentry);
@@ -1499,6 +1591,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         kfree(symlinkPrivate);
         return VFS_ERR_NOMEM;
     }
+
     newDentry->name = newDentry->ownedName;
 
     if (!AddOverlayDentry(newDentry))
@@ -1523,24 +1616,28 @@ int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, c
 
     char parentPath[512] = {};
     char leafName[256]   = {};
+
     if (!vfs_split_parent_and_leaf(path, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
     {
         return VFS_ERR_INVAL;
     }
 
     vfs_path_t parentStart = start;
+
     if (parentPath[0] == '/')
     {
         parentStart = {};
     }
 
     vfs_path_t parentResolved = {};
+
     if (!ResolvePath(parentStart, parentPath, &parentResolved) || parentResolved.dentry == nullptr || parentResolved.dentry->inode == nullptr)
     {
         return VFS_ERR_NOENT;
     }
 
     dentry_t* targetDentry = Lookup(parentResolved.dentry, leafName);
+
     if (targetDentry == nullptr || targetDentry->inode == nullptr)
     {
         return VFS_ERR_NOENT;
@@ -1552,6 +1649,7 @@ int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, c
     }
 
     char linkTarget[512] = {};
+
     if (!vfs_read_symlink_target(targetDentry, linkTarget, sizeof(linkTarget)))
     {
         return VFS_ERR_NOENT;
@@ -1568,11 +1666,16 @@ bool VirtualFileSystem::BuildBackendPath(const vfs_path_t& start, const char* pa
     if (path[0] == '/')
     {
         const size_t length = strlen(path);
+
         if (length + 1 > capacity)
+        {
             return false;
+        }
+
         memcpy(output, path, length + 1);
         return true;
     }
+
     char basePath[512] = {};
     return start.dentry != nullptr && BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)) && JoinPath(basePath, path, output, capacity);
 }
@@ -1585,12 +1688,14 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Mkdir == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectivePath[512] = {};
+
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
         return VFS_ERR_INVAL;
@@ -1607,12 +1712,14 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Unlink == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectivePath[512] = {};
+
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
         return VFS_ERR_INVAL;
@@ -1629,18 +1736,21 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Rename == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectiveOldPath[512] = {};
+
     if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
         return VFS_ERR_INVAL;
     }
 
     char effectiveNewPath[512] = {};
+
     if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
         return VFS_ERR_INVAL;
@@ -1657,18 +1767,21 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Link == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectiveOldPath[512] = {};
+
     if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
         return VFS_ERR_INVAL;
     }
 
     char effectiveNewPath[512] = {};
+
     if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
         return VFS_ERR_INVAL;
@@ -1685,12 +1798,14 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Mknod == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectivePath[512] = {};
+
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
         return VFS_ERR_INVAL;
@@ -1707,21 +1822,25 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Truncate == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char effectivePath[512] = {};
+
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
         return VFS_ERR_INVAL;
     }
 
     const int64_t result = caps->Truncate(caps, effectivePath, size);
+
     if (result == 0)
     {
         vfs_path_t resolved = {};
+
         if (ResolvePath(start, path, &resolved) && resolved.dentry != nullptr && resolved.dentry->inode != nullptr)
         {
             resolved.dentry->inode->size = size;
@@ -1739,24 +1858,28 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
+
     if (caps == nullptr || caps->Truncate == nullptr)
     {
         return VFS_ERR_NOSYS;
     }
 
     char absolutePath[512] = {};
+
     if (!BuildAbsolutePathFromDentry(file->path.dentry, absolutePath, sizeof(absolutePath)))
     {
         return VFS_ERR_INVAL;
     }
 
     const int64_t result = caps->Truncate(caps, absolutePath, size);
+
     if (result == 0)
     {
         if (file->inode != nullptr)
         {
             file->inode->size = size;
         }
+
         if (file->offset > size)
         {
             file->offset = size;
@@ -1769,12 +1892,14 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
 file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint64_t flags)
 {
     vfs_path_t resolved = {};
+
     if (!ResolvePath(start, path, &resolved) || resolved.dentry == nullptr || resolved.dentry->inode == nullptr)
     {
         return nullptr;
     }
 
     file_t* file = (file_t*) kmalloc(sizeof(file_t));
+
     if (file == nullptr)
     {
         return nullptr;
@@ -1799,6 +1924,7 @@ file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint6
             {
                 file->operations->Release(file);
             }
+
             kfree(file);
             return nullptr;
         }
@@ -1831,6 +1957,7 @@ int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, 
 {
     if (file != nullptr && file->operations != nullptr && (file->operations->ReadUser != nullptr || file->operations->WriteUser != nullptr))
         return offset != nullptr ? -29 : -95; // positioned/vector/kernel-buffer I/O not implemented for these files
+
     if (file == nullptr || file->operations == nullptr || (write ? file->operations->Write == nullptr : file->operations->Read == nullptr))
     {
         return -1;
@@ -1840,17 +1967,27 @@ int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, 
     {
         return -1;
     }
+
     const uint64_t savedOffset = file->offset;
     int64_t        result      = 0;
+
     if (offset != nullptr)
     {
         result = *offset > INT64_MAX || file->operations->Seek == nullptr ? -29 : file->operations->Seek(file, (int64_t) *offset, 0);
     }
+
     if (offset == nullptr || result >= 0)
+    {
         result = write ? file->operations->Write(file, buffer, count) : file->operations->Read(file, buffer, count);
+    }
+
     // The entire save/seek/transfer/restore transaction owns both I/O locks.
+
     if (offset != nullptr)
+    {
         file->offset = savedOffset;
+    }
+
     vfs_file_io_end(file);
     return result;
 }
@@ -1866,6 +2003,7 @@ int64_t VirtualFileSystem::Seek(file_t* file, int64_t offset, int whence)
     {
         return -1;
     }
+
     const int64_t result = file->operations->Seek(file, offset, whence);
     vfs_file_io_end(file);
     return result;
@@ -1882,6 +2020,7 @@ int64_t VirtualFileSystem::ReadDirectory(file_t* file, directory_entry_t* entry)
     {
         return -1;
     }
+
     const int64_t result = file->operations->ReadDirectory(file, entry);
     vfs_file_io_end(file);
     return result;
@@ -1898,6 +2037,7 @@ int64_t VirtualFileSystem::Ioctl(file_t* file, uint64_t request, uint64_t argume
     {
         return -1;
     }
+
     const int64_t result = file->operations->Ioctl(file, request, argument);
     vfs_file_io_end(file);
     return result;
@@ -1914,6 +2054,7 @@ int64_t VirtualFileSystem::Mmap(file_t* file, void* address, uint64_t length, ui
     {
         return -1;
     }
+
     const int64_t result = file->operations->Mmap(file, address, length, prot, flags, offset);
     vfs_file_io_end(file);
     return result;
@@ -1933,8 +2074,12 @@ uint32_t VirtualFileSystem::Poll(file_t* file)
 {
     if (file == nullptr)
         return 0x20; // POLLNVAL
+
     if (file->operations != nullptr && file->operations->Poll != nullptr)
+    {
         return file->operations->Poll(file);
+    }
+
     // Linux's default readiness for synchronous files, including EOF.
     return 0x145; // POLLIN | POLLOUT | POLLRDNORM | POLLWRNORM
 }
@@ -1947,6 +2092,7 @@ int64_t VirtualFileSystem::Close(file_t* file)
     }
 
     bool isLastReference = false;
+
     if (!vfs_file_ref_release(file, &isLastReference))
     {
         return -1;
@@ -1958,7 +2104,9 @@ int64_t VirtualFileSystem::Close(file_t* file)
     }
 
     if (file->closeObserver != nullptr)
+    {
         file->closeObserver(file->closeObserverContext, file);
+    }
 
     if (file->operations != nullptr && file->operations->Release != nullptr)
     {

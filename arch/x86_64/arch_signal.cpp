@@ -11,8 +11,16 @@ bool on_stack(const signal_stack_t& stack, uint64_t sp) { return !(stack.flags &
 
 uint64_t arch_signal_validate_action(const signal_action_t* action)
 {
-    if (!user_address(action->handler)) return LINUX_EFAULT;
-    if (!(action->flags & RESTORER) || !user_address(action->restorer)) return LINUX_EOPNOTSUPP;
+    if (!user_address(action->handler))
+    {
+        return LINUX_EFAULT;
+    }
+
+    if (!(action->flags & RESTORER) || !user_address(action->restorer))
+    {
+        return LINUX_EOPNOTSUPP;
+    }
+
     return 0;
 }
 
@@ -24,14 +32,23 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result,
     const signal_action_t* actionPtr, const signal_stack_t* stackPtr,
     const signal_sender_t* senderPtr, uint64_t mask, int signal, bool restartable)
 {
-    if (frame->fxstate == 0) return LINUX_EINVAL;
+    if (frame->fxstate == 0)
+    {
+        return LINUX_EINVAL;
+    }
+
     const auto& action = *actionPtr;
     const auto& stack = *stackPtr;
     const auto& sender = *senderPtr;
     signal_frame_t saved = {};
     saved.restorer = action.restorer;
     saved.uc.stack = stack;
-    if (on_stack(stack, frame->user_rsp)) saved.uc.stack.flags = 1;
+
+    if (on_stack(stack, frame->user_rsp))
+    {
+        saved.uc.stack.flags = 1;
+    }
+
     saved.uc.mask = mask;
     auto& c = saved.uc.context;
     c.r8=frame->arg4; c.r9=frame->arg5; c.r10=frame->arg3; c.r11=frame->r11;
@@ -42,12 +59,22 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result,
     // Restart only syscalls whose state was not consumed, and only for an
     // actual SYSCALL instruction. Poll/select/nanosleep/pause retain EINTR.
     uint16_t instruction = 0;
+
     if (result == (uint64_t) -4 && restartable && (action.flags & RESTART) && c.ip >= 2
         && safe_read_user(c.ip-2, &instruction, 2) && instruction == 0x050f)
     { c.ip -= 2; c.ax = frame->syscall_number; }
     uint64_t top = frame->user_rsp;
-    if ((action.flags & ONSTACK) && !on_stack(stack, top) && !(stack.flags & 2)) top=stack.sp+stack.size;
-    if (top < 128 + 512 + sizeof(saved) + 128) return LINUX_EFAULT;
+
+    if ((action.flags & ONSTACK) && !on_stack(stack, top) && !(stack.flags & 2))
+    {
+        top=stack.sp+stack.size;
+    }
+
+    if (top < 128 + 512 + sizeof(saved) + 128)
+    {
+        return LINUX_EFAULT;
+    }
+
     const uint64_t fp = align_down(top - 128 - 512, 64);
     const uint64_t address = align_down(fp - sizeof(saved), 16) - 8;
     c.fpstate = fp;
@@ -56,7 +83,12 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result,
     memcpy(saved.info+16, &sender.pid, 4); memcpy(saved.info+20, &sender.uid, 4);
     uint8_t floating[512] = {};
     memcpy(floating, (const void*) frame->fxstate, 416);
-    if (!safe_write_user(fp, floating, sizeof(floating)) || !safe_write_user(address, &saved, sizeof(saved))) return LINUX_EFAULT;
+
+    if (!safe_write_user(fp, floating, sizeof(floating)) || !safe_write_user(address, &saved, sizeof(saved)))
+    {
+        return LINUX_EFAULT;
+    }
+
     frame->user_rip=action.handler; frame->user_rsp=address;
     frame->arg0=signal; frame->arg1=address+offsetof(signal_frame_t,info); frame->arg2=address+offsetof(signal_frame_t,uc);
     frame->user_rflags=(frame->user_rflags & 0x250dd5ULL & ~((1ULL<<8)|(1ULL<<10))) | 0x202;
@@ -65,22 +97,63 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result,
 
 uint64_t arch_signal_restore(arch_syscall_frame_t* frame, uint64_t* result, uint64_t* mask, signal_stack_t* restoredStack)
 {
-    if (frame->fxstate == 0 || frame->user_rsp < 8) return LINUX_EINVAL;
+    if (frame->fxstate == 0 || frame->user_rsp < 8)
+    {
+        return LINUX_EINVAL;
+    }
+
     const uint64_t address = frame->user_rsp - 8;
     signal_frame_t saved;
-    if (!safe_read_user(address, &saved, sizeof(saved))) return LINUX_EFAULT;
-    if (saved.uc.flags != 0) return LINUX_EOPNOTSUPP; // XSAVE/extended context formats are absent.
+
+    if (!safe_read_user(address, &saved, sizeof(saved)))
+    {
+        return LINUX_EFAULT;
+    }
+
+    if (saved.uc.flags != 0)
+    {
+        return LINUX_EOPNOTSUPP; // XSAVE/extended context formats are absent.
+    }
+
     auto& c=saved.uc.context;
-    if (!user_address(c.ip) || !user_address(c.sp) || c.cs != USER_CS || c.ss != USER_SS) return LINUX_EINVAL;
+
+    if (!user_address(c.ip) || !user_address(c.sp) || c.cs != USER_CS || c.ss != USER_SS)
+    {
+        return LINUX_EINVAL;
+    }
+
     uint8_t floating[512];
-    if (c.fpstate == 0 || !safe_read_user(c.fpstate, floating, sizeof(floating))) return LINUX_EFAULT;
+
+    if (c.fpstate == 0 || !safe_read_user(c.fpstate, floating, sizeof(floating)))
+    {
+        return LINUX_EFAULT;
+    }
+
     uint32_t mxcsr, mxcsrMask;
     memcpy(&mxcsr, floating+24, 4); memcpy(&mxcsrMask, (const uint8_t*) frame->fxstate+28, 4);
-    if (mxcsr & ~(mxcsrMask != 0 ? mxcsrMask : 0xffbfU)) return LINUX_EINVAL;
+
+    if (mxcsr & ~(mxcsrMask != 0 ? mxcsrMask : 0xffbfU))
+    {
+        return LINUX_EINVAL;
+    }
+
     signal_stack_t stack=saved.uc.stack;
-    if (stack.flags == 1) stack.flags=0;
-    if (stack.flags != 0 && stack.flags != 2) return LINUX_EINVAL;
-    if (stack.flags == 0 && (stack.size < 2048 || !range_within_u64(stack.sp,stack.size,CANONICAL_USER_BASE,CANONICAL_USER_END))) return LINUX_EINVAL;
+
+    if (stack.flags == 1)
+    {
+        stack.flags=0;
+    }
+
+    if (stack.flags != 0 && stack.flags != 2)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (stack.flags == 0 && (stack.size < 2048 || !range_within_u64(stack.sp,stack.size,CANONICAL_USER_BASE,CANONICAL_USER_END)))
+    {
+        return LINUX_EINVAL;
+    }
+
     memcpy((void*) frame->fxstate, floating, sizeof(floating));
     frame->arg4=c.r8; frame->arg5=c.r9; frame->arg3=c.r10; frame->r11=c.r11;
     frame->r12=c.r12; frame->r13=c.r13; frame->r14=c.r14; frame->r15=c.r15;

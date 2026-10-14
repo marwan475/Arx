@@ -14,6 +14,7 @@ extern "C"
     void cpu_preemption_enable(void);
 #ifdef __cplusplus
 }
+
 #endif
 
 static inline void spinlock_acquire(spinlock_t* lock)
@@ -21,6 +22,7 @@ static inline void spinlock_acquire(spinlock_t* lock)
     for (;;)
     {
         uint8_t expected = 0;
+
         if (__atomic_compare_exchange_n(lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
         {
             return;

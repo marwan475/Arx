@@ -9,6 +9,7 @@ void PhysicalMemoryManager::GetMemoryInfo(uint64_t* totalBytes, uint64_t* freeBy
 {
     *totalBytes = 0;
     *freeBytes  = 0;
+
     for (size_t node = 0; node < platform.numa_node_count; ++node)
     {
         zone_t* zone = &platform.numa_nodes[node].zone;

@@ -188,6 +188,7 @@ static void smp_entry(struct limine_smp_info* cpu)
     const char* arg = (const char*) (uintptr_t) cpu->extra_argument;
 
     arch_enable_fp_simd();
+
     if (arg != 0)
     {
         kprintf("Arx kernel: cpu[%u] boot entry: %s\n", (unsigned) arch_cpu_id(), arg);
@@ -229,6 +230,7 @@ void arch_smp_init(struct boot_info* boot_info)
     }
 
     smp_cpus = (struct limine_smp_info**) (uintptr_t) boot_info->smp.cpus;
+
     for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
     {
         uint64_t cpu_hw_id = smp_cpus[i]->mpidr;
@@ -298,6 +300,7 @@ static void gather_boot_info(struct boot_info* boot_info)
     {
         uint64_t count            = memmap_request.response->entry_count;
         uint64_t max_physical_end = 0;
+
         if (count > BOOT_MEMMAP_MAX_ENTRIES)
         {
             count = BOOT_MEMMAP_MAX_ENTRIES;
@@ -364,6 +367,7 @@ static void gather_boot_info(struct boot_info* boot_info)
     if (smp_request.response != 0)
     {
         uint64_t count = smp_request.response->cpu_count;
+
         if (count > BOOT_SMP_MAX_CPUS)
         {
             count = BOOT_SMP_MAX_CPUS;

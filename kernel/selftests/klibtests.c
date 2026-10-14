@@ -19,11 +19,13 @@ static void vmalloc_test(size_t* passes, size_t* failures)
     const size_t aligned_size = align_up(req_size, PAGE_SIZE);
 
     void* ptr = vmalloc(req_size);
+
     if (ptr == NULL)
     {
         klib_test_log_fail("vmalloc returned NULL", failures);
         return;
     }
+
     (*passes)++;
 
     memset(ptr, 0, req_size);
@@ -38,6 +40,7 @@ static void vmalloc_test(size_t* passes, size_t* failures)
     }
 
     virt_region_t* region = vmm_find_region(platform.cpus[arch_cpu_id()].address_space, (virt_addr_t) (uintptr_t) ptr);
+
     if (region == NULL)
     {
         klib_test_log_fail("allocated vmalloc region not found in VMM used regions", failures);
@@ -98,6 +101,7 @@ static void kmalloc_test(size_t* passes, size_t* failures)
     for (size_t i = 0; i < (sizeof(ptrs) / sizeof(ptrs[0])); i++)
     {
         ptrs[i] = kmalloc(sizes[i]);
+
         if (ptrs[i] == NULL)
         {
             klib_test_log_fail("kmalloc odd-size allocation returned NULL", failures);
@@ -109,6 +113,7 @@ static void kmalloc_test(size_t* passes, size_t* failures)
     }
 
     bool unique = true;
+
     for (size_t i = 0; i < (sizeof(ptrs) / sizeof(ptrs[0])); i++)
     {
         for (size_t j = i + 1; j < (sizeof(ptrs) / sizeof(ptrs[0])); j++)
@@ -142,10 +147,12 @@ static void kmalloc_test(size_t* passes, size_t* failures)
     {
         kfree(ptrs[i]);
     }
+
     (*passes)++;
 
     void* r1 = kmalloc(64);
     void* r2 = kmalloc(64);
+
     if (r1 == NULL || r2 == NULL)
     {
         klib_test_log_fail("kmalloc reuse probe allocations failed", failures);
@@ -154,6 +161,7 @@ static void kmalloc_test(size_t* passes, size_t* failures)
     {
         kfree(r1);
         void* r3 = kmalloc(64);
+
         if (r3 == NULL)
         {
             klib_test_log_fail("kmalloc reuse probe re-allocation failed", failures);
@@ -185,6 +193,7 @@ static void kzalloc_test(size_t* passes, size_t* failures)
     for (size_t i = 0; i < (sizeof(ptrs) / sizeof(ptrs[0])); i++)
     {
         ptrs[i] = kzalloc(sizes[i]);
+
         if (ptrs[i] == NULL)
         {
             klib_test_log_fail("kzalloc allocation returned NULL", failures);
@@ -192,6 +201,7 @@ static void kzalloc_test(size_t* passes, size_t* failures)
         }
 
         bool all_zero = true;
+
         for (size_t j = 0; j < sizes[i]; j++)
         {
             if (((uint8_t*) ptrs[i])[j] != 0)
@@ -224,6 +234,7 @@ static void kzalloc_test(size_t* passes, size_t* failures)
     {
         kfree(ptrs[i]);
     }
+
     (*passes)++;
 }
 
@@ -234,18 +245,27 @@ static void sort_u32_test(size_t* passes, size_t* failures)
     sort_u32(NULL, 0);
     sort_u32(values, 0);
     sort_u32(values, 1);
+
     if (values[0] != UINT32_MAX)
+    {
         klib_test_log_fail("sort_u32 empty/single element changed data", failures);
+    }
     else
         (*passes)++;
     sort_u32(values, sizeof(values) / sizeof(values[0]));
+
     if (memcmp(values, expected, sizeof(values)) != 0)
+    {
         klib_test_log_fail("sort_u32 ordering, duplicates and uint32 bounds", failures);
+    }
     else
         (*passes)++;
     sort_u32(values, sizeof(values) / sizeof(values[0]));
+
     if (memcmp(values, expected, sizeof(values)) != 0)
+    {
         klib_test_log_fail("sort_u32 sorted input", failures);
+    }
     else
         (*passes)++;
 }
@@ -255,19 +275,36 @@ static void counter32_test(size_t* passes, size_t* failures)
     uint64_t value = extend_counter32(0xfffffffeULL, 0xffffffffU);
     value = extend_counter32(value, 0);
     value = extend_counter32(value, 7);
+
     if (value != 0x100000007ULL || extend_counter32(value, 7) != value)
+    {
         klib_test_log_fail("32-bit counter rollover and unchanged sample", failures);
-    else (*passes)++;
+    }
+    else
+    {
+        (*passes)++;
+    }
 
     value = extend_counter32(value, 0xfffffffeU);
     value = extend_counter32(value, 3);
+
     if (value != 0x200000003ULL || extend_counter32(value, 4) != 0x200000004ULL)
+    {
         klib_test_log_fail("32-bit counter preserves multiple epochs", failures);
-    else (*passes)++;
+    }
+    else
+    {
+        (*passes)++;
+    }
 
     if (extend_counter32(42, 45) != 45 || extend_counter32(0x12345678ffffffffULL, 0) != 0x1234567900000000ULL)
+    {
         klib_test_log_fail("32-bit counter normal increments and high epoch", failures);
-    else (*passes)++;
+    }
+    else
+    {
+        (*passes)++;
+    }
 }
 
 static void error_logger_test(size_t* passes, size_t* failures)
@@ -277,54 +314,82 @@ static void error_logger_test(size_t* passes, size_t* failures)
     static error_log_buffer_t buffer;
     char output[ERROR_LOGGER_MESSAGE_SIZE];
     memset(&buffer, 0, sizeof(buffer));
+
     if (error_logger_read(&buffer, 0, output, sizeof(output))
         || error_logger_append(NULL, "bad") || error_logger_append(&buffer, NULL)
         || error_logger_append(&buffer, "") || buffer.reserved != 0)
         klib_test_log_fail("error logger empty/invalid inputs", failures);
-    else (*passes)++;
+    else
+    {
+        (*passes)++;
+    }
 
     if (!error_logger_append(&buffer, "clock %s status=%u address=0x%llx", "HPET", 3U, 0x123456789abcdef0ULL)
         || !error_logger_read(&buffer, 0, output, sizeof(output))
         || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0)
         klib_test_log_fail("error logger formatted diagnostic", failures);
-    else (*passes)++;
+    else
+    {
+        (*passes)++;
+    }
 
     char small[5] = {'?', '?', '?', '?', '!'};
+
     if (!error_logger_read(&buffer, 0, small, 4) || strcmp(small, "clo") != 0 || small[4] != '!'
         || error_logger_read(&buffer, 0, output, 0) || error_logger_read(NULL, 0, output, sizeof(output))
         || error_logger_read(&buffer, 0, NULL, sizeof(output))
         || error_logger_read(&buffer, ERROR_LOGGER_CAPACITY, output, sizeof(output)))
         klib_test_log_fail("error logger bounded reads", failures);
-    else (*passes)++;
+    else
+    {
+        (*passes)++;
+    }
 
     char longMessage[ERROR_LOGGER_MESSAGE_SIZE + 32];
     memset(longMessage, 'x', sizeof(longMessage) - 1);
     longMessage[sizeof(longMessage) - 1] = '\0';
+
     if (!error_logger_append(&buffer, "%s", longMessage)
         || !error_logger_read(&buffer, 1, output, sizeof(output))
         || strlen(output) != ERROR_LOGGER_MESSAGE_SIZE - 1
         || strcmp(output + ERROR_LOGGER_MESSAGE_SIZE - sizeof(" [truncated]"), " [truncated]") != 0)
         klib_test_log_fail("error logger marks truncated diagnostics", failures);
-    else (*passes)++;
+    else
+    {
+        (*passes)++;
+    }
 
     bool filled = true;
+
     for (size_t i = 2; i < ERROR_LOGGER_CAPACITY; ++i)
+    {
         filled &= error_logger_append(&buffer, "entry %u", (unsigned) i);
+    }
+
     if (!filled || error_logger_append(&buffer, "overflow")
         || buffer.reserved != ERROR_LOGGER_CAPACITY + 1
         || !error_logger_read(&buffer, 0, output, sizeof(output))
         || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0
         || !error_logger_read(&buffer, ERROR_LOGGER_CAPACITY - 1, output, sizeof(output)))
         klib_test_log_fail("error logger full buffer preserves earliest diagnostics", failures);
-    else (*passes)++;
+    else
+    {
+        (*passes)++;
+    }
 
     // A slot reserved by another CPU must remain unreadable until publication.
     memset(&buffer, 0, sizeof(buffer));
     buffer.reserved = 1;
     memcpy(buffer.entries[0].message, "unfinished", sizeof("unfinished"));
+
     if (error_logger_read(&buffer, 0, output, sizeof(output)))
+    {
         klib_test_log_fail("error logger does not read unpublished slots", failures);
-    else (*passes)++;
+    }
+    else
+    {
+        (*passes)++;
+    }
 }
 
 void run_klib_selftests(void)

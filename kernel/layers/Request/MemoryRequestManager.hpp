@@ -8,6 +8,7 @@ public:
     explicit MemoryRequestManager(ResourceLayerCaps* resourceLayerCaps = nullptr) : ResourceCaps(resourceLayerCaps)
     {
     }
+
     uint64_t HandleMmapRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleMunmapRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleMprotectRequest(const arch_syscall_frame_t* frame);

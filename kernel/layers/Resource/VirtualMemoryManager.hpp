@@ -5,6 +5,7 @@ extern "C"
 {
 #include <memory/vmm.h>
 }
+
 #endif
 
 class VirtualMemoryManager

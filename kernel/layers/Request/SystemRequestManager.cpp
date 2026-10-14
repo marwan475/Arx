@@ -54,12 +54,14 @@ static void copy_uts_field(char* destination, size_t destinationSize, const char
     }
 
     memset(destination, 0, destinationSize);
+
     if (source == nullptr)
     {
         return;
     }
 
     size_t sourceLength = strlen(source);
+
     if (sourceLength >= destinationSize)
     {
         sourceLength = destinationSize - 1;
@@ -67,6 +69,7 @@ static void copy_uts_field(char* destination, size_t destinationSize, const char
 
     memcpy(destination, source, sourceLength);
 }
+
 } // namespace
 
 SystemRequestManager::SystemRequestManager(ResourceLayerCaps* resourceLayerCaps) : ResourceCaps(resourceLayerCaps)
@@ -76,24 +79,41 @@ SystemRequestManager::SystemRequestManager(ResourceLayerCaps* resourceLayerCaps)
 uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
 #if defined(__x86_64__)
     const int32_t operation = (int32_t) frame->arg0;
+
     if (operation < 0x1001 || operation > 0x1004)
+    {
         return LINUX_EINVAL;
+    }
+
     if (ResourceCaps == nullptr || ResourceCaps->taskManager == nullptr)
+    {
         return LINUX_ENOSYS;
+    }
+
     const bool gs = operation == 0x1001 || operation == 0x1004;
+
     if (operation == 0x1001 || operation == 0x1002)
     {
         // The kernel uses four-level paging; reject noncanonical and kernel bases.
+
         if (frame->arg1 >= (1ULL << 47))
             return (uint64_t) -1; // EPERM
         return ResourceCaps->taskManager->SetCurrentTlsBase(gs, frame->arg1) ? 0 : LINUX_ESRCH;
     }
+
     uint64_t value;
+
     if (!ResourceCaps->taskManager->GetCurrentTlsBase(gs, &value))
+    {
         return LINUX_ESRCH;
+    }
+
     return safe_write_user(frame->arg1, &value, sizeof(value)) ? 0 : LINUX_EFAULT;
 #else
     return LINUX_ENOSYS;
@@ -113,6 +133,7 @@ uint64_t SystemRequestManager::HandleUmaskRequest(const arch_syscall_frame_t* fr
     }
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return LINUX_ESRCH;
@@ -124,83 +145,146 @@ uint64_t SystemRequestManager::HandleUmaskRequest(const arch_syscall_frame_t* fr
 uint64_t SystemRequestManager::HandlePrlimit64Request(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
     return HandleFileLimitRequest((int32_t) frame->arg0, (uint32_t) frame->arg1, frame->arg2, frame->arg3);
 }
 
 uint64_t SystemRequestManager::HandleGetrlimitRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
     if (frame->arg1 == 0)
+    {
         return LINUX_EFAULT;
+    }
+
     return HandleFileLimitRequest(0, (uint32_t) frame->arg0, 0, frame->arg1);
 }
 
 uint64_t SystemRequestManager::HandleSetrlimitRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
     if (frame->arg1 == 0)
+    {
         return LINUX_EFAULT;
+    }
+
     return HandleFileLimitRequest(0, (uint32_t) frame->arg0, frame->arg1, 0);
 }
 
 uint64_t SystemRequestManager::HandleFileLimitRequest(int32_t pid, uint32_t resource, uint64_t proposed, uint64_t previous)
 {
     if (resource >= 16)
+    {
         return LINUX_EINVAL;
+    }
+
     if (resource != 7) // RLIMIT_NOFILE is the only enforced resource.
         return LINUX_EOPNOTSUPP;
+
     if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
+    {
         return LINUX_ENOSYS;
+    }
+
     ProcessManager*     manager = ResourceCaps->processManager;
     FileDescriptorGuard guard(manager->GetCurrentProcess());
     process_t*          process = manager->GetCurrentProcess();
+
     if (process == nullptr)
+    {
         return LINUX_ESRCH;
+    }
+
     if (pid < 0)
+    {
         return LINUX_ESRCH;
+    }
+
     if (pid != 0 && (uint64_t) pid != process->id)
+    {
         return LINUX_EOPNOTSUPP;
+    }
+
     process_file_limit_t next = {}, old = {};
+
     if (proposed != 0 && !safe_read_user(proposed, &next, sizeof(next)))
+    {
         return LINUX_EFAULT;
+    }
+
     // Linux commits the new limit before copying the previous limit out.
     // Snapshot input first so new/old pointers may alias.
     const uint64_t result = manager->ChangeFileLimit(process, proposed != 0 ? &next : nullptr, &old);
+
     if (result != 0)
+    {
         return result;
+    }
+
     if (previous != 0 && !safe_write_user(previous, &old, sizeof(old)))
+    {
         return LINUX_EFAULT;
+    }
+
     return 0;
 }
 
 uint64_t SystemRequestManager::HandlePrctlRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
     const int32_t operation = (int32_t) frame->arg0;
+
     if (operation != 15 && operation != 16) // PR_SET_NAME, PR_GET_NAME
         return LINUX_EOPNOTSUPP;
+
     if (ResourceCaps == nullptr || ResourceCaps->taskManager == nullptr)
+    {
         return LINUX_ENOSYS;
+    }
+
     char name[16] = {};
+
     if (operation == 16)
     {
         if (!ResourceCaps->taskManager->GetCurrentName(name))
+        {
             return LINUX_ESRCH;
+        }
+
         return safe_write_user(frame->arg1, name, sizeof(name)) ? 0 : LINUX_EFAULT;
     }
+
     // Read only through the first NUL or 15 bytes: a valid short string at
     // the end of a page must not require the following page to be mapped.
+
     for (size_t i = 0; i < 15; ++i)
     {
         if (frame->arg1 > UINT64_MAX - i || !safe_read_user(frame->arg1 + i, &name[i], 1))
+        {
             return LINUX_EFAULT;
+        }
+
         if (name[i] == '\0')
+        {
             break;
+        }
     }
+
     return ResourceCaps->taskManager->SetCurrentName(name) ? 0 : LINUX_ESRCH;
 }
 
@@ -217,12 +301,14 @@ uint64_t SystemRequestManager::HandleUnameRequest(const arch_syscall_frame_t* fr
     }
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return LINUX_ESRCH;
     }
 
     const uintptr_t userUts = (uintptr_t) frame->arg0;
+
     if (userUts == 0)
     {
         return LINUX_EFAULT;
@@ -257,23 +343,32 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
     }
 
     process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
+
     if (currentProcess == nullptr)
     {
         return LINUX_ESRCH;
     }
 
     const uintptr_t userSysinfo = (uintptr_t) frame->arg0;
+
     if (userSysinfo == 0)
     {
         return LINUX_EFAULT;
     }
 
     if (ResourceCaps->timeManager == nullptr || ResourceCaps->taskManager == nullptr || ResourceCaps->physicalMemoryManager == nullptr)
+    {
         return LINUX_ENOSYS;
+    }
+
     time_timespec_t elapsed     = {};
     const uint64_t  clockResult = ResourceCaps->timeManager->ReadClock(1, &elapsed);
+
     if (clockResult != 0)
+    {
         return clockResult;
+    }
+
     uint64_t totalMemoryBytes = 0;
     uint64_t freeMemoryBytes  = 0;
 
@@ -304,10 +399,17 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
 uint64_t SystemRequestManager::HandleGetrandomRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
+    {
         return LINUX_EINVAL;
+    }
+
     const uint32_t flags = (uint32_t) frame->arg2;
+
     if ((flags & ~7U) != 0 || (flags & 6U) == 6U)
+    {
         return LINUX_EINVAL;
+    }
+
     // No entropy source or CSPRNG exists. Never return predictable bytes.
     return LINUX_ENOSYS;
 }

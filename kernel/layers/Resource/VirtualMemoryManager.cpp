@@ -69,14 +69,17 @@ static uint64_t anonymous_page_flags(uint32_t protection)
     uint64_t flags = 0;
     ARCH_PAGE_FLAGS_INIT(flags);
     ARCH_PAGE_FLAG_SET_READ(flags);
+
     if (protection != 0)
     {
         ARCH_PAGE_FLAG_SET_USER(flags);
     }
+
     if ((protection & 2) != 0)
     {
         ARCH_PAGE_FLAG_SET_WRITE(flags);
     }
+
     if ((protection & 4) != 0)
     {
         ARCH_PAGE_FLAG_SET_EXEC(flags);
@@ -84,6 +87,7 @@ static uint64_t anonymous_page_flags(uint32_t protection)
 
     return flags;
 }
+
 } // namespace
 
 bool VirtualMemoryManager::IsPageAvailable(virt_addr_space_t* space, uint64_t address)
@@ -112,6 +116,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     }
 
     void* page = pmm_alloc(PAGE_SIZE);
+
     if (page == nullptr)
     {
         FreeRegion(space, address);
@@ -121,6 +126,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     memset(page, 0, PAGE_SIZE);
     const phys_addr_t physicalAddress = hhdm_to_pa(reinterpret_cast<uintptr_t>(page), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
     // Intermediate tables remain writable/user-accessible; protection is leaf-only.
+
     if (!MapPage(address, physicalAddress, anonymous_page_flags(3), space))
     {
         pmm_free(page);
@@ -139,6 +145,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
 void VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uint64_t address)
 {
     virt_region_t* region = FindRegion(space, address);
+
     if (region == nullptr || region->backing == nullptr)
     {
         return;
@@ -177,9 +184,11 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
     cpu_preemption_disable();
     spinlock_acquire(&space->operation_lock);
     virt_region_t* region = space->user_used_regions;
+
     while (region != nullptr)
     {
         virt_region_t* next = region->next;
+
         if (region->backing != nullptr)
         {
             ReleaseAnonymousPage(space, region->start);
@@ -195,6 +204,7 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
 virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
 {
     virt_addr_space_t* space = static_cast<virt_addr_space_t*>(kmalloc(sizeof(virt_addr_space_t)));
+
     if (space == nullptr)
     {
         return nullptr;
@@ -203,6 +213,7 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
     memset(space, 0, sizeof(*space));
     space->type = VIRT_ADDR_USER;
     space->pt   = arch_create_user_page_table();
+
     if (space->pt == 0)
     {
         kfree(space);
@@ -211,6 +222,7 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
 
     metadata_pool_init(&space->user_region_metadata_pool, sizeof(virt_region_t), metadata_default_elements_per_chunk(sizeof(virt_region_t)));
     virt_region_t* freeRegion = static_cast<virt_region_t*>(metadata_pool_alloc(&space->user_region_metadata_pool));
+
     if (freeRegion == nullptr)
     {
         arch_destroy_user_page_table(space->pt);
@@ -231,6 +243,7 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
 void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 {
     // Caller has detached this isolated root from every process/CPU.
+
     if (space == nullptr || space->type != VIRT_ADDR_USER || space->pt == arch_get_pt())
     {
         return;
@@ -238,6 +251,7 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 
     ReleaseAnonymousPages(space);
     // Legacy ELF/stack reservations require their own ownership-aware teardown.
+
     if (space->user_used_regions != nullptr)
     {
         return;
@@ -245,6 +259,7 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 
     arch_destroy_user_page_table(space->pt);
     metadata_chunk_t* chunk = space->user_region_metadata_pool.chunks;
+
     while (chunk != nullptr)
     {
         metadata_chunk_t* next = chunk->next;

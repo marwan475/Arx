@@ -22,23 +22,40 @@
 static volatile uint8_t* pci_ecam_address(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, size_t width)
 {
     if (region == NULL || region->mapped_base == NULL || bus < region->start_bus || bus > region->end_bus)
+    {
         return NULL;
+    }
+
     if ((offset & (width - 1)) != 0 || offset > PCI_CONFIG_SPACE_FUNCTION_SIZE - width)
+    {
         return NULL;
+    }
+
     const uint64_t bus_index     = (uint64_t) (bus - region->start_bus);
     const uint64_t config_offset = (bus_index << 20) + ((uint64_t) device << 15) + ((uint64_t) function << 12) + offset;
+
     if (config_offset + width > region->mapped_size)
+    {
         return NULL;
+    }
+
     return (volatile uint8_t*) ((uintptr_t) region->mapped_base + config_offset);
 }
 
 static bool pci_ecam_read8(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t* out_value)
 {
     if (out_value == NULL)
+    {
         return false;
+    }
+
     volatile uint8_t* address = pci_ecam_address(region, bus, device, function, offset, sizeof(uint8_t));
+
     if (address == NULL)
+    {
         return false;
+    }
+
     *out_value = *((volatile uint8_t*) address);
     return true;
 }
@@ -46,10 +63,17 @@ static bool pci_ecam_read8(const pci_ecam_region_t* region, uint8_t bus, uint8_t
 static bool pci_ecam_read32(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t* out_value)
 {
     if (out_value == NULL)
+    {
         return false;
+    }
+
     volatile uint8_t* address = pci_ecam_address(region, bus, device, function, offset, sizeof(uint32_t));
+
     if (address == NULL)
+    {
         return false;
+    }
+
     *out_value = *((volatile uint32_t*) address);
     return true;
 }
@@ -68,6 +92,7 @@ static void pci_fill_bars(const pci_ecam_region_t* region, uint8_t bus, uint8_t 
         uint32_t raw_low;
 
         offset = (uint16_t) (PCI_BAR0_OFFSET + (bar * sizeof(uint32_t)));
+
         if (!pci_ecam_read32(region, bus, device, function, offset, &raw_low))
         {
             continue;
@@ -136,17 +161,29 @@ static bool pci_map_regions(void)
 
         const uint64_t bus_offset = (uint64_t) platform.arch_info.pci_regions[i].start_bus << 20;
         const uint64_t base       = platform.arch_info.pci_regions[i].base_address;
+
         if (base > UINT64_MAX - bus_offset || base + bus_offset > UINT64_MAX - map_size || ((base + bus_offset) & (PAGE_SIZE - 1)) != 0)
+        {
             return false;
+        }
+
         mapped = NULL;
+
         for (uint64_t offset = 0; offset < map_size; offset += PAGE_SIZE)
         {
             const virt_addr_t va = vmm_map_direct_mmio_page(base + bus_offset + offset, vmm_kernel_space());
+
             if (va == 0)
+            {
                 return false;
+            }
+
             if (offset == 0)
+            {
                 mapped = (void*) (uintptr_t) va;
+            }
         }
+
         if (mapped == NULL)
         {
             error_logger("PCI: failed to map ECAM region %u\n", (unsigned) i);
@@ -177,6 +214,7 @@ static bool pci_scan_function(const pci_ecam_region_t* region, uint8_t bus, uint
     }
 
     vendor_id = (uint16_t) (vendor_device & 0xFFFFu);
+
     if (vendor_id == 0xFFFFu)
     {
         return true;
@@ -303,6 +341,7 @@ static bool pci_get_device_info(void)
     size_t        device_count;
 
     devices = (pci_device_t*) kmalloc(MAX_PCI_DEVICES * sizeof(pci_device_t));
+
     if (devices == NULL)
     {
         error_logger("PCI: failed to allocate pci device array\n");
@@ -345,6 +384,7 @@ bool pci_get_mcfg_region_count(size_t* out_region_count)
     *out_region_count = 0;
 
     status = acpi_get_mcfg(&mcfg, &mcfg_table);
+
     if (status != UACPI_STATUS_OK)
     {
         return false;
@@ -357,6 +397,7 @@ bool pci_get_mcfg_region_count(size_t* out_region_count)
     }
 
     entries_size = (size_t) (mcfg->hdr.length - sizeof(*mcfg));
+
     if ((entries_size % sizeof(struct acpi_mcfg_allocation)) != 0)
     {
         uacpi_table_unref(&mcfg_table);
@@ -385,6 +426,7 @@ bool pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entrie
     *out_entry_count = 0;
 
     status = acpi_get_mcfg(&mcfg, &mcfg_table);
+
     if (status != UACPI_STATUS_OK)
     {
         return false;
@@ -397,6 +439,7 @@ bool pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entrie
     }
 
     entries_size = (size_t) (mcfg->hdr.length - sizeof(*mcfg));
+
     if ((entries_size % sizeof(struct acpi_mcfg_allocation)) != 0)
     {
         uacpi_table_unref(&mcfg_table);
@@ -436,6 +479,7 @@ bool pci_init(void)
     platform.pci_device_count = 0;
 
     region_count = 0;
+
     if (!pci_get_mcfg_region_count(&region_count))
     {
         error_logger("PCI: failed to read MCFG region count\n");
@@ -451,6 +495,7 @@ bool pci_init(void)
     }
 
     regions = (pci_ecam_region_t*) kmalloc(region_count * sizeof(pci_ecam_region_t));
+
     if (regions == NULL)
     {
         error_logger("PCI: failed to allocate region table (%u entries)\n", (unsigned) region_count);
@@ -458,6 +503,7 @@ bool pci_init(void)
     }
 
     extracted_count = 0;
+
     if (!pci_get_regions_from_mcfg(regions, region_count, &extracted_count))
     {
         kfree(regions);

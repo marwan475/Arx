@@ -97,6 +97,7 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
 
     bool     handledBySelftest = false;
     uint64_t selftestResult    = selftest_syscall_dispatch(frame, &handledBySelftest);
+
     if (handledBySelftest)
     {
         return selftestResult;

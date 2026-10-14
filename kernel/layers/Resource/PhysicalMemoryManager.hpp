@@ -5,6 +5,7 @@ extern "C"
 {
 #include <memory/pmm.h>
 }
+
 #endif
 
 class PhysicalMemoryManager

@@ -55,6 +55,7 @@ static void route_irq(volatile uint8_t* ioapic_base, uint32_t pin, uint32_t vect
 static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
 {
     volatile uint8_t* ioapic_base = ioapic_get_base();
+
     if (!ioapic_base)
     {
         return;
@@ -89,6 +90,7 @@ static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = low;
         break;
     }
+
     spinlock_release_preempt(&ioapic_lock);
 }
 
@@ -105,18 +107,21 @@ void ioapic_unmask_vector(uint8_t vector)
 uint32_t ioapic_register_device(uint32_t gsi)
 {
     volatile uint8_t* ioapic_base = ioapic_get_base();
+
     if (!ioapic_base)
     {
         return 0;
     }
 
     uint32_t ioapic_gsi_base = platform.arch_info.acpi_ioapic_gsi_base;
+
     if (gsi < ioapic_gsi_base)
     {
         return 0;
     }
 
     uint32_t pin = gsi - ioapic_gsi_base;
+
     if (pin > platform.arch_info.ioapic_max_redir)
     {
         return 0;
@@ -124,6 +129,7 @@ uint32_t ioapic_register_device(uint32_t gsi)
 
     spinlock_acquire_preempt(&ioapic_lock);
     uint32_t vector = platform.vector_base;
+
     if (vector >= 0xFF)
     {
         spinlock_release_preempt(&ioapic_lock);
@@ -159,6 +165,7 @@ static void route_legacy_irqs(volatile uint8_t* ioapic_base, uint32_t max_redir,
         }
 
         uint32_t pin = gsi - ioapic_gsi_base;
+
         if (pin > max_redir)
         {
             continue;
@@ -191,8 +198,11 @@ void ioapic_init(void)
 
     phys_addr_t ioapic_pa = align_down(platform.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
     virt_addr_t ioapic_va = vmm_map_direct_mmio_page(ioapic_pa, cpu_info->address_space);
+
     if (ioapic_va == 0)
+    {
         panic();
+    }
 
     volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
 
@@ -215,6 +225,7 @@ void ioapic_init(void)
     uint8_t  bsp_lapic_id    = platform.cpus[platform.bsp_id].arch_info.acpi_lapic_id;
 
     // mask all entries
+
     for (uint32_t i = 0; i <= max_redir; i++)
     {
         uint8_t low_index  = (uint8_t) (IOAPIC_REDIR_TABLE_BASE + i * 2);

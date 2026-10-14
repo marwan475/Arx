@@ -68,10 +68,19 @@ typedef struct numa_node
     kernel_heap_t heap;
 } numa_node_t;
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 void pmm_init(struct boot_info* boot_info);
 
 // returns hhdm address of allocated block
 void* pmm_alloc(size_t size);
 void  pmm_free(void* addr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1457,6 +1457,7 @@ uint64_t VfsRequestManager::HandleUnlinkatRequest(const arch_syscall_frame_t* fr
     {
         return LINUX_EINVAL;
     }
+    const bool removeDirectory = (flags & LINUX_AT_REMOVEDIR) != 0;
 
     char cwdResolvedPath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
     const char* effectivePath = nullptr;

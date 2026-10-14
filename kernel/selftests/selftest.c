@@ -155,6 +155,9 @@ void selftest_record_failure_detail(const char* detail)
         return;
     }
 
+    const char* name = g_current_case_idx < g_case_result_count ? g_case_results[g_current_case_idx].test_name : "unknown";
+    error_logger("selftest %s: %s", name != NULL ? name : "unknown", detail);
+
     if (g_current_case_idx == (unsigned long long) -1 || g_current_case_idx >= SELFTEST_MAX_CASES)
     {
         return;
@@ -186,6 +189,7 @@ void selftest_case_end(const char* test_name, unsigned long long passes, unsigne
 
         if (failures != 0 && g_case_fail_details[g_current_case_idx][0] == '\0')
         {
+            error_logger("selftest %s: %llu failures without explicit detail", test_name, failures);
             selftest_append_detail(g_case_fail_details[g_current_case_idx], "failure count incremented with no explicit detail");
         }
     }

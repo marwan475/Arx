@@ -46,7 +46,7 @@ __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* ar
         void* region = vmalloc(CPU_KERNEL_STACK_SIZE + PAGE_SIZE);
         if (region == NULL)
         {
-            kprintf("Arx kernel: failed to allocate kernel stack for CPU %d\n", arch_cpu_id());
+            error_logger("Arx kernel: failed to allocate kernel stack for CPU %d\n", arch_cpu_id());
             panic();
         }
 

@@ -399,7 +399,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     void* new_table = pmm_alloc(PAGE_SIZE);
     if (new_table == NULL)
     {
-        kprintf("Arx kernel: arch_map_page failed: unable to allocate page table\n");
+        error_logger("Arx kernel: arch_map_page failed: unable to allocate page table\n");
         return false;
     }
 
@@ -408,7 +408,7 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
 
     if (!x86_64_is_pa_encodable(new_table_pa))
     {
-        kprintf("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
+        error_logger("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
         pmm_free(new_table);
         return false;
     }
@@ -529,7 +529,7 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
         {
             if (request->failure_context != NULL)
             {
-                kprintf("Arx kernel: %s failed at %s[%llu]\n", request->failure_context, request->level_name, (unsigned long long) level_index);
+                error_logger("Arx kernel: %s failed at %s[%llu]\n", request->failure_context, request->level_name, (unsigned long long) level_index);
             }
             return X86_64_WALK_LEVEL_ERROR;
         }
@@ -660,7 +660,7 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                     {
                         if (failure_context != NULL)
                         {
-                            kprintf("Arx kernel: %s failed at PT[%llu] for VA 0x%llx\n", failure_context, (unsigned long long) (pt_index + entry), (unsigned long long) leaf_va);
+                            error_logger("Arx kernel: %s failed at PT[%llu] for VA 0x%llx\n", failure_context, (unsigned long long) (pt_index + entry), (unsigned long long) leaf_va);
                         }
                         return false;
                     }

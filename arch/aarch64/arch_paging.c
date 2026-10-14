@@ -217,7 +217,7 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
     void* new_table = pmm_alloc(PAGE_SIZE);
     if (new_table == NULL)
     {
-        kprintf("Arx kernel: arch_map_page failed: unable to allocate aarch64 table\n");
+        error_logger("Arx kernel: arch_map_page failed: unable to allocate aarch64 table\n");
         return false;
     }
 
@@ -267,7 +267,7 @@ bool __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     phys_addr_t l1_pa = 0;
     if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
     {
-        kprintf("Arx kernel: arch_map_page failed at L0[%llu]\n", (unsigned long long) l0_index);
+        error_logger("Arx kernel: arch_map_page failed at L0[%llu]\n", (unsigned long long) l0_index);
         return false;
     }
     uint64_t* l1 = aarch64_table_from_pa(l1_pa);
@@ -275,7 +275,7 @@ bool __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     phys_addr_t l2_pa = 0;
     if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
     {
-        kprintf("Arx kernel: arch_map_page failed at L1[%llu]\n", (unsigned long long) l1_index);
+        error_logger("Arx kernel: arch_map_page failed at L1[%llu]\n", (unsigned long long) l1_index);
         return false;
     }
     uint64_t* l2 = aarch64_table_from_pa(l2_pa);
@@ -283,7 +283,7 @@ bool __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     phys_addr_t l3_pa = 0;
     if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
     {
-        kprintf("Arx kernel: arch_map_page failed at L2[%llu]\n", (unsigned long long) l2_index);
+        error_logger("Arx kernel: arch_map_page failed at L2[%llu]\n", (unsigned long long) l2_index);
         return false;
     }
     uint64_t* l3 = aarch64_table_from_pa(l3_pa);
@@ -442,7 +442,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
         phys_addr_t l1_pa = 0;
         if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
         {
-            kprintf("Arx kernel: arch_map_range failed at L0[%llu]\n", (unsigned long long) l0_index);
+            error_logger("Arx kernel: arch_map_range failed at L0[%llu]\n", (unsigned long long) l0_index);
             success = false;
             goto out;
         }
@@ -456,7 +456,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             phys_addr_t l2_pa = 0;
             if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
             {
-                kprintf("Arx kernel: arch_map_range failed at L1[%llu]\n", (unsigned long long) l1_index);
+                error_logger("Arx kernel: arch_map_range failed at L1[%llu]\n", (unsigned long long) l1_index);
                 success = false;
                 goto out;
             }
@@ -470,7 +470,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                 phys_addr_t l3_pa = 0;
                 if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
                 {
-                    kprintf("Arx kernel: arch_map_range failed at L2[%llu]\n", (unsigned long long) l2_index);
+                    error_logger("Arx kernel: arch_map_range failed at L2[%llu]\n", (unsigned long long) l2_index);
                     success = false;
                     goto out;
                 }
@@ -531,7 +531,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             phys_addr_t l1_pa = 0;
             if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
             {
-                kprintf("Arx kernel: arch_map_range failed at L0[%llu] during remap\n", (unsigned long long) l0_index);
+                error_logger("Arx kernel: arch_map_range failed at L0[%llu] during remap\n", (unsigned long long) l0_index);
                 success = false;
                 goto out;
             }
@@ -545,7 +545,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                 phys_addr_t l2_pa = 0;
                 if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
                 {
-                    kprintf("Arx kernel: arch_map_range failed at L1[%llu] during remap\n", (unsigned long long) l1_index);
+                    error_logger("Arx kernel: arch_map_range failed at L1[%llu] during remap\n", (unsigned long long) l1_index);
                     success = false;
                     goto out;
                 }
@@ -559,7 +559,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                     phys_addr_t l3_pa = 0;
                     if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
                     {
-                        kprintf("Arx kernel: arch_map_range failed at L2[%llu] during remap\n", (unsigned long long) l2_index);
+                        error_logger("Arx kernel: arch_map_range failed at L2[%llu] during remap\n", (unsigned long long) l2_index);
                         success = false;
                         goto out;
                     }

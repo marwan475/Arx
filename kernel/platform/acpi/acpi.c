@@ -53,7 +53,10 @@ void uacpi_kernel_unmap(void* addr, uacpi_size len)
 
 void uacpi_kernel_log(uacpi_log_level level, const uacpi_char* text)
 {
-    kprintf("uACPI[%u]: %s", (unsigned) level, (const char*) text);
+    if (level == UACPI_LOG_ERROR || level == UACPI_LOG_WARN)
+        error_logger("uACPI[%u]: %s", (unsigned) level, (const char*) text);
+    else
+        kprintf("uACPI[%u]: %s", (unsigned) level, (const char*) text);
 }
 
 uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)
@@ -112,7 +115,7 @@ void acpi_init(phys_addr_t rsdp_address)
     status = uacpi_setup_early_table_access(uacpi_early_table_buffer, ACPI_EARLY_TABLE_BUFFER_SIZE);
     if (status != UACPI_STATUS_OK)
     {
-        kprintf("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        error_logger("ACPI: uACPI early init failed: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
         panic();
     }
 

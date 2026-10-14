@@ -87,7 +87,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
 
     if (target_cpu_id >= platform.cpu_count)
     {
-        kprintf("Arx kernel: send_ipi rejected invalid target cpu id %u\n", (unsigned) target_cpu_id);
+        error_logger("Arx kernel: send_ipi rejected invalid target cpu id %u\n", (unsigned) target_cpu_id);
         return;
     }
 

@@ -241,12 +241,12 @@ static void cache_init(cache_t* cache, size_t object_size)
         slab_t* slab = alloc_slab_struct(cache);
         if (slab == NULL)
         {
-            kprintf("Arx kernel: failed to allocate slab metadata for cache\n");
+            error_logger("Arx kernel: failed to allocate slab metadata for cache\n");
             panic();
         }
         if (!slab_init(slab, object_size))
         {
-            kprintf("Arx kernel: failed to initialize slab\n");
+            error_logger("Arx kernel: failed to initialize slab\n");
             panic();
         }
 

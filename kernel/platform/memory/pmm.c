@@ -178,7 +178,7 @@ void pmm_init(struct boot_info* boot_info)
     uint64_t buddy_metadata_pfn = pmm_alloc_from_region(zone, buddy_metadata_pages);
     if (buddy_metadata_pfn == PMM_INVALID_PFN)
     {
-        kprintf("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
+        error_logger("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
         panic();
     }
 

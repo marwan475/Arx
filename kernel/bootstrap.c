@@ -87,7 +87,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     if (!terminal_init(&platform.framebuffer))
     {
-        kprintf("Arx kernel: failed to initialize terminal\n");
+        error_logger("Arx kernel: failed to initialize terminal\n");
         panic();
     }
 
@@ -136,7 +136,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     if (!status)
     {
-        kprintf("Arx kernel: architecture initialization failed\n");
+        error_logger("Arx kernel: architecture initialization failed\n");
         kterm_printf("Arx kernel: architecture initialization failed\n");
         panic();
     }

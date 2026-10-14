@@ -34,7 +34,8 @@ extern "C" void kmain(void)
     if (resourceLayerCaps != nullptr && logicLayerCaps != nullptr && logicLayerCaps->virtualFileSystem != nullptr)
     {
         const bool mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
-        kprintf("Arx kernel: root initramfs mount %s\n", mounted ? "ok" : "failed");
+        if (mounted) kprintf("Arx kernel: root initramfs mount ok\n");
+        else error_logger("Arx kernel: root initramfs mount failed\n");
         poststartkerneltests((void*) resourceLayerCaps, (void*) logicLayerCaps);
     }
 
@@ -85,6 +86,7 @@ static void KernelPostInit(void)
         selftest_group_end("smp");
 
         selftest_print_summary();
+        error_logger_print();
     }
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
@@ -141,7 +143,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
         process_t* process = processManager->CreateProcess(activeSpace);
         if (process == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init process create failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init process create failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }
@@ -149,7 +151,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
         task_t* seedTask = taskManager->AllocateTask();
         if (seedTask == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u running task allocation failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running task allocation failed\n", (unsigned) cpuId);
             (void) processManager->FreeProcess(process);
             all_ok = false;
             continue;
@@ -157,7 +159,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!taskManager->SetRunningTask(cpuId, seedTask))
         {
-            kprintf("Arx kernel: bootstrap cpu %u running task set failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running task set failed\n", (unsigned) cpuId);
             (void) taskManager->FreeTask(seedTask);
             (void) processManager->FreeProcess(process);
             all_ok = false;
@@ -166,7 +168,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!processManager->SetRunningProcess(cpuId, process))
         {
-            kprintf("Arx kernel: bootstrap cpu %u running process set failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running process set failed\n", (unsigned) cpuId);
             (void) taskManager->SetRunningTask(cpuId, nullptr);
             (void) taskManager->FreeTask(seedTask);
             (void) processManager->FreeProcess(process);
@@ -177,14 +179,14 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
         task_t* postInitTask = taskManager->CreateKernelTask(KernelPostInitTask, (void*) (uintptr_t) cpuId);
         if (postInitTask == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init task create failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init task create failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }
 
         if (!processManager->AddTask(process, postInitTask))
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init task attach failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init task attach failed\n", (unsigned) cpuId);
             (void) taskManager->FreeTask(postInitTask);
             all_ok = false;
             continue;
@@ -192,7 +194,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!scheduler->EnqueueProcess(cpuId, process->id))
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init enqueue failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init enqueue failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }

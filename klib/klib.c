@@ -6,6 +6,101 @@
 
 spinlock_t kprintf_lock = 0;
 
+static error_log_buffer_t boot_errors;
+
+static void error_logger_format(char* message, const char* format, va_list args)
+{
+    const int length = vsnprintf_(message, ERROR_LOGGER_MESSAGE_SIZE, format, args);
+    if (length < 0)
+        memcpy(message, "error formatting diagnostic", sizeof("error formatting diagnostic"));
+    else if ((size_t) length >= ERROR_LOGGER_MESSAGE_SIZE)
+        memcpy(message + ERROR_LOGGER_MESSAGE_SIZE - sizeof(" [truncated]"), " [truncated]", sizeof(" [truncated]"));
+}
+
+static bool error_logger_publish(error_log_buffer_t* buffer, const char* message)
+{
+    if (message[0] == '\0') return false;
+    // Each writer owns one slot. An interrupt/NMI cannot deadlock on a logger
+    // lock held by its interrupted context; ready publishes the completed copy.
+    const uint64_t index = __atomic_fetch_add(&buffer->reserved, 1ULL, __ATOMIC_RELAXED);
+    if (index >= ERROR_LOGGER_CAPACITY) return false;
+    memcpy(buffer->entries[index].message, message, strlen(message) + 1);
+    __atomic_store_n(&buffer->entries[index].ready, 1, __ATOMIC_RELEASE);
+    return true;
+}
+
+bool error_logger_append(error_log_buffer_t* buffer, const char* format, ...)
+{
+    if (buffer == NULL || format == NULL) return false;
+    char message[ERROR_LOGGER_MESSAGE_SIZE];
+    va_list args;
+    va_start(args, format);
+    error_logger_format(message, format, args);
+    va_end(args);
+    return error_logger_publish(buffer, message);
+}
+
+bool error_logger_read(const error_log_buffer_t* buffer, size_t index, char* message, size_t capacity)
+{
+    if (buffer == NULL || message == NULL || capacity == 0 || index >= ERROR_LOGGER_CAPACITY) return false;
+    if (!__atomic_load_n(&buffer->entries[index].ready, __ATOMIC_ACQUIRE)) return false;
+    const char* source = buffer->entries[index].message;
+    size_t length = strlen(source);
+    if (length >= capacity) length = capacity - 1;
+    memcpy(message, source, length);
+    message[length] = '\0';
+    return true;
+}
+
+void error_logger(const char* format, ...)
+{
+    if (format == NULL) return;
+    char message[ERROR_LOGGER_MESSAGE_SIZE];
+    va_list args;
+    va_start(args, format);
+    error_logger_format(message, format, args);
+    va_end(args);
+    (void) error_logger_publish(&boot_errors, message);
+    // Store first: even an emergency serial failure cannot discard the record.
+    kprintf("%s%s", message, message[0] != '\0' && message[strlen(message) - 1] != '\n' ? "\n" : "");
+}
+
+static void error_logger_output(const char* message)
+{
+    KDEBUG("%s", message);
+    kprintf("%s", message);
+}
+
+void error_logger_print(void)
+{
+    const uint64_t reserved = __atomic_load_n(&boot_errors.reserved, __ATOMIC_ACQUIRE);
+    const uint64_t count = reserved < ERROR_LOGGER_CAPACITY ? reserved : ERROR_LOGGER_CAPACITY;
+    char message[ERROR_LOGGER_MESSAGE_SIZE];
+    char line[ERROR_LOGGER_MESSAGE_SIZE + 96];
+    error_logger_output("\n========== Kernel error log ==========\n");
+    if (count == 0) error_logger_output("No recorded kernel errors.\n");
+    uint64_t pending = 0;
+    for (uint64_t i = 0; i < count; ++i)
+    {
+        if (!error_logger_read(&boot_errors, (size_t) i, message, sizeof(message)))
+        {
+            ++pending;
+            continue;
+        }
+        const size_t length = strlen(message);
+        snprintf_(line, sizeof(line), "[error %llu] %s%s", (unsigned long long) (i + 1), message,
+            length != 0 && message[length - 1] == '\n' ? "" : "\n");
+        error_logger_output(line);
+    }
+    if (reserved > count || pending != 0)
+    {
+        snprintf_(line, sizeof(line), "Error log: %llu dropped (buffer full), %llu pending at snapshot.\n",
+            (unsigned long long) (reserved - count), (unsigned long long) pending);
+        error_logger_output(line);
+    }
+    error_logger_output("======== End kernel error log ========\n");
+}
+
 static void sift_u32(uint32_t* values, size_t root, size_t count)
 {
     while (root < count / 2)

@@ -216,7 +216,7 @@ void arch_smp_init(struct boot_info* boot_info)
 
     if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
     {
-        kprintf("Arx kernel: smp cpu array unavailable\n");
+        error_logger("Arx kernel: smp cpu array unavailable\n");
         return;
     }
 

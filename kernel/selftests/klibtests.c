@@ -250,6 +250,63 @@ static void sort_u32_test(size_t* passes, size_t* failures)
         (*passes)++;
 }
 
+static void error_logger_test(size_t* passes, size_t* failures)
+{
+    // An isolated buffer avoids clearing actual boot errors or printing fake
+    // failures in the end-of-init dump. Static storage avoids a large stack.
+    static error_log_buffer_t buffer;
+    char output[ERROR_LOGGER_MESSAGE_SIZE];
+    memset(&buffer, 0, sizeof(buffer));
+    if (error_logger_read(&buffer, 0, output, sizeof(output))
+        || error_logger_append(NULL, "bad") || error_logger_append(&buffer, NULL)
+        || error_logger_append(&buffer, "") || buffer.reserved != 0)
+        klib_test_log_fail("error logger empty/invalid inputs", failures);
+    else (*passes)++;
+
+    if (!error_logger_append(&buffer, "clock %s status=%u address=0x%llx", "HPET", 3U, 0x123456789abcdef0ULL)
+        || !error_logger_read(&buffer, 0, output, sizeof(output))
+        || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0)
+        klib_test_log_fail("error logger formatted diagnostic", failures);
+    else (*passes)++;
+
+    char small[5] = {'?', '?', '?', '?', '!'};
+    if (!error_logger_read(&buffer, 0, small, 4) || strcmp(small, "clo") != 0 || small[4] != '!'
+        || error_logger_read(&buffer, 0, output, 0) || error_logger_read(NULL, 0, output, sizeof(output))
+        || error_logger_read(&buffer, 0, NULL, sizeof(output))
+        || error_logger_read(&buffer, ERROR_LOGGER_CAPACITY, output, sizeof(output)))
+        klib_test_log_fail("error logger bounded reads", failures);
+    else (*passes)++;
+
+    char longMessage[ERROR_LOGGER_MESSAGE_SIZE + 32];
+    memset(longMessage, 'x', sizeof(longMessage) - 1);
+    longMessage[sizeof(longMessage) - 1] = '\0';
+    if (!error_logger_append(&buffer, "%s", longMessage)
+        || !error_logger_read(&buffer, 1, output, sizeof(output))
+        || strlen(output) != ERROR_LOGGER_MESSAGE_SIZE - 1
+        || strcmp(output + ERROR_LOGGER_MESSAGE_SIZE - sizeof(" [truncated]"), " [truncated]") != 0)
+        klib_test_log_fail("error logger marks truncated diagnostics", failures);
+    else (*passes)++;
+
+    bool filled = true;
+    for (size_t i = 2; i < ERROR_LOGGER_CAPACITY; ++i)
+        filled &= error_logger_append(&buffer, "entry %u", (unsigned) i);
+    if (!filled || error_logger_append(&buffer, "overflow")
+        || buffer.reserved != ERROR_LOGGER_CAPACITY + 1
+        || !error_logger_read(&buffer, 0, output, sizeof(output))
+        || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0
+        || !error_logger_read(&buffer, ERROR_LOGGER_CAPACITY - 1, output, sizeof(output)))
+        klib_test_log_fail("error logger full buffer preserves earliest diagnostics", failures);
+    else (*passes)++;
+
+    // A slot reserved by another CPU must remain unreadable until publication.
+    memset(&buffer, 0, sizeof(buffer));
+    buffer.reserved = 1;
+    memcpy(buffer.entries[0].message, "unfinished", sizeof("unfinished"));
+    if (error_logger_read(&buffer, 0, output, sizeof(output)))
+        klib_test_log_fail("error logger does not read unpublished slots", failures);
+    else (*passes)++;
+}
+
 void run_klib_selftests(void)
 {
     size_t failures = 0;
@@ -261,6 +318,7 @@ void run_klib_selftests(void)
     kmalloc_test(&passes, &failures);
     kzalloc_test(&passes, &failures);
     sort_u32_test(&passes, &failures);
+    error_logger_test(&passes, &failures);
 
     selftest_case_end("klib_test", (unsigned long long) passes, (unsigned long long) failures);
 }

@@ -243,7 +243,7 @@ static bool init_arch_acpi()
     status = acpi_get_madt(&madt, &madt_table);
     if (status != UACPI_STATUS_OK)
     {
-        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        error_logger("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
         return false;
     }
 
@@ -251,7 +251,7 @@ static bool init_arch_acpi()
     if (status != UACPI_STATUS_OK)
     {
         uacpi_table_unref(&madt_table);
-        kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        error_logger("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
         return false;
     }
 

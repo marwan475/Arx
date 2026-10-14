@@ -8,6 +8,10 @@ TimeManager::TimeManager() : RealtimeSeconds(0), ResolutionNanoseconds(0), Clock
 {
     ClockAvailable = arch_time_init(&RealtimeSeconds, &RealtimeAvailable, &ResolutionNanoseconds);
     kprintf("Arx kernel: time clock=%s realtime=%s\n", ClockAvailable ? "HPET" : "unavailable", RealtimeAvailable ? "RTC" : "unavailable");
+    if (!ClockAvailable)
+        error_logger("Arx kernel: no usable monotonic clock; clock reads and timed waits are unavailable");
+    else if (!RealtimeAvailable)
+        error_logger("Arx kernel: RTC unavailable; realtime clock reads are unavailable");
 }
 
 uint64_t TimeManager::ReadClock(int clock, time_timespec_t* value)

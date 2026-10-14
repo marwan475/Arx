@@ -2,6 +2,7 @@
 #define KLIB_H
 
 #include "debug.h"
+#include "error_logger.h"
 
 #include <arch/arch.h>
 #include <boot/boot.h>

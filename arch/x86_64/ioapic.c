@@ -203,7 +203,7 @@ void ioapic_init(void)
 
     if (ioapic_ver == 0 || ioapic_ver == 0xFFFFFFFF)
     {
-        kprintf("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr);
+        error_logger("Arx kernel: cpu %d IOAPIC MMIO read failed ver=0x%x pa=0x%llx\n", arch_cpu_id(), (unsigned) ioapic_ver, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr);
         panic();
     }
 

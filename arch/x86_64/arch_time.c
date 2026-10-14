@@ -99,8 +99,12 @@ static bool read_rtc(uint64_t* seconds)
 bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds)
 {
     uacpi_table table;
-    if (uacpi_table_find_by_signature(ACPI_HPET_SIGNATURE, &table) != UACPI_STATUS_OK)
+    uacpi_status status = uacpi_table_find_by_signature(ACPI_HPET_SIGNATURE, &table);
+    if (status != UACPI_STATUS_OK)
+    {
+        error_logger("Arx kernel: HPET unavailable: ACPI table lookup status=%u\n", (unsigned) status);
         return false;
+    }
     uint64_t address = 0;
     if (table.hdr->length >= sizeof(struct acpi_hpet))
     {
@@ -110,17 +114,27 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     }
     uacpi_table_unref(&table);
     if (address == 0 || (address & 7) || (address & (PAGE_SIZE - 1)) > PAGE_SIZE - 0xf8)
+    {
+        error_logger("Arx kernel: HPET unavailable: missing/unsupported register address\n");
         return false;
+    }
     cpu_info_t* cpu  = &platform.cpus[arch_cpu_id()];
     phys_addr_t page = align_down(address, PAGE_SIZE);
     virt_addr_t base = vmm_map_direct_mmio_page(page, cpu->address_space);
     if (vmm_virt_to_phys(base, cpu->address_space) != page)
+    {
+        error_logger("Arx kernel: HPET unavailable: MMIO mapping failed\n");
         return false;
+    }
     volatile uint8_t* registers    = (volatile uint8_t*) (uintptr_t) (base + (address - page));
     uint64_t          capabilities = REG(uint64_t, registers);
     uint64_t          period       = capabilities >> 32;
     if (!(capabilities & (1ULL << 13)) || period == 0 || period > 100000000)
+    {
+        error_logger("Arx kernel: HPET unavailable: counter64=%u period_fs=%llu\n",
+                (unsigned) ((capabilities >> 13) & 1), (unsigned long long) period);
         return false;
+    }
     REG(uint64_t, registers + 0x10) |= 1;
     uint64_t initial   = REG(uint64_t, registers + 0xf0);
     bool     advancing = false;
@@ -134,7 +148,10 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
         arch_pause();
     }
     if (!advancing)
+    {
+        error_logger("Arx kernel: HPET unavailable: enabled counter did not advance\n");
         return false;
+    }
     __asm__ volatile("inb $0x70, %0" : "=a"(cmos_index));
     // RTC is interpreted as UTC; no timezone-setting syscall is implemented.
     *realtimeAvailable = read_rtc(realtimeSeconds);

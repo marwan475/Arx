@@ -127,7 +127,7 @@ static bool pci_map_regions(void)
 
         if (platform.arch_info.pci_regions[i].end_bus < platform.arch_info.pci_regions[i].start_bus)
         {
-            kprintf("PCI: invalid ECAM bus range for segment %u\n", platform.arch_info.pci_regions[i].segment);
+            error_logger("PCI: invalid ECAM bus range for segment %u\n", platform.arch_info.pci_regions[i].segment);
             return false;
         }
 
@@ -149,7 +149,7 @@ static bool pci_map_regions(void)
         }
         if (mapped == NULL)
         {
-            kprintf("PCI: failed to map ECAM region %u\n", (unsigned) i);
+            error_logger("PCI: failed to map ECAM region %u\n", (unsigned) i);
             return false;
         }
 
@@ -305,7 +305,7 @@ static bool pci_get_device_info(void)
     devices = (pci_device_t*) kmalloc(MAX_PCI_DEVICES * sizeof(pci_device_t));
     if (devices == NULL)
     {
-        kprintf("PCI: failed to allocate pci device array\n");
+        error_logger("PCI: failed to allocate pci device array\n");
         return false;
     }
 
@@ -438,7 +438,7 @@ bool pci_init(void)
     region_count = 0;
     if (!pci_get_mcfg_region_count(&region_count))
     {
-        kprintf("PCI: failed to read MCFG region count\n");
+        error_logger("PCI: failed to read MCFG region count\n");
         return false;
     }
 
@@ -453,7 +453,7 @@ bool pci_init(void)
     regions = (pci_ecam_region_t*) kmalloc(region_count * sizeof(pci_ecam_region_t));
     if (regions == NULL)
     {
-        kprintf("PCI: failed to allocate region table (%u entries)\n", (unsigned) region_count);
+        error_logger("PCI: failed to allocate region table (%u entries)\n", (unsigned) region_count);
         return false;
     }
 
@@ -461,7 +461,7 @@ bool pci_init(void)
     if (!pci_get_regions_from_mcfg(regions, region_count, &extracted_count))
     {
         kfree(regions);
-        kprintf("PCI: failed to extract MCFG regions\n");
+        error_logger("PCI: failed to extract MCFG regions\n");
         return false;
     }
 

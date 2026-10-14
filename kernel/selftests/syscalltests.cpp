@@ -3203,7 +3203,7 @@ static bool test_time_clock(process_t* process, uint64_t number)
     if (result == LINUX_ENOSYS)
     {
         kprintf("Arx kernel: time selftest clock unavailable syscall=%llu\n", (unsigned long long) number);
-        return memory_expect(number == SYSCALL_time || number == SYSCALL_gettimeofday, "monotonic HPET clock is required for clock selftests");
+        return memory_expect(number == SYSCALL_time || number == SYSCALL_gettimeofday, "monotonic clock unavailable; inspect boot clock diagnostic");
     }
     bool ok = memory_expect(number == SYSCALL_time ? static_cast<int64_t>(result) >= 0 : result == 0, "time dispatcher success");
     ok &= memory_expect(*memory_bytes(process, output - 1) == 0xa5 && *memory_bytes(process, output + outputSize) == 0xa5, "time writes exact ABI size");
@@ -3295,6 +3295,13 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     Dispatcher*          dispatcher  = static_cast<Dispatcher*>(platform.dispacher);
     ResourceLayerCaps*   resources   = dispatcher->GetResourceLayerCaps();
     Scheduler*           scheduler   = dispatcher->GetLogicLayerCaps()->scheduler;
+    time_timespec_t clockProbe;
+    if (resources->timeManager == nullptr || resources->timeManager->ReadClock(1, &clockProbe) != 0)
+    {
+        // Retain failure reporting without creating a runnable peer that a
+        // missing clock cannot park/wake the current task to exercise.
+        return memory_expect(false, "sleep requires monotonic clock; inspect boot clock diagnostic");
+    }
     sleep_peer_context_t peerContext = {scheduler, resources->processManager, resources->taskManager, process, resources->taskManager->GetCurrentTask(), false, false, false};
     virt_addr_space_t*   peerSpace   = resources->virtualMemoryManager->CreateUserAddressSpace();
     process_t*           peerProcess = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;

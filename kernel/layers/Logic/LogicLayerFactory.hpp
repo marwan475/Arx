@@ -11,13 +11,13 @@ class SignalManager;
 
 struct LogicLayerCaps
 {
-    Scheduler*         scheduler;
-    VirtualFileSystem* virtualFileSystem;
-    ElfMapper*         elfMapper;
-    CredentialManager* credentialManager;
-    EventManager*      eventManager;
+    Scheduler*              scheduler;
+    VirtualFileSystem*      virtualFileSystem;
+    ElfMapper*              elfMapper;
+    CredentialManager*      credentialManager;
+    EventManager*           eventManager;
     SynchronizationManager* synchronizationManager;
-    SignalManager* signalManager;
+    SignalManager*          signalManager;
 };
 
 class LogicLayerFactory

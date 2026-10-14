@@ -205,10 +205,10 @@ uint64_t TimeRequestManager::SleepRequest(int clock, bool absolute, uint64_t req
             return LINUX_ENOSYS;
         }
 
-        uint64_t left=deadline > now ? deadline-now : 0;
-        time_timespec_t remaining={(int64_t) (left/1000000000), (int64_t) (left%1000000000)};
+        uint64_t        left      = deadline > now ? deadline - now : 0;
+        time_timespec_t remaining = {(int64_t) (left / 1000000000), (int64_t) (left % 1000000000)};
 
-        if (!safe_write_user(remainderAddress,&remaining,sizeof(remaining)))
+        if (!safe_write_user(remainderAddress, &remaining, sizeof(remaining)))
         {
             return LINUX_EFAULT;
         }

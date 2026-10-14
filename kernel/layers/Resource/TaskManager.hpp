@@ -1,11 +1,12 @@
 #pragma once
 
+#include "layers/Resource/SignalState.hpp"
+
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "layers/Resource/SignalState.hpp"
 
 struct process_t;
 
@@ -31,24 +32,24 @@ struct task_t
         uint64_t arg1;
     } userLaunchContext;
 
-    bool                     allocated;
-    bool                     isUserTask;
-    bool                     sleepPending;
-    bool                     sleepBlocked;
-    uint64_t                 syscallActive;
-    uint32_t                 preemptionDepth;
-    uint64_t                 id;
-    char                     name[16];
-    process_t* process;
-    uint64_t signalMask;
-    uint64_t signalPending;
-    uint64_t signalSequence;
+    bool             allocated;
+    bool             isUserTask;
+    bool             sleepPending;
+    bool             sleepBlocked;
+    uint64_t         syscallActive;
+    uint32_t         preemptionDepth;
+    uint64_t         id;
+    char             name[16];
+    process_t*       process;
+    uint64_t         signalMask;
+    uint64_t         signalPending;
+    uint64_t         signalSequence;
     signal_sender_t* signalSenders;
-    signal_stack_t signalStack;
-    uint64_t signalDepth;
-    uint64_t robustHead;
-    process_t* robustOwner;
-    void* retirementContext;
+    signal_stack_t   signalStack;
+    uint64_t         signalDepth;
+    uint64_t         robustHead;
+    process_t*       robustOwner;
+    void*            retirementContext;
     void (*retirementCleanup)(void*, task_t*);
     struct arch_task_context taskContext;
     void*                    stack;

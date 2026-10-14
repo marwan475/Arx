@@ -147,7 +147,7 @@ static bool read_rtc(uint64_t* seconds)
 
 bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds)
 {
-    uacpi_table table;
+    uacpi_table  table;
     uacpi_status status = uacpi_table_find_by_signature(ACPI_HPET_SIGNATURE, &table);
 
     if (status != UACPI_STATUS_OK)
@@ -192,8 +192,7 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
 
     if (period == 0 || period > 100000000)
     {
-        error_logger("Arx kernel: HPET unavailable: counter64=%u period_fs=%llu\n",
-                (unsigned) ((capabilities >> 13) & 1), (unsigned long long) period);
+        error_logger("Arx kernel: HPET unavailable: counter64=%u period_fs=%llu\n", (unsigned) ((capabilities >> 13) & 1), (unsigned long long) period);
         return false;
     }
 
@@ -223,9 +222,9 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     // RTC is interpreted as UTC; no timezone-setting syscall is implemented.
     *realtimeAvailable = read_rtc(realtimeSeconds);
     __asm__ volatile("outb %0, $0x70" : : "a"(cmos_index));
-    counter_origin         = hpet_read_counter(registers, wide);
-    period_fs              = period;
-    counter_is_64bit       = wide;
+    counter_origin   = hpet_read_counter(registers, wide);
+    period_fs        = period;
+    counter_is_64bit = wide;
     __atomic_store_n(&extended_counter32, counter_origin, __ATOMIC_RELAXED);
     // AP timer reads may start before initialization finishes. Publish only
     // after all immutable state and the 32-bit extension baseline are ready.
@@ -258,7 +257,7 @@ bool arch_time_read_monotonic(uint64_t* nanoseconds)
             // Re-read hardware after every failed CAS. Reusing an older sample
             // after another CPU advanced the baseline would invent a wrap.
             const uint32_t sample = (uint32_t) hpet_read_counter(registers, false);
-            counter = extend_counter32(previous, sample);
+            counter               = extend_counter32(previous, sample);
 
             if (__atomic_compare_exchange_n(&extended_counter32, &previous, counter, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
             {

@@ -69,25 +69,24 @@ void lapic_timer_init(void)
 bool lapic_timer_calibrate(void)
 {
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
-    uint64_t start, finish;
+    uint64_t    start, finish;
 
-    if (!cpu->arch_info.acpi_has_lapic || cpu->arch_info.acpi_lapic_base_addr == 0
-        || !arch_time_read_monotonic(&start))
+    if (!cpu->arch_info.acpi_has_lapic || cpu->arch_info.acpi_lapic_base_addr == 0 || !arch_time_read_monotonic(&start))
         return false;
 
     // The HPET is available only after resource initialization. Calibrate here
     // from each CPU's post-init task, retaining the bootstrap timer on failure.
     // IPIs remain enabled; only timer dispatch is masked during measurement.
     cpu_preemption_disable();
-    volatile uint8_t* registers = lapic_get_base(cpu);
-    const uint32_t previous_lvt = REG(uint32_t, registers + LAPIC_REG_LVT_TIMER);
-    const uint32_t previous_initial = REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT);
-    REG(uint32_t, registers + LAPIC_REG_LVT_TIMER) = LAPIC_LVT_MASKED | LAPIC_TIMER_VECTOR;
+    volatile uint8_t* registers                        = lapic_get_base(cpu);
+    const uint32_t    previous_lvt                     = REG(uint32_t, registers + LAPIC_REG_LVT_TIMER);
+    const uint32_t    previous_initial                 = REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT);
+    REG(uint32_t, registers + LAPIC_REG_LVT_TIMER)     = LAPIC_LVT_MASKED | LAPIC_TIMER_VECTOR;
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = UINT32_MAX;
 
-    bool measured = arch_time_read_monotonic(&start);
-    const uint32_t first = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
-    finish = start;
+    bool           measured = arch_time_read_monotonic(&start);
+    const uint32_t first    = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
+    finish                  = start;
     // A bounded loop must restore timer delivery even if HPET stops advancing.
 
     for (unsigned attempts = 0; measured && attempts < 1000000; ++attempts)
@@ -102,23 +101,22 @@ bool lapic_timer_calibrate(void)
         arch_pause();
     }
 
-    const uint32_t last = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
+    const uint32_t last    = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
     const uint64_t elapsed = finish >= start ? finish - start : 0;
-    const uint64_t ticks = first >= last ? (uint64_t) first - last : 0;
+    const uint64_t ticks   = first >= last ? (uint64_t) first - last : 0;
     // Reject expiration, non-advancing timers and excessively interrupted samples.
-    measured = measured && last != 0 && ticks != 0 && elapsed >= 10000000ULL && elapsed <= 100000000ULL;
-    const uint64_t initial = measured ? ticks * 10000000ULL / elapsed : 0;
-    measured = measured && initial != 0 && initial <= UINT32_MAX;
+    measured                                           = measured && last != 0 && ticks != 0 && elapsed >= 10000000ULL && elapsed <= 100000000ULL;
+    const uint64_t initial                             = measured ? ticks * 10000000ULL / elapsed : 0;
+    measured                                           = measured && initial != 0 && initial <= UINT32_MAX;
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = 0;
-    REG(uint32_t, registers + LAPIC_REG_LVT_TIMER) = measured ? LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR : previous_lvt;
+    REG(uint32_t, registers + LAPIC_REG_LVT_TIMER)     = measured ? LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR : previous_lvt;
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = measured ? (uint32_t) initial : previous_initial;
     cpu_preemption_enable();
 
     if (measured)
     {
         const uint64_t old_microseconds = (uint64_t) previous_initial * elapsed / ticks / 1000;
-        KDEBUG("cpu %u LAPIC timer calibrated: previous period~%llu us, target=10000 us, count=%u\n",
-            (unsigned) arch_cpu_id(), (unsigned long long) old_microseconds, (unsigned) initial);
+        KDEBUG("cpu %u LAPIC timer calibrated: previous period~%llu us, target=10000 us, count=%u\n", (unsigned) arch_cpu_id(), (unsigned long long) old_microseconds, (unsigned) initial);
     }
     else
     {

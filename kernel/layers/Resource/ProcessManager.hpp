@@ -109,11 +109,11 @@ struct process_t
     process_credentials_t credentials;
     process_group_list_t* supplementaryGroups;
     char                  cwdPath[256];
-    spinlock_t signalLock;
-    uint64_t signalPending;
-    uint64_t signalIgnored;
-    signal_action_t signalActions[32];
-    signal_sender_t signalSenders[32];
+    spinlock_t            signalLock;
+    uint64_t              signalPending;
+    uint64_t              signalIgnored;
+    signal_action_t       signalActions[32];
+    signal_sender_t       signalSenders[32];
 };
 
 inline uint64_t pending_signals(const process_t* process, const task_t* task)
@@ -123,9 +123,7 @@ inline uint64_t pending_signals(const process_t* process, const task_t* task)
         return 0;
     }
 
-    return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE))
-        & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE)
-        & ~__atomic_load_n(&process->signalIgnored, __ATOMIC_ACQUIRE);
+    return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE)) & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE) & ~__atomic_load_n(&process->signalIgnored, __ATOMIC_ACQUIRE);
 }
 
 // A descriptor pointer is borrowed only inside this transaction. Holding the

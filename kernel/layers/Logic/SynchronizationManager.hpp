@@ -20,25 +20,25 @@ public:
 
 private:
     static constexpr size_t CAPACITY = 128;
-    static constexpr size_t NONE = (size_t) -1;
+    static constexpr size_t NONE     = (size_t) -1;
     struct waiter_t
     {
         virt_addr_space* space;
-        uint64_t address;
-        uint64_t sequence;
-        uint32_t bits;
-        size_t next;
-        bool used;
-        bool queued;
-        bool woken;
+        uint64_t         address;
+        uint64_t         sequence;
+        uint32_t         bits;
+        size_t           next;
+        bool             used;
+        bool             queued;
+        bool             woken;
     };
-    void Remove(size_t index);
-    uint64_t WakeKey(virt_addr_space* space, uint64_t address, int32_t count, uint32_t bits);
-    static void CleanupRobust(void* context, task_t* task);
+    void               Remove(size_t index);
+    uint64_t           WakeKey(virt_addr_space* space, uint64_t address, int32_t count, uint32_t bits);
+    static void        CleanupRobust(void* context, task_t* task);
     ResourceLayerCaps* Resources;
-    Scheduler* SchedulerManager;
-    spinlock_t Lock;
-    waiter_t Waiters[CAPACITY];
-    size_t Head;
-    size_t Tail;
+    Scheduler*         SchedulerManager;
+    spinlock_t         Lock;
+    waiter_t           Waiters[CAPACITY];
+    size_t             Head;
+    size_t             Tail;
 };

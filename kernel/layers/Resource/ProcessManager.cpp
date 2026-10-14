@@ -69,16 +69,16 @@ FileDescriptorGuard::~FileDescriptorGuard()
 
 void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
 {
-    process->allocated    = allocated;
-    process->id           = id;
-    process->hasParent    = false;
-    process->parentId     = 0;
-    process->exited       = false;
-    process->reclaiming   = false;
+    process->allocated        = allocated;
+    process->id               = id;
+    process->hasParent        = false;
+    process->parentId         = 0;
+    process->exited           = false;
+    process->reclaiming       = false;
     process->retirementActive = false;
-    process->signalLock = 0;
-    process->signalPending = 0;
-    process->signalIgnored = SIGNAL_DEFAULT_IGNORED;
+    process->signalLock       = 0;
+    process->signalPending    = 0;
+    process->signalIgnored    = SIGNAL_DEFAULT_IGNORED;
     memset(process->signalActions, 0, sizeof(process->signalActions));
     memset(process->signalSenders, 0, sizeof(process->signalSenders));
     process->ownerCpu     = -1;

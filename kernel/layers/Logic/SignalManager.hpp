@@ -1,7 +1,8 @@
 #pragma once
+#include "layers/Resource/SignalState.hpp"
+
 #include <arch/arch.h>
 #include <stddef.h>
-#include "layers/Resource/SignalState.hpp"
 
 struct ResourceLayerCaps;
 class Scheduler;
@@ -19,8 +20,9 @@ public:
     uint64_t Pause();
     uint64_t Deliver(arch_syscall_frame_t* frame, uint64_t result, bool restartable = false);
     uint64_t Restore(arch_syscall_frame_t* frame);
+
 private:
-    [[noreturn]] void Terminate(int signal);
+    [[noreturn]] void  Terminate(int signal);
     ResourceLayerCaps* Resources;
-    Scheduler* SchedulerManager;
+    Scheduler*         SchedulerManager;
 };

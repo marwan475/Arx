@@ -16,6 +16,7 @@ public:
     uint64_t HandleKillRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleTgkillRequest(const arch_syscall_frame_t* frame);
     uint64_t HandlePauseRequest(const arch_syscall_frame_t* frame);
+
 private:
     LogicLayerCaps* Logic;
 };

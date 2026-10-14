@@ -644,7 +644,6 @@ uint64_t EventManager::WaitEpoll(int32_t epfd, event_epoll_event_t* events, size
                 return status;
             }
         }
-
     }();
     Vfs->Close(file);
     return result;

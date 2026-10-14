@@ -53,7 +53,7 @@ bool error_logger_append(error_log_buffer_t* buffer, const char* format, ...)
         return false;
     }
 
-    char message[ERROR_LOGGER_MESSAGE_SIZE];
+    char    message[ERROR_LOGGER_MESSAGE_SIZE];
     va_list args;
     va_start(args, format);
     error_logger_format(message, format, args);
@@ -74,7 +74,7 @@ bool error_logger_read(const error_log_buffer_t* buffer, size_t index, char* mes
     }
 
     const char* source = buffer->entries[index].message;
-    size_t length = strlen(source);
+    size_t      length = strlen(source);
 
     if (length >= capacity)
     {
@@ -93,7 +93,7 @@ void error_logger(const char* format, ...)
         return;
     }
 
-    char message[ERROR_LOGGER_MESSAGE_SIZE];
+    char    message[ERROR_LOGGER_MESSAGE_SIZE];
     va_list args;
     va_start(args, format);
     error_logger_format(message, format, args);
@@ -112,9 +112,9 @@ static void error_logger_output(const char* message)
 void error_logger_print(void)
 {
     const uint64_t reserved = __atomic_load_n(&boot_errors.reserved, __ATOMIC_ACQUIRE);
-    const uint64_t count = reserved < ERROR_LOGGER_CAPACITY ? reserved : ERROR_LOGGER_CAPACITY;
-    char message[ERROR_LOGGER_MESSAGE_SIZE];
-    char line[ERROR_LOGGER_MESSAGE_SIZE + 96];
+    const uint64_t count    = reserved < ERROR_LOGGER_CAPACITY ? reserved : ERROR_LOGGER_CAPACITY;
+    char           message[ERROR_LOGGER_MESSAGE_SIZE];
+    char           line[ERROR_LOGGER_MESSAGE_SIZE + 96];
     error_logger_output("\n========== Kernel error log ==========\n");
 
     if (count == 0)
@@ -133,15 +133,13 @@ void error_logger_print(void)
         }
 
         const size_t length = strlen(message);
-        snprintf_(line, sizeof(line), "[error %llu] %s%s", (unsigned long long) (i + 1), message,
-            length != 0 && message[length - 1] == '\n' ? "" : "\n");
+        snprintf_(line, sizeof(line), "[error %llu] %s%s", (unsigned long long) (i + 1), message, length != 0 && message[length - 1] == '\n' ? "" : "\n");
         error_logger_output(line);
     }
 
     if (reserved > count || pending != 0)
     {
-        snprintf_(line, sizeof(line), "Error log: %llu dropped (buffer full), %llu pending at snapshot.\n",
-            (unsigned long long) (reserved - count), (unsigned long long) pending);
+        snprintf_(line, sizeof(line), "Error log: %llu dropped (buffer full), %llu pending at snapshot.\n", (unsigned long long) (reserved - count), (unsigned long long) pending);
         error_logger_output(line);
     }
 
@@ -277,7 +275,7 @@ bool safe_atomic_load_user32_locked(const user_memory_access_t* access, uint64_t
     }
 
     const uint32_t* word = (const uint32_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-    *value = __atomic_load_n(word, __ATOMIC_ACQUIRE);
+    *value               = __atomic_load_n(word, __ATOMIC_ACQUIRE);
     return true;
 }
 

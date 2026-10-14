@@ -92,11 +92,11 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
 
     while (*link != NO_SLEEPER)
     {
-        sleep_entry_t& entry   = SleepQueue[*link];
-        const bool     exited  = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
-        const bool     changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
-        const bool     timed   = entry.deadline != UINT64_MAX;
-        const bool interrupted = pending_signals(entry.process, entry.task) != 0;
+        sleep_entry_t& entry       = SleepQueue[*link];
+        const bool     exited      = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
+        const bool     changed     = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
+        const bool     timed       = entry.deadline != UINT64_MAX;
+        const bool     interrupted = pending_signals(entry.process, entry.task) != 0;
 
         if ((timed && !clockAvailable) || exited || interrupted || changed || (timed && entry.deadline <= now))
         {
@@ -127,10 +127,10 @@ void Scheduler::WakeSignalWaiters(process_t* process)
 
             if (entry.process == process && pending_signals(process, entry.task) != 0)
             {
-                *link = entry.next;
-                entry.next = NO_SLEEPER;
+                *link         = entry.next;
+                entry.next    = NO_SLEEPER;
                 entry.waiting = false;
-                entry.result = (uint64_t) -4;
+                entry.result  = (uint64_t) -4;
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
             }
             else
@@ -853,7 +853,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         task_t* next = iter->next;
 
         task_t* previous = iter->prev;
-        void* retired = nullptr;
+        void*   retired  = nullptr;
         // Run callbacks before taking QueueLock, then retire and unlink under
         // the same lock used when attaching a newly allocated task slot.
         const bool cleaned = taskManager->CleanupRetiredTask(iter);
@@ -887,7 +887,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     LockQueues();
-    const bool reap = process->tasks == nullptr;
+    const bool reap           = process->tasks == nullptr;
     process->retirementActive = false;
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a

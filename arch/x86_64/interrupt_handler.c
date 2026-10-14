@@ -220,7 +220,7 @@ static void handle_interrupt(registers_t* reg)
 }
 
 extern void arch_signal_interrupt(registers_t* reg, void* floating);
-void ISRHANDLER(registers_t* reg, void* floating)
+void        ISRHANDLER(registers_t* reg, void* floating)
 {
     handle_interrupt(reg);
 
@@ -230,7 +230,7 @@ void ISRHANDLER(registers_t* reg, void* floating)
         // signal delivery accesses user mappings, but defer ordinary preemption.
         cpu_preemption_disable();
         arch_enable_interrupts();
-        arch_signal_interrupt(reg,floating);
+        arch_signal_interrupt(reg, floating);
         arch_disable_interrupts();
         cpu_preemption_enable();
     }

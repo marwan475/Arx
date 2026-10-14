@@ -1,25 +1,26 @@
 #include "layers/Logic/SynchronizationManager.hpp"
+
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+
 #include <klib/klib.h>
 
-SynchronizationManager::SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler)
-    : Resources(resources), SchedulerManager(scheduler), Lock(0), Waiters{}, Head(NONE), Tail(NONE)
+SynchronizationManager::SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler) : Resources(resources), SchedulerManager(scheduler), Lock(0), Waiters{}, Head(NONE), Tail(NONE)
 {
     static_assert(CAPACITY == TaskManager::MAX_TASKS, "one futex waiter per task");
 }
 
 void SynchronizationManager::Remove(size_t index)
 {
-    size_t* link = &Head;
-    size_t previous = NONE;
+    size_t* link     = &Head;
+    size_t  previous = NONE;
 
     while (*link != NONE && *link != index)
     {
         previous = *link;
-        link = &Waiters[*link].next;
+        link     = &Waiters[*link].next;
     }
 
     if (*link == NONE)
@@ -50,14 +51,14 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
     }
 
     ProcessManager* processes = Resources->processManager;
-    process_t* process = processes->AcquireCurrentMemoryProcess();
+    process_t*      process   = processes->AcquireCurrentMemoryProcess();
 
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
 
-    task_t* task = Resources->taskManager->GetCurrentTask();
+    task_t*  task   = Resources->taskManager->GetCurrentTask();
     uint64_t result = [&]() -> uint64_t
     {
         if (task == nullptr || task->id >= CAPACITY)
@@ -72,8 +73,8 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             return LINUX_ESRCH;
         }
 
-        const size_t index = (size_t) task->id;
-        waiter_t& waiter = Waiters[index];
+        const size_t index  = (size_t) task->id;
+        waiter_t&    waiter = Waiters[index];
         spinlock_acquire_preempt(&Lock);
         uint32_t actual;
         uint64_t status = 0;
@@ -82,17 +83,19 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
         {
             status = LINUX_EINVAL;
         }
-        else if (!safe_atomic_load_user32_locked(&access, address, &actual)) status = LINUX_EFAULT;
-        else if (actual != expected) status = (uint64_t) -11; // EAGAIN
+        else if (!safe_atomic_load_user32_locked(&access, address, &actual))
+            status = LINUX_EFAULT;
+        else if (actual != expected)
+            status = (uint64_t) -11; // EAGAIN
 
         if (status == 0)
         {
-            waiter.space = access.space;
+            waiter.space   = access.space;
             waiter.address = address;
-            waiter.bits = bits;
+            waiter.bits    = bits;
             waiter.used = waiter.queued = true;
-            waiter.woken = false;
-            waiter.next = NONE;
+            waiter.woken                = false;
+            waiter.next                 = NONE;
 
             if (Tail != NONE)
             {
@@ -117,7 +120,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
 
         for (;;)
         {
-            uint64_t now = 0;
+            uint64_t   now   = 0;
             const bool clock = deadline == UINT64_MAX || arch_time_read_monotonic(&now);
             spinlock_acquire_preempt(&Lock);
 
@@ -125,8 +128,10 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             {
                 status = 0;
             }
-            else if (!clock) status = LINUX_ENOSYS;
-            else if (deadline != UINT64_MAX && now >= deadline) status = (uint64_t) -110; // ETIMEDOUT
+            else if (!clock)
+                status = LINUX_ENOSYS;
+            else if (deadline != UINT64_MAX && now >= deadline)
+                status = (uint64_t) -110; // ETIMEDOUT
             else
             {
                 spinlock_release_preempt(&Lock);
@@ -153,12 +158,11 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
                 Remove(index);
             }
 
-            waiter.used = false;
+            waiter.used  = false;
             waiter.space = nullptr;
             spinlock_release_preempt(&Lock);
             return status;
         }
-
     }();
     processes->ReleaseMemoryProcess(process);
     return result;
@@ -182,7 +186,7 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
     }
 
     ProcessManager* processes = Resources->processManager;
-    process_t* process = processes->AcquireCurrentMemoryProcess();
+    process_t*      process   = processes->AcquireCurrentMemoryProcess();
 
     if (process == nullptr)
     {
@@ -197,7 +201,7 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
 uint64_t SynchronizationManager::WakeKey(virt_addr_space* space, uint64_t address, int32_t count, uint32_t bits)
 {
     const uint64_t* notify[CAPACITY];
-    size_t woken = 0;
+    size_t          woken = 0;
     // Legacy Linux FUTEX_WAKE/WAKE_BITSET wakes the first matching waiter even
     // for a nonpositive nr_wake (the limit is checked after removing it).
     const uint32_t limit = count > 0 ? (uint32_t) count : 1U;
@@ -206,8 +210,8 @@ uint64_t SynchronizationManager::WakeKey(virt_addr_space* space, uint64_t addres
 
     while (index != NONE && woken < limit)
     {
-        waiter_t& waiter = Waiters[index];
-        const size_t next = waiter.next;
+        waiter_t&    waiter = Waiters[index];
+        const size_t next   = waiter.next;
 
         if (waiter.space == space && waiter.address == address && (waiter.bits & bits) != 0)
         {
@@ -254,7 +258,7 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
         }
     }
 
-    task->robustHead = head;
+    task->robustHead        = head;
     task->retirementContext = this;
     task->retirementCleanup = head != 0 ? CleanupRobust : nullptr;
 
@@ -291,18 +295,18 @@ uint64_t SynchronizationManager::GetRobustList(int32_t tid, uint64_t* head, uint
         return LINUX_EOPNOTSUPP;
     }
 
-    *head = task->robustHead;
+    *head   = task->robustHead;
     *length = 24;
     return 0;
 }
 
 void SynchronizationManager::CleanupRobust(void* context, task_t* task)
 {
-    auto manager = static_cast<SynchronizationManager*>(context);
-    process_t* owner = task->robustOwner;
-    const uint64_t address = task->robustHead;
-    task->robustHead = 0;
-    task->robustOwner = nullptr;
+    auto           manager  = static_cast<SynchronizationManager*>(context);
+    process_t*     owner    = task->robustOwner;
+    const uint64_t address  = task->robustHead;
+    task->robustHead        = 0;
+    task->robustOwner       = nullptr;
     task->retirementCleanup = nullptr;
 
     if (owner == nullptr)
@@ -313,7 +317,12 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
     cpu_preemption_disable();
     spinlock_acquire(&owner->addressSpace->operation_lock);
     user_memory_access_t access = {manager->Resources->processManager, owner, owner->addressSpace};
-    struct { uint64_t next; int64_t offset; uint64_t pending; } head;
+    struct
+    {
+        uint64_t next;
+        int64_t  offset;
+        uint64_t pending;
+    } head;
 
     if (address != 0 && safe_read_user_locked(&access, address, &head, sizeof(head)))
     {
@@ -361,7 +370,7 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
                     return;
                 }
 
-                const uint32_t previous = value;
+                const uint32_t previous    = value;
                 const uint32_t replacement = (value & 0x80000000U) | 0x40000000U;
 
                 if (!safe_atomic_compare_exchange_user32_locked(&access, word, &value, replacement))
@@ -379,7 +388,6 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
                     return;
                 }
             }
-
         };
         uint64_t entry = head.next;
 

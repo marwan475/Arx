@@ -149,7 +149,6 @@ struct request_user_fixture_t
         valid &= mapped;
         return mapped ? base + offset : 0;
     }
-
 };
 
 static uint64_t request_user_address(const void* buffer, size_t length)
@@ -199,7 +198,6 @@ struct request_process_state_t
             cpu_preemption_enable();
         }
     }
-
 };
 
 enum expected_result_kind_t
@@ -3302,8 +3300,8 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
                     managerName, tests[index].name, tests[index].syscallNumber, &frame, result,
             };
             stats->customCaseUsed++;
-            const bool traceWait = strcmp(managerName, "time") == 0 || strcmp(managerName, "event") == 0 || strcmp(managerName, "sync") == 0 || strcmp(managerName,"signal") == 0;
-            uint64_t started = 0, finished = 0;
+            const bool traceWait = strcmp(managerName, "time") == 0 || strcmp(managerName, "event") == 0 || strcmp(managerName, "sync") == 0 || strcmp(managerName, "signal") == 0;
+            uint64_t   started = 0, finished = 0;
             const bool haveStart = traceWait && arch_time_read_monotonic(&started);
 
             if (traceWait)
@@ -3316,8 +3314,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
             if (traceWait)
             {
                 if (haveStart && arch_time_read_monotonic(&finished) && finished >= started)
-                    KDEBUG("[selftest] finished %s::%s elapsed=%llu ms result=%s\n", managerName, tests[index].name,
-                        (unsigned long long) ((finished - started) / 1000000), passed ? "PASS" : "FAIL");
+                    KDEBUG("[selftest] finished %s::%s elapsed=%llu ms result=%s\n", managerName, tests[index].name, (unsigned long long) ((finished - started) / 1000000), passed ? "PASS" : "FAIL");
                 else
                 {
                     KDEBUG("[selftest] finished %s::%s result=%s (clock unavailable)\n", managerName, tests[index].name, passed ? "PASS" : "FAIL");
@@ -3533,10 +3530,10 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     request = {0, 1000000000};
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(call(input) == LINUX_EINVAL, "sleep invalid nanoseconds");
-    Dispatcher*          dispatcher  = static_cast<Dispatcher*>(platform.dispacher);
-    ResourceLayerCaps*   resources   = dispatcher->GetResourceLayerCaps();
-    Scheduler*           scheduler   = dispatcher->GetLogicLayerCaps()->scheduler;
-    time_timespec_t clockProbe;
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
+    Scheduler*         scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    time_timespec_t    clockProbe;
 
     if (resources->timeManager == nullptr || resources->timeManager->ReadClock(1, &clockProbe) != 0)
     {
@@ -4452,19 +4449,19 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
 
 struct futex_peer_context_t
 {
-    Scheduler* scheduler;
+    Scheduler*         scheduler;
     ResourceLayerCaps* resources;
-    task_t* sleeper;
-    uint64_t address;
-    uint32_t bits;
-    bool selective;
-    bool entered;
-    bool protectedTask;
-    uint64_t wrongAddress;
-    uint64_t wrongBits;
-    uint64_t result;
-    process_t* isolated;
-    uint64_t wrongProcess;
+    task_t*            sleeper;
+    uint64_t           address;
+    uint32_t           bits;
+    bool               selective;
+    bool               entered;
+    bool               protectedTask;
+    uint64_t           wrongAddress;
+    uint64_t           wrongBits;
+    uint64_t           result;
+    process_t*         isolated;
+    uint64_t           wrongProcess;
 };
 
 static void futex_peer_entry(void* argument)
@@ -4473,14 +4470,13 @@ static void futex_peer_entry(void* argument)
     // ExitCurrentTask explicitly switches away with this guard on the dying task.
     cpu_preemption_disable();
     futex_peer_context_t* context = static_cast<futex_peer_context_t*>(argument);
-    context->entered = true;
-    context->protectedTask = !context->resources->taskManager->FreeTask(context->sleeper)
-        && !context->resources->taskManager->ExecuteTask(context->sleeper);
-    context->wrongAddress = memory_call(SYSCALL_futex, context->address + 4, 129, 1);
+    context->entered              = true;
+    context->protectedTask        = !context->resources->taskManager->FreeTask(context->sleeper) && !context->resources->taskManager->ExecuteTask(context->sleeper);
+    context->wrongAddress         = memory_call(SYSCALL_futex, context->address + 4, 129, 1);
     cpu_preemption_disable();
     ProcessManager* processes = context->resources->processManager;
-    process_t* original = processes->GetCurrentProcess();
-    context->wrongProcess = UINT64_MAX;
+    process_t*      original  = processes->GetCurrentProcess();
+    context->wrongProcess     = UINT64_MAX;
 
     if (processes->SetRunningProcess(arch_cpu_id(), context->isolated))
     {
@@ -4494,9 +4490,7 @@ static void futex_peer_entry(void* argument)
 
     cpu_preemption_enable();
     context->wrongBits = context->selective ? memory_call(SYSCALL_futex, context->address, 138, 1, 0, 0, ~context->bits) : 0;
-    context->result = context->selective
-        ? memory_call(SYSCALL_futex, context->address, 138, 1, 0, 0, context->bits)
-        : memory_call(SYSCALL_futex, context->address, 129, 0); // Legacy nonpositive count wakes one.
+    context->result    = context->selective ? memory_call(SYSCALL_futex, context->address, 138, 1, 0, 0, context->bits) : memory_call(SYSCALL_futex, context->address, 129, 0); // Legacy nonpositive count wakes one.
     context->scheduler->ExitCurrentTask();
 }
 
@@ -4511,21 +4505,14 @@ static bool test_sync_futex(process_t* process)
 
     const uint64_t address = base + PAGE_SIZE - 4;
     const uint64_t timeout = base + 64;
-    uint32_t word = 7;
+    uint32_t       word    = 7;
     time_fixture_store(process, address, &word, sizeof(word));
     bool ok = memory_expect(memory_call(SYSCALL_futex, address, 128, 8) == (uint64_t) -11, "futex compare mismatch EAGAIN");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0
-        && memory_call(SYSCALL_futex, address, 129, 0) == 0, "futex wake with no waiters/zero count");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address + 1, 128, 7) == LINUX_EINVAL
-        && memory_call(SYSCALL_futex, CANONICAL_KERNEL_BASE, 128, 7) == LINUX_EFAULT
-        && memory_call(SYSCALL_futex, base + 2 * PAGE_SIZE, 128, 7) == LINUX_EFAULT, "futex alignment/kernel/unmapped word validation");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address, 137, 7, 0, 0, 0) == LINUX_EINVAL
-        && memory_call(SYSCALL_futex, address, 138, 1, 0, 0, 0) == LINUX_EINVAL
-        && memory_call(SYSCALL_futex, address, 129, UINT64_MAX) == 0, "futex bitsets and empty legacy wake count");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP
-        && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS
-        && memory_call(SYSCALL_futex, address, 132, 7) == LINUX_ENOSYS
-        && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS, "futex shared/PI/requeue/unsupported clock modes explicit");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0 && memory_call(SYSCALL_futex, address, 129, 0) == 0, "futex wake with no waiters/zero count");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address + 1, 128, 7) == LINUX_EINVAL && memory_call(SYSCALL_futex, CANONICAL_KERNEL_BASE, 128, 7) == LINUX_EFAULT && memory_call(SYSCALL_futex, base + 2 * PAGE_SIZE, 128, 7) == LINUX_EFAULT, "futex alignment/kernel/unmapped word validation");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 137, 7, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 138, 1, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 129, UINT64_MAX) == 0, "futex bitsets and empty legacy wake count");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 132, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS,
+                        "futex shared/PI/requeue/unsupported clock modes explicit");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 7, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "futex invalid timeout buffer");
     time_timespec_t duration = {-1, 0};
     time_fixture_store(process, timeout, &duration, sizeof(duration));
@@ -4533,10 +4520,10 @@ static bool test_sync_futex(process_t* process)
     duration = {0, 1000000000};
     time_fixture_store(process, timeout, &duration, sizeof(duration));
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 7, timeout) == LINUX_EINVAL, "futex timeout nanoseconds");
-    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
-    Scheduler* scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
-    time_timespec_t now;
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
+    Scheduler*         scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    time_timespec_t    now;
 
     if (resources->timeManager != nullptr && resources->timeManager->ReadClock(1, &now) == 0)
     {
@@ -4564,7 +4551,7 @@ static bool test_sync_futex(process_t* process)
     }
 
     virt_addr_space_t* isolatedSpace = resources->virtualMemoryManager->CreateUserAddressSpace();
-    process_t* isolated = isolatedSpace != nullptr ? resources->processManager->CreateProcess(isolatedSpace) : nullptr;
+    process_t*         isolated      = isolatedSpace != nullptr ? resources->processManager->CreateProcess(isolatedSpace) : nullptr;
 
     if (isolated == nullptr)
     {
@@ -4581,19 +4568,18 @@ static bool test_sync_futex(process_t* process)
     for (uint32_t operation : waitOperations)
     {
         futex_peer_context_t context = {scheduler, resources, resources->taskManager->GetCurrentTask(), address, 2, operation == 137, false, false, UINT64_MAX, UINT64_MAX, UINT64_MAX, isolated, UINT64_MAX};
-        task_t* peer = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
-        const bool added = peer != nullptr && resources->processManager->AddTask(process, peer);
-        const bool ready = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+        task_t*              peer    = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
+        const bool           added   = peer != nullptr && resources->processManager->AddTask(process, peer);
+        const bool           ready   = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
         ok &= memory_expect(ready, "futex runnable sibling task fixture");
 
         if (ready)
         {
             // Same process/address space: FUTEX_PRIVATE keys must not match a
             // different process simply because it maps the same virtual address.
-            const uint32_t mask = operation == 128 ? UINT32_MAX : context.bits;
+            const uint32_t mask   = operation == 128 ? UINT32_MAX : context.bits;
             const uint64_t result = memory_call(SYSCALL_futex, address, operation, 7, 0, 0, mask);
-            ok &= memory_expect(result == 0 && context.entered && context.protectedTask
-                && context.wrongAddress == 0 && context.wrongProcess == 0 && context.result == 1, "futex real parked wait/peer wake, process isolation and task lifetime");
+            ok &= memory_expect(result == 0 && context.entered && context.protectedTask && context.wrongAddress == 0 && context.wrongProcess == 0 && context.result == 1, "futex real parked wait/peer wake, process isolation and task lifetime");
 
             if (operation == 137)
             {
@@ -4646,35 +4632,43 @@ static bool test_sync_robust(process_t* process, uint64_t number)
         return false;
     }
 
-    const uint64_t headAddress = base + PAGE_SIZE - 4;
+    const uint64_t headAddress   = base + PAGE_SIZE - 4;
     const uint64_t lengthAddress = base + 64;
-    bool ok = memory_expect(memory_call(SYSCALL_set_robust_list, 0, 24) == 0, "robust empty-list clearing");
-    ok &= memory_expect(memory_call(SYSCALL_set_robust_list, base, 23) == LINUX_EINVAL
-        && memory_call(SYSCALL_set_robust_list, base, 24) == 0, "robust length validation and registration");
+    bool           ok            = memory_expect(memory_call(SYSCALL_set_robust_list, 0, 24) == 0, "robust empty-list clearing");
+    ok &= memory_expect(memory_call(SYSCALL_set_robust_list, base, 23) == LINUX_EINVAL && memory_call(SYSCALL_set_robust_list, base, 24) == 0, "robust length validation and registration");
     const uint64_t tid = memory_call(SYSCALL_gettid);
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, number == SYSCALL_get_robust_list ? tid : 0, headAddress, lengthAddress) == 0, "robust current task query");
     uint64_t head = UINT64_MAX, length = 0;
     time_fixture_load(process, headAddress, &head, sizeof(head));
     time_fixture_load(process, lengthAddress, &length, sizeof(length));
     ok &= memory_expect(head == base && length == 24, "robust registered head query");
-    ok &= memory_expect(memory_call(SYSCALL_set_robust_list,0,24) == 0,"robust unregister releases owner pin");
-    struct { uint64_t next; int64_t offset; uint64_t pending; } robust={base+256,8,base+288};
-    struct { uint64_t next; uint32_t word; uint32_t padding; } node={base+128,(uint32_t) tid|0x80000000U,0};
-    time_fixture_store(process,base+128,&robust,sizeof(robust));
-    time_fixture_store(process,base+256,&node,sizeof(node));
-    time_fixture_store(process,base+288,&node,sizeof(node));
-    ok &= memory_expect(memory_call(SYSCALL_set_robust_list,base+128,24)==0,"robust linked and pending registrations");
+    ok &= memory_expect(memory_call(SYSCALL_set_robust_list, 0, 24) == 0, "robust unregister releases owner pin");
+    struct
+    {
+        uint64_t next;
+        int64_t  offset;
+        uint64_t pending;
+    } robust = {base + 256, 8, base + 288};
+    struct
+    {
+        uint64_t next;
+        uint32_t word;
+        uint32_t padding;
+    } node = {base + 128, (uint32_t) tid | 0x80000000U, 0};
+    time_fixture_store(process, base + 128, &robust, sizeof(robust));
+    time_fixture_store(process, base + 256, &node, sizeof(node));
+    time_fixture_store(process, base + 288, &node, sizeof(node));
+    ok &= memory_expect(memory_call(SYSCALL_set_robust_list, base + 128, 24) == 0, "robust linked and pending registrations");
     static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->CleanupCurrentTask();
-    uint32_t died=0,pendingDied=0;
-    time_fixture_load(process,base+264,&died,4); time_fixture_load(process,base+296,&pendingDied,4);
-    ok &= memory_expect(died==0xc0000000U && pendingDied==0xc0000000U,"robust owner death updates list and pending operation");
+    uint32_t died = 0, pendingDied = 0;
+    time_fixture_load(process, base + 264, &died, 4);
+    time_fixture_load(process, base + 296, &pendingDied, 4);
+    ok &= memory_expect(died == 0xc0000000U && pendingDied == 0xc0000000U, "robust owner death updates list and pending operation");
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, lengthAddress, lengthAddress) == 0, "robust aliased outputs permitted");
     time_fixture_load(process, lengthAddress, &head, sizeof(head));
     ok &= memory_expect(head == 0, "robust outputs follow Linux length-then-head order");
-    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, UINT64_MAX, headAddress, lengthAddress) == LINUX_ESRCH
-        && memory_call(SYSCALL_get_robust_list, tid + 1, headAddress, lengthAddress) == LINUX_EOPNOTSUPP, "robust other-task queries explicit");
-    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, CANONICAL_KERNEL_BASE, lengthAddress) == LINUX_EFAULT
-        && memory_call(SYSCALL_get_robust_list, 0, headAddress, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "robust invalid output pointers");
+    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, UINT64_MAX, headAddress, lengthAddress) == LINUX_ESRCH && memory_call(SYSCALL_get_robust_list, tid + 1, headAddress, lengthAddress) == LINUX_EOPNOTSUPP, "robust other-task queries explicit");
+    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, CANONICAL_KERNEL_BASE, lengthAddress) == LINUX_EFAULT && memory_call(SYSCALL_get_robust_list, 0, headAddress, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "robust invalid output pointers");
     memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, headAddress, lengthAddress) == LINUX_EFAULT, "robust readonly output across page");
     return ok;
@@ -4682,10 +4676,7 @@ static bool test_sync_robust(process_t* process, uint64_t number)
 
 template <uint64_t Number> static bool custom_case_validate_sync(const custom_case_ctx_t*)
 {
-    return run_memory_case([](process_t* process)
-    {
-        return Number == SYSCALL_futex ? test_sync_futex(process) : test_sync_robust(process, Number);
-    });
+    return run_memory_case([](process_t* process) { return Number == SYSCALL_futex ? test_sync_futex(process) : test_sync_robust(process, Number); });
 }
 
 static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
@@ -4702,8 +4693,7 @@ static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
     {
         arch_syscall_frame_t frame = {};
 
-        if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS
-            || (caps->syncRequestManager != nullptr && (caps->syncRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
+        if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->syncRequestManager != nullptr && (caps->syncRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
             selftest_record_failure_detail("sync missing dependency/null-frame validation");
@@ -4716,151 +4706,158 @@ static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
 struct signal_peer_context_t
 {
     ResourceLayerCaps* resources;
-    Scheduler* scheduler;
-    process_t* process;
-    uint64_t robustHead;
-    uint64_t result;
+    Scheduler*         scheduler;
+    process_t*         process;
+    uint64_t           robustHead;
+    uint64_t           result;
 };
 
 static void signal_peer_entry(void* argument)
 {
     cpu_preemption_disable();
-    auto context=static_cast<signal_peer_context_t*>(argument);
-    context->result=context->robustHead != 0 ? memory_call(SYSCALL_set_robust_list,context->robustHead,24)
-        : memory_call(SYSCALL_kill,context->process->id,10);
+    auto context    = static_cast<signal_peer_context_t*>(argument);
+    context->result = context->robustHead != 0 ? memory_call(SYSCALL_set_robust_list, context->robustHead, 24) : memory_call(SYSCALL_kill, context->process->id, 10);
     context->scheduler->ExitCurrentTask();
 }
 
-template <typename Wait> static bool signal_with_peer(process_t* process,uint64_t robustHead,uint64_t robustWord,Wait wait)
+template <typename Wait> static bool signal_with_peer(process_t* process, uint64_t robustHead, uint64_t robustWord, Wait wait)
 {
-    Dispatcher* dispatcher=static_cast<Dispatcher*>(platform.dispacher);
-    auto resources=dispatcher->GetResourceLayerCaps();
-    auto scheduler=dispatcher->GetLogicLayerCaps()->scheduler;
-    signal_peer_context_t context={resources,scheduler,process,robustHead,UINT64_MAX};
-    task_t* peer=resources->taskManager->CreateKernelTask(signal_peer_entry,&context);
-    bool added=peer != nullptr && resources->processManager->AddTask(process,peer);
+    Dispatcher*           dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto                  resources  = dispatcher->GetResourceLayerCaps();
+    auto                  scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    signal_peer_context_t context    = {resources, scheduler, process, robustHead, UINT64_MAX};
+    task_t*               peer       = resources->taskManager->CreateKernelTask(signal_peer_entry, &context);
+    bool                  added      = peer != nullptr && resources->processManager->AddTask(process, peer);
 
     if (added && robustWord != 0)
     {
-        uint32_t owned=0x80000000U|(uint32_t) peer->id;
-        time_fixture_store(process,robustWord,&owned,4);
+        uint32_t owned = 0x80000000U | (uint32_t) peer->id;
+        time_fixture_store(process, robustWord, &owned, 4);
     }
 
-    const bool ready=added && scheduler->EnqueueProcess(arch_cpu_id(),process->id);
-    bool ok=memory_expect(ready,"signal/owner-death runnable peer fixture");
+    const bool ready = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+    bool       ok    = memory_expect(ready, "signal/owner-death runnable peer fixture");
 
-    if (ready) ok &= wait(peer->id)
+    if (ready)
     {
-        && memory_expect(context.result==0,"signal/robust peer syscall succeeds");
+        ok &= wait(peer->id) && memory_expect(context.result == 0, "signal/robust peer syscall succeeds");
     }
 
     if (added)
     {
-        if (peer->prev != nullptr) peer->prev->next=peer->next; else process->tasks=peer->next;
+        if (peer->prev != nullptr)
+            peer->prev->next = peer->next;
+        else
+            process->tasks = peer->next;
 
         if (peer->next != nullptr)
         {
-            peer->next->prev=peer->prev;
+            peer->next->prev = peer->prev;
         }
 
-        peer->next=peer->prev=nullptr;
+        peer->next = peer->prev = nullptr;
     }
 
     if (peer != nullptr)
     {
-        ok &= memory_expect(resources->taskManager->FreeTask(peer),"signal peer retirement cleanup");
+        ok &= memory_expect(resources->taskManager->FreeTask(peer), "signal peer retirement cleanup");
     }
 
     return ok;
 }
 
-static bool test_signal_case(process_t* process,uint64_t number)
+static bool test_signal_case(process_t* process, uint64_t number)
 {
-    const uint64_t base=memory_map(6);
+    const uint64_t base = memory_map(6);
 
-    if ((int64_t) base<0)
+    if ((int64_t) base < 0)
     {
         return false;
     }
 
-    auto dispatcher=static_cast<Dispatcher*>(platform.dispacher);
-    auto signals=dispatcher->GetLogicLayerCaps()->signalManager;
-    auto resources=dispatcher->GetResourceLayerCaps();
-    const uint64_t input=base+PAGE_SIZE-4,output=base+128;
-    const uint64_t tid=memory_call(SYSCALL_gettid);
-    bool ok=true;
-    signal_action_t action={base+512,0x14000004,base+768,0}; // RESTORER|RESTART|SIGINFO
-    time_fixture_store(process,input,&action,sizeof(action));
-    ok &= memory_expect(memory_call(SYSCALL_rt_sigaction,10,input,0,8)==0,"signal handler action install");
+    auto            dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto            signals    = dispatcher->GetLogicLayerCaps()->signalManager;
+    auto            resources  = dispatcher->GetResourceLayerCaps();
+    const uint64_t  input = base + PAGE_SIZE - 4, output = base + 128;
+    const uint64_t  tid    = memory_call(SYSCALL_gettid);
+    bool            ok     = true;
+    signal_action_t action = {base + 512, 0x14000004, base + 768, 0}; // RESTORER|RESTART|SIGINFO
+    time_fixture_store(process, input, &action, sizeof(action));
+    ok &= memory_expect(memory_call(SYSCALL_rt_sigaction, 10, input, 0, 8) == 0, "signal handler action install");
 
-    if (number==SYSCALL_rt_sigaction)
+    if (number == SYSCALL_rt_sigaction)
     {
-        signal_action_t queried={};
-        ok &= memory_expect(memory_call(number,10,0,output,8)==0,"signal action query");
-        time_fixture_load(process,output,&queried,sizeof(queried));
-        ok &= memory_expect(queried.handler==action.handler && queried.flags==action.flags,"signal raw action ABI round trip");
-        ok &= memory_expect(memory_call(number,0,0,output,8)==LINUX_EINVAL
-            && memory_call(number,9,input,0,8)==LINUX_EINVAL && memory_call(number,19,input,0,8)==LINUX_EINVAL
-            && memory_call(number,10,input,0,16)==LINUX_EINVAL,"signal number/unblockable/size validation");
-        ok &= memory_expect(memory_call(number,10,CANONICAL_KERNEL_BASE,0,8)==LINUX_EFAULT,"signal action bad user input");
-        action.flags|=2;
-        time_fixture_store(process,input,&action,sizeof(action));
-        ok &= memory_expect(memory_call(number,10,input,0,8)==LINUX_EOPNOTSUPP,"unsupported child-reaping action flag rejected");
+        signal_action_t queried = {};
+        ok &= memory_expect(memory_call(number, 10, 0, output, 8) == 0, "signal action query");
+        time_fixture_load(process, output, &queried, sizeof(queried));
+        ok &= memory_expect(queried.handler == action.handler && queried.flags == action.flags, "signal raw action ABI round trip");
+        ok &= memory_expect(memory_call(number, 0, 0, output, 8) == LINUX_EINVAL && memory_call(number, 9, input, 0, 8) == LINUX_EINVAL && memory_call(number, 19, input, 0, 8) == LINUX_EINVAL && memory_call(number, 10, input, 0, 16) == LINUX_EINVAL, "signal number/unblockable/size validation");
+        ok &= memory_expect(memory_call(number, 10, CANONICAL_KERNEL_BASE, 0, 8) == LINUX_EFAULT, "signal action bad user input");
+        action.flags |= 2;
+        time_fixture_store(process, input, &action, sizeof(action));
+        ok &= memory_expect(memory_call(number, 10, input, 0, 8) == LINUX_EOPNOTSUPP, "unsupported child-reaping action flag rejected");
     }
-    else if (number==SYSCALL_rt_sigprocmask)
+    else if (number == SYSCALL_rt_sigprocmask)
     {
-        uint64_t mask=UINT64_MAX,queried=0;
-        time_fixture_store(process,input,&mask,8);
-        ok &= memory_expect(memory_call(number,2,input,output,8)==0,"signal mask replacement");
-        ok &= memory_expect(memory_call(number,99,0,output,8)==0,"signal mask query ignores how without input");
-        time_fixture_load(process,output,&queried,8);
-        ok &= memory_expect(queried==(UINT64_MAX&~SIGNAL_UNBLOCKABLE),"SIGKILL/SIGSTOP cannot be masked");
-        ok &= memory_expect(memory_call(number,3,input,0,8)==LINUX_EINVAL && memory_call(number,0,input,0,4)==LINUX_EINVAL,"signal mask operation and size errors");
-        mask=0; time_fixture_store(process,input,&mask,8); memory_call(number,2,input,0,8);
+        uint64_t mask = UINT64_MAX, queried = 0;
+        time_fixture_store(process, input, &mask, 8);
+        ok &= memory_expect(memory_call(number, 2, input, output, 8) == 0, "signal mask replacement");
+        ok &= memory_expect(memory_call(number, 99, 0, output, 8) == 0, "signal mask query ignores how without input");
+        time_fixture_load(process, output, &queried, 8);
+        ok &= memory_expect(queried == (UINT64_MAX & ~SIGNAL_UNBLOCKABLE), "SIGKILL/SIGSTOP cannot be masked");
+        ok &= memory_expect(memory_call(number, 3, input, 0, 8) == LINUX_EINVAL && memory_call(number, 0, input, 0, 4) == LINUX_EINVAL, "signal mask operation and size errors");
+        mask = 0;
+        time_fixture_store(process, input, &mask, 8);
+        memory_call(number, 2, input, 0, 8);
     }
-    else if (number==SYSCALL_sigaltstack)
+    else if (number == SYSCALL_sigaltstack)
     {
-        signal_stack_t stack={base+PAGE_SIZE*2,0,0,PAGE_SIZE*2},queried={};
-        time_fixture_store(process,input,&stack,sizeof(stack));
-        ok &= memory_expect(memory_call(number,input,output)==0 && memory_call(number,0,output)==0,"alternate stack install/query");
-        time_fixture_load(process,output,&queried,sizeof(queried));
-        ok &= memory_expect(queried.sp==stack.sp && queried.size==stack.size && queried.flags==0,"alternate stack raw ABI");
-        arch_syscall_frame_t active={}; active.syscall_number=number; active.arg0=input;
+        signal_stack_t stack = {base + PAGE_SIZE * 2, 0, 0, PAGE_SIZE * 2}, queried = {};
+        time_fixture_store(process, input, &stack, sizeof(stack));
+        ok &= memory_expect(memory_call(number, input, output) == 0 && memory_call(number, 0, output) == 0, "alternate stack install/query");
+        time_fixture_load(process, output, &queried, sizeof(queried));
+        ok &= memory_expect(queried.sp == stack.sp && queried.size == stack.size && queried.flags == 0, "alternate stack raw ABI");
+        arch_syscall_frame_t active = {};
+        active.syscall_number       = number;
+        active.arg0                 = input;
 #if defined(__x86_64__)
-        active.user_rsp=stack.sp+64;
+        active.user_rsp = stack.sp + 64;
 #else
-        active.user_sp=stack.sp+64;
+        active.user_sp = stack.sp + 64;
 #endif
-        ok &= memory_expect(dispatcher_dispatch_syscall(&active)==(uint64_t) -1,"alternate stack cannot change while active");
-        stack.size=1024; time_fixture_store(process,input,&stack,sizeof(stack));
-        ok &= memory_expect(memory_call(number,input)==LINUX_ENOMEM,"alternate stack minimum size");
+        ok &= memory_expect(dispatcher_dispatch_syscall(&active) == (uint64_t) -1, "alternate stack cannot change while active");
+        stack.size = 1024;
+        time_fixture_store(process, input, &stack, sizeof(stack));
+        ok &= memory_expect(memory_call(number, input) == LINUX_ENOMEM, "alternate stack minimum size");
     }
-    else if (number==SYSCALL_kill || number==SYSCALL_tgkill)
+    else if (number == SYSCALL_kill || number == SYSCALL_tgkill)
     {
-        auto send=[&](uint64_t signal) { return number==SYSCALL_kill ? memory_call(number,process->id,signal) : memory_call(number,process->id,tid,signal); };
-        ok &= memory_expect(send(0)==0 && send(10)==0,"signal existence probe and pending enqueue");
-        task_t* task=resources->taskManager->GetCurrentTask();
-        ok &= memory_expect((pending_signals(process,task)&512)!=0,"signal routed to current process/thread");
-        ok &= memory_expect(send(65)==LINUX_EINVAL && send(34)==LINUX_EOPNOTSUPP,"invalid and unsupported realtime signals");
-        ok &= memory_expect(number==SYSCALL_kill ? memory_call(number,0,10)==LINUX_EOPNOTSUPP : memory_call(number,process->id,0,10)==LINUX_EINVAL,"signal unsupported group/invalid thread targeting");
-        signal_action_t ignore={1,0,0,0}; time_fixture_store(process,input,&ignore,sizeof(ignore));
-        ok &= memory_expect(memory_call(SYSCALL_rt_sigaction,10,input,0,8)==0 && send(10)==0 && (pending_signals(process,task)&512)==0,"ignored signal discards pending instances");
-        auto space=resources->virtualMemoryManager->CreateUserAddressSpace();
-        process_t* victim=space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
+        auto send = [&](uint64_t signal) { return number == SYSCALL_kill ? memory_call(number, process->id, signal) : memory_call(number, process->id, tid, signal); };
+        ok &= memory_expect(send(0) == 0 && send(10) == 0, "signal existence probe and pending enqueue");
+        task_t* task = resources->taskManager->GetCurrentTask();
+        ok &= memory_expect((pending_signals(process, task) & 512) != 0, "signal routed to current process/thread");
+        ok &= memory_expect(send(65) == LINUX_EINVAL && send(34) == LINUX_EOPNOTSUPP, "invalid and unsupported realtime signals");
+        ok &= memory_expect(number == SYSCALL_kill ? memory_call(number, 0, 10) == LINUX_EOPNOTSUPP : memory_call(number, process->id, 0, 10) == LINUX_EINVAL, "signal unsupported group/invalid thread targeting");
+        signal_action_t ignore = {1, 0, 0, 0};
+        time_fixture_store(process, input, &ignore, sizeof(ignore));
+        ok &= memory_expect(memory_call(SYSCALL_rt_sigaction, 10, input, 0, 8) == 0 && send(10) == 0 && (pending_signals(process, task) & 512) == 0, "ignored signal discards pending instances");
+        auto       space  = resources->virtualMemoryManager->CreateUserAddressSpace();
+        process_t* victim = space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
 
         if (victim != nullptr)
         {
-            process_credentials_t previous=process->credentials;
-            process->credentials.user={100,100,100,100}; victim->credentials.user={200,200,200,200};
-            ok &= memory_expect(memory_call(SYSCALL_kill,victim->id,0)==(uint64_t) -1,"signal permissions reject unrelated identities");
-            process->credentials.user.effective=0;
-            ok &= memory_expect(memory_call(SYSCALL_kill,victim->id,0)==0,"root signal permission probe");
-            process->credentials=previous;
-            ok &= memory_expect(resources->processManager->FreeProcess(victim),"signal permission target cleanup");
+            process_credentials_t previous = process->credentials;
+            process->credentials.user      = {100, 100, 100, 100};
+            victim->credentials.user       = {200, 200, 200, 200};
+            ok &= memory_expect(memory_call(SYSCALL_kill, victim->id, 0) == (uint64_t) -1, "signal permissions reject unrelated identities");
+            process->credentials.user.effective = 0;
+            ok &= memory_expect(memory_call(SYSCALL_kill, victim->id, 0) == 0, "root signal permission probe");
+            process->credentials = previous;
+            ok &= memory_expect(resources->processManager->FreeProcess(victim), "signal permission target cleanup");
         }
         else
         {
-            ok &= memory_expect(false,"signal permission target fixture");
+            ok &= memory_expect(false, "signal permission target fixture");
         }
 
         if (space != nullptr)
@@ -4868,71 +4865,89 @@ static bool test_signal_case(process_t* process,uint64_t number)
             resources->virtualMemoryManager->DestroyUserAddressSpace(space);
         }
     }
-    else if (number==SYSCALL_pause)
+    else if (number == SYSCALL_pause)
     {
-        ok &= signal_with_peer(process,0,0,[&](uint64_t) { return memory_expect(memory_call(number)==(uint64_t) -4,"pause returns EINTR from real peer signal"); });
-        __atomic_store_n(&process->signalPending,0ULL,__ATOMIC_RELEASE);
+        ok &= signal_with_peer(process, 0, 0, [&](uint64_t) { return memory_expect(memory_call(number) == (uint64_t) -4, "pause returns EINTR from real peer signal"); });
+        __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
         time_timespec_t now;
 
-        if (resources->timeManager->ReadClock(1,&now)==0)
+        if (resources->timeManager->ReadClock(1, &now) == 0)
         {
-            time_timespec_t duration={1,0},remaining={};
-            time_fixture_store(process,input,&duration,sizeof(duration));
-            ok &= signal_with_peer(process,0,0,[&](uint64_t) { return memory_expect(memory_call(SYSCALL_nanosleep,input,output)==(uint64_t) -4,"nanosleep signal interruption"); });
-            time_fixture_load(process,output,&remaining,sizeof(remaining));
-            ok &= memory_expect(remaining.seconds>=0 && remaining.seconds<=1 && remaining.nanoseconds>=0 && remaining.nanoseconds<1000000000,"interrupted sleep normalized remainder");
+            time_timespec_t duration = {1, 0}, remaining = {};
+            time_fixture_store(process, input, &duration, sizeof(duration));
+            ok &= signal_with_peer(process, 0, 0, [&](uint64_t) { return memory_expect(memory_call(SYSCALL_nanosleep, input, output) == (uint64_t) -4, "nanosleep signal interruption"); });
+            time_fixture_load(process, output, &remaining, sizeof(remaining));
+            ok &= memory_expect(remaining.seconds >= 0 && remaining.seconds <= 1 && remaining.nanoseconds >= 0 && remaining.nanoseconds < 1000000000, "interrupted sleep normalized remainder");
         }
     }
-    else if (number==SYSCALL_rt_sigreturn)
+    else if (number == SYSCALL_rt_sigreturn)
     {
 #if defined(__x86_64__)
-        alignas(16) uint8_t floating[512]={};
-        uint32_t mxcsr=0x1f80,mask=0xffbf;
-        memcpy(floating+24,&mxcsr,4); memcpy(floating+28,&mask,4); floating[160]=0x5a;
-        arch_syscall_frame_t f={};
-        f.syscall_number=SYSCALL_futex; f.user_cs=USER_CS; f.user_ss=USER_SS; f.user_rflags=0x202;
-        f.user_rip=base+514; f.user_rsp=base+6*PAGE_SIZE-16; f.rbx=0x123456789abcdef0ULL; f.r13=0xaabbccdd;
-        f.fxstate=(uint64_t) floating;
-        const uint16_t syscallInstruction=0x050f; time_fixture_store(process,base+512,&syscallInstruction,2);
-        ok &= memory_expect(memory_call(SYSCALL_kill,process->id,10)==0,"signal return pending fixture");
-        ok &= memory_expect(signals->Deliver(&f,(uint64_t) -4,true)==0 && f.user_rip==action.handler && f.arg0==10,"signal frame delivery");
-        const uint64_t frameAddress=f.user_rsp;
-        signal_frame_t saved={}; time_fixture_load(process,frameAddress,&saved,sizeof(saved));
-        ok &= memory_expect(saved.uc.context.ax==SYSCALL_futex && saved.uc.context.ip==base+512
-            && saved.uc.context.bx==0x123456789abcdef0ULL && (frameAddress&15)==8,"SA_RESTART rewind and full register context");
-        f.syscall_number=SYSCALL_rt_sigreturn; f.user_rsp=frameAddress+8;
-        const uint64_t goodIp=saved.uc.context.ip;
-        saved.uc.context.ip=CANONICAL_KERNEL_BASE; time_fixture_store(process,frameAddress,&saved,sizeof(saved));
-        ok &= memory_expect(dispatcher_dispatch_syscall(&f)==LINUX_EINVAL && f.user_rsp==frameAddress+8
-            && resources->taskManager->GetCurrentTask()->signalDepth==1,"sigreturn rejects kernel instruction pointer without consuming frame");
-        saved.uc.context.ip=goodIp; saved.uc.context.flags=UINT64_MAX;
-        time_fixture_store(process,frameAddress,&saved,sizeof(saved));
-        uint32_t invalidMxcsr=UINT32_MAX;
-        time_fixture_store(process,saved.uc.context.fpstate+24,&invalidMxcsr,4);
-        ok &= memory_expect(dispatcher_dispatch_syscall(&f)==LINUX_EINVAL,"sigreturn rejects reserved MXCSR bits");
-        time_fixture_store(process,saved.uc.context.fpstate+24,&mxcsr,4);
-        floating[160]=0;
-        ok &= memory_expect(dispatcher_dispatch_syscall(&f)==SYSCALL_futex && f.rbx==0x123456789abcdef0ULL
-            && f.r13==0xaabbccdd && floating[160]==0x5a && (f.user_rflags&0x27000)==0,"sigreturn GP/FP restoration and privilege flag sanitization");
+        alignas(16) uint8_t floating[512] = {};
+        uint32_t            mxcsr = 0x1f80, mask = 0xffbf;
+        memcpy(floating + 24, &mxcsr, 4);
+        memcpy(floating + 28, &mask, 4);
+        floating[160]                     = 0x5a;
+        arch_syscall_frame_t f            = {};
+        f.syscall_number                  = SYSCALL_futex;
+        f.user_cs                         = USER_CS;
+        f.user_ss                         = USER_SS;
+        f.user_rflags                     = 0x202;
+        f.user_rip                        = base + 514;
+        f.user_rsp                        = base + 6 * PAGE_SIZE - 16;
+        f.rbx                             = 0x123456789abcdef0ULL;
+        f.r13                             = 0xaabbccdd;
+        f.fxstate                         = (uint64_t) floating;
+        const uint16_t syscallInstruction = 0x050f;
+        time_fixture_store(process, base + 512, &syscallInstruction, 2);
+        ok &= memory_expect(memory_call(SYSCALL_kill, process->id, 10) == 0, "signal return pending fixture");
+        ok &= memory_expect(signals->Deliver(&f, (uint64_t) -4, true) == 0 && f.user_rip == action.handler && f.arg0 == 10, "signal frame delivery");
+        const uint64_t frameAddress = f.user_rsp;
+        signal_frame_t saved        = {};
+        time_fixture_load(process, frameAddress, &saved, sizeof(saved));
+        ok &= memory_expect(saved.uc.context.ax == SYSCALL_futex && saved.uc.context.ip == base + 512 && saved.uc.context.bx == 0x123456789abcdef0ULL && (frameAddress & 15) == 8, "SA_RESTART rewind and full register context");
+        f.syscall_number      = SYSCALL_rt_sigreturn;
+        f.user_rsp            = frameAddress + 8;
+        const uint64_t goodIp = saved.uc.context.ip;
+        saved.uc.context.ip   = CANONICAL_KERNEL_BASE;
+        time_fixture_store(process, frameAddress, &saved, sizeof(saved));
+        ok &= memory_expect(dispatcher_dispatch_syscall(&f) == LINUX_EINVAL && f.user_rsp == frameAddress + 8 && resources->taskManager->GetCurrentTask()->signalDepth == 1, "sigreturn rejects kernel instruction pointer without consuming frame");
+        saved.uc.context.ip    = goodIp;
+        saved.uc.context.flags = UINT64_MAX;
+        time_fixture_store(process, frameAddress, &saved, sizeof(saved));
+        uint32_t invalidMxcsr = UINT32_MAX;
+        time_fixture_store(process, saved.uc.context.fpstate + 24, &invalidMxcsr, 4);
+        ok &= memory_expect(dispatcher_dispatch_syscall(&f) == LINUX_EINVAL, "sigreturn rejects reserved MXCSR bits");
+        time_fixture_store(process, saved.uc.context.fpstate + 24, &mxcsr, 4);
+        floating[160] = 0;
+        ok &= memory_expect(dispatcher_dispatch_syscall(&f) == SYSCALL_futex && f.rbx == 0x123456789abcdef0ULL && f.r13 == 0xaabbccdd && floating[160] == 0x5a && (f.user_rflags & 0x27000) == 0, "sigreturn GP/FP restoration and privilege flag sanitization");
         // Negative user return values must not be confused with restore errors.
-        saved.uc.context.ax=(uint64_t) -4;
-        saved.uc.mask=UINT64_MAX;
-        time_fixture_store(process,frameAddress,&saved,sizeof(saved));
-        task_t* restoredTask=resources->taskManager->GetCurrentTask();
-        restoredTask->signalDepth=1;
-        f.user_rsp=frameAddress+8;
-        ok &= memory_expect(dispatcher_dispatch_syscall(&f)==(uint64_t) -4 && restoredTask->signalDepth==0
-            && restoredTask->signalMask==(UINT64_MAX&~SIGNAL_UNBLOCKABLE),"sigreturn restores negative result and sanitizes mask");
-        restoredTask->signalMask=0;
-        uint32_t word=7; time_fixture_store(process,base+64,&word,4);
-        ok &= signal_with_peer(process,0,0,[&](uint64_t) { return memory_expect(memory_call(SYSCALL_futex,base+64,128,7)==(uint64_t) -4,"futex interrupted by real pending signal"); });
-        ok &= memory_expect(memory_call(SYSCALL_futex,base+64,129,1)==0,"interrupted futex dequeues waiter");
-        __atomic_store_n(&process->signalPending,0ULL,__ATOMIC_RELEASE);
-        struct { uint64_t next; int64_t offset; uint64_t pending; } robust={base+256,8,0};
-        uint64_t next=base+128; time_fixture_store(process,base+128,&robust,sizeof(robust)); time_fixture_store(process,base+256,&next,8);
-        ok &= signal_with_peer(process,base+128,base+264,[&](uint64_t owner) { return memory_expect(memory_call(SYSCALL_futex,base+264,128,0x80000000U|(uint32_t) owner)==0,"robust task exit wakes futex waiter"); });
-        uint32_t died=0; time_fixture_load(process,base+264,&died,4);
-        ok &= memory_expect(died==0xc0000000U,"robust exit publishes OWNER_DIED with WAITERS preserved");
+        saved.uc.context.ax = (uint64_t) -4;
+        saved.uc.mask       = UINT64_MAX;
+        time_fixture_store(process, frameAddress, &saved, sizeof(saved));
+        task_t* restoredTask      = resources->taskManager->GetCurrentTask();
+        restoredTask->signalDepth = 1;
+        f.user_rsp                = frameAddress + 8;
+        ok &= memory_expect(dispatcher_dispatch_syscall(&f) == (uint64_t) -4 && restoredTask->signalDepth == 0 && restoredTask->signalMask == (UINT64_MAX & ~SIGNAL_UNBLOCKABLE), "sigreturn restores negative result and sanitizes mask");
+        restoredTask->signalMask = 0;
+        uint32_t word            = 7;
+        time_fixture_store(process, base + 64, &word, 4);
+        ok &= signal_with_peer(process, 0, 0, [&](uint64_t) { return memory_expect(memory_call(SYSCALL_futex, base + 64, 128, 7) == (uint64_t) -4, "futex interrupted by real pending signal"); });
+        ok &= memory_expect(memory_call(SYSCALL_futex, base + 64, 129, 1) == 0, "interrupted futex dequeues waiter");
+        __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        struct
+        {
+            uint64_t next;
+            int64_t  offset;
+            uint64_t pending;
+        } robust      = {base + 256, 8, 0};
+        uint64_t next = base + 128;
+        time_fixture_store(process, base + 128, &robust, sizeof(robust));
+        time_fixture_store(process, base + 256, &next, 8);
+        ok &= signal_with_peer(process, base + 128, base + 264, [&](uint64_t owner) { return memory_expect(memory_call(SYSCALL_futex, base + 264, 128, 0x80000000U | (uint32_t) owner) == 0, "robust task exit wakes futex waiter"); });
+        uint32_t died = 0;
+        time_fixture_load(process, base + 264, &died, 4);
+        ok &= memory_expect(died == 0xc0000000U, "robust exit publishes OWNER_DIED with WAITERS preserved");
 #endif
     }
 
@@ -4941,17 +4956,21 @@ static bool test_signal_case(process_t* process,uint64_t number)
 
 template <uint64_t Number> static bool custom_case_validate_signal(const custom_case_ctx_t*)
 {
-    return run_memory_case([](process_t* process)
-    {
-        auto resources=static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps();
-        task_t* task=resources->taskManager->GetCurrentTask();
-        uint64_t mask=task->signalMask,pending=task->signalPending;
-        signal_stack_t stack=task->signalStack;
-        uint64_t depth=task->signalDepth;
-        bool ok=test_signal_case(process,Number);
-        task->signalMask=mask; task->signalPending=pending; task->signalStack=stack; task->signalDepth=depth;
-        return ok;
-    });
+    return run_memory_case(
+            [](process_t* process)
+            {
+                auto           resources = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps();
+                task_t*        task      = resources->taskManager->GetCurrentTask();
+                uint64_t       mask = task->signalMask, pending = task->signalPending;
+                signal_stack_t stack = task->signalStack;
+                uint64_t       depth = task->signalDepth;
+                bool           ok    = test_signal_case(process, Number);
+                task->signalMask     = mask;
+                task->signalPending  = pending;
+                task->signalStack    = stack;
+                task->signalDepth    = depth;
+                return ok;
+            });
 }
 
 static void test_signal_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
@@ -4965,14 +4984,13 @@ static void test_signal_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
             {"HandleTgkillRequest", &SignalRequestManager::HandleTgkillRequest, SYSCALL_tgkill, custom_case_validate_signal<SYSCALL_tgkill>},
             {"HandlePauseRequest", &SignalRequestManager::HandlePauseRequest, SYSCALL_pause, custom_case_validate_signal<SYSCALL_pause>},
     };
-    SignalRequestManager unavailable(nullptr,nullptr);
+    SignalRequestManager unavailable(nullptr, nullptr);
 
-    for (const auto& test: tests)
+    for (const auto& test : tests)
     {
-        arch_syscall_frame_t frame={};
+        arch_syscall_frame_t frame = {};
 
-        if ((unavailable.*test.method)(&frame)!=LINUX_ENOSYS
-            || (caps->signalRequestManager != nullptr && (caps->signalRequestManager->*test.method)(nullptr)!=LINUX_EINVAL))
+        if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->signalRequestManager != nullptr && (caps->signalRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
             selftest_record_failure_detail("signal null-frame/missing-dependency validation");

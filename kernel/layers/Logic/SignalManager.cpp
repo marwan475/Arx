@@ -1,16 +1,24 @@
 #include "layers/Logic/SignalManager.hpp"
+
 #include "layers/Logic/Scheduler.hpp"
-#include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+
 #include <klib/klib.h>
 
-namespace {
-constexpr uint64_t RESTORER=0x04000000, ONSTACK=0x08000000, RESTART=0x10000000, NODEFER=0x40000000, RESETHAND=0x80000000;
-bool on_stack(const signal_stack_t& stack, uint64_t rsp) { return !(stack.flags & 2) && rsp >= stack.sp && rsp - stack.sp < stack.size; }
+namespace
+{
+constexpr uint64_t RESTORER = 0x04000000, ONSTACK = 0x08000000, RESTART = 0x10000000, NODEFER = 0x40000000, RESETHAND = 0x80000000;
+bool               on_stack(const signal_stack_t& stack, uint64_t rsp)
+{
+    return !(stack.flags & 2) && rsp >= stack.sp && rsp - stack.sp < stack.size;
 }
+} // namespace
 
-SignalManager::SignalManager(ResourceLayerCaps* resources, Scheduler* scheduler) : Resources(resources), SchedulerManager(scheduler) {}
+SignalManager::SignalManager(ResourceLayerCaps* resources, Scheduler* scheduler) : Resources(resources), SchedulerManager(scheduler)
+{
+}
 
 uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal_action_t* previous)
 {
@@ -28,7 +36,7 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
 
         if (previous != nullptr)
         {
-            *previous={};
+            *previous = {};
         }
 
         return 0;
@@ -74,13 +82,13 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
 
     if (previous != nullptr)
     {
-        *previous = process->signalActions[signal-1];
+        *previous = process->signalActions[signal - 1];
     }
 
     if (action != nullptr)
     {
-        process->signalActions[signal-1] = *action;
-        process->signalActions[signal-1].mask &= ~SIGNAL_UNBLOCKABLE;
+        process->signalActions[signal - 1] = *action;
+        process->signalActions[signal - 1].mask &= ~SIGNAL_UNBLOCKABLE;
         const bool ignored = action->handler == 1 || (action->handler == 0 && (SIGNAL_DEFAULT_IGNORED & bit));
 
         if (ignored)
@@ -88,9 +96,9 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
             __atomic_fetch_or(&process->signalIgnored, bit, __ATOMIC_RELEASE);
             __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
 
-            for (size_t i=0; i<TaskManager::MAX_TASKS; ++i)
+            for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
             {
-                task_t* task=&Resources->taskManager->GetTasks()[i];
+                task_t* task = &Resources->taskManager->GetTasks()[i];
 
                 if (Resources->taskManager->RetainForDispatch(task))
                 {
@@ -126,7 +134,7 @@ uint64_t SignalManager::Mask(int operation, const uint64_t* mask, uint64_t* prev
         return LINUX_ENOSYS;
     }
 
-    task_t* task = Resources->taskManager->GetCurrentTask();
+    task_t*    task    = Resources->taskManager->GetCurrentTask();
     process_t* process = Resources->processManager->GetCurrentProcess();
 
     if (task == nullptr || process == nullptr)
@@ -179,9 +187,9 @@ uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previ
 
     if (stack != nullptr)
     {
-        if (active) return (uint64_t)
+        if (active)
         {
-            -1;
+            return (uint64_t) -1;
         }
 
         if (stack->flags != 0 && stack->flags != 2)
@@ -199,12 +207,12 @@ uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previ
             return LINUX_EFAULT;
         }
 
-        task->signalStack = *stack;
+        task->signalStack         = *stack;
         task->signalStack.padding = 0;
 
         if (stack->flags == 2)
         {
-            task->signalStack = {0,2,0,0};
+            task->signalStack = {0, 2, 0, 0};
         }
     }
 
@@ -229,9 +237,9 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
     }
 
     ProcessManager* processes = Resources->processManager;
-    process_t* source = processes->AcquireCurrentMemoryProcess(false);
-    process_t* target = processes->AcquireProcess((uint64_t) pid);
-    uint64_t result = [&]() -> uint64_t
+    process_t*      source    = processes->AcquireCurrentMemoryProcess(false);
+    process_t*      target    = processes->AcquireProcess((uint64_t) pid);
+    uint64_t        result    = [&]() -> uint64_t
     {
         if (source == nullptr || target == nullptr || target->exited)
         {
@@ -239,12 +247,16 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
         }
 
         process_identity_t sender, receiver;
-        spinlock_acquire_preempt(&source->credentialLock); sender=source->credentials.user; spinlock_release_preempt(&source->credentialLock);
-        spinlock_acquire_preempt(&target->credentialLock); receiver=target->credentials.user; spinlock_release_preempt(&target->credentialLock);
+        spinlock_acquire_preempt(&source->credentialLock);
+        sender = source->credentials.user;
+        spinlock_release_preempt(&source->credentialLock);
+        spinlock_acquire_preempt(&target->credentialLock);
+        receiver = target->credentials.user;
+        spinlock_release_preempt(&target->credentialLock);
 
-        if (sender.effective != 0 && sender.real != receiver.real && sender.real != receiver.saved && sender.effective != receiver.real && sender.effective != receiver.saved) return (uint64_t)
+        if (sender.effective != 0 && sender.real != receiver.real && sender.real != receiver.saved && sender.effective != receiver.real && sender.effective != receiver.saved)
         {
-            -1;
+            return (uint64_t) -1;
         }
 
         task_t* task = nullptr;
@@ -280,36 +292,36 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
         {
             const uint64_t bit = 1ULL << (signal - 1);
             spinlock_acquire_preempt(&target->signalLock);
-            const bool ignored=(__atomic_load_n(&target->signalIgnored,__ATOMIC_RELAXED)&bit)!=0;
+            const bool ignored = (__atomic_load_n(&target->signalIgnored, __ATOMIC_RELAXED) & bit) != 0;
 
             if (!ignored && task != nullptr && task->signalSenders == nullptr)
             {
-                task->signalSenders=static_cast<signal_sender_t*>(kzalloc(32*sizeof(signal_sender_t)));
+                task->signalSenders = static_cast<signal_sender_t*>(kzalloc(32 * sizeof(signal_sender_t)));
 
                 if (task->signalSenders == nullptr)
                 {
-                    status=LINUX_ENOMEM;
+                    status = LINUX_ENOMEM;
                 }
             }
 
             if (status == 0 && !ignored)
             {
-                signal_sender_t info={(int32_t) source->id, sender.real, tid >= 0 ? -6 : 0};
+                signal_sender_t info = {(int32_t) source->id, sender.real, tid >= 0 ? -6 : 0};
 
                 if (task != nullptr)
                 {
-                    if (!(__atomic_load_n(&task->signalPending,__ATOMIC_RELAXED)&bit))
+                    if (!(__atomic_load_n(&task->signalPending, __ATOMIC_RELAXED) & bit))
                     {
-                        task->signalSenders[signal-1]=info;
+                        task->signalSenders[signal - 1] = info;
                     }
 
                     __atomic_fetch_or(&task->signalPending, bit, __ATOMIC_RELEASE);
                 }
                 else
                 {
-                    if (!(__atomic_load_n(&target->signalPending,__ATOMIC_RELAXED)&bit))
+                    if (!(__atomic_load_n(&target->signalPending, __ATOMIC_RELAXED) & bit))
                     {
-                        target->signalSenders[signal-1]=info;
+                        target->signalSenders[signal - 1] = info;
                     }
 
                     __atomic_fetch_or(&target->signalPending, bit, __ATOMIC_RELEASE);
@@ -356,7 +368,7 @@ uint64_t SignalManager::Pause()
     }
 
     uint64_t sequence = __atomic_load_n(&task->signalSequence, __ATOMIC_ACQUIRE);
-    uint64_t result = SchedulerManager->WaitForEvent(&task->signalSequence, sequence);
+    uint64_t result   = SchedulerManager->WaitForEvent(&task->signalSequence, sequence);
     return result == 0 ? (uint64_t) -4 : result;
 }
 
@@ -380,7 +392,7 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
     }
 
     process_t* process = Resources->processManager->GetCurrentProcess();
-    task_t* task = Resources->taskManager->GetCurrentTask();
+    task_t*    task    = Resources->taskManager->GetCurrentTask();
 
     if (process == nullptr || task == nullptr || !arch_signal_user_return(frame))
     {
@@ -395,23 +407,34 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
     spinlock_acquire_preempt(&process->signalLock);
     const uint64_t pending = pending_signals(process, task);
 
-    if (pending == 0) { spinlock_release_preempt(&process->signalLock); return result; }
-    const int signal = (pending & (1ULL<<8)) ? 9 : __builtin_ctzll(pending) + 1;
-    const uint64_t bit = 1ULL << (signal - 1);
-    signal_action_t action = process->signalActions[signal-1];
+    if (pending == 0)
+    {
+        spinlock_release_preempt(&process->signalLock);
+        return result;
+    }
+    const int       signal = (pending & (1ULL << 8)) ? 9 : __builtin_ctzll(pending) + 1;
+    const uint64_t  bit    = 1ULL << (signal - 1);
+    signal_action_t action = process->signalActions[signal - 1];
     signal_sender_t sender;
 
     if (__atomic_load_n(&task->signalPending, __ATOMIC_RELAXED) & bit)
-    { sender=task->signalSenders[signal-1]; __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE); }
-    else { sender=process->signalSenders[signal-1]; __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE); }
+    {
+        sender = task->signalSenders[signal - 1];
+        __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE);
+    }
+    else
+    {
+        sender = process->signalSenders[signal - 1];
+        __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
+    }
 
     if (action.flags & RESETHAND)
     {
-        process->signalActions[signal-1] = {};
+        process->signalActions[signal - 1] = {};
 
         if (SIGNAL_DEFAULT_IGNORED & bit)
         {
-            __atomic_fetch_or(&process->signalIgnored,bit,__ATOMIC_RELEASE);
+            __atomic_fetch_or(&process->signalIgnored, bit, __ATOMIC_RELEASE);
         }
     }
 
@@ -456,15 +479,15 @@ uint64_t SignalManager::Restore(arch_syscall_frame_t* frame)
         return LINUX_ENOSYS;
     }
 
-    task_t* task=Resources->taskManager->GetCurrentTask();
+    task_t* task = Resources->taskManager->GetCurrentTask();
 
     if (task == nullptr)
     {
         return LINUX_ESRCH;
     }
 
-    uint64_t result = 0, mask = 0;
-    signal_stack_t stack = {};
+    uint64_t       result = 0, mask = 0;
+    signal_stack_t stack  = {};
     const uint64_t status = task->signalDepth == 0 ? LINUX_EINVAL : arch_signal_restore(frame, &result, &mask, &stack);
 
     if (status != 0)

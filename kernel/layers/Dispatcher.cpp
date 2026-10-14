@@ -58,20 +58,17 @@ RequestLayerCaps* Dispatcher::GetRequestLayerCaps() const
 
 extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64_t result)
 {
-    Dispatcher* dispatcher=static_cast<Dispatcher*>(platform.dispacher);
-    LogicLayerCaps* logic=dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
 
     if (logic == nullptr || logic->signalManager == nullptr)
     {
         return result;
     }
 
-    const bool restartable=(frame->syscall_number == SYSCALL_futex && frame->arg3 == 0)
-        || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write;
-    return logic->signalManager->Deliver(frame,result,restartable);
+    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write;
+    return logic->signalManager->Deliver(frame, result, restartable);
 }
-
-
 
 uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
 {

@@ -77,7 +77,7 @@ ElfMapper::ElfMapper(ResourceLayerCaps* resourceLayerCaps)
 
 bool ElfMapper::AddWouldOverflow(uint64_t a, uint64_t b)
 {
-    return a > (UINT64_MAX - b);
+    return add_overflows_u64(a, b);
 }
 
 uint64_t ElfMapper::MinU64(uint64_t a, uint64_t b)

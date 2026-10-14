@@ -232,6 +232,28 @@ void vmm_init(struct boot_info* boot_info)
     }
 }
 
+uint64_t vmm_kernel_page_flags(bool uncached, bool global)
+{
+    uint64_t flags = 0;
+    ARCH_PAGE_FLAGS_INIT(flags);
+    ARCH_PAGE_FLAG_SET_READ(flags);
+    ARCH_PAGE_FLAG_SET_WRITE(flags);
+    if (uncached) ARCH_PAGE_FLAG_SET_NOCACHE(flags);
+    if (global) ARCH_PAGE_FLAG_SET_GLOBAL(flags);
+    return flags;
+}
+
+virt_addr_t vmm_map_direct_mmio_page(phys_addr_t page, virt_addr_space_t* space, bool only_if_missing)
+{
+    const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+    const virt_addr_t address = pa_to_hhdm(page, zone->hhdm_present, zone->hhdm_offset);
+    if (!only_if_missing || vmm_virt_to_phys(address, space) == 0)
+    {
+        vmm_map_page(address, page, vmm_kernel_page_flags(true, true), space);
+    }
+    return address;
+}
+
 void vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
 {
     spinlock_acquire(&space->lock);

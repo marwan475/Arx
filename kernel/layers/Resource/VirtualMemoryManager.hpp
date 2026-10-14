@@ -18,7 +18,6 @@ public:
     void ReleaseAnonymousPage(virt_addr_space_t* space, uint64_t address);
     void ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection);
     void DiscardAnonymousPage(virt_addr_space_t* space, uint64_t address);
-    bool WriteAnonymousUser(virt_addr_space_t* space, uint64_t address, const void* source, size_t length);
     void ReleaseAnonymousPages(virt_addr_space_t* space);
     void MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space);
     void UnmapPage(virt_addr_t va, virt_addr_space_t* space);
@@ -37,8 +36,4 @@ public:
     void           FreeRegion(virt_addr_space_t* space, virt_addr_t addr);
     virt_region_t* FindRegion(virt_addr_space_t* space, virt_addr_t addr);
 
-    bool IsUserRangeAccessible(uintptr_t userAddress, size_t length, virt_addr_space_t* space);
-    bool CopyFromUser(void* kernelDestination, uintptr_t userSource, size_t length, virt_addr_space_t* space);
-    bool CopyToUser(uintptr_t userDestination, const void* kernelSource, size_t length, virt_addr_space_t* space);
-    bool CopyStringFromUser(char* kernelDestination, size_t destinationSize, uintptr_t userSource, virt_addr_space_t* space, size_t* outLength);
 };

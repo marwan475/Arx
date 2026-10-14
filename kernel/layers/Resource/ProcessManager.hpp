@@ -87,6 +87,7 @@ public:
     bool       AddTask(process_t* process, task_t* task);
     int64_t    AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags);
     int64_t    AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd);
+    static file_descriptor_t* GetFileDescriptor(process_t* process, uint64_t fd);
     bool       EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex);
     bool       BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp);
     bool       ActivateProcessAddressSpace(process_t* process);
@@ -108,6 +109,7 @@ public:
     size_t GetCapacity() const;
 
 private:
+    static void ResetProcessSlot(process_t* process, uint64_t id, bool allocated);
     process_t* AllocateProcessUnlocked();
     void       LockManager() const;
     void       UnlockManager() const;

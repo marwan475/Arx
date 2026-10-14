@@ -1563,6 +1563,19 @@ int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, c
     return (int64_t) toCopy;
 }
 
+bool VirtualFileSystem::BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity) const
+{
+    if (path[0] == '/')
+    {
+        const size_t length = strlen(path);
+        if (length + 1 > capacity) return false;
+        memcpy(output, path, length + 1);
+        return true;
+    }
+    char basePath[512] = {};
+    return start.dentry != nullptr && BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)) && JoinPath(basePath, path, output, capacity);
+}
+
 int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint32_t mode)
 {
     if (path == nullptr)
@@ -1577,26 +1590,9 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
     }
 
     char effectivePath[512] = {};
-    if (path[0] == '/')
+    if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        if (strlen(path) + 1 > sizeof(effectivePath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectivePath, path, strlen(path) + 1);
-    }
-    else
-    {
-        char basePath[512] = {};
-        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     return caps->Mkdir(caps, effectivePath, mode);
@@ -1616,26 +1612,9 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
     }
 
     char effectivePath[512] = {};
-    if (path[0] == '/')
+    if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        if (strlen(path) + 1 > sizeof(effectivePath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectivePath, path, strlen(path) + 1);
-    }
-    else
-    {
-        char basePath[512] = {};
-        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     return caps->Unlink(caps, effectivePath, directory);
@@ -1655,49 +1634,15 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
     }
 
     char effectiveOldPath[512] = {};
-    if (oldPath[0] == '/')
+    if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
-        if (strlen(oldPath) + 1 > sizeof(effectiveOldPath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectiveOldPath, oldPath, strlen(oldPath) + 1);
-    }
-    else
-    {
-        char oldBasePath[512] = {};
-        if (oldStart.dentry == nullptr || !BuildAbsolutePathFromDentry(oldStart.dentry, oldBasePath, sizeof(oldBasePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(oldBasePath, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     char effectiveNewPath[512] = {};
-    if (newPath[0] == '/')
+    if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
-        if (strlen(newPath) + 1 > sizeof(effectiveNewPath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectiveNewPath, newPath, strlen(newPath) + 1);
-    }
-    else
-    {
-        char newBasePath[512] = {};
-        if (newStart.dentry == nullptr || !BuildAbsolutePathFromDentry(newStart.dentry, newBasePath, sizeof(newBasePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(newBasePath, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     return caps->Rename(caps, effectiveOldPath, effectiveNewPath);
@@ -1717,49 +1662,15 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
     }
 
     char effectiveOldPath[512] = {};
-    if (oldPath[0] == '/')
+    if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
-        if (strlen(oldPath) + 1 > sizeof(effectiveOldPath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectiveOldPath, oldPath, strlen(oldPath) + 1);
-    }
-    else
-    {
-        char oldBasePath[512] = {};
-        if (oldStart.dentry == nullptr || !BuildAbsolutePathFromDentry(oldStart.dentry, oldBasePath, sizeof(oldBasePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(oldBasePath, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     char effectiveNewPath[512] = {};
-    if (newPath[0] == '/')
+    if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
-        if (strlen(newPath) + 1 > sizeof(effectiveNewPath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectiveNewPath, newPath, strlen(newPath) + 1);
-    }
-    else
-    {
-        char newBasePath[512] = {};
-        if (newStart.dentry == nullptr || !BuildAbsolutePathFromDentry(newStart.dentry, newBasePath, sizeof(newBasePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(newBasePath, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     return caps->Link(caps, effectiveOldPath, effectiveNewPath, followSymlink);
@@ -1779,26 +1690,9 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
     }
 
     char effectivePath[512] = {};
-    if (path[0] == '/')
+    if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        if (strlen(path) + 1 > sizeof(effectivePath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectivePath, path, strlen(path) + 1);
-    }
-    else
-    {
-        char basePath[512] = {};
-        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     return caps->Mknod(caps, effectivePath, mode, device);
@@ -1818,26 +1712,9 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
     }
 
     char effectivePath[512] = {};
-    if (path[0] == '/')
+    if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        if (strlen(path) + 1 > sizeof(effectivePath))
-        {
-            return VFS_ERR_INVAL;
-        }
-        memcpy(effectivePath, path, strlen(path) + 1);
-    }
-    else
-    {
-        char basePath[512] = {};
-        if (start.dentry == nullptr || !BuildAbsolutePathFromDentry(start.dentry, basePath, sizeof(basePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
-
-        if (!JoinPath(basePath, path, effectivePath, sizeof(effectivePath)))
-        {
-            return VFS_ERR_INVAL;
-        }
+        return VFS_ERR_INVAL;
     }
 
     const int64_t result = caps->Truncate(caps, effectivePath, size);

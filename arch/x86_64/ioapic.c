@@ -184,19 +184,7 @@ void ioapic_init(void)
     }
 
     phys_addr_t ioapic_pa = align_down(platform.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
-    virt_addr_t ioapic_va = pa_to_hhdm(ioapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
-
-    if (vmm_virt_to_phys(ioapic_va, cpu_info->address_space) == 0)
-    {
-        uint64_t map_flags = 0;
-        ARCH_PAGE_FLAGS_INIT(map_flags);
-        ARCH_PAGE_FLAG_SET_READ(map_flags);
-        ARCH_PAGE_FLAG_SET_WRITE(map_flags);
-        ARCH_PAGE_FLAG_SET_NOCACHE(map_flags);
-        ARCH_PAGE_FLAG_SET_GLOBAL(map_flags);
-
-        vmm_map_page(ioapic_va, ioapic_pa, map_flags, cpu_info->address_space);
-    }
+    virt_addr_t ioapic_va = vmm_map_direct_mmio_page(ioapic_pa, cpu_info->address_space, true);
 
     volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
 

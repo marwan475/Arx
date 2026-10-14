@@ -35,10 +35,7 @@ void* uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len)
         return NULL;
     }
 
-    uint64_t map_flags = 0;
-    ARCH_PAGE_FLAGS_INIT(map_flags);
-    ARCH_PAGE_FLAG_SET_READ(map_flags);
-    ARCH_PAGE_FLAG_SET_WRITE(map_flags);
+    const uint64_t map_flags = vmm_kernel_page_flags(false, false);
 
     vmm_map_range(va, aligned_pa, aligned_len, map_flags, platform.cpus[arch_cpu_id()].address_space);
     return (void*) (va + offset);

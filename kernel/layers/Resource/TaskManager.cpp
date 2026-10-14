@@ -62,6 +62,22 @@ static uint64_t resolve_task_kernel_stack_top(const task_t* task, const cpu_info
     return 0;
 }
 
+void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
+{
+    memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
+    task->allocated       = allocated;
+    task->isUserTask      = false;
+    task->sleepPending    = false;
+    task->sleepBlocked    = false;
+    task->syscallActive   = 0;
+    task->preemptionDepth = 0;
+    task->id              = id;
+    memset(&task->taskContext, 0, sizeof(task->taskContext));
+    task->stack = nullptr;
+    task->next  = nullptr;
+    task->prev  = nullptr;
+}
+
 TaskManager::TaskManager()
 {
     ManagerLock = 0;
@@ -73,18 +89,7 @@ TaskManager::TaskManager()
 
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
-        memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-        Tasks[i].allocated       = false;
-        Tasks[i].isUserTask      = false;
-        Tasks[i].sleepPending    = false;
-        Tasks[i].sleepBlocked    = false;
-        Tasks[i].syscallActive   = 0;
-        Tasks[i].preemptionDepth = 0;
-        Tasks[i].id              = (uint64_t) i;
-        memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
-        Tasks[i].stack = nullptr;
-        Tasks[i].next  = nullptr;
-        Tasks[i].prev  = nullptr;
+        ResetTaskSlot(&Tasks[i], i, false);
     }
 }
 
@@ -106,18 +111,7 @@ task_t* TaskManager::AllocateTaskUnlocked()
     {
         if (!Tasks[i].allocated)
         {
-            memset(&Tasks[i].userLaunchContext, 0, sizeof(Tasks[i].userLaunchContext));
-            Tasks[i].allocated       = true;
-            Tasks[i].isUserTask      = false;
-            Tasks[i].sleepPending    = false;
-            Tasks[i].sleepBlocked    = false;
-            Tasks[i].syscallActive   = 0;
-            Tasks[i].preemptionDepth = 0;
-            Tasks[i].id              = (uint64_t) i;
-            memset(&Tasks[i].taskContext, 0, sizeof(Tasks[i].taskContext));
-            Tasks[i].stack = nullptr;
-            Tasks[i].next  = nullptr;
-            Tasks[i].prev  = nullptr;
+            ResetTaskSlot(&Tasks[i], i, true);
             return &Tasks[i];
         }
     }
@@ -133,21 +127,11 @@ task_t* TaskManager::AllocateTask()
     return task;
 }
 
-task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
+task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch)
 {
-    if (entry == nullptr)
-    {
-        return nullptr;
-    }
-
     void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
-    if (allocatedStack == nullptr)
-    {
-        return nullptr;
-    }
-
+    if (allocatedStack == nullptr) return nullptr;
     LockManager();
-
     task_t* task = AllocateTaskUnlocked();
     if (task == nullptr)
     {
@@ -155,49 +139,29 @@ task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
         kfree(allocatedStack);
         return nullptr;
     }
-
-    task->stack           = allocatedStack;
-    task->isUserTask      = false;
-    task->syscallActive   = 0;
-    task->preemptionDepth = 0;
-
+    task->stack = allocatedStack;
+    task->isUserTask = userLaunch != nullptr;
+    if (userLaunch != nullptr)
+    {
+        task->userLaunchContext = *userLaunch;
+        arg = &task->userLaunchContext;
+    }
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
     arch_init_context(&task->taskContext, stack_top, entry, arg);
-
     UnlockManager();
     return task;
 }
 
+task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
+{
+    if (entry == nullptr) return nullptr;
+    return CreateTask(entry, arg, nullptr);
+}
+
 task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1)
 {
-    void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
-    if (allocatedStack == nullptr)
-    {
-        return nullptr;
-    }
-
-    LockManager();
-
-    task_t* task = AllocateTaskUnlocked();
-    if (task == nullptr)
-    {
-        UnlockManager();
-        kfree(allocatedStack);
-        return nullptr;
-    }
-
-    task->stack                     = allocatedStack;
-    task->isUserTask                = true;
-    task->userLaunchContext.userRip = userRip;
-    task->userLaunchContext.userRsp = userRsp;
-    task->userLaunchContext.arg0    = arg0;
-    task->userLaunchContext.arg1    = arg1;
-
-    void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
-    arch_init_context(&task->taskContext, stack_top, user_task_bootstrap_entry, &task->userLaunchContext);
-
-    UnlockManager();
-    return task;
+    const task_t::user_launch_context_t launch = {userRip, userRsp, arg0, arg1};
+    return CreateTask(user_task_bootstrap_entry, nullptr, &launch);
 }
 
 bool TaskManager::FreeTask(task_t* task)
@@ -230,13 +194,7 @@ bool TaskManager::FreeTask(task_t* task)
         task->stack = nullptr;
     }
 
-    memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
-    memset(&task->taskContext, 0, sizeof(task->taskContext));
-    task->id         = (uint64_t) (task - &Tasks[0]);
-    task->allocated  = false;
-    task->isUserTask = false;
-    task->next       = nullptr;
-    task->prev       = nullptr;
+    ResetTaskSlot(task, (uint64_t) (task - &Tasks[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {

@@ -26,27 +26,10 @@ static bool validate_user_memory(const user_memory_access_t* access, uint64_t ad
     return true;
 }
 
-bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length)
+static bool copy_user_locked(const user_memory_access_t* access, uint64_t address, void* buffer, size_t length, bool write)
 {
-    if (destination == NULL || !validate_user_memory(access, address, length, false)) return false;
-    uint8_t* output = destination;
-    while (length != 0)
-    {
-        size_t offset = address & (PAGE_SIZE - 1);
-        size_t chunk = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
-        phys_addr_t physical = vmm_virt_to_phys(align_down(address, PAGE_SIZE), access->space);
-        if (physical == 0) return false;
-        const uint8_t* page = (const uint8_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-        memcpy(output, page + offset, chunk);
-        output += chunk; address += chunk; length -= chunk;
-    }
-    return true;
-}
-
-bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length)
-{
-    if (source == NULL || !validate_user_memory(access, address, length, true)) return false;
-    const uint8_t* input = source;
+    if (buffer == NULL || !validate_user_memory(access, address, length, write)) return false;
+    uint8_t* bytes = (uint8_t*) buffer;
     while (length != 0)
     {
         size_t offset = address & (PAGE_SIZE - 1);
@@ -54,10 +37,23 @@ bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address
         phys_addr_t physical = vmm_virt_to_phys(align_down(address, PAGE_SIZE), access->space);
         if (physical == 0) return false;
         uint8_t* page = (uint8_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-        memcpy(page + offset, input, chunk);
-        input += chunk; address += chunk; length -= chunk;
+        if (write) memcpy(page + offset, bytes, chunk);
+        else memcpy(bytes, page + offset, chunk);
+        bytes += chunk;
+        address += chunk;
+        length -= chunk;
     }
     return true;
+}
+
+bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length)
+{
+    return copy_user_locked(access, address, destination, length, false);
+}
+
+bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length)
+{
+    return copy_user_locked(access, address, (void*) source, length, true);
 }
 
 bool safe_read_user(uint64_t address, void* destination, size_t length)
@@ -76,6 +72,62 @@ bool safe_write_user(uint64_t address, const void* source, size_t length)
     bool result = safe_write_user_locked(&access, address, source, length);
     end_user_memory(&access);
     return result;
+}
+
+bool safe_read_user_string(uint64_t address, char* destination, size_t capacity, size_t* out_length)
+{
+    if (destination == NULL || capacity == 0) return false;
+    user_memory_access_t access;
+    if (!begin_user_memory(&access)) return false;
+    bool result = false;
+    for (size_t copied = 0; copied < capacity; ++copied)
+    {
+        if (address > UINT64_MAX - copied || !safe_read_user_locked(&access, address + copied, &destination[copied], 1)) break;
+        if (destination[copied] == '\0')
+        {
+            if (out_length != NULL) *out_length = copied;
+            result = true;
+            break;
+        }
+    }
+    if (!result) destination[capacity - 1] = '\0';
+    end_user_memory(&access);
+    return result;
+}
+
+bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
+{
+    if (addressSpace == NULL || source == NULL)
+    {
+        return false;
+    }
+
+    const uint8_t* sourceBytes = (const uint8_t*) source;
+    uint64_t       offset      = 0;
+
+    while (offset < size)
+    {
+        const uint64_t currentVirtualAddress = destinationVirtualAddress + offset;
+        const uint64_t pageOffset            = currentVirtualAddress & (PAGE_SIZE - 1);
+        const uint64_t chunkSize             = ((size - offset) < (PAGE_SIZE - pageOffset)) ? (size - offset) : (PAGE_SIZE - pageOffset);
+
+        phys_addr_t physicalAddress = vmm_virt_to_phys(currentVirtualAddress, addressSpace);
+        if (physicalAddress == 0)
+        {
+            return false;
+        }
+
+        uint8_t* destination = (uint8_t*) pa_to_hhdm((uintptr_t) physicalAddress, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+        if (destination == NULL)
+        {
+            return false;
+        }
+
+        memcpy(destination + pageOffset, sourceBytes + offset, (size_t) chunkSize);
+        offset += chunkSize;
+    }
+
+    return true;
 }
 
 // klib printf only prints to qemu serial.
@@ -288,7 +340,7 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     }
 }
 
-static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
+static void free_virtual_backing(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
 {
     for (size_t offset = 0; offset < mapped_size;)
     {
@@ -321,6 +373,11 @@ static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, vir
 
         offset += step;
     }
+}
+
+static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
+{
+    free_virtual_backing(zone, address_space, base, mapped_size);
 
     if (mapped_size > 0)
     {
@@ -363,11 +420,7 @@ void* vmalloc(size_t size)
         return NULL;
     }
 
-    uint64_t page_flags = 0;
-    ARCH_PAGE_FLAGS_INIT(page_flags);
-    ARCH_PAGE_FLAG_SET_READ(page_flags);
-    ARCH_PAGE_FLAG_SET_WRITE(page_flags);
-    ARCH_PAGE_FLAG_SET_GLOBAL(page_flags);
+    const uint64_t page_flags = vmm_kernel_page_flags(false, true);
 
     size_t mapped_size      = 0;
     size_t max_chunk_size   = ((size_t) 1ULL << MAX_ORDER) * PAGE_SIZE;
@@ -435,37 +488,7 @@ void vfree(void* ptr)
     const virt_addr_t region_start = region->start;
     const size_t      region_size  = region->size;
 
-    for (size_t offset = 0; offset < region_size;)
-    {
-        const virt_addr_t va   = region_start + offset;
-        const phys_addr_t pa   = vmm_virt_to_phys(va, address_space);
-        size_t            step = PAGE_SIZE;
-
-        if (pa != 0)
-        {
-            const uint64_t pfn = pa >> PAGE_SHIFT;
-            if (pfn < zone->max_pfn)
-            {
-                page_t* page = &zone->buddy_metadata[pfn];
-                if (page->flags == PMM_PAGE_USED && page->order <= MAX_ORDER)
-                {
-                    const uint64_t block_pages = (uint64_t) 1ULL << page->order;
-                    if ((pfn & (block_pages - 1)) == 0)
-                    {
-                        pmm_free((void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
-                        step = (size_t) block_pages * PAGE_SIZE;
-                    }
-                }
-            }
-        }
-
-        if (step == 0)
-        {
-            step = PAGE_SIZE;
-        }
-
-        offset += step;
-    }
+    free_virtual_backing(zone, address_space, region_start, region_size);
 
     vmm_unmap_range(region_start, region_size, address_space);
     vmm_free_region(address_space, region_start);

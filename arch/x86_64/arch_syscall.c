@@ -27,36 +27,8 @@ _Static_assert(offsetof(arch_info_t, syscall_ctx.active) - offsetof(arch_info_t,
 _Static_assert(offsetof(struct arch_task_context, rflags) == 64, "context RFLAGS offset");
 _Static_assert(offsetof(struct arch_task_context, fxState) == 80, "aligned FXSAVE context offset");
 
-static inline uint64_t rdmsr(uint32_t msr)
-{
-    uint32_t low  = 0;
-    uint32_t high = 0;
-    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return ((uint64_t) high << 32) | low;
-}
-
-static inline void wrmsr(uint32_t msr, uint64_t value)
-{
-    uint32_t low  = (uint32_t) value;
-    uint32_t high = (uint32_t) (value >> 32);
-    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
-}
-
-static uint64_t read_rsp(void)
-{
-    uint64_t rsp = 0;
-    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
-    return rsp;
-}
-
 extern void     arch_x86_64_syscall_entry(void);
 extern uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame);
-
-static void set_tss_rsp0(tss_t* tss, uint64_t rsp0)
-{
-    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
-    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
-}
 
 void arch_syscall_set_kernel_stack(uint64_t kernel_rsp)
 {
@@ -71,14 +43,14 @@ void arch_set_user_transition_stack(uint64_t kernel_rsp)
     const uint64_t aligned_rsp = kernel_rsp & ~0xFULL;
 
     arch_syscall_set_kernel_stack(aligned_rsp);
-    set_tss_rsp0(&cpu_info->arch_info.tss, aligned_rsp);
+    x86_set_tss_rsp0(&cpu_info->arch_info.tss, aligned_rsp);
 }
 
 void arch_syscall_init(void)
 {
     cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
 
-    cpu_info->arch_info.syscall_ctx.kernel_rsp = read_rsp() & ~0xFULL;
+    cpu_info->arch_info.syscall_ctx.kernel_rsp = x86_read_rsp() & ~0xFULL;
     cpu_info->arch_info.syscall_ctx.user_rsp   = 0;
     cpu_info->arch_info.syscall_ctx.active     = 0;
 
@@ -88,17 +60,17 @@ void arch_syscall_init(void)
     // interrupts once the syscall frame is safely on the kernel stack.
     const uint64_t fmask = RFLAGS_IF | RFLAGS_TF | RFLAGS_DF | RFLAGS_NT | RFLAGS_AC;
 
-    wrmsr(IA32_STAR, star);
-    wrmsr(IA32_LSTAR, lstar);
-    wrmsr(IA32_FMASK, fmask);
+    x86_write_msr(IA32_STAR, star);
+    x86_write_msr(IA32_LSTAR, lstar);
+    x86_write_msr(IA32_FMASK, fmask);
 
     // Kernel mode always owns the per-CPU GS base. User entry/exit swap it.
-    wrmsr(IA32_GS_BASE, (uint64_t) (uintptr_t) &cpu_info->arch_info.syscall_ctx);
-    wrmsr(IA32_KERNEL_GS_BASE, 0);
+    x86_write_msr(IA32_GS_BASE, (uint64_t) (uintptr_t) &cpu_info->arch_info.syscall_ctx);
+    x86_write_msr(IA32_KERNEL_GS_BASE, 0);
 
-    uint64_t efer = rdmsr(IA32_EFER);
+    uint64_t efer = x86_read_msr(IA32_EFER);
     efer |= IA32_EFER_SCE;
-    wrmsr(IA32_EFER, efer);
+    x86_write_msr(IA32_EFER, efer);
 }
 
 uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)

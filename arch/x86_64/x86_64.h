@@ -560,4 +560,33 @@ DECL_ISR(254)
 DECL_ISR(255)
 #undef DECL_ISR
 
+// Shared x86 register and TSS primitives.
+static inline uint64_t x86_read_msr(uint32_t msr)
+{
+    uint32_t low  = 0;
+    uint32_t high = 0;
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t) high << 32) | low;
+}
+
+static inline void x86_write_msr(uint32_t msr, uint64_t value)
+{
+    uint32_t low  = (uint32_t) value;
+    uint32_t high = (uint32_t) (value >> 32);
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+}
+
+static inline uint64_t x86_read_rsp(void)
+{
+    uint64_t rsp = 0;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    return rsp;
+}
+
+static inline void x86_set_tss_rsp0(tss_t* tss, uint64_t rsp0)
+{
+    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
+    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
+}
+
 #endif

@@ -99,14 +99,7 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     if (address == 0 || (address & 7) || (address & (PAGE_SIZE - 1)) > PAGE_SIZE - 0xf8) return false;
     cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
     phys_addr_t page = align_down(address, PAGE_SIZE);
-    virt_addr_t base = pa_to_hhdm(page, cpu->numa_node->zone.hhdm_present, cpu->numa_node->zone.hhdm_offset);
-    uint64_t flags;
-    ARCH_PAGE_FLAGS_INIT(flags);
-    ARCH_PAGE_FLAG_SET_READ(flags);
-    ARCH_PAGE_FLAG_SET_WRITE(flags);
-    ARCH_PAGE_FLAG_SET_NOCACHE(flags);
-    ARCH_PAGE_FLAG_SET_GLOBAL(flags);
-    vmm_map_page(base, page, flags, cpu->address_space);
+    virt_addr_t base = vmm_map_direct_mmio_page(page, cpu->address_space, false);
     if (vmm_virt_to_phys(base, cpu->address_space) != page) return false;
     volatile uint8_t* registers = (volatile uint8_t*) (uintptr_t) (base + (address - page));
     uint64_t capabilities = REG(uint64_t, registers);

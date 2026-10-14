@@ -80,7 +80,7 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
     }
 
     memcpy(affinityMaskBuffer, &mask, sizeof(mask));
-    if (!ResourceCaps->virtualMemoryManager->CopyToUser(userSet, affinityMaskBuffer, sizeof(affinityMaskBuffer), currentProcess->addressSpace))
+    if (!safe_write_user(userSet, affinityMaskBuffer, sizeof(affinityMaskBuffer)))
     {
         return LINUX_EFAULT;
     }
@@ -93,7 +93,7 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
         while (remaining > 0)
         {
             const uint64_t chunk = remaining > sizeof(zeroBuffer) ? sizeof(zeroBuffer) : remaining;
-            if (!ResourceCaps->virtualMemoryManager->CopyToUser(current, zeroBuffer, (size_t) chunk, currentProcess->addressSpace))
+            if (!safe_write_user(current, zeroBuffer, (size_t) chunk))
             {
                 return LINUX_EFAULT;
             }
@@ -130,7 +130,7 @@ uint64_t SchedulerRequestManager::HandleGetcpuRequest(const arch_syscall_frame_t
     if (cpuPtr != 0)
     {
         const uint32_t cpuId = (uint32_t) arch_cpu_id();
-        if (!ResourceCaps->virtualMemoryManager->CopyToUser(cpuPtr, &cpuId, sizeof(cpuId), currentProcess->addressSpace))
+        if (!safe_write_user(cpuPtr, &cpuId, sizeof(cpuId)))
         {
             return LINUX_EFAULT;
         }
@@ -139,7 +139,7 @@ uint64_t SchedulerRequestManager::HandleGetcpuRequest(const arch_syscall_frame_t
     if (nodePtr != 0)
     {
         const uint32_t nodeId = 0;
-        if (!ResourceCaps->virtualMemoryManager->CopyToUser(nodePtr, &nodeId, sizeof(nodeId), currentProcess->addressSpace))
+        if (!safe_write_user(nodePtr, &nodeId, sizeof(nodeId)))
         {
             return LINUX_EFAULT;
         }

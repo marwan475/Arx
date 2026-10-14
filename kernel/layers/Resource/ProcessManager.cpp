@@ -13,45 +13,6 @@ extern "C"
 
 namespace
 {
-static bool add_would_overflow_u64(uint64_t a, uint64_t b)
-{
-    return a > (UINT64_MAX - b);
-}
-
-static bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
-{
-    if (addressSpace == nullptr || source == nullptr)
-    {
-        return false;
-    }
-
-    const uint8_t* sourceBytes = (const uint8_t*) source;
-    uint64_t       offset      = 0;
-
-    while (offset < size)
-    {
-        const uint64_t currentVirtualAddress = destinationVirtualAddress + offset;
-        const uint64_t pageOffset            = currentVirtualAddress & (PAGE_SIZE - 1);
-        const uint64_t chunkSize             = ((size - offset) < (PAGE_SIZE - pageOffset)) ? (size - offset) : (PAGE_SIZE - pageOffset);
-
-        phys_addr_t physicalAddress = vmm_virt_to_phys(currentVirtualAddress, addressSpace);
-        if (physicalAddress == 0)
-        {
-            return false;
-        }
-
-        uint8_t* destination = (uint8_t*) pa_to_hhdm((uintptr_t) physicalAddress, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-        if (destination == nullptr)
-        {
-            return false;
-        }
-
-        memcpy(destination + pageOffset, sourceBytes + offset, (size_t) chunkSize);
-        offset += chunkSize;
-    }
-
-    return true;
-}
 
 static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t* writeCursor, uint64_t value)
 {
@@ -70,6 +31,29 @@ static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t
 }
 } // namespace
 
+void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
+{
+    process->allocated           = allocated;
+    process->id                  = id;
+    process->hasParent           = false;
+    process->parentId            = 0;
+    process->exited              = false;
+    process->exitStatus          = 0;
+    process->addressSpace        = nullptr;
+    process->elfMetadata         = nullptr;
+    process->breakBase           = 0;
+    process->programBreak        = 0;
+    process->memoryUsers         = 0;
+    memset(process->timerIntervalSeconds, 0, sizeof(process->timerIntervalSeconds));
+    memset(process->timerIntervalMicroseconds, 0, sizeof(process->timerIntervalMicroseconds));
+    process->tasks               = nullptr;
+    process->fileDescriptors     = nullptr;
+    process->fileDescriptorCount = 0;
+    process->umask               = 0022U;
+    memset(process->cwdPath, 0, sizeof(process->cwdPath));
+    process->cwdPath[0] = '/';
+}
+
 ProcessManager::ProcessManager()
 {
     ManagerLock = 0;
@@ -81,25 +65,7 @@ ProcessManager::ProcessManager()
 
     for (size_t i = 0; i < MAX_PROCESSES; i++)
     {
-        Processes[i].allocated           = false;
-        Processes[i].id                  = (uint64_t) i;
-        Processes[i].hasParent           = false;
-        Processes[i].parentId            = 0;
-        Processes[i].exited              = false;
-        Processes[i].exitStatus          = 0;
-        Processes[i].addressSpace        = nullptr;
-        Processes[i].elfMetadata         = nullptr;
-        Processes[i].breakBase           = 0;
-        Processes[i].programBreak        = 0;
-        Processes[i].memoryUsers         = 0;
-        memset(Processes[i].timerIntervalSeconds, 0, sizeof(Processes[i].timerIntervalSeconds));
-        memset(Processes[i].timerIntervalMicroseconds, 0, sizeof(Processes[i].timerIntervalMicroseconds));
-        Processes[i].tasks               = nullptr;
-        Processes[i].fileDescriptors     = nullptr;
-        Processes[i].fileDescriptorCount = 0;
-        Processes[i].umask               = 0022U;
-        memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
-        Processes[i].cwdPath[0] = '/';
+        ResetProcessSlot(&Processes[i], i, false);
     }
 }
 
@@ -121,25 +87,7 @@ process_t* ProcessManager::AllocateProcessUnlocked()
     {
         if (!Processes[i].allocated)
         {
-            Processes[i].allocated           = true;
-            Processes[i].id                  = (uint64_t) i;
-            Processes[i].hasParent           = false;
-            Processes[i].parentId            = 0;
-            Processes[i].exited              = false;
-            Processes[i].exitStatus          = 0;
-            Processes[i].addressSpace        = nullptr;
-            Processes[i].elfMetadata         = nullptr;
-            Processes[i].breakBase           = 0;
-            Processes[i].programBreak        = 0;
-            Processes[i].memoryUsers         = 0;
-            memset(Processes[i].timerIntervalSeconds, 0, sizeof(Processes[i].timerIntervalSeconds));
-            memset(Processes[i].timerIntervalMicroseconds, 0, sizeof(Processes[i].timerIntervalMicroseconds));
-            Processes[i].tasks               = nullptr;
-            Processes[i].fileDescriptors     = nullptr;
-            Processes[i].fileDescriptorCount = 0;
-            Processes[i].umask               = 0022U;
-            memset(Processes[i].cwdPath, 0, sizeof(Processes[i].cwdPath));
-            Processes[i].cwdPath[0] = '/';
+            ResetProcessSlot(&Processes[i], i, true);
             return &Processes[i];
         }
     }
@@ -287,19 +235,7 @@ bool ProcessManager::FreeProcess(process_t* process)
         process->fileDescriptors = nullptr;
     }
 
-    process->addressSpace        = nullptr;
-    process->elfMetadata         = nullptr;
-    process->id                  = (uint64_t) (process - &Processes[0]);
-    process->hasParent           = false;
-    process->parentId            = 0;
-    process->exited              = false;
-    process->exitStatus          = 0;
-    process->allocated           = false;
-    process->tasks               = nullptr;
-    process->fileDescriptorCount = 0;
-    process->umask               = 0022U;
-    memset(process->cwdPath, 0, sizeof(process->cwdPath));
-    process->cwdPath[0] = '/';
+    ResetProcessSlot(process, (uint64_t) (process - &Processes[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
@@ -356,6 +292,13 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
 int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags)
 {
     return AddFileDescriptorFrom(process, file, flags, 0);
+}
+
+file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
+{
+    if (process == nullptr || process->fileDescriptors == nullptr || fd >= process->fileDescriptorCount) return nullptr;
+    file_descriptor_t* descriptor = &process->fileDescriptors[fd];
+    return descriptor->file != nullptr ? descriptor : nullptr;
 }
 
 bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex)
@@ -495,7 +438,7 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
         return false;
     }
 
-    if (add_would_overflow_u64(layout->stackBase, layout->stackSize))
+    if (add_overflows_u64(layout->stackBase, layout->stackSize))
     {
         return false;
     }
@@ -581,7 +524,7 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
 
     stackCursor = align_down(stackCursor, 16);
 
-    if (add_would_overflow_u64(layout->auxvCount, layout->argc) || add_would_overflow_u64(layout->auxvCount, layout->envc))
+    if (add_overflows_u64(layout->auxvCount, layout->argc) || add_overflows_u64(layout->auxvCount, layout->envc))
     {
         goto fail;
     }

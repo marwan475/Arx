@@ -14,6 +14,24 @@
 #include <stdint.h>
 #include <terminal/terminal.h>
 
+// Shared Linux-style syscall error values.
+static const uint64_t LINUX_ENOENT = (uint64_t) -2;
+static const uint64_t LINUX_ESRCH = (uint64_t) -3;
+static const uint64_t LINUX_EIO = (uint64_t) -5;
+static const uint64_t LINUX_EBADF = (uint64_t) -9;
+static const uint64_t LINUX_ENOMEM = (uint64_t) -12;
+static const uint64_t LINUX_EACCES = (uint64_t) -13;
+static const uint64_t LINUX_EFAULT = (uint64_t) -14;
+static const uint64_t LINUX_ENOTDIR = (uint64_t) -20;
+static const uint64_t LINUX_EINVAL = (uint64_t) -22;
+static const uint64_t LINUX_EMFILE = (uint64_t) -24;
+static const uint64_t LINUX_ENOTTY = (uint64_t) -25;
+static const uint64_t LINUX_ERANGE = (uint64_t) -34;
+static const uint64_t LINUX_ENAMETOOLONG = (uint64_t) -36;
+static const uint64_t LINUX_ENOSYS = (uint64_t) -38;
+static const uint64_t LINUX_EOVERFLOW = (uint64_t) -75;
+static const uint64_t LINUX_EOPNOTSUPP = (uint64_t) -95;
+
 struct process_t;
 struct virt_addr_space;
 
@@ -55,6 +73,11 @@ extern "C"
         return x & ~(a - 1);
     }
 
+    static inline bool add_overflows_u64(uint64_t a, uint64_t b)
+    {
+        return a > UINT64_MAX - b;
+    }
+
     // Inclusive bounds; validates address arithmetic, not mapping permissions.
     bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_t upper);
 
@@ -62,12 +85,16 @@ extern "C"
     // pin the process, and serialize mapping changes for the complete copy.
     bool safe_read_user(uint64_t address, void* destination, size_t length);
     bool safe_write_user(uint64_t address, const void* source, size_t length);
+    bool safe_read_user_string(uint64_t address, char* destination, size_t capacity, size_t* out_length);
     // Multi-copy transactions. Pair every successful begin with end, and never
     // retain the operation lock across a sleep or context switch.
     bool begin_user_memory(user_memory_access_t* access);
     void end_user_memory(user_memory_access_t* access);
     bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length);
     bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length);
+
+    // Explicit-address-space initialization; caller owns mapping lifetime.
+    bool copy_to_process_virtual(struct virt_addr_space* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size);
 
     // memory
     void*     memset(void* dest, int value, size_t count);

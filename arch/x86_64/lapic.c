@@ -4,21 +4,10 @@
 #include <memory/vmm.h>
 #include <platform.h>
 
-static inline uint64_t rdmsr(uint32_t msr)
+static volatile uint8_t* lapic_get_base(const cpu_info_t* cpu)
 {
-    uint32_t low;
-    uint32_t high;
-
-    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return ((uint64_t) high << 32) | low;
-}
-
-static inline void wrmsr(uint32_t msr, uint64_t value)
-{
-    uint32_t low  = (uint32_t) value;
-    uint32_t high = (uint32_t) (value >> 32);
-
-    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+    const zone_t* zone = &cpu->numa_node->zone;
+    return (volatile uint8_t*) (uintptr_t) pa_to_hhdm(cpu->arch_info.acpi_lapic_base_addr, zone->hhdm_present, zone->hhdm_offset);
 }
 
 void lapic_init(void)
@@ -31,24 +20,12 @@ void lapic_init(void)
         panic();
     }
 
-    uint64_t apic_base_msr = rdmsr(IA32_APIC_BASE_MSR);
+    uint64_t apic_base_msr = x86_read_msr(IA32_APIC_BASE_MSR);
     apic_base_msr |= IA32_APIC_BASE_ENABLE;
-    wrmsr(IA32_APIC_BASE_MSR, apic_base_msr);
+    x86_write_msr(IA32_APIC_BASE_MSR, apic_base_msr);
 
     phys_addr_t lapic_pa = align_down(cpu_info->arch_info.acpi_lapic_base_addr, PAGE_SIZE);
-    virt_addr_t lapic_va = pa_to_hhdm(lapic_pa, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
-
-    if (vmm_virt_to_phys(lapic_va, cpu_info->address_space) == 0)
-    {
-        uint64_t map_flags = 0;
-        ARCH_PAGE_FLAGS_INIT(map_flags);
-        ARCH_PAGE_FLAG_SET_READ(map_flags);
-        ARCH_PAGE_FLAG_SET_WRITE(map_flags);
-        ARCH_PAGE_FLAG_SET_NOCACHE(map_flags);
-        ARCH_PAGE_FLAG_SET_GLOBAL(map_flags);
-
-        vmm_map_page(lapic_va, lapic_pa, map_flags, cpu_info->address_space);
-    }
+    virt_addr_t lapic_va = vmm_map_direct_mmio_page(lapic_pa, cpu_info->address_space, true);
 
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 
@@ -70,8 +47,7 @@ void lapic_timer_init(void)
         return;
     }
 
-    virt_addr_t       lapic_va   = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
-    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+    volatile uint8_t* lapic_base = lapic_get_base(cpu_info);
 
     REG(uint32_t, lapic_base + LAPIC_REG_DIVIDE_CONFIG) = LAPIC_TIMER_DIVIDE_BY_16;
     REG(uint32_t, lapic_base + LAPIC_REG_LVT_TIMER)     = LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR;
@@ -87,8 +63,7 @@ void lapic_eoi(void)
         return;
     }
 
-    virt_addr_t       lapic_va   = pa_to_hhdm(cpu_info->arch_info.acpi_lapic_base_addr, cpu_info->numa_node->zone.hhdm_present, cpu_info->numa_node->zone.hhdm_offset);
-    volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
+    volatile uint8_t* lapic_base = lapic_get_base(cpu_info);
 
     REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;
 }
@@ -128,8 +103,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
         target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
     }
 
-    virt_addr_t       lapic_va    = pa_to_hhdm(source_cpu_info->arch_info.acpi_lapic_base_addr, source_cpu_info->numa_node->zone.hhdm_present, source_cpu_info->numa_node->zone.hhdm_offset);
-    volatile uint8_t* lapic_base  = (volatile uint8_t*) (uintptr_t) lapic_va;
+    volatile uint8_t* lapic_base = lapic_get_base(source_cpu_info);
     const uint32_t    destination = ((uint32_t) target_cpu_info->arch_info.acpi_lapic_id) << 24;
 
     while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)

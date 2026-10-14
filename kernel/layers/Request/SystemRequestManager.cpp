@@ -155,7 +155,7 @@ uint64_t SystemRequestManager::HandleUnameRequest(const arch_syscall_frame_t* fr
     copy_uts_field(utsData.machine, sizeof(utsData.machine), platform.arch == ARCH_AARCH64 ? "aarch64" : "x86_64");
     copy_uts_field(utsData.domainname, sizeof(utsData.domainname), "localdomain");
 
-    if (!ResourceCaps->virtualMemoryManager->CopyToUser(userUts, &utsData, sizeof(utsData), currentProcess->addressSpace))
+    if (!safe_write_user(userUts, &utsData, sizeof(utsData)))
     {
         return LINUX_EFAULT;
     }
@@ -209,7 +209,7 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
     sysinfoData.freehigh        = 0;
     sysinfoData.mem_unit        = 1;
 
-    if (!ResourceCaps->virtualMemoryManager->CopyToUser(userSysinfo, &sysinfoData, sizeof(sysinfoData), currentProcess->addressSpace))
+    if (!safe_write_user(userSysinfo, &sysinfoData, sizeof(sysinfoData)))
     {
         return LINUX_EFAULT;
     }

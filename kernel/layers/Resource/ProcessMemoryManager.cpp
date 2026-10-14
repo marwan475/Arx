@@ -82,24 +82,24 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
     process_t* process = BeginMemoryOperation();
     if (process == nullptr)
     {
-        return static_cast<uint64_t>(-3);
+        return LINUX_ESRCH;
     }
 
     if ((flags & 0x20) == 0)
     {
         if (fd < 0 || process->fileDescriptors == nullptr || static_cast<uint64_t>(fd) >= process->fileDescriptorCount || process->fileDescriptors[fd].file == nullptr)
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-9));
+            return EndMemoryOperation(process, LINUX_EBADF);
         }
 
         // The VFS mmap callback has no initramfs implementation or backing-object contract.
-        return EndMemoryOperation(process, static_cast<uint64_t>(-95));
+        return EndMemoryOperation(process, LINUX_EOPNOTSUPP);
     }
 
     if ((flags & 3) != 2)
     {
         // Shared mappings must share backing, rather than allocate private copies.
-        return EndMemoryOperation(process, static_cast<uint64_t>(-95));
+        return EndMemoryOperation(process, LINUX_EOPNOTSUPP);
     }
 
     virt_addr_space_t*    space                = process->addressSpace;
@@ -124,7 +124,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
 
             if (virtualMemoryManager->FindRegion(space, page) == nullptr && virtualMemoryManager->VirtToPhys(page, space) == 0)
             {
-                return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+                return EndMemoryOperation(process, LINUX_ENOMEM);
             }
 
             if ((flags & 0x100000) != 0)
@@ -135,7 +135,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
             if (!owns_anonymous_page(virtualMemoryManager, space, page))
             {
                 // Legacy ELF/stack allocations have no releasable backing metadata.
-                return EndMemoryOperation(process, static_cast<uint64_t>(-95));
+                return EndMemoryOperation(process, LINUX_EOPNOTSUPP);
             }
         }
 
@@ -165,7 +165,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
 
         if (address == 0)
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+            return EndMemoryOperation(process, LINUX_ENOMEM);
         }
     }
 
@@ -185,7 +185,7 @@ uint64_t ProcessMemoryManager::MapProcessMemory(uint64_t address, uint64_t lengt
             virtualMemoryManager->ReleaseAnonymousPage(space, rollback);
         }
 
-        return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+        return EndMemoryOperation(process, LINUX_ENOMEM);
     }
 
     return EndMemoryOperation(process, address);
@@ -196,7 +196,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
     process_t* process = BeginMemoryOperation();
     if (process == nullptr)
     {
-        return static_cast<uint64_t>(-3);
+        return LINUX_ESRCH;
     }
 
     virt_addr_space_t*    space                = process->addressSpace;
@@ -204,7 +204,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
     {
-        return EndMemoryOperation(process, static_cast<uint64_t>(-22));
+        return EndMemoryOperation(process, LINUX_EINVAL);
     }
 
     // Preflight legacy mappings so an unsupported request changes no pages.
@@ -212,7 +212,7 @@ uint64_t ProcessMemoryManager::UnmapProcessMemory(uint64_t address, uint64_t len
     {
         if (!owns_anonymous_page(virtualMemoryManager, space, page) && (virtualMemoryManager->FindRegion(space, page) != nullptr || virtualMemoryManager->VirtToPhys(page, space) != 0))
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-95));
+            return EndMemoryOperation(process, LINUX_EOPNOTSUPP);
         }
     }
 
@@ -229,7 +229,7 @@ uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t l
     process_t* process = BeginMemoryOperation();
     if (process == nullptr)
     {
-        return static_cast<uint64_t>(-3);
+        return LINUX_ESRCH;
     }
 
     virt_addr_space_t*    space                = process->addressSpace;
@@ -237,14 +237,14 @@ uint64_t ProcessMemoryManager::ProtectProcessMemory(uint64_t address, uint64_t l
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
     {
-        return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+        return EndMemoryOperation(process, LINUX_ENOMEM);
     }
 
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
         if (!owns_anonymous_page(virtualMemoryManager, space, page))
         {
-            const uint64_t error = virtualMemoryManager->VirtToPhys(page, space) != 0 ? static_cast<uint64_t>(-95) : static_cast<uint64_t>(-12);
+            const uint64_t error = virtualMemoryManager->VirtToPhys(page, space) != 0 ? LINUX_EOPNOTSUPP : LINUX_ENOMEM;
             return EndMemoryOperation(process, error);
         }
     }
@@ -262,7 +262,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     process_t* process = BeginMemoryOperation();
     if (process == nullptr)
     {
-        return static_cast<uint64_t>(-3);
+        return LINUX_ESRCH;
     }
 
     virt_addr_space_t*    space                = process->addressSpace;
@@ -270,7 +270,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
     {
-        return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+        return EndMemoryOperation(process, LINUX_ENOMEM);
     }
 
     const uint64_t count = (end - address) / PAGE_SIZE;
@@ -281,7 +281,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
 
     if (!range_within_u64(vector, count, CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
-        return EndMemoryOperation(process, static_cast<uint64_t>(-14));
+        return EndMemoryOperation(process, LINUX_EFAULT);
     }
 
     for (uint64_t page = align_down(vector, PAGE_SIZE); page < vector + count; page += PAGE_SIZE)
@@ -289,7 +289,7 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
         virt_region_t* region = virtualMemoryManager->FindRegion(space, page);
         if (region == nullptr || region->backing == nullptr || (region->protection & 2) == 0)
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-14));
+            return EndMemoryOperation(process, LINUX_EFAULT);
         }
     }
 
@@ -297,17 +297,18 @@ uint64_t ProcessMemoryManager::QueryProcessMemoryResidency(uint64_t address, uin
     {
         if (!owns_anonymous_page(virtualMemoryManager, space, page) && virtualMemoryManager->VirtToPhys(page, space) == 0)
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-12));
+            return EndMemoryOperation(process, LINUX_ENOMEM);
         }
     }
 
+    const user_memory_access_t access = {nullptr, nullptr, space};
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
         // Eager pages, including PROT_NONE pages, retain resident physical backing.
         const uint8_t resident = owns_anonymous_page(virtualMemoryManager, space, page) || virtualMemoryManager->VirtToPhys(page, space) != 0 ? 1 : 0;
-        if (!virtualMemoryManager->WriteAnonymousUser(space, vector++, &resident, sizeof(resident)))
+        if (!safe_write_user_locked(&access, vector++, &resident, sizeof(resident)))
         {
-            return EndMemoryOperation(process, static_cast<uint64_t>(-14));
+            return EndMemoryOperation(process, LINUX_EFAULT);
         }
     }
 
@@ -319,7 +320,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
     process_t* process = BeginMemoryOperation();
     if (process == nullptr)
     {
-        return static_cast<uint64_t>(-3);
+        return LINUX_ESRCH;
     }
 
     virt_addr_space_t*    space                = process->addressSpace;
@@ -327,7 +328,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
     uint64_t              end                  = 0;
     if (!memory_range_end(address, length, &end))
     {
-        return EndMemoryOperation(process, static_cast<uint64_t>(-22));
+        return EndMemoryOperation(process, LINUX_EINVAL);
     }
 
     // DONTNEED on an untracked mapping cannot preserve its backing semantics.
@@ -337,7 +338,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
         {
             if (!owns_anonymous_page(virtualMemoryManager, space, page) && virtualMemoryManager->VirtToPhys(page, space) != 0)
             {
-                return EndMemoryOperation(process, static_cast<uint64_t>(-95));
+                return EndMemoryOperation(process, LINUX_EOPNOTSUPP);
             }
         }
     }
@@ -350,7 +351,7 @@ uint64_t ProcessMemoryManager::AdviseProcessMemory(uint64_t address, uint64_t le
         {
             if (virtualMemoryManager->VirtToPhys(page, space) == 0)
             {
-                result = static_cast<uint64_t>(-12);
+                result = LINUX_ENOMEM;
             }
 
             continue;

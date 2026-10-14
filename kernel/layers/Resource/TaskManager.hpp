@@ -54,6 +54,8 @@ public:
     size_t GetCapacity() const;
 
 private:
+    static void ResetTaskSlot(task_t* task, uint64_t id, bool allocated);
+    task_t* CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch);
     task_t* AllocateTaskUnlocked();
     void    LockManager() const;
     void    UnlockManager() const;

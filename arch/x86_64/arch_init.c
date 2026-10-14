@@ -14,13 +14,6 @@ static inline void outb(uint16_t port, uint8_t value)
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
-static uint64_t read_rsp(void)
-{
-    uint64_t rsp = 0;
-    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
-    return rsp;
-}
-
 uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context)
 {
     if (context == NULL)
@@ -34,12 +27,6 @@ uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context
 static bool is_low_half_user_va(uint64_t va)
 {
     return (va & 0xFFFF800000000000ULL) == 0;
-}
-
-static void set_tss_rsp0(tss_t* tss, uint64_t rsp0)
-{
-    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
-    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
 }
 
 static void set_tss_ist1(tss_t* tss, uint64_t ist1)
@@ -113,10 +100,10 @@ static void gdt_init()
     }
     else
     {
-        kernel_stack_top = read_rsp();
+        kernel_stack_top = x86_read_rsp();
     }
 
-    set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
+    x86_set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
     set_tss_ist1(&cpu_info->arch_info.tss, kernel_stack_top);
     cpu_info->arch_info.tss.io_map_base = (uint16_t) sizeof(tss_t);
 

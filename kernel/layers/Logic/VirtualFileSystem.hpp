@@ -192,6 +192,7 @@ public:
     int64_t   Close(file_t* file);
 
 private:
+    bool BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity) const;
     mount_t*  FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
     dentry_t* FindOverlayDentry(const dentry_t* parent, const char* name) const;
     bool      AddOverlayDentry(dentry_t* dentry);

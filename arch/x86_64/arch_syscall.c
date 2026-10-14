@@ -26,9 +26,22 @@ _Static_assert(offsetof(arch_syscall_frame_t, arg3) == 32, "R10 syscall argument
 _Static_assert(offsetof(arch_info_t, syscall_ctx.active) - offsetof(arch_info_t, syscall_ctx) == 16, "syscall active GS offset");
 _Static_assert(offsetof(struct arch_task_context, rflags) == 64, "context RFLAGS offset");
 _Static_assert(offsetof(struct arch_task_context, fxState) == 80, "aligned FXSAVE context offset");
+_Static_assert(offsetof(struct arch_task_context, fsBase) == 592, "context FS base offset");
+_Static_assert(offsetof(struct arch_task_context, userGsBase) == 600, "context user GS base offset");
 
 extern void     arch_x86_64_syscall_entry(void);
 extern uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame);
+
+uint64_t arch_read_user_tls_base(bool gs)
+{
+    return x86_read_msr(gs ? IA32_KERNEL_GS_BASE : 0xc0000100U);
+}
+
+void arch_write_user_tls_base(bool gs, uint64_t value)
+{
+    // Kernel GS stays active; swapgs installs this base on return to userspace.
+    x86_write_msr(gs ? IA32_KERNEL_GS_BASE : 0xc0000100U, value);
+}
 
 void arch_syscall_set_kernel_stack(uint64_t kernel_rsp)
 {

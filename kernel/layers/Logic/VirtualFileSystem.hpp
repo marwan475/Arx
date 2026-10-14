@@ -79,6 +79,11 @@ struct file_operations_t
     int64_t (*Mmap)(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset);
 
     void (*Release)(file_t* file);
+    uint32_t (*Poll)(file_t* file);
+    // Blocking anonymous files own their user-copy/state transaction. These
+    // callbacks run with a retained file, outside descriptor and VFS I/O locks.
+    uint64_t (*ReadUser)(file_t* file, uint64_t address, uint64_t count);
+    uint64_t (*WriteUser)(file_t* file, uint64_t address, uint64_t count);
 };
 
 struct inode_t
@@ -146,6 +151,11 @@ struct file_t
     spinlock_t refLock;
 
     uint64_t refCount;
+
+    // Installed while holding a live reference; invoked after the last put,
+    // before Release/free, to detach weak readiness registrations.
+    void (*closeObserver)(void* context, file_t* file);
+    void* closeObserverContext;
 };
 
 struct vfs_namespace_t
@@ -191,7 +201,9 @@ public:
     int64_t   Ioctl(file_t* file, uint64_t request, uint64_t argument);
     int64_t   Mmap(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset);
     bool      Retain(file_t* file);
-    int64_t   Close(file_t* file);
+    uint32_t  Poll(file_t* file);
+    static int64_t Close(file_t* file);
+    static void ReleaseFileHandle(void* file);
 
 private:
     int64_t   Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset);

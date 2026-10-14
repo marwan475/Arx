@@ -1829,6 +1829,8 @@ int64_t VirtualFileSystem::WriteAt(file_t* file, const void* buffer, uint64_t co
 
 int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset)
 {
+    if (file != nullptr && file->operations != nullptr && (file->operations->ReadUser != nullptr || file->operations->WriteUser != nullptr))
+        return offset != nullptr ? -29 : -95; // positioned/vector/kernel-buffer I/O not implemented for these files
     if (file == nullptr || file->operations == nullptr || (write ? file->operations->Write == nullptr : file->operations->Read == nullptr))
     {
         return -1;
@@ -1927,6 +1929,15 @@ bool VirtualFileSystem::Retain(file_t* file)
     return vfs_file_ref_acquire(file);
 }
 
+uint32_t VirtualFileSystem::Poll(file_t* file)
+{
+    if (file == nullptr) return 0x20; // POLLNVAL
+    if (file->operations != nullptr && file->operations->Poll != nullptr)
+        return file->operations->Poll(file);
+    // Linux's default readiness for synchronous files, including EOF.
+    return 0x145; // POLLIN | POLLOUT | POLLRDNORM | POLLWRNORM
+}
+
 int64_t VirtualFileSystem::Close(file_t* file)
 {
     if (file == nullptr)
@@ -1945,6 +1956,9 @@ int64_t VirtualFileSystem::Close(file_t* file)
         return 0;
     }
 
+    if (file->closeObserver != nullptr)
+        file->closeObserver(file->closeObserverContext, file);
+
     if (file->operations != nullptr && file->operations->Release != nullptr)
     {
         file->operations->Release(file);
@@ -1952,4 +1966,9 @@ int64_t VirtualFileSystem::Close(file_t* file)
 
     kfree(file);
     return 0;
+}
+
+void VirtualFileSystem::ReleaseFileHandle(void* file)
+{
+    (void) Close(static_cast<file_t*>(file));
 }

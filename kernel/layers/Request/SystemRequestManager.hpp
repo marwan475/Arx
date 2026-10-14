@@ -21,5 +21,6 @@ public:
     uint64_t HandleGetrandomRequest(const arch_syscall_frame_t* frame);
 
 private:
+    uint64_t HandleFileLimitRequest(int32_t pid, uint32_t resource, uint64_t proposed, uint64_t previous);
     ResourceLayerCaps* ResourceCaps;
 };

@@ -76,6 +76,10 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->fileDescriptorLock  = 0;
     process->fileDescriptorCount = 0;
     process->umask               = 0022U;
+    process->fileLimit           = {1024, MAX_FILE_DESCRIPTORS};
+    process->credentialLock      = 0;
+    process->credentials         = {};
+    process->supplementaryGroups = nullptr;
     memset(process->cwdPath, 0, sizeof(process->cwdPath));
     process->cwdPath[0] = '/';
 }
@@ -195,6 +199,13 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     {
         process->hasParent = true;
         process->parentId  = RunningProcesses[currentCpu]->id;
+        process_t* parent = RunningProcesses[currentCpu];
+        spinlock_acquire(&parent->credentialLock);
+        process->credentials = parent->credentials;
+        process->supplementaryGroups = parent->supplementaryGroups;
+        if (process->supplementaryGroups != nullptr)
+            __atomic_add_fetch(&process->supplementaryGroups->references, 1U, __ATOMIC_RELAXED);
+        spinlock_release(&parent->credentialLock);
     }
     else
     {
@@ -209,6 +220,8 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
 bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 {
     file_descriptor_t* descriptorsToFree = nullptr;
+    uint64_t descriptorCountToFree = 0;
+    process_group_list_t* groupsToFree = nullptr;
 
     LockManager();
 
@@ -255,9 +268,11 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     if (process->fileDescriptors != nullptr)
     {
         descriptorsToFree        = process->fileDescriptors;
+        descriptorCountToFree    = process->fileDescriptorCount;
         process->fileDescriptors = nullptr;
     }
 
+    groupsToFree = process->supplementaryGroups;
     ResetProcessSlot(process, (uint64_t) (process - &Processes[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -272,8 +287,12 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 
     if (descriptorsToFree != nullptr)
     {
+        for (uint64_t fd = 0; fd < descriptorCountToFree; ++fd)
+            if (descriptorsToFree[fd].file != nullptr && descriptorsToFree[fd].release != nullptr)
+                descriptorsToFree[fd].release(descriptorsToFree[fd].file);
         kfree(descriptorsToFree);
     }
+    ReleaseGroupList(groupsToFree);
 
     return true;
 }
@@ -312,9 +331,9 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
     return true;
 }
 
-int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags)
+int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t))
 {
-    return AddFileDescriptorFrom(process, file, flags, 0);
+    return AddFileDescriptorFrom(process, file, flags, 0, release);
 }
 
 file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
@@ -328,7 +347,7 @@ file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_
 bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex)
 {
     FileDescriptorGuard descriptors(process);
-    if (process == nullptr)
+    if (process == nullptr || requiredIndex >= process->fileLimit.current)
     {
         return false;
     }
@@ -387,7 +406,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
     return true;
 }
 
-int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd)
+int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t))
 {
     FileDescriptorGuard descriptors(process);
     if (process == nullptr || file == nullptr)
@@ -397,36 +416,107 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
 
     if (!EnsureFileDescriptorCapacity(process, minFd))
     {
-        return -1;
+        return minFd >= process->fileLimit.current ? (int64_t) LINUX_EMFILE : (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->fileDescriptorCount; i++)
+    for (uint64_t i = minFd; i < process->fileDescriptorCount && i < process->fileLimit.current; i++)
     {
         if (process->fileDescriptors[i].file == nullptr)
         {
             process->fileDescriptors[i].file  = file;
             process->fileDescriptors[i].flags = flags;
+            process->fileDescriptors[i].release = release;
             return (int64_t) i;
         }
     }
 
     const uint64_t growFrom = process->fileDescriptorCount;
+    if (growFrom >= process->fileLimit.current)
+        return (int64_t) LINUX_EMFILE;
     if (!EnsureFileDescriptorCapacity(process, growFrom))
     {
-        return -1;
+        return (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->fileDescriptorCount; i++)
+    for (uint64_t i = minFd; i < process->fileDescriptorCount && i < process->fileLimit.current; i++)
     {
         if (process->fileDescriptors[i].file == nullptr)
         {
             process->fileDescriptors[i].file  = file;
             process->fileDescriptors[i].flags = flags;
+            process->fileDescriptors[i].release = release;
             return (int64_t) i;
         }
     }
 
-    return -1;
+    return (int64_t) LINUX_EMFILE;
+}
+
+uint32_t ProcessManager::ExchangeUmask(process_t* process, uint32_t mask)
+{
+    return __atomic_exchange_n(&process->umask, mask & 0777U, __ATOMIC_RELAXED);
+}
+
+process_t* ProcessManager::AcquireCurrentCredentials()
+{
+    cpu_preemption_disable();
+    process_t* process = GetCurrentProcess();
+    // A running process cannot be freed. Keep preemption disabled until the
+    // credential lock is released; no user copies or manager-lock calls inside.
+    if (process == nullptr || !process->allocated || process->reclaiming)
+    {
+        cpu_preemption_enable();
+        return nullptr;
+    }
+    spinlock_acquire(&process->credentialLock);
+    return process;
+}
+
+void ProcessManager::ReleaseCredentials(process_t* process)
+{
+    spinlock_release(&process->credentialLock);
+    cpu_preemption_enable();
+}
+
+process_group_list_t* ProcessManager::CreateGroupList(const uint32_t* ids, uint32_t count)
+{
+    if (count == 0 || count > MAX_SUPPLEMENTARY_GROUPS || ids == nullptr)
+        return nullptr;
+    // Full Linux-sized lists exceed the slab allocator's maximum object size.
+    process_group_list_t* groups = static_cast<process_group_list_t*>(pmm_alloc(sizeof(process_group_list_t) + count * sizeof(uint32_t)));
+    if (groups != nullptr)
+    {
+        groups->references = 1;
+        groups->count = count;
+        memcpy(groups->ids, ids, count * sizeof(uint32_t));
+    }
+    return groups;
+}
+
+void ProcessManager::ReleaseGroupList(process_group_list_t* groups)
+{
+    if (groups != nullptr && __atomic_sub_fetch(&groups->references, 1U, __ATOMIC_ACQ_REL) == 0)
+        pmm_free(groups);
+}
+
+uint64_t ProcessManager::ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous)
+{
+    FileDescriptorGuard descriptors(process);
+    if (process == nullptr)
+        return LINUX_ESRCH;
+    if (proposed != nullptr)
+    {
+        if (proposed->current > proposed->maximum)
+            return LINUX_EINVAL;
+        // Capability authorization for hard-limit increases is not implemented.
+        if (proposed->maximum > process->fileLimit.maximum)
+            return (uint64_t) -1; // EPERM
+    }
+    if (previous != nullptr)
+        *previous = process->fileLimit;
+    if (proposed != nullptr)
+        process->fileLimit = *proposed;
+    return 0;
 }
 
 bool ProcessManager::BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp)

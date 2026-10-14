@@ -6,6 +6,37 @@
 
 spinlock_t kprintf_lock = 0;
 
+static void sift_u32(uint32_t* values, size_t root, size_t count)
+{
+    while (root < count / 2)
+    {
+        size_t child = root * 2 + 1;
+        if (child + 1 < count && values[child] < values[child + 1])
+            ++child;
+        if (values[root] >= values[child])
+            break;
+        uint32_t value = values[root];
+        values[root] = values[child];
+        values[child] = value;
+        root = child;
+    }
+}
+
+void sort_u32(uint32_t* values, size_t count)
+{
+    if (values == NULL || count < 2)
+        return;
+    for (size_t start = count / 2; start != 0; --start)
+        sift_u32(values, start - 1, count);
+    for (size_t end = count; end > 1; --end)
+    {
+        uint32_t value = values[0];
+        values[0] = values[end - 1];
+        values[end - 1] = value;
+        sift_u32(values, 0, end - 1);
+    }
+}
+
 // An empty range still requires its address to be inside the inclusive bounds.
 // Subtraction avoids overflow, including upper == UINT64_MAX.
 bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_t upper)

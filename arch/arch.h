@@ -87,6 +87,10 @@ extern "C"
 
     bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds);
     bool arch_time_read_monotonic(uint64_t* nanoseconds);
+#if defined(__x86_64__)
+    uint64_t arch_read_user_tls_base(bool gs);
+    void arch_write_user_tls_base(bool gs, uint64_t value);
+#endif
     // Isolated user roots share only kernel-half tables. Destroy after removing user leaves.
     phys_addr_t arch_create_user_page_table(void);
     void        arch_destroy_user_page_table(phys_addr_t page_table);

@@ -27,6 +27,7 @@ struct file_descriptor_t
 {
     file_handle_t file;
     uint32_t      flags;
+    void (*release)(file_handle_t);
 };
 
 struct process_user_auxv_entry_t
@@ -48,6 +49,35 @@ struct process_user_stack_layout_t
 
     const process_user_auxv_entry_t* auxv;
     uint64_t                         auxvCount;
+};
+
+struct process_file_limit_t
+{
+    uint64_t current;
+    uint64_t maximum;
+};
+static_assert(sizeof(process_file_limit_t) == 16, "Linux LP64 rlimit layout");
+
+struct process_identity_t
+{
+    uint32_t real;
+    uint32_t effective;
+    uint32_t saved;
+    uint32_t filesystem;
+};
+
+struct process_credentials_t
+{
+    process_identity_t user;
+    process_identity_t group;
+};
+
+// Immutable after publication. Shared by inherited credentials until replaced.
+struct process_group_list_t
+{
+    uint32_t references;
+    uint32_t count;
+    uint32_t ids[];
 };
 
 struct process_t
@@ -72,6 +102,10 @@ struct process_t
     spinlock_t         fileDescriptorLock;
     uint64_t           fileDescriptorCount;
     uint32_t           umask;
+    process_file_limit_t fileLimit;
+    spinlock_t          credentialLock;
+    process_credentials_t credentials;
+    process_group_list_t* supplementaryGroups;
     char               cwdPath[256];
 };
 
@@ -96,6 +130,8 @@ class ProcessManager
 public:
     static constexpr size_t   MAX_PROCESSES                 = 64;
     static constexpr uint64_t DEFAULT_FILE_DESCRIPTOR_COUNT = 32;
+    static constexpr uint64_t MAX_FILE_DESCRIPTORS = 1024 * 1024;
+    static constexpr uint32_t MAX_SUPPLEMENTARY_GROUPS = 65536;
     static constexpr size_t   MAX_CWD_PATH_LENGTH           = 256;
 
     ProcessManager();
@@ -104,8 +140,8 @@ public:
     process_t*                CreateProcess(virt_addr_space_t* addressSpace);
     bool                      FreeProcess(process_t* process, bool onlyIfExited = false);
     bool                      AddTask(process_t* process, task_t* task);
-    int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags);
-    int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd);
+    int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t) = nullptr);
+    int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t) = nullptr);
     static file_descriptor_t* GetFileDescriptor(process_t* process, uint64_t fd);
     bool                      EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex);
     bool                      BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp);
@@ -126,6 +162,12 @@ public:
     bool TryReapExitedProcess(uint64_t processId);
 
     size_t GetCapacity() const;
+    uint32_t ExchangeUmask(process_t* process, uint32_t mask);
+    uint64_t ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous);
+    process_t* AcquireCurrentCredentials();
+    static void ReleaseCredentials(process_t* process);
+    static process_group_list_t* CreateGroupList(const uint32_t* ids, uint32_t count);
+    static void ReleaseGroupList(process_group_list_t* groups);
 
 private:
     static void ResetProcessSlot(process_t* process, uint64_t id, bool allocated);

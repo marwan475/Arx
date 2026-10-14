@@ -106,6 +106,9 @@ extern "C"
     uintptr_t pa_to_hhdm(uintptr_t pa, bool hhdm_present, uint64_t hhdm_offset);
     uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offset);
 
+    // In-place ascending order, bounded O(n log n) time, no allocations.
+    void sort_u32(uint32_t* values, size_t count);
+
     // memory allocation
 
     // Allocate large contiguous blocks of virtual memory (slow)

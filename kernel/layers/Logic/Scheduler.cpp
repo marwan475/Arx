@@ -84,12 +84,14 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
     {
         sleep_entry_t& entry  = SleepQueue[*link];
         const bool     exited = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
-        if (!clockAvailable || exited || entry.deadline <= now)
+        const bool changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
+        const bool timed = entry.deadline != UINT64_MAX;
+        if ((timed && !clockAvailable) || exited || changed || (timed && entry.deadline <= now))
         {
             *link         = entry.next;
             entry.next    = NO_SLEEPER;
             entry.waiting = false;
-            entry.result  = !clockAvailable ? static_cast<uint64_t>(-38) : exited ? static_cast<uint64_t>(-3) : 0;
+            entry.result  = exited ? static_cast<uint64_t>(-3) : timed && !clockAvailable && !changed ? static_cast<uint64_t>(-38) : 0;
             __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
         }
         else
@@ -127,8 +129,47 @@ void Scheduler::ReapExitedProcesses()
 
 uint64_t Scheduler::SleepUntil(uint64_t monotonicDeadline)
 {
-    uint64_t now;
-    if (!arch_time_read_monotonic(&now))
+    return Sleep(monotonicDeadline, nullptr, 0);
+}
+
+uint64_t Scheduler::WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline)
+{
+    if (sequence == nullptr)
+        return static_cast<uint64_t>(-22);
+    return Sleep(monotonicDeadline, sequence, expected);
+}
+
+void Scheduler::WakeEventWaiters(const uint64_t* sequence)
+{
+    if (sequence == nullptr) return;
+    LockQueues();
+    for (size_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
+    {
+        size_t* link = &SleepHeads[cpu];
+        while (*link != NO_SLEEPER)
+        {
+            sleep_entry_t& entry = SleepQueue[*link];
+            if (entry.sequence == sequence && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence)
+            {
+                *link = entry.next;
+                entry.next = NO_SLEEPER;
+                entry.waiting = false;
+                entry.result = 0;
+                __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
+            }
+            else
+                link = &entry.next;
+        }
+    }
+    UnlockQueues();
+}
+
+uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, uint64_t expected)
+{
+    if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
+        return 0;
+    uint64_t now = 0;
+    if (monotonicDeadline != UINT64_MAX && !arch_time_read_monotonic(&now))
         return static_cast<uint64_t>(-38);
     if (monotonicDeadline <= now)
         return 0;
@@ -158,11 +199,22 @@ uint64_t Scheduler::SleepUntil(uint64_t monotonicDeadline)
         return static_cast<uint64_t>(-12);
     }
     LockQueues();
+    // Close the readiness-scan/parking race under the wakeup queue lock.
+    if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
+    {
+        UnlockQueues();
+        taskManager->FinishSleeping(task);
+        processManager->ReleaseMemoryProcess(process);
+        cpu_preemption_enable();
+        return 0;
+    }
     sleep_entry_t& entry = SleepQueue[task->id];
     entry.process        = process;
     entry.task           = task;
     entry.deadline       = monotonicDeadline;
     entry.result         = 0;
+    entry.sequence       = sequence;
+    entry.expectedSequence = expected;
     entry.cpuId          = cpuId;
     entry.waiting        = true;
     entry.dispatched     = false;
@@ -196,6 +248,7 @@ uint64_t Scheduler::SleepUntil(uint64_t monotonicDeadline)
     uint64_t result = switched ? entry.result : static_cast<uint64_t>(-3);
     entry.task      = nullptr;
     entry.process   = nullptr;
+    entry.sequence  = nullptr;
     UnlockQueues();
     taskManager->FinishSleeping(task);
     processManager->ReleaseMemoryProcess(process);

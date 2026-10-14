@@ -227,6 +227,29 @@ static void kzalloc_test(size_t* passes, size_t* failures)
     (*passes)++;
 }
 
+static void sort_u32_test(size_t* passes, size_t* failures)
+{
+    uint32_t values[] = {UINT32_MAX, 4, 0, 4, 1, UINT32_MAX - 1, 2};
+    const uint32_t expected[] = {0, 1, 2, 4, 4, UINT32_MAX - 1, UINT32_MAX};
+    sort_u32(NULL, 0);
+    sort_u32(values, 0);
+    sort_u32(values, 1);
+    if (values[0] != UINT32_MAX)
+        klib_test_log_fail("sort_u32 empty/single element changed data", failures);
+    else
+        (*passes)++;
+    sort_u32(values, sizeof(values) / sizeof(values[0]));
+    if (memcmp(values, expected, sizeof(values)) != 0)
+        klib_test_log_fail("sort_u32 ordering, duplicates and uint32 bounds", failures);
+    else
+        (*passes)++;
+    sort_u32(values, sizeof(values) / sizeof(values[0]));
+    if (memcmp(values, expected, sizeof(values)) != 0)
+        klib_test_log_fail("sort_u32 sorted input", failures);
+    else
+        (*passes)++;
+}
+
 void run_klib_selftests(void)
 {
     size_t failures = 0;
@@ -237,6 +260,7 @@ void run_klib_selftests(void)
     vmalloc_test(&passes, &failures);
     kmalloc_test(&passes, &failures);
     kzalloc_test(&passes, &failures);
+    sort_u32_test(&passes, &failures);
 
     selftest_case_end("klib_test", (unsigned long long) passes, (unsigned long long) failures);
 }

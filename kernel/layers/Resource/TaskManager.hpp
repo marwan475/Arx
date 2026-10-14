@@ -28,6 +28,7 @@ struct task_t
     uint64_t                 syscallActive;
     uint32_t                 preemptionDepth;
     uint64_t                 id;
+    char                     name[16];
     struct arch_task_context taskContext;
     void*                    stack;
     task_t*                  next;
@@ -62,6 +63,11 @@ public:
     const task_t* GetTasks() const;
 
     size_t GetCapacity() const;
+    size_t CountTasks() const;
+    bool   GetCurrentName(char* name);
+    bool   SetCurrentName(const char* name);
+    bool   GetCurrentTlsBase(bool gs, uint64_t* value);
+    bool   SetCurrentTlsBase(bool gs, uint64_t value);
 
 private:
     static void ResetTaskSlot(task_t* task, uint64_t id, bool allocated);

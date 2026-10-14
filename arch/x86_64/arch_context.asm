@@ -22,6 +22,8 @@ extern task_context_switch_complete
 %define CTX_RSP 56
 %define CTX_RFLAGS 64
 %define CTX_FX_STATE 80
+%define CTX_FS_BASE 592
+%define CTX_USER_GS_BASE 600
 
 ; void arch_init_context(
 ;     struct arch_task_context* context, ; rdi
@@ -45,6 +47,8 @@ arch_init_context:
     mov [rdi + CTX_RIP], rax
     mov qword [rdi + CTX_RFLAGS], 0x202
     fxsave64 [rdi + CTX_FX_STATE]
+    mov qword [rdi + CTX_FS_BASE], 0
+    mov qword [rdi + CTX_USER_GS_BASE], 0
 
     ret
 
@@ -70,6 +74,19 @@ arch_save_switch_and_execute_context:
     mov [rdi + CTX_R14], r14
     mov [rdi + CTX_R15], r15
 
+    ; All context switches run with kernel GS active. The user GS base lives
+    ; in KERNEL_GS_BASE until the return path executes swapgs.
+    mov ecx, 0xc0000100
+    rdmsr
+    shl rdx, 32
+    or rax, rdx
+    mov [rdi + CTX_FS_BASE], rax
+    mov ecx, 0xc0000102
+    rdmsr
+    shl rdx, 32
+    or rax, rdx
+    mov [rdi + CTX_USER_GS_BASE], rax
+
     mov rax, [rsp]
     mov [rdi + CTX_RIP], rax
     lea rax, [rsp + 8]
@@ -83,6 +100,16 @@ arch_save_switch_and_execute_context:
     call task_context_switch_complete
     add rsp, 8
     pop rsi
+    mov rax, [rsi + CTX_FS_BASE]
+    mov rdx, rax
+    shr rdx, 32
+    mov ecx, 0xc0000100
+    wrmsr
+    mov rax, [rsi + CTX_USER_GS_BASE]
+    mov rdx, rax
+    shr rdx, 32
+    mov ecx, 0xc0000102
+    wrmsr
     fxrstor64 [rsi + CTX_FX_STATE]
 
     mov rbx, [rsi + CTX_RBX]

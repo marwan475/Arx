@@ -39,10 +39,10 @@ RequestLayerCaps* RequestLayerFactory::Create(ResourceLayerCaps* resourceLayerCa
     RequestLayerExportCaps->timeRequestManager       = new TimeRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->memoryRequestManager     = new MemoryRequestManager(resourceLayerCaps);
     RequestLayerExportCaps->vfsRequestManager        = new VfsRequestManager(resourceLayerCaps, logicLayerCaps);
-    RequestLayerExportCaps->eventRequestManager      = new EventRequestManager();
+    RequestLayerExportCaps->eventRequestManager      = new EventRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->syncRequestManager       = new SyncRequestManager();
     RequestLayerExportCaps->signalRequestManager     = new SignalRequestManager();
-    RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager();
+    RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->systemRequestManager     = new SystemRequestManager(resourceLayerCaps);
     RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager();
     RequestLayerExportCaps->interruptRequestManager  = new InterruptRequestManager();

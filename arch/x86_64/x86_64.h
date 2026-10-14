@@ -231,6 +231,8 @@ struct arch_task_context
     uint64_t rsp;
     uint64_t rflags;
     uint8_t  fxState[512] __attribute__((aligned(16)));
+    uint64_t fsBase;
+    uint64_t userGsBase;
 };
 
 typedef struct arch_info

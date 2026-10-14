@@ -513,11 +513,11 @@ static uint64_t duplicate_from_fd(ProcessManager* processManager, VirtualFileSys
     file_t* file = static_cast<file_t*>(descriptor->file);
     if (!vfs->Retain(file))
         return LINUX_EIO;
-    const int64_t fd = processManager->AddFileDescriptorFrom(process, descriptor->file, flags, minFd);
+    const int64_t fd = processManager->AddFileDescriptorFrom(process, descriptor->file, flags, minFd, descriptor->release);
     if (fd < 0)
     {
         (void) vfs->Close(file);
-        return LINUX_ENOMEM;
+        return (uint64_t) fd;
     }
     return (uint64_t) fd;
 }
@@ -529,13 +529,16 @@ static uint64_t duplicate_to_fd(ProcessManager* processManager, VirtualFileSyste
         return LINUX_EBADF;
     }
 
+    if (oldFd == newFd)
+        return newFd;
+
+    if (newFd >= currentProcess->fileLimit.current)
+        return LINUX_EBADF;
+
     if (!processManager->EnsureFileDescriptorCapacity(currentProcess, newFd))
     {
         return LINUX_ENOMEM;
     }
-
-    if (oldFd == newFd)
-        return newFd;
 
     if (currentProcess->fileDescriptors[newFd].file != nullptr)
     {
@@ -553,6 +556,7 @@ static uint64_t duplicate_to_fd(ProcessManager* processManager, VirtualFileSyste
 
     currentProcess->fileDescriptors[newFd].file  = currentProcess->fileDescriptors[oldFd].file;
     currentProcess->fileDescriptors[newFd].flags = newFlags;
+    currentProcess->fileDescriptors[newFd].release = currentProcess->fileDescriptors[oldFd].release;
     return newFd;
 }
 
@@ -611,11 +615,11 @@ uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* fram
         return LINUX_ENOENT;
     }
 
-    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE);
+    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
     if (fd < 0)
     {
         (void) LogicCaps->virtualFileSystem->Close(file);
-        return LINUX_EIO;
+        return (uint64_t) fd;
     }
 
     return (uint64_t) fd;
@@ -807,8 +811,34 @@ uint64_t VfsRequestManager::HandleMkdirRequest(const arch_syscall_frame_t* frame
     return HandleMkdiratRequest(&mkdiratFrame);
 }
 
+static uint64_t perform_anonymous_user_io(ResourceLayerCaps* resources, LogicLayerCaps* logic, const arch_syscall_frame_t* frame, bool write, bool* handled)
+{
+    *handled = false;
+    if (frame == nullptr || resources == nullptr || resources->processManager == nullptr || logic == nullptr || logic->virtualFileSystem == nullptr)
+        return 0;
+    file_t* file = nullptr;
+    uint64_t (*callback)(file_t*, uint64_t, uint64_t) = nullptr;
+    {
+        FileDescriptorGuard guard(resources->processManager->GetCurrentProcess());
+        file_descriptor_t* descriptor = resources->processManager->GetFileDescriptor(resources->processManager->GetCurrentProcess(), frame->arg0);
+        if (descriptor == nullptr) return 0;
+        file = static_cast<file_t*>(descriptor->file);
+        if (file->operations == nullptr) return 0;
+        callback = write ? file->operations->WriteUser : file->operations->ReadUser;
+        if (callback == nullptr) return 0;
+        *handled = true;
+        if (!logic->virtualFileSystem->Retain(file)) return LINUX_EBADF;
+    }
+    const uint64_t result = callback(file, frame->arg1, frame->arg2);
+    logic->virtualFileSystem->Close(file);
+    return result;
+}
+
 uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
 {
+    bool handled;
+    const uint64_t anonymousResult = perform_anonymous_user_io(ResourceCaps, LogicCaps, frame, false, &handled);
+    if (handled) return anonymousResult;
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
     if (frame == nullptr)
     {
@@ -845,6 +875,9 @@ uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
 
 uint64_t VfsRequestManager::HandleWriteRequest(const arch_syscall_frame_t* frame)
 {
+    bool handled;
+    const uint64_t anonymousResult = perform_anonymous_user_io(ResourceCaps, LogicCaps, frame, true, &handled);
+    if (handled) return anonymousResult;
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
     if (frame == nullptr)
     {
@@ -1561,7 +1594,7 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
     if (cmd == LINUX_F_DUPFD || cmd == LINUX_F_DUPFD_CLOEXEC)
     {
         const uint64_t minFd = arg;
-        if ((int64_t) minFd < 0)
+        if ((int64_t) minFd < 0 || minFd >= currentProcess->fileLimit.current)
         {
             return LINUX_EINVAL;
         }
@@ -1583,7 +1616,7 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
             return LINUX_EBADF;
         }
 
-        return file->statusFlags;
+        return __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
     }
 
     if (cmd == LINUX_F_SETFL)
@@ -1594,7 +1627,16 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
             return LINUX_EBADF;
         }
 
-        file->statusFlags = arg;
+        if (file->operations != nullptr && file->operations->ReadUser != nullptr)
+        {
+            // Anonymous counter files currently support changing O_NONBLOCK.
+            // Access mode is fixed at creation and cannot be changed by SETFL.
+            if ((arg & ~(3ULL | 04000ULL)) != 0) return LINUX_EOPNOTSUPP;
+            const uint64_t flags = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
+            __atomic_store_n(&file->statusFlags, (flags & ~04000ULL) | (arg & 04000ULL), __ATOMIC_RELAXED);
+        }
+        else
+            __atomic_store_n(&file->statusFlags, arg, __ATOMIC_RELAXED);
         return 0;
     }
 

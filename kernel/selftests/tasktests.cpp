@@ -17,21 +17,52 @@ struct task_test_context_t
     task_t*      taskB;
     task_t*      bspTask;
     volatile int step;
+    bool tlsCorrect;
+    uint64_t originalFs;
+    uint64_t originalGs;
 };
 
 static task_test_context_t g_task_test_ctx;
+
+static bool task_test_tls_matches(TaskManager* manager, uint64_t fs, uint64_t gs)
+{
+#if defined(__x86_64__)
+    uint64_t actualFs = 0, actualGs = 0;
+    return manager->GetCurrentTlsBase(false, &actualFs) && manager->GetCurrentTlsBase(true, &actualGs) && actualFs == fs && actualGs == gs;
+#else
+    (void) manager;
+    (void) fs;
+    (void) gs;
+    return true;
+#endif
+}
+
+static void task_test_set_tls(TaskManager* manager, uint64_t fs, uint64_t gs)
+{
+#if defined(__x86_64__)
+    manager->SetCurrentTlsBase(false, fs);
+    manager->SetCurrentTlsBase(true, gs);
+#else
+    (void) manager;
+    (void) fs;
+    (void) gs;
+#endif
+}
 
 static void task_entry_a(void* arg)
 {
     task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
 
     kprintf("Arx kernel: task_selftest task A entered\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0, 0);
+    task_test_set_tls(ctx->manager, 0x12345000, 0x23456000);
     ctx->step = 1;
     kprintf("Arx kernel: task_selftest switching A -> B\n");
     ctx->manager->ExecuteTask(ctx->taskB);
 
     // If task B switched back to task A, we reach here.
     kprintf("Arx kernel: task_selftest task A resumed\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0x12345000, 0x23456000);
     ctx->step = 3;
     kprintf("Arx kernel: task_selftest switching A -> BSP\n");
     ctx->manager->ExecuteTask(ctx->bspTask);
@@ -47,6 +78,8 @@ static void task_entry_b(void* arg)
     task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
 
     kprintf("Arx kernel: task_selftest task B entered\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0, 0);
+    task_test_set_tls(ctx->manager, 0x34567000, 0x45678000);
     ctx->step = 2;
     kprintf("Arx kernel: task_selftest switching B -> A\n");
     ctx->manager->ExecuteTask(ctx->taskA);
@@ -119,6 +152,11 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     g_task_test_ctx.taskB   = nullptr;
     g_task_test_ctx.bspTask = bspTask;
     g_task_test_ctx.step    = 0;
+    g_task_test_ctx.tlsCorrect = true;
+#if defined(__x86_64__)
+    g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs)
+            && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
+#endif
 
     taskA                 = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);
     taskB                 = manager->CreateKernelTask(task_entry_b, &g_task_test_ctx);
@@ -144,6 +182,14 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     }
 
     kprintf("Arx kernel: task_selftest returned to BSP after task chain, step=%d\n", g_task_test_ctx.step);
+
+    if (!g_task_test_ctx.tlsCorrect || !task_test_tls_matches(manager, g_task_test_ctx.originalFs, g_task_test_ctx.originalGs))
+    {
+        fails++;
+        selftest_record_failure_detail("task TLS bases were not isolated/restored across A -> B -> A");
+    }
+    else
+        passes++;
 
     if (g_task_test_ctx.step != 3)
     {

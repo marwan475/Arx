@@ -1,6 +1,8 @@
 #include "layers/Logic/LogicLayerFactory.hpp"
 
 #include "layers/Logic/ElfMapper.hpp"
+#include "layers/Logic/CredentialManager.hpp"
+#include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -14,6 +16,8 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->eventManager;
+        delete LogicLayerExportCaps->credentialManager;
         delete LogicLayerExportCaps->elfMapper;
         delete LogicLayerExportCaps->virtualFileSystem;
         delete LogicLayerExportCaps->scheduler;
@@ -38,6 +42,8 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->scheduler         = new Scheduler(resourceLayerCaps);
     LogicLayerExportCaps->virtualFileSystem = new VirtualFileSystem(resourceLayerCaps);
     LogicLayerExportCaps->elfMapper         = new ElfMapper(resourceLayerCaps);
+    LogicLayerExportCaps->credentialManager = new CredentialManager(resourceLayerCaps);
+    LogicLayerExportCaps->eventManager      = new EventManager(resourceLayerCaps, LogicLayerExportCaps->scheduler, LogicLayerExportCaps->virtualFileSystem);
 
     return LogicLayerExportCaps;
 }

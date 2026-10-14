@@ -10,6 +10,76 @@ extern "C"
 
 static TaskManager* contextTaskManager;
 
+size_t TaskManager::CountTasks() const
+{
+    LockManager();
+    size_t count = 0;
+    for (size_t i = 0; i < MAX_TASKS; ++i)
+        if (Tasks[i].allocated)
+            ++count;
+    UnlockManager();
+    return count;
+}
+
+bool TaskManager::GetCurrentName(char* name)
+{
+    LockManager();
+    task_t* task = GetCurrentTask();
+    if (task != nullptr)
+        memcpy(name, task->name, sizeof(task->name));
+    UnlockManager();
+    return task != nullptr;
+}
+
+bool TaskManager::SetCurrentName(const char* name)
+{
+    LockManager();
+    task_t* task = GetCurrentTask();
+    if (task != nullptr)
+    {
+        memcpy(task->name, name, sizeof(task->name));
+        task->name[15] = '\0';
+    }
+    UnlockManager();
+    return task != nullptr;
+}
+
+bool TaskManager::GetCurrentTlsBase(bool gs, uint64_t* value)
+{
+#if defined(__x86_64__)
+    cpu_preemption_disable();
+    bool found = GetCurrentTask() != nullptr;
+    if (found)
+        *value = arch_read_user_tls_base(gs);
+    cpu_preemption_enable();
+    return found;
+#else
+    (void) gs;
+    (void) value;
+    return false;
+#endif
+}
+
+bool TaskManager::SetCurrentTlsBase(bool gs, uint64_t value)
+{
+#if defined(__x86_64__)
+    cpu_preemption_disable();
+    task_t* task = GetCurrentTask();
+    if (task != nullptr)
+    {
+        if (gs) task->taskContext.userGsBase = value;
+        else task->taskContext.fsBase = value;
+        arch_write_user_tls_base(gs, value);
+    }
+    cpu_preemption_enable();
+    return task != nullptr;
+#else
+    (void) gs;
+    (void) value;
+    return false;
+#endif
+}
+
 extern "C" void task_context_switch_complete(void)
 {
     contextTaskManager->CompleteSwitch();
@@ -84,6 +154,8 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->syscallActive   = 0;
     task->preemptionDepth = 0;
     task->id              = id;
+    memset(task->name, 0, sizeof(task->name));
+    memcpy(task->name, "Arx", 3);
     memset(&task->taskContext, 0, sizeof(task->taskContext));
     task->stack = nullptr;
     task->next  = nullptr;

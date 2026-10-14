@@ -288,6 +288,10 @@ typedef struct arch_platform_info
     size_t             pci_region_count;
 } arch_platform_info_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void     lapic_init(void);
 void     lapic_timer_init(void);
 bool     lapic_timer_calibrate(void);
@@ -563,6 +567,10 @@ DECL_ISR(253)
 DECL_ISR(254)
 DECL_ISR(255)
 #undef DECL_ISR
+
+#ifdef __cplusplus
+}
+#endif
 
 // Shared x86 register and TSS primitives.
 static inline uint64_t x86_read_msr(uint32_t msr)

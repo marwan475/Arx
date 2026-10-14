@@ -13,14 +13,14 @@
 #include "layers/Request/TimeRequestManager.hpp"
 #include "layers/Request/VfsRequestManager.hpp"
 
-#include <stdint.h>
 #include <klib/klib.h>
+#include <stdint.h>
 
 struct ResourceLayerCaps;
 struct LogicLayerCaps;
 
 // Shared Linux ABI-style syscall return codes used by request managers.
-constexpr int64_t  LINUX_AT_FDCWD     = -100;
+constexpr int64_t LINUX_AT_FDCWD = -100;
 
 enum : uint64_t
 {

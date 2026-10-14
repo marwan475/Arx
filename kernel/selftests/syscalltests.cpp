@@ -1,6 +1,6 @@
 #include "layers/Dispatcher.hpp"
-#include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -3069,26 +3069,28 @@ static void test_scheduler_manager(RequestLayerCaps* caps, requestlayer_stats_t*
 static void time_fixture_store(process_t* process, uint64_t address, const void* source, size_t length)
 {
     const uint8_t* bytes = static_cast<const uint8_t*>(source);
-    for (size_t i = 0; i < length; ++i) *memory_bytes(process, address + i) = bytes[i];
+    for (size_t i = 0; i < length; ++i)
+        *memory_bytes(process, address + i) = bytes[i];
 }
 
 static void time_fixture_load(process_t* process, uint64_t address, void* destination, size_t length)
 {
     uint8_t* bytes = static_cast<uint8_t*>(destination);
-    for (size_t i = 0; i < length; ++i) bytes[i] = *memory_bytes(process, address + i);
+    for (size_t i = 0; i < length; ++i)
+        bytes[i] = *memory_bytes(process, address + i);
 }
 
 static bool test_time_clock(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
-    if (static_cast<int64_t>(base) < 0) return memory_expect(false, "time fixture mapping");
-    uint64_t output = base + PAGE_SIZE - 8;
-    const size_t outputSize = number == SYSCALL_time ? 8 : 16;
-    *memory_bytes(process, output - 1) = 0xa5;
+    if (static_cast<int64_t>(base) < 0)
+        return memory_expect(false, "time fixture mapping");
+    uint64_t     output                         = base + PAGE_SIZE - 8;
+    const size_t outputSize                     = number == SYSCALL_time ? 8 : 16;
+    *memory_bytes(process, output - 1)          = 0xa5;
     *memory_bytes(process, output + outputSize) = 0xa5;
-    time_timespec_t value = {};
-    uint64_t result = number == SYSCALL_time ? memory_call(number, output) :
-                      number == SYSCALL_gettimeofday ? memory_call(number, output, base + 64) : memory_call(number, 1, output);
+    time_timespec_t value                       = {};
+    uint64_t        result                      = number == SYSCALL_time ? memory_call(number, output) : number == SYSCALL_gettimeofday ? memory_call(number, output, base + 64) : memory_call(number, 1, output);
     if (result == LINUX_ENOSYS)
     {
         kprintf("Arx kernel: time selftest clock unavailable syscall=%llu\n", (unsigned long long) number);
@@ -3116,7 +3118,8 @@ static bool test_time_clock(process_t* process, uint64_t number)
         {
             ok &= memory_expect(memory_call(number, 2, output) == LINUX_EINVAL && memory_call(number, UINT64_MAX, output) == LINUX_EINVAL, "unsupported clock IDs");
             ok &= memory_expect(memory_call(number, 1, 0) == (number == SYSCALL_clock_getres ? 0 : LINUX_EFAULT), "clock nullable output semantics");
-            if (number == SYSCALL_clock_getres) ok &= memory_expect(value.seconds > 0 || value.nanoseconds > 0, "clock positive resolution");
+            if (number == SYSCALL_clock_getres)
+                ok &= memory_expect(value.seconds > 0 || value.nanoseconds > 0, "clock positive resolution");
             else
             {
                 time_timespec_t next;
@@ -3126,9 +3129,7 @@ static bool test_time_clock(process_t* process, uint64_t number)
             }
         }
     }
-    auto call_output = [number](uint64_t pointer) {
-        return number == SYSCALL_time || number == SYSCALL_gettimeofday ? memory_call(number, pointer) : memory_call(number, 1, pointer);
-    };
+    auto call_output = [number](uint64_t pointer) { return number == SYSCALL_time || number == SYSCALL_gettimeofday ? memory_call(number, pointer) : memory_call(number, 1, pointer); };
     ok &= memory_expect(call_output(CANONICAL_KERNEL_BASE) == LINUX_EFAULT && call_output(0x400000) == LINUX_EFAULT, "time rejects kernel and unmapped output");
     *memory_bytes(process, base + 2 * PAGE_SIZE - 4) = 0xa5;
     ok &= memory_expect(call_output(base + 2 * PAGE_SIZE - 4) == LINUX_EFAULT && *memory_bytes(process, base + 2 * PAGE_SIZE - 4) == 0xa5, "time preflights entire output before writing");
@@ -3141,23 +3142,23 @@ static bool test_time_clock(process_t* process, uint64_t number)
 
 struct sleep_peer_context_t
 {
-    Scheduler* scheduler;
+    Scheduler*      scheduler;
     ProcessManager* processManager;
-    TaskManager* taskManager;
-    process_t* sleeper;
-    task_t* sleepingTask;
-    bool entered;
-    bool protectedLifetime;
-    bool blockedDispatch;
+    TaskManager*    taskManager;
+    process_t*      sleeper;
+    task_t*         sleepingTask;
+    bool            entered;
+    bool            protectedLifetime;
+    bool            blockedDispatch;
 };
 
 static void sleep_peer_entry(void* argument)
 {
     sleep_peer_context_t* context = static_cast<sleep_peer_context_t*>(argument);
-    context->entered = true;
-    context->protectedLifetime = !context->taskManager->FreeTask(context->sleepingTask) && !context->processManager->FreeProcess(context->sleeper);
-    context->blockedDispatch = !context->taskManager->ExecuteTask(context->sleepingTask);
-    process_t* current = context->processManager->GetCurrentProcess();
+    context->entered              = true;
+    context->protectedLifetime    = !context->taskManager->FreeTask(context->sleepingTask) && !context->processManager->FreeProcess(context->sleeper);
+    context->blockedDispatch      = !context->taskManager->ExecuteTask(context->sleepingTask);
+    process_t* current            = context->processManager->GetCurrentProcess();
     // Leave no ready entry referring to this deliberately suspended test peer.
     context->scheduler->KillProcess(current->id, 0);
     for (;;)
@@ -3171,32 +3172,34 @@ static void sleep_peer_entry(void* argument)
 static bool test_time_sleep(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
-    if (static_cast<int64_t>(base) < 0) return memory_expect(false, "sleep fixture mapping");
-    uint64_t input = base + PAGE_SIZE - 8;
-    auto call = [number](uint64_t pointer, uint64_t clock = 1, uint64_t flags = 0) {
-        return number == SYSCALL_nanosleep ? memory_call(number, pointer, CANONICAL_KERNEL_BASE) : memory_call(number, clock, flags, pointer, CANONICAL_KERNEL_BASE);
-    };
-    bool ok = memory_expect(call(0) == LINUX_EFAULT && call(CANONICAL_KERNEL_BASE) == LINUX_EFAULT && call(base + 2 * PAGE_SIZE - 8) == LINUX_EFAULT, "sleep invalid request buffers");
+    if (static_cast<int64_t>(base) < 0)
+        return memory_expect(false, "sleep fixture mapping");
+    uint64_t        input   = base + PAGE_SIZE - 8;
+    auto            call    = [number](uint64_t pointer, uint64_t clock = 1, uint64_t flags = 0) { return number == SYSCALL_nanosleep ? memory_call(number, pointer, CANONICAL_KERNEL_BASE) : memory_call(number, clock, flags, pointer, CANONICAL_KERNEL_BASE); };
+    bool            ok      = memory_expect(call(0) == LINUX_EFAULT && call(CANONICAL_KERNEL_BASE) == LINUX_EFAULT && call(base + 2 * PAGE_SIZE - 8) == LINUX_EFAULT, "sleep invalid request buffers");
     time_timespec_t request = {-1, 0};
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(call(input) == LINUX_EINVAL, "sleep negative seconds");
     request = {0, 1000000000};
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(call(input) == LINUX_EINVAL, "sleep invalid nanoseconds");
-    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
-    Scheduler* scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
+    Dispatcher*          dispatcher  = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps*   resources   = dispatcher->GetResourceLayerCaps();
+    Scheduler*           scheduler   = dispatcher->GetLogicLayerCaps()->scheduler;
     sleep_peer_context_t peerContext = {scheduler, resources->processManager, resources->taskManager, process, resources->taskManager->GetCurrentTask(), false, false, false};
-    virt_addr_space_t* peerSpace = resources->virtualMemoryManager->CreateUserAddressSpace();
-    process_t* peerProcess = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
-    task_t* peerTask = resources->taskManager->CreateKernelTask(sleep_peer_entry, &peerContext);
-    bool peerReady = peerProcess != nullptr && peerTask != nullptr && resources->processManager->AddTask(peerProcess, peerTask) && scheduler->EnqueueProcess(arch_cpu_id(), peerProcess->id);
+    virt_addr_space_t*   peerSpace   = resources->virtualMemoryManager->CreateUserAddressSpace();
+    process_t*           peerProcess = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
+    task_t*              peerTask    = resources->taskManager->CreateKernelTask(sleep_peer_entry, &peerContext);
+    bool                 peerReady   = peerProcess != nullptr && peerTask != nullptr && resources->processManager->AddTask(peerProcess, peerTask) && scheduler->EnqueueProcess(arch_cpu_id(), peerProcess->id);
     ok &= memory_expect(peerReady, "sleep runnable peer fixture");
     if (!peerReady)
     {
-        if (peerTask != nullptr) resources->taskManager->FreeTask(peerTask);
-        if (peerProcess != nullptr) resources->processManager->FreeProcess(peerProcess);
-        if (peerSpace != nullptr) resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
+        if (peerTask != nullptr)
+            resources->taskManager->FreeTask(peerTask);
+        if (peerProcess != nullptr)
+            resources->processManager->FreeProcess(peerProcess);
+        if (peerSpace != nullptr)
+            resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
         return false;
     }
     request = {0, 100000000};
@@ -3207,8 +3210,9 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     ok &= memory_expect(call(input) == 0, "scheduler sleep and ignore remainder on success");
     ok &= memory_expect(peerContext.entered && peerContext.protectedLifetime && peerContext.blockedDispatch, "sleep lets a peer run while protecting and blocking the sleeper");
     // If the clock failed before switching, remove the still-queued peer too.
-    if (!peerContext.entered) scheduler->KillProcess(peerProcess->id, 0);
-    bool releasedTask = !peerTask->allocated || resources->taskManager->FreeTask(peerTask);
+    if (!peerContext.entered)
+        scheduler->KillProcess(peerProcess->id, 0);
+    bool releasedTask    = !peerTask->allocated || resources->taskManager->FreeTask(peerTask);
     bool releasedProcess = !peerProcess->allocated || resources->processManager->FreeProcess(peerProcess);
     ok &= memory_expect(releasedTask && releasedProcess, "sleep peer cleanup");
     resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
@@ -3227,7 +3231,11 @@ static bool test_time_sleep(process_t* process, uint64_t number)
         ok &= memory_expect(call(input, 2) == LINUX_EINVAL && call(input, 1, 2) == LINUX_EINVAL, "sleep unsupported clock and flags");
         request = after;
         request.nanoseconds += 1000000;
-        if (request.nanoseconds >= 1000000000) { ++request.seconds; request.nanoseconds -= 1000000000; }
+        if (request.nanoseconds >= 1000000000)
+        {
+            ++request.seconds;
+            request.nanoseconds -= 1000000000;
+        }
         time_fixture_store(process, input, &request, sizeof(request));
         ok &= memory_expect(call(input, 1, 1) == 0, "absolute monotonic sleep");
         memory_call(SYSCALL_clock_gettime, 1, base + 64);
@@ -3246,10 +3254,11 @@ static bool test_time_sleep(process_t* process, uint64_t number)
 static bool test_time_timer(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
-    if (static_cast<int64_t>(base) < 0) return memory_expect(false, "timer fixture mapping");
-    uint64_t input = base + PAGE_SIZE - 8;
-    uint64_t output = base + 64;
-    bool ok = true;
+    if (static_cast<int64_t>(base) < 0)
+        return memory_expect(false, "timer fixture mapping");
+    uint64_t         input   = base + PAGE_SIZE - 8;
+    uint64_t         output  = base + 64;
+    bool             ok      = true;
     time_itimerval_t request = {{2, 123}, {0, 0}}, value = {};
     for (unsigned which = 0; which < 3; ++which)
     {
@@ -3294,11 +3303,15 @@ static bool test_time_timer(process_t* process, uint64_t number)
 
 template <uint64_t Number> static bool custom_case_validate_time(const custom_case_ctx_t*)
 {
-    return run_memory_case([](process_t* process) {
-        if (Number == SYSCALL_nanosleep || Number == SYSCALL_clock_nanosleep) return test_time_sleep(process, Number);
-        if (Number == SYSCALL_getitimer || Number == SYSCALL_setitimer || Number == SYSCALL_alarm) return test_time_timer(process, Number);
-        return test_time_clock(process, Number);
-    });
+    return run_memory_case(
+            [](process_t* process)
+            {
+                if (Number == SYSCALL_nanosleep || Number == SYSCALL_clock_nanosleep)
+                    return test_time_sleep(process, Number);
+                if (Number == SYSCALL_getitimer || Number == SYSCALL_setitimer || Number == SYSCALL_alarm)
+                    return test_time_timer(process, Number);
+                return test_time_clock(process, Number);
+            });
 }
 
 static void test_time_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)

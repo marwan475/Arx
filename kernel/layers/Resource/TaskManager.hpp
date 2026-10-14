@@ -55,10 +55,10 @@ public:
 
 private:
     static void ResetTaskSlot(task_t* task, uint64_t id, bool allocated);
-    task_t* CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch);
-    task_t* AllocateTaskUnlocked();
-    void    LockManager() const;
-    void    UnlockManager() const;
+    task_t*     CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch);
+    task_t*     AllocateTaskUnlocked();
+    void        LockManager() const;
+    void        UnlockManager() const;
 
     mutable spinlock_t ManagerLock;
     task_t             Tasks[MAX_TASKS];

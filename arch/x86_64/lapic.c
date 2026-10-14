@@ -103,7 +103,7 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
         target_cpu_info->ipi_request_data.type = (ipi_request_type_t) request_type;
     }
 
-    volatile uint8_t* lapic_base = lapic_get_base(source_cpu_info);
+    volatile uint8_t* lapic_base  = lapic_get_base(source_cpu_info);
     const uint32_t    destination = ((uint32_t) target_cpu_info->arch_info.acpi_lapic_id) << 24;
 
     while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)

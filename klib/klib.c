@@ -15,30 +15,36 @@ bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_
 
 static bool validate_user_memory(const user_memory_access_t* access, uint64_t address, size_t length, bool write)
 {
-    if (access == NULL || access->space == NULL || !range_within_u64(address, length, CANONICAL_USER_BASE, CANONICAL_USER_END)) return false;
+    if (access == NULL || access->space == NULL || !range_within_u64(address, length, CANONICAL_USER_BASE, CANONICAL_USER_END))
+        return false;
     for (uint64_t page = align_down(address, PAGE_SIZE); length != 0 && page < address + length; page += PAGE_SIZE)
     {
         spinlock_acquire(&access->space->lock);
         bool accessible = arch_user_page_accessible(page, access->space->pt, write);
         spinlock_release(&access->space->lock);
-        if (!accessible) return false;
+        if (!accessible)
+            return false;
     }
     return true;
 }
 
 static bool copy_user_locked(const user_memory_access_t* access, uint64_t address, void* buffer, size_t length, bool write)
 {
-    if (buffer == NULL || !validate_user_memory(access, address, length, write)) return false;
+    if (buffer == NULL || !validate_user_memory(access, address, length, write))
+        return false;
     uint8_t* bytes = (uint8_t*) buffer;
     while (length != 0)
     {
-        size_t offset = address & (PAGE_SIZE - 1);
-        size_t chunk = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
+        size_t      offset   = address & (PAGE_SIZE - 1);
+        size_t      chunk    = length < PAGE_SIZE - offset ? length : PAGE_SIZE - offset;
         phys_addr_t physical = vmm_virt_to_phys(align_down(address, PAGE_SIZE), access->space);
-        if (physical == 0) return false;
+        if (physical == 0)
+            return false;
         uint8_t* page = (uint8_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-        if (write) memcpy(page + offset, bytes, chunk);
-        else memcpy(bytes, page + offset, chunk);
+        if (write)
+            memcpy(page + offset, bytes, chunk);
+        else
+            memcpy(bytes, page + offset, chunk);
         bytes += chunk;
         address += chunk;
         length -= chunk;
@@ -59,7 +65,8 @@ bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address
 bool safe_read_user(uint64_t address, void* destination, size_t length)
 {
     user_memory_access_t access;
-    if (!begin_user_memory(&access)) return false;
+    if (!begin_user_memory(&access))
+        return false;
     bool result = safe_read_user_locked(&access, address, destination, length);
     end_user_memory(&access);
     return result;
@@ -68,7 +75,8 @@ bool safe_read_user(uint64_t address, void* destination, size_t length)
 bool safe_write_user(uint64_t address, const void* source, size_t length)
 {
     user_memory_access_t access;
-    if (!begin_user_memory(&access)) return false;
+    if (!begin_user_memory(&access))
+        return false;
     bool result = safe_write_user_locked(&access, address, source, length);
     end_user_memory(&access);
     return result;
@@ -76,21 +84,26 @@ bool safe_write_user(uint64_t address, const void* source, size_t length)
 
 bool safe_read_user_string(uint64_t address, char* destination, size_t capacity, size_t* out_length)
 {
-    if (destination == NULL || capacity == 0) return false;
+    if (destination == NULL || capacity == 0)
+        return false;
     user_memory_access_t access;
-    if (!begin_user_memory(&access)) return false;
+    if (!begin_user_memory(&access))
+        return false;
     bool result = false;
     for (size_t copied = 0; copied < capacity; ++copied)
     {
-        if (address > UINT64_MAX - copied || !safe_read_user_locked(&access, address + copied, &destination[copied], 1)) break;
+        if (address > UINT64_MAX - copied || !safe_read_user_locked(&access, address + copied, &destination[copied], 1))
+            break;
         if (destination[copied] == '\0')
         {
-            if (out_length != NULL) *out_length = copied;
+            if (out_length != NULL)
+                *out_length = copied;
             result = true;
             break;
         }
     }
-    if (!result) destination[capacity - 1] = '\0';
+    if (!result)
+        destination[capacity - 1] = '\0';
     end_user_memory(&access);
     return result;
 }

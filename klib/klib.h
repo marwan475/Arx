@@ -15,30 +15,30 @@
 #include <terminal/terminal.h>
 
 // Shared Linux-style syscall error values.
-static const uint64_t LINUX_ENOENT = (uint64_t) -2;
-static const uint64_t LINUX_ESRCH = (uint64_t) -3;
-static const uint64_t LINUX_EIO = (uint64_t) -5;
-static const uint64_t LINUX_EBADF = (uint64_t) -9;
-static const uint64_t LINUX_ENOMEM = (uint64_t) -12;
-static const uint64_t LINUX_EACCES = (uint64_t) -13;
-static const uint64_t LINUX_EFAULT = (uint64_t) -14;
-static const uint64_t LINUX_ENOTDIR = (uint64_t) -20;
-static const uint64_t LINUX_EINVAL = (uint64_t) -22;
-static const uint64_t LINUX_EMFILE = (uint64_t) -24;
-static const uint64_t LINUX_ENOTTY = (uint64_t) -25;
-static const uint64_t LINUX_ERANGE = (uint64_t) -34;
+static const uint64_t LINUX_ENOENT       = (uint64_t) -2;
+static const uint64_t LINUX_ESRCH        = (uint64_t) -3;
+static const uint64_t LINUX_EIO          = (uint64_t) -5;
+static const uint64_t LINUX_EBADF        = (uint64_t) -9;
+static const uint64_t LINUX_ENOMEM       = (uint64_t) -12;
+static const uint64_t LINUX_EACCES       = (uint64_t) -13;
+static const uint64_t LINUX_EFAULT       = (uint64_t) -14;
+static const uint64_t LINUX_ENOTDIR      = (uint64_t) -20;
+static const uint64_t LINUX_EINVAL       = (uint64_t) -22;
+static const uint64_t LINUX_EMFILE       = (uint64_t) -24;
+static const uint64_t LINUX_ENOTTY       = (uint64_t) -25;
+static const uint64_t LINUX_ERANGE       = (uint64_t) -34;
 static const uint64_t LINUX_ENAMETOOLONG = (uint64_t) -36;
-static const uint64_t LINUX_ENOSYS = (uint64_t) -38;
-static const uint64_t LINUX_EOVERFLOW = (uint64_t) -75;
-static const uint64_t LINUX_EOPNOTSUPP = (uint64_t) -95;
+static const uint64_t LINUX_ENOSYS       = (uint64_t) -38;
+static const uint64_t LINUX_EOVERFLOW    = (uint64_t) -75;
+static const uint64_t LINUX_EOPNOTSUPP   = (uint64_t) -95;
 
 struct process_t;
 struct virt_addr_space;
 
 typedef struct user_memory_access
 {
-    void* process_manager;
-    struct process_t* process;
+    void*                   process_manager;
+    struct process_t*       process;
     struct virt_addr_space* space;
 } user_memory_access_t;
 

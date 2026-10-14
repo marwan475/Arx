@@ -1568,7 +1568,8 @@ bool VirtualFileSystem::BuildBackendPath(const vfs_path_t& start, const char* pa
     if (path[0] == '/')
     {
         const size_t length = strlen(path);
-        if (length + 1 > capacity) return false;
+        if (length + 1 > capacity)
+            return false;
         memcpy(output, path, length + 1);
         return true;
     }

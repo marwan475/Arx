@@ -33,17 +33,17 @@ static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t
 
 void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
 {
-    process->allocated           = allocated;
-    process->id                  = id;
-    process->hasParent           = false;
-    process->parentId            = 0;
-    process->exited              = false;
-    process->exitStatus          = 0;
-    process->addressSpace        = nullptr;
-    process->elfMetadata         = nullptr;
-    process->breakBase           = 0;
-    process->programBreak        = 0;
-    process->memoryUsers         = 0;
+    process->allocated    = allocated;
+    process->id           = id;
+    process->hasParent    = false;
+    process->parentId     = 0;
+    process->exited       = false;
+    process->exitStatus   = 0;
+    process->addressSpace = nullptr;
+    process->elfMetadata  = nullptr;
+    process->breakBase    = 0;
+    process->programBreak = 0;
+    process->memoryUsers  = 0;
     memset(process->timerIntervalSeconds, 0, sizeof(process->timerIntervalSeconds));
     memset(process->timerIntervalMicroseconds, 0, sizeof(process->timerIntervalMicroseconds));
     process->tasks               = nullptr;
@@ -296,7 +296,8 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
 
 file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
 {
-    if (process == nullptr || process->fileDescriptors == nullptr || fd >= process->fileDescriptorCount) return nullptr;
+    if (process == nullptr || process->fileDescriptors == nullptr || fd >= process->fileDescriptorCount)
+        return nullptr;
     file_descriptor_t* descriptor = &process->fileDescriptors[fd];
     return descriptor->file != nullptr ? descriptor : nullptr;
 }

@@ -35,5 +35,4 @@ public:
     virt_addr_t    ReserveRegion(virt_addr_space_t* space, size_t size, virt_type_t type);
     void           FreeRegion(virt_addr_space_t* space, virt_addr_t addr);
     virt_region_t* FindRegion(virt_addr_space_t* space, virt_addr_t addr);
-
 };

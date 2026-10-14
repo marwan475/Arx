@@ -64,10 +64,10 @@ extern "C"
 {
 #endif
 
-void                           cpus_init(size_t cpu_count);
-void                           cpu_preemption_disable(void);
-void                           cpu_preemption_enable(void);
-__attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
+    void                           cpus_init(size_t cpu_count);
+    void                           cpu_preemption_disable(void);
+    void                           cpu_preemption_enable(void);
+    __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
 
 #ifdef __cplusplus
 }

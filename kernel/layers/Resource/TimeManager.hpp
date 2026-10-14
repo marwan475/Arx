@@ -4,9 +4,21 @@
 #include <stdint.h>
 
 // Linux LP64 wire layouts. Never dereference these through a user pointer.
-struct time_timespec_t { int64_t seconds; int64_t nanoseconds; };
-struct time_timeval_t { int64_t seconds; int64_t microseconds; };
-struct time_itimerval_t { time_timeval_t interval; time_timeval_t value; };
+struct time_timespec_t
+{
+    int64_t seconds;
+    int64_t nanoseconds;
+};
+struct time_timeval_t
+{
+    int64_t seconds;
+    int64_t microseconds;
+};
+struct time_itimerval_t
+{
+    time_timeval_t interval;
+    time_timeval_t value;
+};
 static_assert(sizeof(time_timespec_t) == 16 && sizeof(time_timeval_t) == 16 && sizeof(time_itimerval_t) == 32, "Linux time ABI");
 
 class TimeManager
@@ -23,6 +35,6 @@ public:
 private:
     uint64_t RealtimeSeconds;
     uint64_t ResolutionNanoseconds;
-    bool ClockAvailable;
-    bool RealtimeAvailable;
+    bool     ClockAvailable;
+    bool     RealtimeAvailable;
 };

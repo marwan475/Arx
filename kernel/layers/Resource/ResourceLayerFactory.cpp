@@ -48,7 +48,7 @@ ResourceLayerCaps* ResourceLayerFactory::Create()
     ResourceLayerExportCaps->taskManager              = new TaskManager();
     ResourceLayerExportCaps->virtualMemoryManager     = new VirtualMemoryManager();
     ResourceLayerExportCaps->processMemoryManager     = new ProcessMemoryManager(ResourceLayerExportCaps->processManager, ResourceLayerExportCaps->virtualMemoryManager);
-    ResourceLayerExportCaps->timeManager = new TimeManager();
+    ResourceLayerExportCaps->timeManager              = new TimeManager();
     ResourceLayerExportCaps->initRamFileSystemManager = new InitRamFileSystemManager(platform.initramfs_size, platform.initramfs_address);
     ResourceFileSystemExport                          = new ResourceFileSystem(ResourceLayerExportCaps->initRamFileSystemManager);
     ResourceLayerExportCaps->fileSystemCaps           = ResourceFileSystemExport->GetCaps();

@@ -2,8 +2,8 @@
 
 #include <boot/boot.h>
 #include <cstddef>
-#include <stdint.h>
 #include <klib/spinlock.h>
+#include <stdint.h>
 
 struct ResourceLayerCaps;
 struct task_t;
@@ -19,34 +19,34 @@ public:
     void ActivateScheduling();
     bool IsSchedulingActive() const;
 
-    bool ScheduleProcess(uint64_t processId);
-    bool EnqueueProcess(uint8_t cpuId, uint64_t processId);
-    bool RunNextReadyProcess(uint8_t cpuId);
-    bool KillProcess(uint64_t processId, int32_t exitStatus);
+    bool     ScheduleProcess(uint64_t processId);
+    bool     EnqueueProcess(uint8_t cpuId, uint64_t processId);
+    bool     RunNextReadyProcess(uint8_t cpuId);
+    bool     KillProcess(uint64_t processId, int32_t exitStatus);
     uint64_t SleepUntil(uint64_t monotonicDeadline);
-    void WakeSleepingTasks(uint8_t cpuId);
+    void     WakeSleepingTasks(uint8_t cpuId);
 
 private:
-    void InitializeBspProcessAndTask();
+    void        InitializeBspProcessAndTask();
     static void IdleEntry(void* argument);
-    bool ScheduleTask(process_t* process, task_t* task);
-    void LockQueues();
-    void UnlockQueues();
+    bool        ScheduleTask(process_t* process, task_t* task);
+    void        LockQueues();
+    void        UnlockQueues();
 
     static constexpr size_t READY_QUEUE_CAPACITY = 64;
     static constexpr size_t SLEEP_QUEUE_CAPACITY = 128;
-    static constexpr size_t NO_SLEEPER = static_cast<size_t>(-1);
+    static constexpr size_t NO_SLEEPER           = static_cast<size_t>(-1);
 
     struct sleep_entry_t
     {
         process_t* process;
-        task_t* task;
-        uint64_t deadline;
-        uint64_t result;
-        size_t next;
-        uint8_t cpuId;
-        bool waiting;
-        bool dispatched;
+        task_t*    task;
+        uint64_t   deadline;
+        uint64_t   result;
+        size_t     next;
+        uint8_t    cpuId;
+        bool       waiting;
+        bool       dispatched;
     };
 
     struct ready_queue_t
@@ -61,10 +61,10 @@ private:
 
     ready_queue_t ReadyQueues[BOOT_SMP_MAX_CPUS];
     bool          SchedulingActive[BOOT_SMP_MAX_CPUS];
-    spinlock_t QueueLock;
+    spinlock_t    QueueLock;
     sleep_entry_t SleepQueue[SLEEP_QUEUE_CAPACITY];
-    size_t SleepHeads[BOOT_SMP_MAX_CPUS];
-    task_t* IdleTasks[BOOT_SMP_MAX_CPUS];
+    size_t        SleepHeads[BOOT_SMP_MAX_CPUS];
+    task_t*       IdleTasks[BOOT_SMP_MAX_CPUS];
     // The boot kernel root stays alive while idle contexts are suspended.
     virt_addr_space* IdleAddressSpace;
 

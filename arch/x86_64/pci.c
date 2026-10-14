@@ -20,28 +20,35 @@
 
 static volatile uint8_t* pci_ecam_address(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, size_t width)
 {
-    if (region == NULL || region->mapped_base == NULL || bus < region->start_bus || bus > region->end_bus) return NULL;
-    if ((offset & (width - 1)) != 0 || offset > PCI_CONFIG_SPACE_FUNCTION_SIZE - width) return NULL;
-    const uint64_t bus_index = (uint64_t) (bus - region->start_bus);
+    if (region == NULL || region->mapped_base == NULL || bus < region->start_bus || bus > region->end_bus)
+        return NULL;
+    if ((offset & (width - 1)) != 0 || offset > PCI_CONFIG_SPACE_FUNCTION_SIZE - width)
+        return NULL;
+    const uint64_t bus_index     = (uint64_t) (bus - region->start_bus);
     const uint64_t config_offset = (bus_index << 20) + ((uint64_t) device << 15) + ((uint64_t) function << 12) + offset;
-    if (config_offset + width > region->mapped_size) return NULL;
+    if (config_offset + width > region->mapped_size)
+        return NULL;
     return (volatile uint8_t*) ((uintptr_t) region->mapped_base + config_offset);
 }
 
 static bool pci_ecam_read8(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t* out_value)
 {
-    if (out_value == NULL) return false;
+    if (out_value == NULL)
+        return false;
     volatile uint8_t* address = pci_ecam_address(region, bus, device, function, offset, sizeof(uint8_t));
-    if (address == NULL) return false;
+    if (address == NULL)
+        return false;
     *out_value = *((volatile uint8_t*) address);
     return true;
 }
 
 static bool pci_ecam_read32(const pci_ecam_region_t* region, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint32_t* out_value)
 {
-    if (out_value == NULL) return false;
+    if (out_value == NULL)
+        return false;
     volatile uint8_t* address = pci_ecam_address(region, bus, device, function, offset, sizeof(uint32_t));
-    if (address == NULL) return false;
+    if (address == NULL)
+        return false;
     *out_value = *((volatile uint32_t*) address);
     return true;
 }

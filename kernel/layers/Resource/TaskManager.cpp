@@ -130,7 +130,8 @@ task_t* TaskManager::AllocateTask()
 task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch)
 {
     void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
-    if (allocatedStack == nullptr) return nullptr;
+    if (allocatedStack == nullptr)
+        return nullptr;
     LockManager();
     task_t* task = AllocateTaskUnlocked();
     if (task == nullptr)
@@ -139,12 +140,12 @@ task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t
         kfree(allocatedStack);
         return nullptr;
     }
-    task->stack = allocatedStack;
+    task->stack      = allocatedStack;
     task->isUserTask = userLaunch != nullptr;
     if (userLaunch != nullptr)
     {
         task->userLaunchContext = *userLaunch;
-        arg = &task->userLaunchContext;
+        arg                     = &task->userLaunchContext;
     }
     void* stack_top = (void*) ((uint8_t*) task->stack + CPU_KERNEL_STACK_SIZE);
     arch_init_context(&task->taskContext, stack_top, entry, arg);
@@ -154,7 +155,8 @@ task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t
 
 task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
 {
-    if (entry == nullptr) return nullptr;
+    if (entry == nullptr)
+        return nullptr;
     return CreateTask(entry, arg, nullptr);
 }
 

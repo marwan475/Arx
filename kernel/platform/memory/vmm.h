@@ -55,7 +55,7 @@ typedef struct virt_addr_space
 void vmm_init(struct boot_info* boot_info);
 
 // Shared kernel mapping policy; device callers retain their own verification.
-uint64_t vmm_kernel_page_flags(bool uncached, bool global);
+uint64_t    vmm_kernel_page_flags(bool uncached, bool global);
 virt_addr_t vmm_map_direct_mmio_page(phys_addr_t page, virt_addr_space_t* space, bool only_if_missing);
 
 void vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space);

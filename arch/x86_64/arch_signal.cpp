@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <arch/x86_64/arch_signal.hpp>
+#include <kernel/platform/memory/vmm.h>
 #include <klib/klib.h>
 
 namespace {

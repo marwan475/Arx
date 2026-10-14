@@ -426,7 +426,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     const uint64_t sanitized_flags = (flags & AARCH64_PTE_ALLOWED_MAP_FLAGS) | (1ULL << AARCH64_PTE_BIT_AF);
     const bool     active_pt       = page_table == arch_get_pt();
 
-    bool        success = true;
+    bool        success          = true;
     bool        replacement_seen = false;
     bool        post_sync_phase  = false;
     bool        writes_pending   = false;

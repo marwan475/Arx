@@ -17,9 +17,9 @@ struct task_test_context_t
     task_t*      taskB;
     task_t*      bspTask;
     volatile int step;
-    bool tlsCorrect;
-    uint64_t originalFs;
-    uint64_t originalGs;
+    bool         tlsCorrect;
+    uint64_t     originalFs;
+    uint64_t     originalGs;
 };
 
 static task_test_context_t g_task_test_ctx;
@@ -148,14 +148,13 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         goto cleanup;
     }
     passes++;
-    g_task_test_ctx.taskA   = nullptr;
-    g_task_test_ctx.taskB   = nullptr;
-    g_task_test_ctx.bspTask = bspTask;
-    g_task_test_ctx.step    = 0;
+    g_task_test_ctx.taskA      = nullptr;
+    g_task_test_ctx.taskB      = nullptr;
+    g_task_test_ctx.bspTask    = bspTask;
+    g_task_test_ctx.step       = 0;
     g_task_test_ctx.tlsCorrect = true;
 #if defined(__x86_64__)
-    g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs)
-            && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
+    g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs) && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
 #endif
 
     taskA                 = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);

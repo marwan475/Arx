@@ -22,7 +22,7 @@ typedef enum virt_type
 
 typedef struct virt_backing_block
 {
-    void* pointer;
+    void*                      pointer;
     struct virt_backing_block* next;
 } virt_backing_block_t;
 
@@ -30,17 +30,17 @@ typedef struct virt_region virt_region_t;
 
 typedef struct virt_region
 {
-    virt_addr_t    start;
-    virt_addr_t    end;
-    size_t         size;
-    virt_type_t    type;
-    bool           allocated; // used for metadata allocations
-    void*          backing;   // Owned eager anonymous page; null for legacy reservations.
-    virt_backing_block_t* blocks; // vmalloc owns whole PMM allocations.
-    uint32_t       protection;
-    bool           heap_page;
-    virt_region_t* next;
-    virt_region_t* prev;
+    virt_addr_t           start;
+    virt_addr_t           end;
+    size_t                size;
+    virt_type_t           type;
+    bool                  allocated; // used for metadata allocations
+    void*                 backing;   // Owned eager anonymous page; null for legacy reservations.
+    virt_backing_block_t* blocks;    // vmalloc owns whole PMM allocations.
+    uint32_t              protection;
+    bool                  heap_page;
+    virt_region_t*        next;
+    virt_region_t*        prev;
 } virt_region_t;
 
 typedef struct virt_addr_space

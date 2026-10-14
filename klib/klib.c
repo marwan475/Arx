@@ -16,9 +16,9 @@ static void sift_u32(uint32_t* values, size_t root, size_t count)
         if (values[root] >= values[child])
             break;
         uint32_t value = values[root];
-        values[root] = values[child];
-        values[child] = value;
-        root = child;
+        values[root]   = values[child];
+        values[child]  = value;
+        root           = child;
     }
 }
 
@@ -30,8 +30,8 @@ void sort_u32(uint32_t* values, size_t count)
         sift_u32(values, start - 1, count);
     for (size_t end = count; end > 1; --end)
     {
-        uint32_t value = values[0];
-        values[0] = values[end - 1];
+        uint32_t value  = values[0];
+        values[0]       = values[end - 1];
         values[end - 1] = value;
         sift_u32(values, 0, end - 1);
     }
@@ -405,9 +405,9 @@ void* vmalloc(size_t size)
 {
     if (size == 0 || size > SIZE_MAX - (PAGE_SIZE - 1))
         return NULL;
-    virt_addr_space_t* space = vmm_kernel_space();
-    const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
-    const size_t aligned_size = align_up(size, PAGE_SIZE);
+    virt_addr_space_t* space        = vmm_kernel_space();
+    const zone_t*      zone         = &platform.cpus[arch_cpu_id()].numa_node->zone;
+    const size_t       aligned_size = align_up(size, PAGE_SIZE);
     spinlock_acquire_preempt(&space->operation_lock);
     virt_addr_t base = vmm_reserve_region(space, aligned_size, VIRT_ADDR_KERNEL);
     if (base == 0)
@@ -415,14 +415,14 @@ void* vmalloc(size_t size)
         spinlock_release_preempt(&space->operation_lock);
         return NULL;
     }
-    virt_backing_block_t* blocks = NULL;
-    size_t mapped_size = 0;
+    virt_backing_block_t* blocks      = NULL;
+    size_t                mapped_size = 0;
     while (mapped_size < aligned_size)
     {
-        const size_t max_chunk = ((size_t) 1 << MAX_ORDER) * PAGE_SIZE;
-        const size_t remaining = aligned_size - mapped_size;
-        const size_t chunk = remaining < max_chunk ? remaining : max_chunk;
-        virt_backing_block_t* block = kmalloc(sizeof(*block));
+        const size_t          max_chunk = ((size_t) 1 << MAX_ORDER) * PAGE_SIZE;
+        const size_t          remaining = aligned_size - mapped_size;
+        const size_t          chunk     = remaining < max_chunk ? remaining : max_chunk;
+        virt_backing_block_t* block     = kmalloc(sizeof(*block));
         if (block == NULL)
             goto fail;
         block->pointer = pmm_alloc(chunk);
@@ -431,10 +431,10 @@ void* vmalloc(size_t size)
             kfree(block);
             goto fail;
         }
-        block->next = blocks;
-        blocks = block;
-        const phys_addr_t pa = hhdm_to_pa((uintptr_t) block->pointer, zone->hhdm_present, zone->hhdm_offset);
-        const bool mapped = vmm_map_range(base + mapped_size, pa, chunk, vmm_kernel_page_flags(false, true), space);
+        block->next              = blocks;
+        blocks                   = block;
+        const phys_addr_t pa     = hhdm_to_pa((uintptr_t) block->pointer, zone->hhdm_present, zone->hhdm_offset);
+        const bool        mapped = vmm_map_range(base + mapped_size, pa, chunk, vmm_kernel_page_flags(false, true), space);
         mapped_size += chunk; // Include any partially installed range in rollback.
         if (!mapped)
             goto fail;

@@ -1,12 +1,12 @@
 #include "layers/Request/SystemRequestManager.hpp"
 
 #include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/PhysicalMemoryManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
-#include "layers/Resource/VirtualMemoryManager.hpp"
-#include "layers/Resource/TimeManager.hpp"
 #include "layers/Resource/TaskManager.hpp"
-#include "layers/Resource/PhysicalMemoryManager.hpp"
+#include "layers/Resource/TimeManager.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
 {
@@ -154,9 +154,9 @@ uint64_t SystemRequestManager::HandleFileLimitRequest(int32_t pid, uint32_t reso
         return LINUX_EOPNOTSUPP;
     if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
         return LINUX_ENOSYS;
-    ProcessManager* manager = ResourceCaps->processManager;
+    ProcessManager*     manager = ResourceCaps->processManager;
     FileDescriptorGuard guard(manager->GetCurrentProcess());
-    process_t* process = manager->GetCurrentProcess();
+    process_t*          process = manager->GetCurrentProcess();
     if (process == nullptr)
         return LINUX_ESRCH;
     if (pid < 0)
@@ -270,8 +270,8 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
 
     if (ResourceCaps->timeManager == nullptr || ResourceCaps->taskManager == nullptr || ResourceCaps->physicalMemoryManager == nullptr)
         return LINUX_ENOSYS;
-    time_timespec_t elapsed = {};
-    const uint64_t clockResult = ResourceCaps->timeManager->ReadClock(1, &elapsed);
+    time_timespec_t elapsed     = {};
+    const uint64_t  clockResult = ResourceCaps->timeManager->ReadClock(1, &elapsed);
     if (clockResult != 0)
         return clockResult;
     uint64_t totalMemoryBytes = 0;
@@ -281,17 +281,17 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
 
     linux_sysinfo_t sysinfoData = {};
     memset(&sysinfoData, 0, sizeof(sysinfoData));
-    sysinfoData.uptime          = elapsed.seconds + (elapsed.nanoseconds != 0);
-    sysinfoData.totalram        = totalMemoryBytes;
-    sysinfoData.freeram         = freeMemoryBytes;
-    sysinfoData.sharedram       = 0;
-    sysinfoData.bufferram       = 0;
-    sysinfoData.totalswap       = 0;
-    sysinfoData.freeswap        = 0;
-    sysinfoData.procs           = (uint16_t) ResourceCaps->taskManager->CountTasks();
-    sysinfoData.totalhigh       = 0;
-    sysinfoData.freehigh        = 0;
-    sysinfoData.mem_unit        = 1;
+    sysinfoData.uptime    = elapsed.seconds + (elapsed.nanoseconds != 0);
+    sysinfoData.totalram  = totalMemoryBytes;
+    sysinfoData.freeram   = freeMemoryBytes;
+    sysinfoData.sharedram = 0;
+    sysinfoData.bufferram = 0;
+    sysinfoData.totalswap = 0;
+    sysinfoData.freeswap  = 0;
+    sysinfoData.procs     = (uint16_t) ResourceCaps->taskManager->CountTasks();
+    sysinfoData.totalhigh = 0;
+    sysinfoData.freehigh  = 0;
+    sysinfoData.mem_unit  = 1;
 
     if (!safe_write_user(userSysinfo, &sysinfoData, sizeof(sysinfoData)))
     {

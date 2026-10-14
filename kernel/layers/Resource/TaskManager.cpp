@@ -4,8 +4,8 @@ extern "C"
 {
 #include <cpu/cpu.h>
 #include <klib/klib.h>
-#include <platform/memory/vmm.h>
 #include <platform.h>
+#include <platform/memory/vmm.h>
 }
 
 static TaskManager* contextTaskManager;
@@ -67,8 +67,10 @@ bool TaskManager::SetCurrentTlsBase(bool gs, uint64_t value)
     task_t* task = GetCurrentTask();
     if (task != nullptr)
     {
-        if (gs) task->taskContext.userGsBase = value;
-        else task->taskContext.fsBase = value;
+        if (gs)
+            task->taskContext.userGsBase = value;
+        else
+            task->taskContext.fsBase = value;
         arch_write_user_tls_base(gs, value);
     }
     cpu_preemption_enable();
@@ -164,12 +166,12 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 
 TaskManager::TaskManager()
 {
-    ManagerLock = 0;
+    ManagerLock        = 0;
     contextTaskManager = this;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
-        RunningTasks[i] = nullptr;
+        RunningTasks[i]   = nullptr;
         SwitchingTasks[i] = nullptr;
     }
 
@@ -331,8 +333,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     LockManager();
     if (releaseDispatchClaim && task->dispatchUsers != 0)
         --task->dispatchUsers;
-    if (!task->allocated || (task->dying && !task->sleepPending) || task->state == task_t::SWITCHING
-        || (task->ownerCpu >= 0 && task->ownerCpu != cpuId) || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
+    if (!task->allocated || (task->dying && !task->sleepPending) || task->state == task_t::SWITCHING || (task->ownerCpu >= 0 && task->ownerCpu != cpuId) || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
     {
         UnlockManager();
         return false;
@@ -351,15 +352,15 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     }
 
     const uint64_t interruptState = task_save_and_disable_interrupts();
-    current->state = task_t::SWITCHING;
-    SwitchingTasks[cpuId] = current;
-    task->state = task_t::RUNNING;
-    task->ownerCpu = cpuId;
+    current->state                = task_t::SWITCHING;
+    SwitchingTasks[cpuId]         = current;
+    task->state                   = task_t::RUNNING;
+    task->ownerCpu                = cpuId;
     __atomic_store_n(&RunningTasks[cpuId], task, __ATOMIC_RELEASE);
     UnlockManager();
-    cpu_info_t*    cpu_info       = &platform.cpus[cpuId];
-    current->preemptionDepth      = cpu_info->preemption_depth;
-    cpu_info->preemption_depth    = task->preemptionDepth;
+    cpu_info_t* cpu_info       = &platform.cpus[cpuId];
+    current->preemptionDepth   = cpu_info->preemption_depth;
+    cpu_info->preemption_depth = task->preemptionDepth;
 #if defined(__x86_64__)
     current->syscallActive                 = cpu_info->arch_info.syscall_ctx.active;
     cpu_info->arch_info.syscall_ctx.active = task->syscallActive;
@@ -398,8 +399,8 @@ void TaskManager::CompleteSwitch()
     // Called on the incoming stack after the outgoing context is fully saved,
     // before interrupts are restored. Only now is the old stack quiescent.
     LockManager();
-    const uint8_t cpuId = arch_cpu_id();
-    task_t* outgoing = SwitchingTasks[cpuId];
+    const uint8_t cpuId    = arch_cpu_id();
+    task_t*       outgoing = SwitchingTasks[cpuId];
     if (outgoing != nullptr)
         outgoing->state = outgoing->dying ? task_t::DYING : task_t::SUSPENDED;
     SwitchingTasks[cpuId] = nullptr;
@@ -422,8 +423,7 @@ bool TaskManager::MarkSleeping(task_t* task)
 bool TaskManager::RetainForDispatch(task_t* task)
 {
     LockManager();
-    const bool valid = task != nullptr && task >= Tasks && task < Tasks + MAX_TASKS && task->allocated
-        && (!task->dying || task->sleepPending);
+    const bool valid = task != nullptr && task >= Tasks && task < Tasks + MAX_TASKS && task->allocated && (!task->dying || task->sleepPending);
     if (valid)
         ++task->dispatchUsers;
     UnlockManager();
@@ -502,7 +502,7 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
         previous->state = task_t::SUSPENDED;
     if (task != nullptr)
     {
-        task->state = task_t::RUNNING;
+        task->state    = task_t::RUNNING;
         task->ownerCpu = cpuId;
     }
     __atomic_store_n(&RunningTasks[cpuId], task, __ATOMIC_RELEASE);

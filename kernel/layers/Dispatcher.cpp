@@ -1,8 +1,8 @@
 #include "layers/Dispatcher.hpp"
 
+#include "layers/Logic/Scheduler.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
-#include "layers/Logic/Scheduler.hpp"
 
 #include <platform.h>
 
@@ -437,15 +437,14 @@ extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* fram
         return (uint64_t) -38;
     }
 
-    const uint64_t result = dispatcher->DispatchSyscall(frame);
+    const uint64_t     result    = dispatcher->DispatchSyscall(frame);
     ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
-    LogicLayerCaps* logic = dispatcher->GetLogicLayerCaps();
+    LogicLayerCaps*    logic     = dispatcher->GetLogicLayerCaps();
     if (resources != nullptr && resources->processManager != nullptr && resources->taskManager != nullptr)
     {
         process_t* process = resources->processManager->GetCurrentProcess();
-        task_t* task = resources->taskManager->GetCurrentTask();
-        if (process != nullptr && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && task != nullptr && task->isUserTask
-            && logic != nullptr && logic->scheduler != nullptr)
+        task_t*    task    = resources->taskManager->GetCurrentTask();
+        if (process != nullptr && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && task != nullptr && task->isUserTask && logic != nullptr && logic->scheduler != nullptr)
             logic->scheduler->ExitCurrentTask();
     }
     return result;

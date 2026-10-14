@@ -1,7 +1,7 @@
 #include "layers/Logic/LogicLayerFactory.hpp"
 
-#include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/CredentialManager.hpp"
+#include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"

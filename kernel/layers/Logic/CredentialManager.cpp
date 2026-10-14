@@ -1,6 +1,7 @@
 #include "layers/Logic/CredentialManager.hpp"
 
 #include "layers/Resource/ResourceLayerFactory.hpp"
+
 #include <klib/klib.h>
 
 namespace
@@ -11,10 +12,9 @@ bool identity_contains(const process_identity_t& identity, uint32_t id)
 {
     return id == identity.real || id == identity.effective || id == identity.saved;
 }
-}
+} // namespace
 
-CredentialManager::CredentialManager(ResourceLayerCaps* resourceLayerCaps)
-    : Processes(resourceLayerCaps != nullptr ? resourceLayerCaps->processManager : nullptr)
+CredentialManager::CredentialManager(ResourceLayerCaps* resourceLayerCaps) : Processes(resourceLayerCaps != nullptr ? resourceLayerCaps->processManager : nullptr)
 {
 }
 
@@ -39,11 +39,11 @@ uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t
     process_t* process = Processes->AcquireCurrentCredentials();
     if (process == nullptr)
         return LINUX_ESRCH;
-    const bool privileged = process->credentials.user.effective == 0;
-    process_identity_t& current = group ? process->credentials.group : process->credentials.user;
-    const process_identity_t old = current;
-    process_identity_t next = old;
-    uint64_t result = 0;
+    const bool               privileged = process->credentials.user.effective == 0;
+    process_identity_t&      current    = group ? process->credentials.group : process->credentials.user;
+    const process_identity_t old        = current;
+    process_identity_t       next       = old;
+    uint64_t                 result     = 0;
     switch (change)
     {
         case SET_ID:
@@ -54,27 +54,27 @@ uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t
             next.effective = next.filesystem = real;
             break;
         case SET_RE_ID:
-            if (!privileged && ((real != UINT32_MAX && real != old.real && real != old.effective)
-                    || (effective != UINT32_MAX && !identity_contains(old, effective))))
+            if (!privileged && ((real != UINT32_MAX && real != old.real && real != old.effective) || (effective != UINT32_MAX && !identity_contains(old, effective))))
                 result = CREDENTIAL_EPERM;
-            if (real != UINT32_MAX) next.real = real;
-            if (effective != UINT32_MAX) next.effective = effective;
+            if (real != UINT32_MAX)
+                next.real = real;
+            if (effective != UINT32_MAX)
+                next.effective = effective;
             if (real != UINT32_MAX || (effective != UINT32_MAX && effective != old.real))
                 next.saved = next.effective;
             next.filesystem = next.effective;
             break;
         case SET_RES_ID:
-            if ((real == UINT32_MAX || real == old.real)
-                    && (effective == UINT32_MAX || (effective == old.effective && effective == old.filesystem))
-                    && (saved == UINT32_MAX || saved == old.saved))
+            if ((real == UINT32_MAX || real == old.real) && (effective == UINT32_MAX || (effective == old.effective && effective == old.filesystem)) && (saved == UINT32_MAX || saved == old.saved))
                 break;
-            if (!privileged && ((real != UINT32_MAX && !identity_contains(old, real))
-                    || (effective != UINT32_MAX && !identity_contains(old, effective))
-                    || (saved != UINT32_MAX && !identity_contains(old, saved))))
+            if (!privileged && ((real != UINT32_MAX && !identity_contains(old, real)) || (effective != UINT32_MAX && !identity_contains(old, effective)) || (saved != UINT32_MAX && !identity_contains(old, saved))))
                 result = CREDENTIAL_EPERM;
-            if (real != UINT32_MAX) next.real = real;
-            if (effective != UINT32_MAX) next.effective = effective;
-            if (saved != UINT32_MAX) next.saved = saved;
+            if (real != UINT32_MAX)
+                next.real = real;
+            if (effective != UINT32_MAX)
+                next.effective = effective;
+            if (saved != UINT32_MAX)
+                next.saved = saved;
             next.filesystem = next.effective;
             break;
         case SET_FS_ID:
@@ -101,8 +101,8 @@ uint64_t CredentialManager::GetGroups(uint32_t* groups, uint32_t capacity, uint3
     if (process == nullptr)
         return LINUX_ESRCH;
     const process_group_list_t* list = process->supplementaryGroups;
-    *count = list != nullptr ? list->count : 0;
-    uint64_t result = 0;
+    *count                           = list != nullptr ? list->count : 0;
+    uint64_t result                  = 0;
     if (capacity != 0)
     {
         if (capacity < *count)
@@ -117,7 +117,7 @@ uint64_t CredentialManager::GetGroups(uint32_t* groups, uint32_t capacity, uint3
 uint64_t CredentialManager::MaySetGroups()
 {
     process_credentials_t credentials;
-    uint64_t result = GetCredentials(&credentials);
+    uint64_t              result = GetCredentials(&credentials);
     return result != 0 ? result : credentials.user.effective == 0 ? 0 : CREDENTIAL_EPERM;
 }
 
@@ -150,9 +150,9 @@ uint64_t CredentialManager::SetGroups(const uint32_t* groups, uint32_t count)
         result = CREDENTIAL_EPERM;
     else
     {
-        previous = process->supplementaryGroups;
+        previous                     = process->supplementaryGroups;
         process->supplementaryGroups = next;
-        next = nullptr;
+        next                         = nullptr;
     }
     Processes->ReleaseCredentials(process);
     Processes->ReleaseGroupList(previous);

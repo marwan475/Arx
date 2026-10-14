@@ -7,10 +7,11 @@
 typedef uint8_t spinlock_t;
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
-void cpu_preemption_disable(void);
-void cpu_preemption_enable(void);
+    void cpu_preemption_disable(void);
+    void cpu_preemption_enable(void);
 #ifdef __cplusplus
 }
 #endif

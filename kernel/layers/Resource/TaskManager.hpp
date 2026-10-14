@@ -8,11 +8,18 @@
 
 struct task_t
 {
-    enum state_t { READY, RUNNING, SWITCHING, SUSPENDED, DYING };
-    state_t                  state;
-    int16_t                  ownerCpu;
-    uint32_t                 dispatchUsers;
-    bool                     dying;
+    enum state_t
+    {
+        READY,
+        RUNNING,
+        SWITCHING,
+        SUSPENDED,
+        DYING
+    };
+    state_t  state;
+    int16_t  ownerCpu;
+    uint32_t dispatchUsers;
+    bool     dying;
     struct user_launch_context_t
     {
         uint64_t userRip;
@@ -42,18 +49,18 @@ public:
 
     TaskManager();
 
-    task_t* AllocateTask();
-    task_t* CreateKernelTask(arch_task_entry_t entry, void* arg);
-    task_t* CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
-    bool    FreeTask(task_t* task, void** retiredStack = nullptr);
+    task_t*     AllocateTask();
+    task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);
+    task_t*     CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
+    bool        FreeTask(task_t* task, void** retiredStack = nullptr);
     static void ReleaseTaskStack(void* stack);
-    bool    ExecuteTask(task_t* task, bool releaseDispatchClaim = false);
-    bool    RetainForDispatch(task_t* task);
-    void    ReleaseDispatchClaim(task_t* task);
-    void    MarkDying(task_t* task);
-    void    CompleteSwitch();
-    bool    MarkSleeping(task_t* task);
-    void    FinishSleeping(task_t* task);
+    bool        ExecuteTask(task_t* task, bool releaseDispatchClaim = false);
+    bool        RetainForDispatch(task_t* task);
+    void        ReleaseDispatchClaim(task_t* task);
+    void        MarkDying(task_t* task);
+    void        CompleteSwitch();
+    bool        MarkSleeping(task_t* task);
+    void        FinishSleeping(task_t* task);
 
     task_t* GetRunningTask(uint8_t cpuId) const;
     bool    SetRunningTask(uint8_t cpuId, task_t* task);

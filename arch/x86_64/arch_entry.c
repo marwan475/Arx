@@ -1,8 +1,8 @@
 #include <boot/boot.h>
 #include <boot/limine.h>
 #include <klib/klib.h>
-#include <stdint.h>
 #include <platform.h>
+#include <stdint.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -59,7 +59,7 @@ __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
-static struct limine_smp_info* selected_cpus[BOOT_SMP_MAX_CPUS];
+static struct limine_smp_info*  selected_cpus[BOOT_SMP_MAX_CPUS];
 
 extern uint8_t __kernel_start[];
 extern uint8_t __kernel_end[];

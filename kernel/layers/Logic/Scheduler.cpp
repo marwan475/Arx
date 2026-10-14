@@ -82,10 +82,10 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
     size_t* link = &SleepHeads[cpuId];
     while (*link != NO_SLEEPER)
     {
-        sleep_entry_t& entry  = SleepQueue[*link];
-        const bool     exited = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
-        const bool changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
-        const bool timed = entry.deadline != UINT64_MAX;
+        sleep_entry_t& entry   = SleepQueue[*link];
+        const bool     exited  = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
+        const bool     changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
+        const bool     timed   = entry.deadline != UINT64_MAX;
         if ((timed && !clockAvailable) || exited || changed || (timed && entry.deadline <= now))
         {
             *link         = entry.next;
@@ -114,7 +114,7 @@ void Scheduler::ReapExitedProcesses()
 [[noreturn]] void Scheduler::ExitCurrentTask()
 {
     const uint8_t cpuId = arch_cpu_id();
-    TaskManager* tasks = ResourceLayerImportCaps->taskManager;
+    TaskManager*  tasks = ResourceLayerImportCaps->taskManager;
     cpu_preemption_disable();
     if (IdleTasks[cpuId] == nullptr)
         panic();
@@ -141,7 +141,8 @@ uint64_t Scheduler::WaitForEvent(const uint64_t* sequence, uint64_t expected, ui
 
 void Scheduler::WakeEventWaiters(const uint64_t* sequence)
 {
-    if (sequence == nullptr) return;
+    if (sequence == nullptr)
+        return;
     LockQueues();
     for (size_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
     {
@@ -151,10 +152,10 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
             sleep_entry_t& entry = SleepQueue[*link];
             if (entry.sequence == sequence && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence)
             {
-                *link = entry.next;
-                entry.next = NO_SLEEPER;
+                *link         = entry.next;
+                entry.next    = NO_SLEEPER;
                 entry.waiting = false;
-                entry.result = 0;
+                entry.result  = 0;
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
             }
             else
@@ -208,17 +209,17 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         cpu_preemption_enable();
         return 0;
     }
-    sleep_entry_t& entry = SleepQueue[task->id];
-    entry.process        = process;
-    entry.task           = task;
-    entry.deadline       = monotonicDeadline;
-    entry.result         = 0;
-    entry.sequence       = sequence;
+    sleep_entry_t& entry   = SleepQueue[task->id];
+    entry.process          = process;
+    entry.task             = task;
+    entry.deadline         = monotonicDeadline;
+    entry.result           = 0;
+    entry.sequence         = sequence;
     entry.expectedSequence = expected;
-    entry.cpuId          = cpuId;
-    entry.waiting        = true;
-    entry.dispatched     = false;
-    size_t* link         = &SleepHeads[cpuId];
+    entry.cpuId            = cpuId;
+    entry.waiting          = true;
+    entry.dispatched       = false;
+    size_t* link           = &SleepHeads[cpuId];
     while (*link != NO_SLEEPER && SleepQueue[*link].deadline <= monotonicDeadline)
         link = &SleepQueue[*link].next;
     entry.next = *link;
@@ -665,9 +666,9 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         RemoveProcessFromQueue(&ReadyQueues[cpu], processId);
     }
     // Retirement and dispatch claims share QueueLock.
-    void* retiredStacks[TaskManager::MAX_TASKS];
-    size_t retiredCount = 0;
-    task_t* iter = process->tasks;
+    void*   retiredStacks[TaskManager::MAX_TASKS];
+    size_t  retiredCount = 0;
+    task_t* iter         = process->tasks;
     while (iter != nullptr)
     {
         task_t* next = iter->next;

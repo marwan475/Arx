@@ -7,7 +7,13 @@ struct ResourceLayerCaps;
 class CredentialManager
 {
 public:
-    enum change_t { SET_ID, SET_RE_ID, SET_RES_ID, SET_FS_ID };
+    enum change_t
+    {
+        SET_ID,
+        SET_RE_ID,
+        SET_RES_ID,
+        SET_FS_ID
+    };
 
     explicit CredentialManager(ResourceLayerCaps* resourceLayerCaps);
     uint64_t GetCredentials(process_credentials_t* credentials);

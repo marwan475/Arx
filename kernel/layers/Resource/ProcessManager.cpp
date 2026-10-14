@@ -37,8 +37,8 @@ FileDescriptorGuard::FileDescriptorGuard(process_t* process) : Process(process),
 {
     cpu_preemption_disable();
     const uint8_t cpu = arch_cpu_id();
-    Previous = Active[cpu];
-    Owner = process != nullptr && Previous != process;
+    Previous          = Active[cpu];
+    Owner             = process != nullptr && Previous != process;
     if (Owner)
         spinlock_acquire(&process->fileDescriptorLock);
     if (process != nullptr)
@@ -199,9 +199,9 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     {
         process->hasParent = true;
         process->parentId  = RunningProcesses[currentCpu]->id;
-        process_t* parent = RunningProcesses[currentCpu];
+        process_t* parent  = RunningProcesses[currentCpu];
         spinlock_acquire(&parent->credentialLock);
-        process->credentials = parent->credentials;
+        process->credentials         = parent->credentials;
         process->supplementaryGroups = parent->supplementaryGroups;
         if (process->supplementaryGroups != nullptr)
             __atomic_add_fetch(&process->supplementaryGroups->references, 1U, __ATOMIC_RELAXED);
@@ -219,9 +219,9 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
 
 bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 {
-    file_descriptor_t* descriptorsToFree = nullptr;
-    uint64_t descriptorCountToFree = 0;
-    process_group_list_t* groupsToFree = nullptr;
+    file_descriptor_t*    descriptorsToFree     = nullptr;
+    uint64_t              descriptorCountToFree = 0;
+    process_group_list_t* groupsToFree          = nullptr;
 
     LockManager();
 
@@ -423,8 +423,8 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
     {
         if (process->fileDescriptors[i].file == nullptr)
         {
-            process->fileDescriptors[i].file  = file;
-            process->fileDescriptors[i].flags = flags;
+            process->fileDescriptors[i].file    = file;
+            process->fileDescriptors[i].flags   = flags;
             process->fileDescriptors[i].release = release;
             return (int64_t) i;
         }
@@ -442,8 +442,8 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
     {
         if (process->fileDescriptors[i].file == nullptr)
         {
-            process->fileDescriptors[i].file  = file;
-            process->fileDescriptors[i].flags = flags;
+            process->fileDescriptors[i].file    = file;
+            process->fileDescriptors[i].flags   = flags;
             process->fileDescriptors[i].release = release;
             return (int64_t) i;
         }
@@ -487,7 +487,7 @@ process_group_list_t* ProcessManager::CreateGroupList(const uint32_t* ids, uint3
     if (groups != nullptr)
     {
         groups->references = 1;
-        groups->count = count;
+        groups->count      = count;
         memcpy(groups->ids, ids, count * sizeof(uint32_t));
     }
     return groups;

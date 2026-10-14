@@ -88,9 +88,9 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
         platform.cpus[i].arch_info.acpi_lapic_flags     = 0;
     }
 
-    entry              = madt->entries;
-    table_end          = (uacpi_u8*) madt + madt->hdr.length;
-    lapic_count        = 0;
+    entry       = madt->entries;
+    table_end   = (uacpi_u8*) madt + madt->hdr.length;
+    lapic_count = 0;
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;

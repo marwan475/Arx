@@ -1841,7 +1841,7 @@ int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, 
         return -1;
     }
     const uint64_t savedOffset = file->offset;
-    int64_t result = 0;
+    int64_t        result      = 0;
     if (offset != nullptr)
     {
         result = *offset > INT64_MAX || file->operations->Seek == nullptr ? -29 : file->operations->Seek(file, (int64_t) *offset, 0);
@@ -1931,7 +1931,8 @@ bool VirtualFileSystem::Retain(file_t* file)
 
 uint32_t VirtualFileSystem::Poll(file_t* file)
 {
-    if (file == nullptr) return 0x20; // POLLNVAL
+    if (file == nullptr)
+        return 0x20; // POLLNVAL
     if (file->operations != nullptr && file->operations->Poll != nullptr)
         return file->operations->Poll(file);
     // Linux's default readiness for synchronous files, including EOF.

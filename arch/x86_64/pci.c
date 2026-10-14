@@ -2,8 +2,8 @@
 #include <arch/arch.h>
 #include <device/device.h>
 #include <klib/klib.h>
-#include <platform.h>
 #include <memory/vmm.h>
+#include <platform.h>
 #include <uacpi/kernel_api.h>
 
 #define PCI_CONFIG_SPACE_FUNCTION_SIZE 4096
@@ -135,7 +135,7 @@ static bool pci_map_regions(void)
         map_size  = bus_count << 20;
 
         const uint64_t bus_offset = (uint64_t) platform.arch_info.pci_regions[i].start_bus << 20;
-        const uint64_t base = platform.arch_info.pci_regions[i].base_address;
+        const uint64_t base       = platform.arch_info.pci_regions[i].base_address;
         if (base > UINT64_MAX - bus_offset || base + bus_offset > UINT64_MAX - map_size || ((base + bus_offset) & (PAGE_SIZE - 1)) != 0)
             return false;
         mapped = NULL;

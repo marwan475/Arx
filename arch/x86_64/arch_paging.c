@@ -505,10 +505,10 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
         uint64_t* children = pmm_alloc(PAGE_SIZE);
         if (children == NULL)
             return X86_64_WALK_LEVEL_ERROR;
-        const uint64_t old = *parent;
+        const uint64_t old         = *parent;
         const uint64_t child_shift = request->level_shift - 9;
-        const uint64_t base = old & X86_64_PTE_ADDR_MASK & ~((1ULL << request->level_shift) - 1);
-        uint64_t flags = old & ~X86_64_PTE_ADDR_MASK;
+        const uint64_t base        = old & X86_64_PTE_ADDR_MASK & ~((1ULL << request->level_shift) - 1);
+        uint64_t       flags       = old & ~X86_64_PTE_ADDR_MASK;
         if (child_shift == 12)
         {
             flags &= ~X86_64_PTE_PAGE_SIZE_OR_PAT;
@@ -520,8 +520,7 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
         for (uint64_t i = 0; i < X86_64_PT_ENTRIES; ++i)
             children[i] = (base + (i << child_shift)) | flags;
         const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
-        *parent = hhdm_to_pa((uintptr_t) children, zone->hhdm_present, zone->hhdm_offset)
-                | X86_64_PTE_PRESENT | X86_64_PTE_WRITABLE | (old & X86_64_PTE_USER);
+        *parent            = hhdm_to_pa((uintptr_t) children, zone->hhdm_present, zone->hhdm_offset) | X86_64_PTE_PRESENT | X86_64_PTE_WRITABLE | (old & X86_64_PTE_USER);
     }
     phys_addr_t next_table_pa = 0;
     if (request->allocate_tables)
@@ -678,14 +677,12 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
 
 static bool prune_empty_tables(phys_addr_t table, unsigned depth, virt_addr_t failed_va, phys_addr_t* retired, unsigned* count)
 {
-    uint64_t* words = x86_64_table_from_pa(table);
+    uint64_t*      words = x86_64_table_from_pa(table);
     const unsigned index = (failed_va >> (12 + 9 * (depth - 1))) & X86_64_PT_INDEX_MASK;
     const uint64_t entry = words[index];
-    if (depth > 1 && (entry & X86_64_PTE_PRESENT) && !(entry & X86_64_PTE_PAGE_SIZE_OR_PAT)
-        && prune_empty_tables(entry & X86_64_PTE_ADDR_MASK, depth - 1, failed_va, retired, count)
-        && !(depth == 4 && index >= 256))
+    if (depth > 1 && (entry & X86_64_PTE_PRESENT) && !(entry & X86_64_PTE_PAGE_SIZE_OR_PAT) && prune_empty_tables(entry & X86_64_PTE_ADDR_MASK, depth - 1, failed_va, retired, count) && !(depth == 4 && index >= 256))
     {
-        words[index] = 0;
+        words[index]        = 0;
         retired[(*count)++] = entry & X86_64_PTE_ADDR_MASK;
     }
     for (unsigned i = 0; i < 512; ++i)
@@ -699,7 +696,7 @@ static void rollback_empty_tables(phys_addr_t page_table, virt_addr_t failed_va)
     // One failed leaf descent can allocate at most three intermediate tables.
     // Keep detached tables intact until all paging-structure caches are flushed.
     phys_addr_t retired[3];
-    unsigned count = 0;
+    unsigned    count = 0;
     prune_empty_tables(page_table, 4, failed_va, retired, &count);
     if (count != 0)
     {
@@ -782,7 +779,7 @@ bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     }
 
     const uint64_t range_end = va_start + size;
-    virt_addr_t failed_va = va_start;
+    virt_addr_t    failed_va = va_start;
 
     const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
     const bool     active_pt       = page_table == arch_get_pt();

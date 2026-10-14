@@ -379,7 +379,7 @@ static uint64_t perform_user_buffer_io(VirtualMemoryManager* virtualMemoryManage
             if (*positionedOffset > INT64_MAX || totalTransferred > INT64_MAX - *positionedOffset)
                 return totalTransferred > 0 ? totalTransferred : LINUX_EINVAL;
             const uint64_t offset = *positionedOffset + totalTransferred;
-            ioResult = isWrite ? virtualFileSystem->WriteAt(file, kernelBuffer, chunkSize, offset) : virtualFileSystem->ReadAt(file, kernelBuffer, chunkSize, offset);
+            ioResult              = isWrite ? virtualFileSystem->WriteAt(file, kernelBuffer, chunkSize, offset) : virtualFileSystem->ReadAt(file, kernelBuffer, chunkSize, offset);
         }
         else
             ioResult = isWrite ? virtualFileSystem->Write(file, kernelBuffer, chunkSize) : virtualFileSystem->Read(file, kernelBuffer, chunkSize);
@@ -446,8 +446,8 @@ static uint64_t perform_user_vector_io(VirtualMemoryManager* virtualMemoryManage
         return LINUX_EFAULT;
     }
 
-    uint64_t       runningOffset  = positionedOffset;
-    uint64_t       total          = 0;
+    uint64_t runningOffset = positionedOffset;
+    uint64_t total         = 0;
 
     for (int64_t i = 0; i < iovCount; ++i)
     {
@@ -554,8 +554,8 @@ static uint64_t duplicate_to_fd(ProcessManager* processManager, VirtualFileSyste
         return LINUX_EIO;
     }
 
-    currentProcess->fileDescriptors[newFd].file  = currentProcess->fileDescriptors[oldFd].file;
-    currentProcess->fileDescriptors[newFd].flags = newFlags;
+    currentProcess->fileDescriptors[newFd].file    = currentProcess->fileDescriptors[oldFd].file;
+    currentProcess->fileDescriptors[newFd].flags   = newFlags;
     currentProcess->fileDescriptors[newFd].release = currentProcess->fileDescriptors[oldFd].release;
     return newFd;
 }
@@ -816,18 +816,22 @@ static uint64_t perform_anonymous_user_io(ResourceLayerCaps* resources, LogicLay
     *handled = false;
     if (frame == nullptr || resources == nullptr || resources->processManager == nullptr || logic == nullptr || logic->virtualFileSystem == nullptr)
         return 0;
-    file_t* file = nullptr;
+    file_t* file                                      = nullptr;
     uint64_t (*callback)(file_t*, uint64_t, uint64_t) = nullptr;
     {
         FileDescriptorGuard guard(resources->processManager->GetCurrentProcess());
-        file_descriptor_t* descriptor = resources->processManager->GetFileDescriptor(resources->processManager->GetCurrentProcess(), frame->arg0);
-        if (descriptor == nullptr) return 0;
+        file_descriptor_t*  descriptor = resources->processManager->GetFileDescriptor(resources->processManager->GetCurrentProcess(), frame->arg0);
+        if (descriptor == nullptr)
+            return 0;
         file = static_cast<file_t*>(descriptor->file);
-        if (file->operations == nullptr) return 0;
+        if (file->operations == nullptr)
+            return 0;
         callback = write ? file->operations->WriteUser : file->operations->ReadUser;
-        if (callback == nullptr) return 0;
+        if (callback == nullptr)
+            return 0;
         *handled = true;
-        if (!logic->virtualFileSystem->Retain(file)) return LINUX_EBADF;
+        if (!logic->virtualFileSystem->Retain(file))
+            return LINUX_EBADF;
     }
     const uint64_t result = callback(file, frame->arg1, frame->arg2);
     logic->virtualFileSystem->Close(file);
@@ -836,9 +840,10 @@ static uint64_t perform_anonymous_user_io(ResourceLayerCaps* resources, LogicLay
 
 uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
 {
-    bool handled;
+    bool           handled;
     const uint64_t anonymousResult = perform_anonymous_user_io(ResourceCaps, LogicCaps, frame, false, &handled);
-    if (handled) return anonymousResult;
+    if (handled)
+        return anonymousResult;
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
     if (frame == nullptr)
     {
@@ -875,9 +880,10 @@ uint64_t VfsRequestManager::HandleReadRequest(const arch_syscall_frame_t* frame)
 
 uint64_t VfsRequestManager::HandleWriteRequest(const arch_syscall_frame_t* frame)
 {
-    bool handled;
+    bool           handled;
     const uint64_t anonymousResult = perform_anonymous_user_io(ResourceCaps, LogicCaps, frame, true, &handled);
-    if (handled) return anonymousResult;
+    if (handled)
+        return anonymousResult;
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
     if (frame == nullptr)
     {
@@ -1631,7 +1637,8 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
         {
             // Anonymous counter files currently support changing O_NONBLOCK.
             // Access mode is fixed at creation and cannot be changed by SETFL.
-            if ((arg & ~(3ULL | 04000ULL)) != 0) return LINUX_EOPNOTSUPP;
+            if ((arg & ~(3ULL | 04000ULL)) != 0)
+                return LINUX_EOPNOTSUPP;
             const uint64_t flags = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
             __atomic_store_n(&file->statusFlags, (flags & ~04000ULL) | (arg & 04000ULL), __ATOMIC_RELAXED);
         }

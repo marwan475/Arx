@@ -229,7 +229,7 @@ static void kzalloc_test(size_t* passes, size_t* failures)
 
 static void sort_u32_test(size_t* passes, size_t* failures)
 {
-    uint32_t values[] = {UINT32_MAX, 4, 0, 4, 1, UINT32_MAX - 1, 2};
+    uint32_t       values[]   = {UINT32_MAX, 4, 0, 4, 1, UINT32_MAX - 1, 2};
     const uint32_t expected[] = {0, 1, 2, 4, 4, UINT32_MAX - 1, UINT32_MAX};
     sort_u32(NULL, 0);
     sort_u32(values, 0);

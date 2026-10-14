@@ -82,31 +82,31 @@ struct process_group_list_t
 
 struct process_t
 {
-    bool               allocated;
-    uint64_t           id;
-    bool               hasParent;
-    uint64_t           parentId;
-    bool               exited;
-    bool               reclaiming;
-    int16_t            ownerCpu;
-    int32_t            exitStatus;
-    virt_addr_space_t* addressSpace;
-    void*              elfMetadata;
-    uint64_t           breakBase;
-    uint64_t           programBreak;
-    uint32_t           memoryUsers;
-    int64_t            timerIntervalSeconds[3];
-    int64_t            timerIntervalMicroseconds[3];
-    task_t*            tasks;
-    file_descriptor_t* fileDescriptors;
-    spinlock_t         fileDescriptorLock;
-    uint64_t           fileDescriptorCount;
-    uint32_t           umask;
-    process_file_limit_t fileLimit;
-    spinlock_t          credentialLock;
+    bool                  allocated;
+    uint64_t              id;
+    bool                  hasParent;
+    uint64_t              parentId;
+    bool                  exited;
+    bool                  reclaiming;
+    int16_t               ownerCpu;
+    int32_t               exitStatus;
+    virt_addr_space_t*    addressSpace;
+    void*                 elfMetadata;
+    uint64_t              breakBase;
+    uint64_t              programBreak;
+    uint32_t              memoryUsers;
+    int64_t               timerIntervalSeconds[3];
+    int64_t               timerIntervalMicroseconds[3];
+    task_t*               tasks;
+    file_descriptor_t*    fileDescriptors;
+    spinlock_t            fileDescriptorLock;
+    uint64_t              fileDescriptorCount;
+    uint32_t              umask;
+    process_file_limit_t  fileLimit;
+    spinlock_t            credentialLock;
     process_credentials_t credentials;
     process_group_list_t* supplementaryGroups;
-    char               cwdPath[256];
+    char                  cwdPath[256];
 };
 
 // A descriptor pointer is borrowed only inside this transaction. Holding the
@@ -116,12 +116,13 @@ class FileDescriptorGuard
 public:
     explicit FileDescriptorGuard(process_t* process);
     ~FileDescriptorGuard();
-    FileDescriptorGuard(const FileDescriptorGuard&) = delete;
+    FileDescriptorGuard(const FileDescriptorGuard&)            = delete;
     FileDescriptorGuard& operator=(const FileDescriptorGuard&) = delete;
+
 private:
-    process_t* Process;
-    process_t* Previous;
-    bool Owner;
+    process_t*        Process;
+    process_t*        Previous;
+    bool              Owner;
     static process_t* Active[BOOT_SMP_MAX_CPUS];
 };
 
@@ -130,8 +131,8 @@ class ProcessManager
 public:
     static constexpr size_t   MAX_PROCESSES                 = 64;
     static constexpr uint64_t DEFAULT_FILE_DESCRIPTOR_COUNT = 32;
-    static constexpr uint64_t MAX_FILE_DESCRIPTORS = 1024 * 1024;
-    static constexpr uint32_t MAX_SUPPLEMENTARY_GROUPS = 65536;
+    static constexpr uint64_t MAX_FILE_DESCRIPTORS          = 1024 * 1024;
+    static constexpr uint32_t MAX_SUPPLEMENTARY_GROUPS      = 65536;
     static constexpr size_t   MAX_CWD_PATH_LENGTH           = 256;
 
     ProcessManager();
@@ -161,13 +162,13 @@ public:
     bool IsProcessRunning(const process_t* process) const;
     bool TryReapExitedProcess(uint64_t processId);
 
-    size_t GetCapacity() const;
-    uint32_t ExchangeUmask(process_t* process, uint32_t mask);
-    uint64_t ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous);
-    process_t* AcquireCurrentCredentials();
-    static void ReleaseCredentials(process_t* process);
+    size_t                       GetCapacity() const;
+    uint32_t                     ExchangeUmask(process_t* process, uint32_t mask);
+    uint64_t                     ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous);
+    process_t*                   AcquireCurrentCredentials();
+    static void                  ReleaseCredentials(process_t* process);
     static process_group_list_t* CreateGroupList(const uint32_t* ids, uint32_t count);
-    static void ReleaseGroupList(process_group_list_t* groups);
+    static void                  ReleaseGroupList(process_group_list_t* groups);
 
 private:
     static void ResetProcessSlot(process_t* process, uint64_t id, bool allocated);

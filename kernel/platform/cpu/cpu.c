@@ -1,7 +1,7 @@
 #include <cpu/cpu.h>
 #include <klib/klib.h>
-#include <platform/memory/vmm.h>
 #include <platform.h>
+#include <platform/memory/vmm.h>
 
 platform_t platform;
 

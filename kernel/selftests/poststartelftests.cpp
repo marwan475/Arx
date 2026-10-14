@@ -363,19 +363,19 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     // the page end before building the launch fixture's normal stack.
     {
         const process_user_auxv_entry_t emptyAuxv[] = {{AUXV_AT_PAGESZ, PAGE_SIZE}, {AUXV_AT_NULL, 0}};
-        process_user_stack_layout_t emptyLayout = {};
-        emptyLayout.stackBase = USER_STACK_TOP - USER_STACK_SIZE;
-        emptyLayout.stackSize = USER_STACK_SIZE;
-        emptyLayout.auxv = emptyAuxv;
-        emptyLayout.auxvCount = 2;
-        uint64_t emptyRsp = 0;
+        process_user_stack_layout_t     emptyLayout = {};
+        emptyLayout.stackBase                       = USER_STACK_TOP - USER_STACK_SIZE;
+        emptyLayout.stackSize                       = USER_STACK_SIZE;
+        emptyLayout.auxv                            = emptyAuxv;
+        emptyLayout.auxvCount                       = 2;
+        uint64_t emptyRsp                           = 0;
         if (!resourceCaps->processManager->BuildUserInitialStack(process, &emptyLayout, &emptyRsp) || (emptyRsp & 15) != 0)
         {
             poststart_elf_test_fail("empty initial stack is not aligned", &fails);
             goto cleanup;
         }
         const phys_addr_t physical = resourceCaps->virtualMemoryManager->VirtToPhys(emptyRsp, process->addressSpace);
-        const uint64_t* words = (const uint64_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+        const uint64_t*   words    = (const uint64_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
         if (physical == 0 || words[0] != 0 || words[1] != 0 || words[2] != 0 || words[3] != AUXV_AT_PAGESZ || words[4] != PAGE_SIZE || words[5] != AUXV_AT_NULL || words[6] != 0)
         {
             poststart_elf_test_fail("empty initial stack metadata bytes are incorrect", &fails);

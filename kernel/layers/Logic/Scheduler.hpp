@@ -19,16 +19,16 @@ public:
     void ActivateScheduling();
     bool IsSchedulingActive() const;
 
-    bool     ScheduleProcess(uint64_t processId);
-    bool     EnqueueProcess(uint8_t cpuId, uint64_t processId);
-    bool     RunNextReadyProcess(uint8_t cpuId);
-    bool     KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false);
-    uint64_t SleepUntil(uint64_t monotonicDeadline);
-    uint64_t WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX);
-    void     WakeEventWaiters(const uint64_t* sequence);
-    void     WakeSleepingTasks(uint8_t cpuId);
+    bool              ScheduleProcess(uint64_t processId);
+    bool              EnqueueProcess(uint8_t cpuId, uint64_t processId);
+    bool              RunNextReadyProcess(uint8_t cpuId);
+    bool              KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false);
+    uint64_t          SleepUntil(uint64_t monotonicDeadline);
+    uint64_t          WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX);
+    void              WakeEventWaiters(const uint64_t* sequence);
+    void              WakeSleepingTasks(uint8_t cpuId);
     [[noreturn]] void ExitCurrentTask();
-    void     ReapExitedProcesses();
+    void              ReapExitedProcesses();
 
 private:
     void        InitializeBspProcessAndTask();
@@ -43,16 +43,16 @@ private:
 
     struct sleep_entry_t
     {
-        process_t* process;
-        task_t*    task;
-        uint64_t   deadline;
-        uint64_t   result;
+        process_t*      process;
+        task_t*         task;
+        uint64_t        deadline;
+        uint64_t        result;
         const uint64_t* sequence;
-        uint64_t   expectedSequence;
-        size_t     next;
-        uint8_t    cpuId;
-        bool       waiting;
-        bool       dispatched;
+        uint64_t        expectedSequence;
+        size_t          next;
+        uint8_t         cpuId;
+        bool            waiting;
+        bool            dispatched;
     };
 
     struct ready_queue_t
@@ -63,7 +63,7 @@ private:
         size_t   count;
     };
 
-    bool RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId);
+    bool     RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId);
     uint64_t Sleep(uint64_t deadline, const uint64_t* sequence, uint64_t expected);
 
     ready_queue_t ReadyQueues[BOOT_SMP_MAX_CPUS];

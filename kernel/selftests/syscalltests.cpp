@@ -29,6 +29,142 @@ static_assert(offsetof(arch_syscall_frame_t, arg5) == 48, "R9 syscall argument o
 
 namespace
 {
+// Validators run in the kernel, but syscall buffers must still pass the real
+// user-page checks. Alias their backing pages temporarily instead of allowing
+// kernel pointers through the production copy helpers. Writes through an alias
+// update the original test buffer, including nested iovec buffers.
+struct request_user_fixture_t;
+static request_user_fixture_t* request_user_fixtures[BOOT_SMP_MAX_CPUS];
+
+struct request_user_fixture_t
+{
+    static constexpr size_t MAX_PAGES = 128;
+    static constexpr uint64_t USER_BASE = 0x600000000ULL;
+    virt_addr_space_t* space;
+    request_user_fixture_t* previous;
+    virt_addr_t pages[MAX_PAGES];
+    size_t count;
+    bool valid;
+
+    request_user_fixture_t() : space(platform.cpus[arch_cpu_id()].address_space), previous(request_user_fixtures[arch_cpu_id()]), count(0), valid(true)
+    {
+        request_user_fixtures[arch_cpu_id()] = this;
+    }
+
+    ~request_user_fixture_t()
+    {
+        cpu_preemption_disable();
+        if (space != nullptr)
+        {
+            spinlock_acquire(&space->operation_lock);
+            for (size_t i = 0; i < count; ++i)
+            {
+                vmm_unmap_page(pages[i], space);
+                vmm_free_region(space, pages[i]);
+            }
+            spinlock_release(&space->operation_lock);
+        }
+        request_user_fixtures[arch_cpu_id()] = previous;
+        cpu_preemption_enable();
+    }
+
+    uint64_t Address(const void* buffer, size_t length)
+    {
+        const uint64_t source = (uint64_t) (uintptr_t) buffer;
+        if (source < CANONICAL_KERNEL_BASE) return source;
+        const size_t offset = source & (PAGE_SIZE - 1);
+        if (space == nullptr || length == 0 || length > MAX_PAGES * PAGE_SIZE - offset)
+        {
+            valid = false;
+            return 0;
+        }
+        const size_t pageCount = align_up(offset + length, PAGE_SIZE) / PAGE_SIZE;
+        if (pageCount > MAX_PAGES - count)
+        {
+            valid = false;
+            return 0;
+        }
+
+        cpu_preemption_disable();
+        spinlock_acquire(&space->operation_lock);
+        const uint64_t base = USER_BASE + count * PAGE_SIZE;
+        uint64_t flags;
+        ARCH_PAGE_FLAGS_INIT(flags);
+        ARCH_PAGE_FLAG_SET_READ(flags);
+        ARCH_PAGE_FLAG_SET_WRITE(flags);
+        ARCH_PAGE_FLAG_SET_USER(flags);
+        bool mapped = true;
+        const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+        for (size_t i = 0; i < pageCount; ++i)
+        {
+            const uint64_t kernelPage = align_down(source, PAGE_SIZE) + i * PAGE_SIZE;
+            phys_addr_t physical = 0;
+            if (zone->hhdm_present && kernelPage >= zone->hhdm_offset && (kernelPage - zone->hhdm_offset) / PAGE_SIZE < zone->max_pfn)
+                physical = kernelPage - zone->hhdm_offset;
+            else
+                physical = vmm_virt_to_phys(kernelPage, space);
+
+            const uint64_t userPage = base + i * PAGE_SIZE;
+            if (physical == 0 || vmm_virt_to_phys(userPage, space) != 0 || !vmm_reserve_page_at(space, userPage))
+            {
+                mapped = false;
+                break;
+            }
+            pages[count++] = userPage;
+            vmm_map_page(userPage, physical, flags, space);
+            if (vmm_virt_to_phys(userPage, space) != physical || !arch_user_page_accessible(userPage, space->pt, true))
+            {
+                mapped = false;
+                break;
+            }
+        }
+        spinlock_release(&space->operation_lock);
+        cpu_preemption_enable();
+        valid &= mapped;
+        return mapped ? base + offset : 0;
+    }
+};
+
+static uint64_t request_user_address(const void* buffer, size_t length)
+{
+    request_user_fixture_t* fixture = request_user_fixtures[arch_cpu_id()];
+    return fixture != nullptr ? fixture->Address(buffer, length) : 0;
+}
+
+// Exit is deliberately exercised against the harness process. Restore its
+// state even when a validator fails, so one failure cannot poison later cases.
+struct request_process_state_t
+{
+    process_t* process;
+    bool exited;
+    int32_t exitStatus;
+    bool guardExit;
+
+    explicit request_process_state_t(uint64_t syscallNumber) : process(nullptr), exited(false), exitStatus(0), guardExit(syscallNumber == SYSCALL_exit || syscallNumber == SYSCALL_exit_group)
+    {
+        if (!guardExit) return;
+        cpu_preemption_disable();
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        ResourceLayerCaps* caps = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
+        process = caps != nullptr && caps->processManager != nullptr ? caps->processManager->GetCurrentProcess() : nullptr;
+        if (process != nullptr)
+        {
+            exited = process->exited;
+            exitStatus = process->exitStatus;
+        }
+    }
+
+    ~request_process_state_t()
+    {
+        if (process != nullptr)
+        {
+            process->exited = exited;
+            process->exitStatus = exitStatus;
+        }
+        if (guardExit) cpu_preemption_enable();
+    }
+};
+
 enum expected_result_kind_t
 {
     EXPECT_NEG_ERRNO,
@@ -46,6 +182,58 @@ struct requestlayer_stats_t
     unsigned long long customCasePass;
     unsigned long long customCaseFail;
 };
+
+static void test_user_copy_fixture(requestlayer_stats_t* stats)
+{
+    request_user_fixture_t fixture;
+    uint32_t original = 0x12345678;
+    const uint32_t replacement = 0xABCDEF01;
+    uint32_t copied = 0;
+    const uint64_t user = request_user_address(&original, sizeof(original));
+    bool passed = user != 0 && fixture.valid;
+    if (passed)
+    {
+        passed &= safe_read_user(user, &copied, sizeof(copied)) && copied == original;
+        passed &= safe_write_user(user, &replacement, sizeof(replacement)) && original == replacement;
+        passed &= !safe_read_user((uint64_t) (uintptr_t) &original, &copied, sizeof(copied));
+        passed &= !safe_write_user((uint64_t) (uintptr_t) &original, &copied, sizeof(copied)) && original == replacement;
+        passed &= !safe_read_user(CANONICAL_USER_END, &copied, sizeof(copied));
+
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number = SYSCALL_getcpu;
+        // Deliberately bypass the fixture: the actual handler must reject it.
+        frame.arg0 = (uint64_t) (uintptr_t) &original;
+        passed &= dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT && original == replacement;
+        frame = {};
+        frame.syscall_number = SYSCALL_open;
+        frame.arg0 = (uint64_t) (uintptr_t) "/test.txt";
+        passed &= dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT;
+
+        uint64_t flags;
+        ARCH_PAGE_FLAGS_INIT(flags);
+        ARCH_PAGE_FLAG_SET_READ(flags);
+        ARCH_PAGE_FLAG_SET_USER(flags);
+        cpu_preemption_disable();
+        vmm_protect_page(align_down(user, PAGE_SIZE), flags, fixture.space);
+        cpu_preemption_enable();
+        passed &= !safe_write_user(user, &copied, sizeof(copied)) && original == replacement;
+        passed &= safe_read_user(user, &copied, sizeof(copied)) && copied == replacement;
+    }
+    stats->total++;
+    stats->implemented++;
+    stats->customCaseUsed++;
+    if (passed)
+    {
+        stats->implementedPass++;
+        stats->customCasePass++;
+    }
+    else
+    {
+        stats->implementedFail++;
+        stats->customCaseFail++;
+        selftest_record_failure_detail("safe_user_copy_fixture");
+    }
+}
 
 struct custom_case_ctx_t
 {
@@ -193,7 +381,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
         arch_syscall_frame_t syscallFrame   = *(ctx->frame);
         syscallFrame.syscall_number         = SYSCALL_read;
         syscallFrame.arg0                   = (uint64_t) fd;
-        syscallFrame.arg1                   = (uint64_t) (uintptr_t) readBuffer;
+        syscallFrame.arg1                   = request_user_address(readBuffer, sizeof(readBuffer));
         syscallFrame.arg2                   = (uint64_t) sizeof(readBuffer);
 
         uint64_t readResult = dispatcher_dispatch_syscall(&syscallFrame);
@@ -230,7 +418,7 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
             arch_syscall_frame_t syscallFrame = *(ctx->frame);
             syscallFrame.syscall_number       = SYSCALL_write;
             syscallFrame.arg0                 = (uint64_t) fd;
-            syscallFrame.arg1                 = (uint64_t) (uintptr_t) payload;
+            syscallFrame.arg1                 = request_user_address(payload, sizeof(payload));
             syscallFrame.arg2                 = testBytes;
 
             uint64_t writeResult = dispatcher_dispatch_syscall(&syscallFrame);
@@ -272,7 +460,7 @@ static bool custom_case_validate_pread64(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -285,7 +473,7 @@ static bool custom_case_validate_pread64(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t preadFrame     = {};
     preadFrame.syscall_number           = SYSCALL_pread64;
     preadFrame.arg0                     = fd;
-    preadFrame.arg1                     = (uint64_t) (uintptr_t) readBuffer;
+    preadFrame.arg1                     = request_user_address(readBuffer, sizeof(readBuffer));
     preadFrame.arg2                     = sizeof(readBuffer);
     preadFrame.arg3                     = 0;
 
@@ -316,7 +504,7 @@ static bool custom_case_validate_pwrite64(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -329,7 +517,7 @@ static bool custom_case_validate_pwrite64(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t pwriteFrame = {};
     pwriteFrame.syscall_number       = SYSCALL_pwrite64;
     pwriteFrame.arg0                 = fd;
-    pwriteFrame.arg1                 = (uint64_t) (uintptr_t) payload;
+    pwriteFrame.arg1                 = request_user_address(payload, sizeof(payload));
     pwriteFrame.arg2                 = (uint64_t) (sizeof(payload) - 1);
     pwriteFrame.arg3                 = 0;
 
@@ -360,7 +548,7 @@ static bool custom_case_validate_readv(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -372,14 +560,14 @@ static bool custom_case_validate_readv(const custom_case_ctx_t* ctx)
     char               readA[8] = {};
     char               readB[8] = {};
     test_linux_iovec_t iov[2]   = {
-            {(void*) readA, sizeof(readA)},
-            {(void*) readB, sizeof(readB)},
+            {(void*) (uintptr_t) request_user_address(readA, sizeof(readA)), sizeof(readA)},
+            {(void*) (uintptr_t) request_user_address(readB, sizeof(readB)), sizeof(readB)},
     };
 
     arch_syscall_frame_t readvFrame = {};
     readvFrame.syscall_number       = SYSCALL_readv;
     readvFrame.arg0                 = fd;
-    readvFrame.arg1                 = (uint64_t) (uintptr_t) iov;
+    readvFrame.arg1                 = request_user_address(iov, sizeof(iov));
     readvFrame.arg2                 = 2;
 
     const uint64_t readvResult = dispatcher_dispatch_syscall(&readvFrame);
@@ -405,7 +593,7 @@ static bool custom_case_validate_writev(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -417,14 +605,14 @@ static bool custom_case_validate_writev(const custom_case_ctx_t* ctx)
     static char        partA[] = "Arx-";
     static char        partB[] = "writev";
     test_linux_iovec_t iov[2]  = {
-            {(void*) partA, (uint64_t) (sizeof(partA) - 1)},
-            {(void*) partB, (uint64_t) (sizeof(partB) - 1)},
+            {(void*) (uintptr_t) request_user_address(partA, sizeof(partA)), (uint64_t) (sizeof(partA) - 1)},
+            {(void*) (uintptr_t) request_user_address(partB, sizeof(partB)), (uint64_t) (sizeof(partB) - 1)},
     };
 
     arch_syscall_frame_t writevFrame = {};
     writevFrame.syscall_number       = SYSCALL_writev;
     writevFrame.arg0                 = fd;
-    writevFrame.arg1                 = (uint64_t) (uintptr_t) iov;
+    writevFrame.arg1                 = request_user_address(iov, sizeof(iov));
     writevFrame.arg2                 = 2;
 
     const uint64_t writevResult = dispatcher_dispatch_syscall(&writevFrame);
@@ -451,7 +639,7 @@ static bool custom_case_validate_preadv(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -463,14 +651,14 @@ static bool custom_case_validate_preadv(const custom_case_ctx_t* ctx)
     char               readA[8] = {};
     char               readB[8] = {};
     test_linux_iovec_t iov[2]   = {
-            {(void*) readA, sizeof(readA)},
-            {(void*) readB, sizeof(readB)},
+            {(void*) (uintptr_t) request_user_address(readA, sizeof(readA)), sizeof(readA)},
+            {(void*) (uintptr_t) request_user_address(readB, sizeof(readB)), sizeof(readB)},
     };
 
     arch_syscall_frame_t preadvFrame = {};
     preadvFrame.syscall_number       = SYSCALL_preadv;
     preadvFrame.arg0                 = fd;
-    preadvFrame.arg1                 = (uint64_t) (uintptr_t) iov;
+    preadvFrame.arg1                 = request_user_address(iov, sizeof(iov));
     preadvFrame.arg2                 = 2;
     preadvFrame.arg3                 = 0;
 
@@ -497,7 +685,7 @@ static bool custom_case_validate_pwritev(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -509,14 +697,14 @@ static bool custom_case_validate_pwritev(const custom_case_ctx_t* ctx)
     static char        partA[] = "Arx-";
     static char        partB[] = "pwritev";
     test_linux_iovec_t iov[2]  = {
-            {(void*) partA, (uint64_t) (sizeof(partA) - 1)},
-            {(void*) partB, (uint64_t) (sizeof(partB) - 1)},
+            {(void*) (uintptr_t) request_user_address(partA, sizeof(partA)), (uint64_t) (sizeof(partA) - 1)},
+            {(void*) (uintptr_t) request_user_address(partB, sizeof(partB)), (uint64_t) (sizeof(partB) - 1)},
     };
 
     arch_syscall_frame_t pwritevFrame = {};
     pwritevFrame.syscall_number       = SYSCALL_pwritev;
     pwritevFrame.arg0                 = fd;
-    pwritevFrame.arg1                 = (uint64_t) (uintptr_t) iov;
+    pwritevFrame.arg1                 = request_user_address(iov, sizeof(iov));
     pwritevFrame.arg2                 = 2;
     pwritevFrame.arg3                 = 0;
 
@@ -549,7 +737,7 @@ static bool custom_case_validate_open(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
 
@@ -581,7 +769,7 @@ static bool custom_case_validate_creat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t creatFrame = {};
     creatFrame.syscall_number       = SYSCALL_creat;
-    creatFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    creatFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     creatFrame.arg1                 = 0644;
 
     uint64_t fdResult = dispatcher_dispatch_syscall(&creatFrame);
@@ -613,7 +801,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t openatFrame = {};
     openatFrame.syscall_number       = SYSCALL_openat;
     openatFrame.arg0                 = LINUX_AT_FDCWD;
-    openatFrame.arg1                 = (uint64_t) (uintptr_t) "/test.txt";
+    openatFrame.arg1                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openatFrame.arg2                 = 0;
     openatFrame.arg3                 = 0;
 
@@ -635,7 +823,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t rootDirFrame = {};
     rootDirFrame.syscall_number       = SYSCALL_open;
-    rootDirFrame.arg0                 = (uint64_t) (uintptr_t) "/";
+    rootDirFrame.arg0                 = request_user_address("/", sizeof("/"));
     rootDirFrame.arg1                 = 0;
     rootDirFrame.arg2                 = 0;
 
@@ -648,7 +836,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t relativeOpenat = {};
     relativeOpenat.syscall_number       = SYSCALL_openat;
     relativeOpenat.arg0                 = rootDirFd;
-    relativeOpenat.arg1                 = (uint64_t) (uintptr_t) "test.txt";
+    relativeOpenat.arg1                 = request_user_address("test.txt", sizeof("test.txt"));
     relativeOpenat.arg2                 = 0;
     relativeOpenat.arg3                 = 0;
 
@@ -673,7 +861,7 @@ static bool custom_case_validate_openat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t regularFileFrame = {};
     regularFileFrame.syscall_number       = SYSCALL_open;
-    regularFileFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    regularFileFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     regularFileFrame.arg1                 = 0;
     regularFileFrame.arg2                 = 0;
 
@@ -706,7 +894,7 @@ static bool custom_case_validate_close(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
 
@@ -739,7 +927,7 @@ static bool custom_case_validate_close_range(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openA = {};
     openA.syscall_number       = SYSCALL_open;
-    openA.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openA.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openA.arg1                 = 0;
     openA.arg2                 = 0;
     const uint64_t fdA         = dispatcher_dispatch_syscall(&openA);
@@ -818,7 +1006,7 @@ static bool custom_case_validate_fcntl(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -881,7 +1069,7 @@ static bool custom_case_validate_dup(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
@@ -919,7 +1107,7 @@ static bool custom_case_validate_dup2(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
@@ -962,7 +1150,7 @@ static bool custom_case_validate_dup3(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t oldFd           = dispatcher_dispatch_syscall(&openFrame);
@@ -1009,7 +1197,7 @@ static bool custom_case_validate_ioctl(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
@@ -1109,8 +1297,8 @@ static bool custom_case_validate_getcpu(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_getcpu;
-    frame.arg0                 = (uint64_t) (uintptr_t) &cpuValue;
-    frame.arg1                 = (uint64_t) (uintptr_t) &nodeValue;
+    frame.arg0                 = request_user_address(&cpuValue, sizeof(cpuValue));
+    frame.arg1                 = request_user_address(&nodeValue, sizeof(nodeValue));
     frame.arg2                 = 0;
 
     const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
@@ -1136,7 +1324,7 @@ static bool custom_case_validate_sched_getaffinity(const custom_case_ctx_t* ctx)
     frame.syscall_number       = SYSCALL_sched_getaffinity;
     frame.arg0                 = 0;
     frame.arg1                 = sizeof(mask);
-    frame.arg2                 = (uint64_t) (uintptr_t) mask;
+    frame.arg2                 = request_user_address(mask, sizeof(mask));
 
     const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
     if (dispatchResult != sizeof(uint64_t))
@@ -1183,7 +1371,7 @@ static bool custom_case_validate_uname(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_uname;
-    frame.arg0                 = (uint64_t) (uintptr_t) &uts;
+    frame.arg0                 = request_user_address(&uts, sizeof(uts));
 
     const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
     if (dispatchResult != 0)
@@ -1232,7 +1420,7 @@ static bool custom_case_validate_sysinfo(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_sysinfo;
-    frame.arg0                 = (uint64_t) (uintptr_t) &info;
+    frame.arg0                 = request_user_address(&info, sizeof(info));
 
     const uint64_t dispatchResult = dispatcher_dispatch_syscall(&frame);
     if (dispatchResult != 0)
@@ -1283,9 +1471,13 @@ static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
         return false;
     }
 
+    // The next syscall must run in a live process under safe user-copy checks.
+    currentProcess->exited = false;
+    currentProcess->exitStatus = 0;
+
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
     const uint64_t testFd          = dispatcher_dispatch_syscall(&openFrame);
@@ -1293,10 +1485,6 @@ static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
     {
         return false;
     }
-
-    // Keep the harness process alive after validation.
-    currentProcess->exited     = false;
-    currentProcess->exitStatus = 0;
 
     arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
     dispatchedFrame.syscall_number       = ctx->syscallNumber;
@@ -1334,7 +1522,7 @@ static bool custom_case_validate_lseek(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
 
@@ -1380,7 +1568,7 @@ static bool custom_case_validate_getcwd(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_getcwd;
-    frame.arg0                 = (uint64_t) (uintptr_t) cwdBuffer;
+    frame.arg0                 = request_user_address(cwdBuffer, sizeof(cwdBuffer));
     frame.arg1                 = sizeof(cwdBuffer);
 
     const uint64_t getcwdResult = dispatcher_dispatch_syscall(&frame);
@@ -1414,7 +1602,7 @@ static bool custom_case_validate_chdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t chdirRoot = {};
     chdirRoot.syscall_number       = SYSCALL_chdir;
-    chdirRoot.arg0                 = (uint64_t) (uintptr_t) "/";
+    chdirRoot.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t chdirRootResult = dispatcher_dispatch_syscall(&chdirRoot);
     if (chdirRootResult != 0)
     {
@@ -1423,7 +1611,7 @@ static bool custom_case_validate_chdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t chdirBad = {};
     chdirBad.syscall_number       = SYSCALL_chdir;
-    chdirBad.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    chdirBad.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t chdirBadResult = dispatcher_dispatch_syscall(&chdirBad);
     return chdirBadResult == LINUX_ENOTDIR;
 }
@@ -1442,7 +1630,7 @@ static bool custom_case_validate_fchdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openDir = {};
     openDir.syscall_number       = SYSCALL_open;
-    openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+    openDir.arg0                 = request_user_address("/", sizeof("/"));
     openDir.arg1                 = 0;
     openDir.arg2                 = 0;
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
@@ -1463,7 +1651,7 @@ static bool custom_case_validate_fchdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFile = {};
     openFile.syscall_number       = SYSCALL_open;
-    openFile.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFile.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFile.arg1                 = 0;
     openFile.arg2                 = 0;
     const uint64_t fileFd         = dispatcher_dispatch_syscall(&openFile);
@@ -1520,7 +1708,7 @@ static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     openFrame.arg1                 = 0;
     openFrame.arg2                 = 0;
 
@@ -1535,7 +1723,7 @@ static bool custom_case_validate_fstat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t fstatFrame = {};
     fstatFrame.syscall_number       = SYSCALL_fstat;
     fstatFrame.arg0                 = fdResult;
-    fstatFrame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+    fstatFrame.arg1                 = request_user_address(&statBuffer, sizeof(statBuffer));
 
     const uint64_t fstatResult = dispatcher_dispatch_syscall(&fstatFrame);
 
@@ -1600,8 +1788,8 @@ static bool custom_case_validate_newfstatat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_newfstatat;
     frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                 = (uint64_t) (uintptr_t) "/test.txt";
-    frame.arg2                 = (uint64_t) (uintptr_t) &statBuffer;
+    frame.arg1                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    frame.arg2                 = request_user_address(&statBuffer, sizeof(statBuffer));
     frame.arg3                 = 0;
 
     const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
@@ -1611,7 +1799,7 @@ static bool custom_case_validate_newfstatat(const custom_case_ctx_t* ctx)
     const uint64_t badFlagResult      = dispatcher_dispatch_syscall(&badFlagFrame);
 
     arch_syscall_frame_t badPathFrame = frame;
-    badPathFrame.arg1                 = (uint64_t) (uintptr_t) "/does-not-exist";
+    badPathFrame.arg1                 = request_user_address("/does-not-exist", sizeof("/does-not-exist"));
     const uint64_t badPathResult      = dispatcher_dispatch_syscall(&badPathFrame);
 
     return okResult == 0 && statBuffer.st_nlink >= 1 && badFlagResult == LINUX_EINVAL && badPathResult == LINUX_ENOENT;
@@ -1658,8 +1846,8 @@ static bool custom_case_validate_stat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_stat;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
-    frame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+    frame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    frame.arg1                 = request_user_address(&statBuffer, sizeof(statBuffer));
 
     const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
 
@@ -1668,7 +1856,7 @@ static bool custom_case_validate_stat(const custom_case_ctx_t* ctx)
     const uint64_t nullBufferResult      = dispatcher_dispatch_syscall(&nullBufferFrame);
 
     arch_syscall_frame_t badPathFrame = frame;
-    badPathFrame.arg0                 = (uint64_t) (uintptr_t) "/does-not-exist";
+    badPathFrame.arg0                 = request_user_address("/does-not-exist", sizeof("/does-not-exist"));
     const uint64_t badPathResult      = dispatcher_dispatch_syscall(&badPathFrame);
 
     return okResult == 0 && statBuffer.st_nlink >= 1 && nullBufferResult == LINUX_EFAULT && badPathResult == LINUX_ENOENT;
@@ -1715,8 +1903,8 @@ static bool custom_case_validate_lstat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_lstat;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
-    frame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+    frame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    frame.arg1                 = request_user_address(&statBuffer, sizeof(statBuffer));
 
     const uint64_t okResult = dispatcher_dispatch_syscall(&frame);
 
@@ -1741,8 +1929,8 @@ static bool custom_case_validate_symlink(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t linkFrame = {};
     linkFrame.syscall_number       = SYSCALL_symlink;
-    linkFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
-    linkFrame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-link";
+    linkFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    linkFrame.arg1                 = request_user_address("/tmp-syscall-link", sizeof("/tmp-syscall-link"));
     const uint64_t linkResult      = dispatcher_dispatch_syscall(&linkFrame);
 
     if (linkResult != 0)
@@ -1753,8 +1941,8 @@ static bool custom_case_validate_symlink(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t readFrame  = {};
     char                 target[64] = {};
     readFrame.syscall_number        = SYSCALL_readlink;
-    readFrame.arg0                  = (uint64_t) (uintptr_t) "/tmp-syscall-link";
-    readFrame.arg1                  = (uint64_t) (uintptr_t) target;
+    readFrame.arg0                  = request_user_address("/tmp-syscall-link", sizeof("/tmp-syscall-link"));
+    readFrame.arg1                  = request_user_address(target, sizeof(target));
     readFrame.arg2                  = sizeof(target);
     const uint64_t readResult       = dispatcher_dispatch_syscall(&readFrame);
 
@@ -1775,7 +1963,7 @@ static bool custom_case_validate_symlinkat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openDir = {};
     openDir.syscall_number       = SYSCALL_open;
-    openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+    openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
     if ((int64_t) dirFd < 0)
     {
@@ -1784,9 +1972,9 @@ static bool custom_case_validate_symlinkat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t linkFrame = {};
     linkFrame.syscall_number       = SYSCALL_symlinkat;
-    linkFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    linkFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     linkFrame.arg1                 = dirFd;
-    linkFrame.arg2                 = (uint64_t) (uintptr_t) "tmp-syscall-link-at";
+    linkFrame.arg2                 = request_user_address("tmp-syscall-link-at", sizeof("tmp-syscall-link-at"));
     const uint64_t linkResult      = dispatcher_dispatch_syscall(&linkFrame);
 
     arch_syscall_frame_t closeDir = {};
@@ -1802,8 +1990,8 @@ static bool custom_case_validate_symlinkat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t readFrame  = {};
     char                 target[64] = {};
     readFrame.syscall_number        = SYSCALL_readlink;
-    readFrame.arg0                  = (uint64_t) (uintptr_t) "/tmp-syscall-link-at";
-    readFrame.arg1                  = (uint64_t) (uintptr_t) target;
+    readFrame.arg0                  = request_user_address("/tmp-syscall-link-at", sizeof("/tmp-syscall-link-at"));
+    readFrame.arg1                  = request_user_address(target, sizeof(target));
     readFrame.arg2                  = sizeof(target);
     const uint64_t readResult       = dispatcher_dispatch_syscall(&readFrame);
 
@@ -1824,8 +2012,8 @@ static bool custom_case_validate_readlink(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t createFrame = {};
     createFrame.syscall_number       = SYSCALL_symlink;
-    createFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
-    createFrame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-link-read";
+    createFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    createFrame.arg1                 = request_user_address("/tmp-syscall-link-read", sizeof("/tmp-syscall-link-read"));
     const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
     if (createResult != 0)
     {
@@ -1835,8 +2023,8 @@ static bool custom_case_validate_readlink(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame      = {};
     char                 target[64] = {};
     frame.syscall_number            = SYSCALL_readlink;
-    frame.arg0                      = (uint64_t) (uintptr_t) "/tmp-syscall-link-read";
-    frame.arg1                      = (uint64_t) (uintptr_t) target;
+    frame.arg0                      = request_user_address("/tmp-syscall-link-read", sizeof("/tmp-syscall-link-read"));
+    frame.arg1                      = request_user_address(target, sizeof(target));
     frame.arg2                      = sizeof(target);
 
     const uint64_t readResult = dispatcher_dispatch_syscall(&frame);
@@ -1857,7 +2045,7 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openDir = {};
     openDir.syscall_number       = SYSCALL_open;
-    openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+    openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
     if ((int64_t) dirFd < 0)
     {
@@ -1866,9 +2054,9 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t createFrame = {};
     createFrame.syscall_number       = SYSCALL_symlinkat;
-    createFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    createFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     createFrame.arg1                 = dirFd;
-    createFrame.arg2                 = (uint64_t) (uintptr_t) "tmp-syscall-link-at-read";
+    createFrame.arg2                 = request_user_address("tmp-syscall-link-at-read", sizeof("tmp-syscall-link-at-read"));
     const uint64_t createResult      = dispatcher_dispatch_syscall(&createFrame);
     if (createResult != 0)
     {
@@ -1883,8 +2071,8 @@ static bool custom_case_validate_readlinkat(const custom_case_ctx_t* ctx)
     char                 target[64] = {};
     frame.syscall_number            = SYSCALL_readlinkat;
     frame.arg0                      = dirFd;
-    frame.arg1                      = (uint64_t) (uintptr_t) "tmp-syscall-link-at-read";
-    frame.arg2                      = (uint64_t) (uintptr_t) target;
+    frame.arg1                      = request_user_address("tmp-syscall-link-at-read", sizeof("tmp-syscall-link-at-read"));
+    frame.arg2                      = request_user_address(target, sizeof(target));
     frame.arg3                      = sizeof(target);
     const uint64_t readResult       = dispatcher_dispatch_syscall(&frame);
 
@@ -1910,7 +2098,7 @@ static bool custom_case_validate_getdents64(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openDir = {};
     openDir.syscall_number       = SYSCALL_open;
-    openDir.arg0                 = (uint64_t) (uintptr_t) "/";
+    openDir.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t dirFd         = dispatcher_dispatch_syscall(&openDir);
     if ((int64_t) dirFd < 0)
     {
@@ -1921,7 +2109,7 @@ static bool custom_case_validate_getdents64(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame       = {};
     frame.syscall_number             = SYSCALL_getdents64;
     frame.arg0                       = dirFd;
-    frame.arg1                       = (uint64_t) (uintptr_t) buffer;
+    frame.arg1                       = request_user_address(buffer, sizeof(buffer));
     frame.arg2                       = sizeof(buffer);
 
     const uint64_t getdentsResult = dispatcher_dispatch_syscall(&frame);
@@ -1957,13 +2145,13 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
 
     if (ctx->syscallNumber == SYSCALL_access)
     {
-        frame.arg0 = (uint64_t) (uintptr_t) "/test.txt";
+        frame.arg0 = request_user_address("/test.txt", sizeof("/test.txt"));
         frame.arg1 = 0;
     }
     else
     {
         frame.arg0 = (uint64_t) LINUX_AT_FDCWD;
-        frame.arg1 = (uint64_t) (uintptr_t) "/test.txt";
+        frame.arg1 = request_user_address("/test.txt", sizeof("/test.txt"));
         frame.arg2 = 0;
         frame.arg3 = 0;
     }
@@ -1984,11 +2172,11 @@ static bool custom_case_validate_access_family(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t missingFrame = frame;
     if (ctx->syscallNumber == SYSCALL_access)
     {
-        missingFrame.arg0 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+        missingFrame.arg0 = request_user_address("/definitely-missing-selftest-file", sizeof("/definitely-missing-selftest-file"));
     }
     else
     {
-        missingFrame.arg1 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+        missingFrame.arg1 = request_user_address("/definitely-missing-selftest-file", sizeof("/definitely-missing-selftest-file"));
     }
     const uint64_t missingResult = dispatcher_dispatch_syscall(&missingFrame);
 
@@ -2045,13 +2233,13 @@ static bool custom_case_validate_statfs(const custom_case_ctx_t* ctx)
     test_linux_statfs_t  statfsData = {};
     arch_syscall_frame_t frame      = {};
     frame.syscall_number            = SYSCALL_statfs;
-    frame.arg0                      = (uint64_t) (uintptr_t) "/";
-    frame.arg1                      = (uint64_t) (uintptr_t) &statfsData;
+    frame.arg0                      = request_user_address("/", sizeof("/"));
+    frame.arg1                      = request_user_address(&statfsData, sizeof(statfsData));
 
     const uint64_t statfsResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t missingFrame = frame;
-    missingFrame.arg0                 = (uint64_t) (uintptr_t) "/definitely-missing-selftest-file";
+    missingFrame.arg0                 = request_user_address("/definitely-missing-selftest-file", sizeof("/definitely-missing-selftest-file"));
     const uint64_t missingResult      = dispatcher_dispatch_syscall(&missingFrame);
 
     return statfsResult == 0 && statfsData.f_bsize > 0 && missingResult == LINUX_ENOENT;
@@ -2071,7 +2259,7 @@ static bool custom_case_validate_fstatfs(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
     if ((int64_t) fd < 0)
     {
@@ -2099,7 +2287,7 @@ static bool custom_case_validate_fstatfs(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame   = {};
     frame.syscall_number         = SYSCALL_fstatfs;
     frame.arg0                   = fd;
-    frame.arg1                   = (uint64_t) (uintptr_t) &statfsData;
+    frame.arg1                   = request_user_address(&statfsData, sizeof(statfsData));
     const uint64_t fstatfsResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badFdFrame = frame;
@@ -2126,7 +2314,7 @@ static bool custom_case_validate_mkdirat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_mkdirat;
     frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-mkdirat";
+    frame.arg1                 = request_user_address("/tmp-syscall-mkdirat", sizeof("/tmp-syscall-mkdirat"));
     frame.arg2                 = 0755;
 
     const uint64_t mkdirResult = dispatcher_dispatch_syscall(&frame);
@@ -2149,7 +2337,7 @@ static bool custom_case_validate_mkdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_mkdir;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/tmp-syscall-mkdir";
+    frame.arg0                 = request_user_address("/tmp-syscall-mkdir", sizeof("/tmp-syscall-mkdir"));
     frame.arg1                 = 0755;
 
     const uint64_t mkdirResult = dispatcher_dispatch_syscall(&frame);
@@ -2173,7 +2361,7 @@ static bool custom_case_validate_unlinkat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame  = {};
     frame.syscall_number        = SYSCALL_unlinkat;
     frame.arg0                  = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                  = (uint64_t) (uintptr_t) "/test.txt";
+    frame.arg1                  = request_user_address("/test.txt", sizeof("/test.txt"));
     frame.arg2                  = 0;
     const uint64_t unlinkResult = dispatcher_dispatch_syscall(&frame);
 
@@ -2199,7 +2387,7 @@ static bool custom_case_validate_unlink(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame  = {};
     frame.syscall_number        = SYSCALL_unlink;
-    frame.arg0                  = (uint64_t) (uintptr_t) "/test.txt";
+    frame.arg0                  = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t unlinkResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badPathFrame = frame;
@@ -2220,7 +2408,7 @@ static bool custom_case_validate_rmdir(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_rmdir;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/";
+    frame.arg0                 = request_user_address("/", sizeof("/"));
     const uint64_t rmdirResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badPathFrame = frame;
@@ -2242,9 +2430,9 @@ static bool custom_case_validate_renameat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame  = {};
     frame.syscall_number        = SYSCALL_renameat;
     frame.arg0                  = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                  = (uint64_t) (uintptr_t) "/test.txt";
+    frame.arg1                  = request_user_address("/test.txt", sizeof("/test.txt"));
     frame.arg2                  = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg3                  = (uint64_t) (uintptr_t) "/test.txt.renamed";
+    frame.arg3                  = request_user_address("/test.txt.renamed", sizeof("/test.txt.renamed"));
     const uint64_t renameResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badPathFrame = frame;
@@ -2265,8 +2453,8 @@ static bool custom_case_validate_rename(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame  = {};
     frame.syscall_number        = SYSCALL_rename;
-    frame.arg0                  = (uint64_t) (uintptr_t) "/test.txt";
-    frame.arg1                  = (uint64_t) (uintptr_t) "/test.txt.renamed2";
+    frame.arg0                  = request_user_address("/test.txt", sizeof("/test.txt"));
+    frame.arg1                  = request_user_address("/test.txt.renamed2", sizeof("/test.txt.renamed2"));
     const uint64_t renameResult = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badPathFrame = frame;
@@ -2288,9 +2476,9 @@ static bool custom_case_validate_linkat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_linkat;
     frame.arg0                 = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                 = (uint64_t) (uintptr_t) "/test.txt";
+    frame.arg1                 = request_user_address("/test.txt", sizeof("/test.txt"));
     frame.arg2                 = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg3                 = (uint64_t) (uintptr_t) "/tmp-syscall-linkat";
+    frame.arg3                 = request_user_address("/tmp-syscall-linkat", sizeof("/tmp-syscall-linkat"));
     frame.arg4                 = 0;
     const uint64_t linkResult  = dispatcher_dispatch_syscall(&frame);
 
@@ -2316,8 +2504,8 @@ static bool custom_case_validate_link(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_link;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
-    frame.arg1                 = (uint64_t) (uintptr_t) "/tmp-syscall-link";
+    frame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
+    frame.arg1                 = request_user_address("/tmp-syscall-link", sizeof("/tmp-syscall-link"));
     const uint64_t linkResult  = dispatcher_dispatch_syscall(&frame);
 
     arch_syscall_frame_t badPathFrame = frame;
@@ -2339,7 +2527,7 @@ static bool custom_case_validate_mknodat(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t frame   = {};
     frame.syscall_number         = SYSCALL_mknodat;
     frame.arg0                   = (uint64_t) LINUX_AT_FDCWD;
-    frame.arg1                   = (uint64_t) (uintptr_t) "/tmp-syscall-mknodat";
+    frame.arg1                   = request_user_address("/tmp-syscall-mknodat", sizeof("/tmp-syscall-mknodat"));
     frame.arg2                   = 0644;
     frame.arg3                   = 0;
     const uint64_t mknodatResult = dispatcher_dispatch_syscall(&frame);
@@ -2362,7 +2550,7 @@ static bool custom_case_validate_mknod(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame = {};
     frame.syscall_number       = SYSCALL_mknod;
-    frame.arg0                 = (uint64_t) (uintptr_t) "/tmp-syscall-mknod";
+    frame.arg0                 = request_user_address("/tmp-syscall-mknod", sizeof("/tmp-syscall-mknod"));
     frame.arg1                 = 0644;
     frame.arg2                 = 0;
     const uint64_t mknodResult = dispatcher_dispatch_syscall(&frame);
@@ -2411,8 +2599,8 @@ static bool custom_case_validate_truncate(const custom_case_ctx_t* ctx)
     test_linux_stat_t    statBuffer = {};
     arch_syscall_frame_t statFrame  = {};
     statFrame.syscall_number        = SYSCALL_stat;
-    statFrame.arg0                  = (uint64_t) (uintptr_t) "/test.txt";
-    statFrame.arg1                  = (uint64_t) (uintptr_t) &statBuffer;
+    statFrame.arg0                  = request_user_address("/test.txt", sizeof("/test.txt"));
+    statFrame.arg1                  = request_user_address(&statBuffer, sizeof(statBuffer));
     const uint64_t statResult       = dispatcher_dispatch_syscall(&statFrame);
     if (statResult != 0)
     {
@@ -2421,7 +2609,7 @@ static bool custom_case_validate_truncate(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t frame    = {};
     frame.syscall_number          = SYSCALL_truncate;
-    frame.arg0                    = (uint64_t) (uintptr_t) "/test.txt";
+    frame.arg0                    = request_user_address("/test.txt", sizeof("/test.txt"));
     frame.arg1                    = (uint64_t) statBuffer.st_size;
     const uint64_t truncateResult = dispatcher_dispatch_syscall(&frame);
 
@@ -2472,7 +2660,7 @@ static bool custom_case_validate_ftruncate(const custom_case_ctx_t* ctx)
 
     arch_syscall_frame_t openFrame = {};
     openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = (uint64_t) (uintptr_t) "/test.txt";
+    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
     const uint64_t fd              = dispatcher_dispatch_syscall(&openFrame);
     if ((int64_t) fd < 0)
     {
@@ -2483,7 +2671,7 @@ static bool custom_case_validate_ftruncate(const custom_case_ctx_t* ctx)
     arch_syscall_frame_t fstatFrame = {};
     fstatFrame.syscall_number       = SYSCALL_fstat;
     fstatFrame.arg0                 = fd;
-    fstatFrame.arg1                 = (uint64_t) (uintptr_t) &statBuffer;
+    fstatFrame.arg1                 = request_user_address(&statBuffer, sizeof(statBuffer));
     const uint64_t fstatResult      = dispatcher_dispatch_syscall(&fstatFrame);
     if (fstatResult != 0)
     {
@@ -2970,6 +3158,8 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
 
     for (size_t index = 0; index < N; ++index)
     {
+        request_process_state_t processState(tests[index].syscallNumber);
+        request_user_fixture_t userFixture;
         arch_syscall_frame_t frame = {};
         frame.syscall_number       = tests[index].syscallNumber;
         if (tests[index].customValidator == nullptr)
@@ -3002,7 +3192,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
                     managerName, tests[index].name, tests[index].syscallNumber, &frame, result,
             };
             stats->customCaseUsed++;
-            if (tests[index].customValidator(&customCtx))
+            if (tests[index].customValidator(&customCtx) && userFixture.valid)
             {
                 stats->customCasePass++;
                 stats->implementedPass++;
@@ -3540,6 +3730,7 @@ extern "C" void launch_syscall_selftests(void* requestLayerCaps)
         return;
     }
 
+    test_user_copy_fixture(&stats);
     test_process_manager(caps, &stats);
     test_scheduler_manager(caps, &stats);
     test_time_manager(caps, &stats);

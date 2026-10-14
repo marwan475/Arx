@@ -26,7 +26,7 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
     const uint32_t operation = (uint32_t) frame->arg1;
     const uint32_t command   = operation & ~384U; // FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME
 
-    if (command != 0 && command != 1 && command != 9 && command != 10)
+    if (command != 0 && command != 1 && command != 3 && command != 4 && command != 5 && command != 9 && command != 10)
     {
         return LINUX_ENOSYS;
     }
@@ -49,6 +49,16 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
         return LINUX_EINVAL;
     }
 
+    if (command == 3 || command == 4)
+    {
+        return Logic->synchronizationManager->Requeue(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, command == 4, (uint32_t) frame->arg5);
+    }
+
+    if (command == 5)
+    {
+        return Logic->synchronizationManager->WakeOperation(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, (uint32_t) frame->arg5);
+    }
+
     const uint32_t bits = command == 9 || command == 10 ? (uint32_t) frame->arg5 : UINT32_MAX;
 
     if (bits == 0)
@@ -65,34 +75,34 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
 
     if (frame->arg3 != 0)
     {
-            time_timespec_t timeout;
+        time_timespec_t timeout;
 
-            if (!safe_read_user(frame->arg3, &timeout, sizeof(timeout)))
-            {
-                return LINUX_EFAULT;
-            }
+        if (!safe_read_user(frame->arg3, &timeout, sizeof(timeout)))
+        {
+            return LINUX_EFAULT;
+        }
 
-            if (timeout.seconds < 0 || timeout.nanoseconds < 0 || timeout.nanoseconds >= 1000000000)
-            {
-                return LINUX_EINVAL;
-            }
+        if (timeout.seconds < 0 || timeout.nanoseconds < 0 || timeout.nanoseconds >= 1000000000)
+        {
+            return LINUX_EINVAL;
+        }
 
-            if (Resources == nullptr || Resources->timeManager == nullptr)
-            {
-                return LINUX_ENOSYS;
-            }
+        if (Resources == nullptr || Resources->timeManager == nullptr)
+        {
+            return LINUX_ENOSYS;
+        }
 
-            uint64_t status = Resources->timeManager->CalculateSleepDeadline(realtime ? 0 : 1, command == 9, timeout, &deadline);
+        const uint64_t status = Resources->timeManager->CalculateSleepDeadline(realtime ? 0 : 1, command == 9, timeout, &deadline);
 
-            if (status != 0)
-            {
-                return status;
-            }
+        if (status != 0)
+        {
+            return status;
+        }
 
-            if (deadline == UINT64_MAX)
-            {
-                return LINUX_EOVERFLOW;
-            }
+        if (deadline == UINT64_MAX)
+        {
+            return LINUX_EOVERFLOW;
+        }
     }
 
     return Logic->synchronizationManager->Wait(frame->arg0, (uint32_t) frame->arg2, bits, deadline);

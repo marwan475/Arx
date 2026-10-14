@@ -97,6 +97,11 @@ struct process_t
     uint64_t              breakBase;
     uint64_t              programBreak;
     uint32_t              memoryUsers;
+    spinlock_t            timerLock;
+    uint64_t              realTimerDeadline;
+    uint64_t              realTimerInterval;
+    bool                  realTimerArmed;
+    bool                  realTimerExpired;
     int64_t               timerIntervalSeconds[3];
     int64_t               timerIntervalMicroseconds[3];
     task_t*               tasks;

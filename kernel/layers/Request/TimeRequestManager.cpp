@@ -246,11 +246,6 @@ uint64_t TimeRequestManager::HandleAlarmRequest(const arch_syscall_frame_t* fram
         return LINUX_EINVAL;
     }
 
-    if (static_cast<uint32_t>(frame->arg0) != 0)
-    {
-        return LINUX_ENOSYS;
-    }
-
     TimeManager* manager = GetTimeManager();
-    return manager != nullptr ? manager->CancelAlarm() : LINUX_ENOSYS;
+    return manager != nullptr ? manager->SetAlarm(static_cast<uint32_t>(frame->arg0)) : LINUX_ENOSYS;
 }

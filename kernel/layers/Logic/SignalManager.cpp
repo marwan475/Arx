@@ -4,6 +4,7 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+#include "layers/Resource/TimeManager.hpp"
 
 #include <klib/klib.h>
 
@@ -157,6 +158,55 @@ uint64_t SignalManager::Mask(int operation, const uint64_t* mask, uint64_t* prev
     }
 
     return 0;
+}
+
+uint64_t SignalManager::BeginTemporaryMask(uint64_t mask)
+{
+    if (Resources == nullptr || Resources->taskManager == nullptr || Resources->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    task_t*    task    = Resources->taskManager->GetCurrentTask();
+    process_t* process = Resources->processManager->GetCurrentProcess();
+
+    if (task == nullptr || process == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    spinlock_acquire_preempt(&process->signalLock);
+    task->signalSavedMask   = __atomic_load_n(&task->signalMask, __ATOMIC_RELAXED);
+    task->signalRestoreMask = true;
+    __atomic_store_n(&task->signalMask, mask & ~SIGNAL_UNBLOCKABLE, __ATOMIC_RELEASE);
+    spinlock_release_preempt(&process->signalLock);
+    return 0;
+}
+
+void SignalManager::FinishTemporaryMask(bool deferRestore)
+{
+    if (Resources == nullptr || Resources->taskManager == nullptr || Resources->processManager == nullptr)
+    {
+        return;
+    }
+
+    task_t*    task    = Resources->taskManager->GetCurrentTask();
+    process_t* process = Resources->processManager->GetCurrentProcess();
+
+    if (task == nullptr || process == nullptr || deferRestore)
+    {
+        return;
+    }
+
+    spinlock_acquire_preempt(&process->signalLock);
+
+    if (task->signalRestoreMask)
+    {
+        __atomic_store_n(&task->signalMask, task->signalSavedMask, __ATOMIC_RELEASE);
+        task->signalRestoreMask = false;
+    }
+
+    spinlock_release_preempt(&process->signalLock);
 }
 
 uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previous, uint64_t rsp)
@@ -410,6 +460,7 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
     if (pending == 0)
     {
         spinlock_release_preempt(&process->signalLock);
+        FinishTemporaryMask(false);
         return result;
     }
     const int       signal = (pending & (1ULL << 8)) ? 9 : __builtin_ctzll(pending) + 1;
@@ -440,8 +491,14 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
 
     spinlock_release_preempt(&process->signalLock);
 
+    if (signal == 14 && Resources->timeManager != nullptr)
+    {
+        Resources->timeManager->RestartRealTimer(process);
+    }
+
     if (action.handler == 1 || (action.handler == 0 && (SIGNAL_DEFAULT_IGNORED & bit)))
     {
+        FinishTemporaryMask(false);
         return result;
     }
 
@@ -455,14 +512,16 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
         Terminate(11);
     }
 
-    const uint64_t mask = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+    const uint64_t mask        = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+    const uint64_t restoreMask = task->signalRestoreMask ? task->signalSavedMask : mask;
 
-    if (arch_signal_prepare(frame, result, &action, &task->signalStack, &sender, mask, signal, restartable) != 0)
+    if (arch_signal_prepare(frame, result, &action, &task->signalStack, &sender, restoreMask, signal, restartable) != 0)
     {
         Terminate(11);
     }
 
     ++task->signalDepth;
+    task->signalRestoreMask = false;
     __atomic_store_n(&task->signalMask, (mask | action.mask | ((action.flags & NODEFER) ? 0 : bit)) & ~SIGNAL_UNBLOCKABLE, __ATOMIC_RELEASE);
     return 0;
 }

@@ -63,6 +63,13 @@ struct directory_entry_t
     inode_type_t type;
 };
 
+struct file_iovec_t
+{
+    uint64_t address;
+    uint64_t length;
+};
+static_assert(sizeof(file_iovec_t) == 16, "Linux LP64 iovec ABI");
+
 struct file_operations_t
 {
     int64_t (*Open)(file_t* file);
@@ -85,6 +92,8 @@ struct file_operations_t
     // callbacks run with a retained file, outside descriptor and VFS I/O locks.
     uint64_t (*ReadUser)(file_t* file, uint64_t address, uint64_t count);
     uint64_t (*WriteUser)(file_t* file, uint64_t address, uint64_t count);
+    uint64_t (*ReadVectorUser)(file_t* file, const file_iovec_t* vectors, size_t count);
+    uint64_t (*WriteVectorUser)(file_t* file, const file_iovec_t* vectors, size_t count);
 };
 
 struct inode_t

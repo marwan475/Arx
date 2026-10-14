@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct process_t;
+
 // Linux LP64 wire layouts. Never dereference these through a user pointer.
 struct time_timespec_t
 {
@@ -31,8 +33,14 @@ public:
     uint64_t GetTimer(int which, uint64_t destination);
     uint64_t SetTimer(int which, uint64_t source, uint64_t previous);
     uint64_t CancelAlarm();
+    uint64_t SetAlarm(uint32_t seconds);
+    // Caller retains the process. Expiration publishes SIGALRM before returning.
+    bool     ExpireRealTimer(process_t* process, uint64_t now);
+    void     RestartRealTimer(process_t* process);
 
 private:
+    // Caller holds the process timer lock.
+    void     SnapshotTimer(process_t* process, int which, uint64_t now, time_itimerval_t* value);
     uint64_t RealtimeSeconds;
     uint64_t ResolutionNanoseconds;
     bool     ClockAvailable;

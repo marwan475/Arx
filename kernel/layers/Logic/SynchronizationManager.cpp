@@ -201,14 +201,22 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
 uint64_t SynchronizationManager::WakeKey(virt_addr_space* space, uint64_t address, int32_t count, uint32_t bits)
 {
     const uint64_t* notify[CAPACITY];
-    size_t          woken = 0;
     // Legacy Linux FUTEX_WAKE/WAKE_BITSET wakes the first matching waiter even
     // for a nonpositive nr_wake (the limit is checked after removing it).
     const uint32_t limit = count > 0 ? (uint32_t) count : 1U;
     spinlock_acquire_preempt(&Lock);
+    const size_t woken = WakeKeyLocked(space, address, limit, bits, notify);
+    spinlock_release_preempt(&Lock);
+    NotifyWaiters(notify, woken);
+    return woken;
+}
+
+size_t SynchronizationManager::WakeKeyLocked(virt_addr_space* space, uint64_t address, uint32_t count, uint32_t bits, const uint64_t** notify)
+{
+    size_t woken = 0;
     size_t index = Head;
 
-    while (index != NONE && woken < limit)
+    while (index != NONE && woken < count)
     {
         waiter_t&    waiter = Waiters[index];
         const size_t next   = waiter.next;
@@ -224,14 +232,234 @@ uint64_t SynchronizationManager::WakeKey(virt_addr_space* space, uint64_t addres
         index = next;
     }
 
-    spinlock_release_preempt(&Lock);
+    return woken;
+}
 
-    for (size_t i = 0; i < woken; ++i)
+void SynchronizationManager::NotifyWaiters(const uint64_t** notify, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
     {
         SchedulerManager->WakeEventWaiters(notify[i]);
     }
+}
 
-    return woken;
+uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected)
+{
+    if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    if ((address & 3) != 0 || (destination & 3) != 0 || wakeCount < 0 || moveCount < 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (!range_within_u64(address, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END) || !range_within_u64(destination, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END))
+    {
+        return LINUX_EFAULT;
+    }
+
+    user_memory_access_t access;
+
+    if (!begin_user_memory(&access))
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t* notify[CAPACITY];
+    size_t          woken = 0;
+    size_t          moved = 0;
+    uint64_t        result = 0;
+    spinlock_acquire_preempt(&Lock);
+    uint32_t actual = 0;
+
+    if (compare && !safe_atomic_load_user32_locked(&access, address, &actual))
+    {
+        result = LINUX_EFAULT;
+    }
+    else if (compare && actual != expected)
+    {
+        result = (uint64_t) -11; // EAGAIN; neither queue has changed.
+    }
+    else
+    {
+        woken = WakeKeyLocked(access.space, address, (uint32_t) wakeCount, UINT32_MAX, notify);
+        size_t       index = Head;
+        const size_t last  = Tail;
+
+        while (index != NONE && moved < (uint32_t) moveCount)
+        {
+            waiter_t&    waiter = Waiters[index];
+            const size_t next   = waiter.next;
+
+            if (waiter.space == access.space && waiter.address == address)
+            {
+                Remove(index);
+                waiter.address = destination;
+                waiter.next    = NONE;
+                waiter.queued  = true;
+
+                if (Tail != NONE)
+                {
+                    Waiters[Tail].next = index;
+                }
+                else
+                {
+                    Head = index;
+                }
+
+                Tail = index;
+                ++moved;
+            }
+
+            if (index == last)
+            {
+                break;
+            }
+
+            index = next;
+        }
+
+        result = woken + moved;
+    }
+
+    spinlock_release_preempt(&Lock);
+    end_user_memory(&access);
+    NotifyWaiters(notify, woken);
+    return result;
+}
+
+uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation)
+{
+    if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    if ((address & 3) != 0 || (destination & 3) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (!range_within_u64(address, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END) || !range_within_u64(destination, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END))
+    {
+        return LINUX_EFAULT;
+    }
+
+    const uint32_t command  = (operation >> 28) & 7;
+    const uint32_t compare  = (operation >> 24) & 15;
+    const int32_t  operand  = (int32_t) (((operation >> 12) & 0xfffU) << 20) >> 20;
+    const int32_t  expected = (int32_t) ((operation & 0xfffU) << 20) >> 20;
+
+    if (command > 4)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    const uint32_t argument = (operation & 0x80000000U) != 0 ? 1U << ((uint32_t) operand & 31U) : (uint32_t) operand;
+    user_memory_access_t access;
+
+    if (!begin_user_memory(&access))
+    {
+        return LINUX_ESRCH;
+    }
+
+    const uint64_t* notify[CAPACITY];
+    size_t          woken = 0;
+    uint64_t        result = 0;
+    spinlock_acquire_preempt(&Lock);
+    uint32_t actual = 0;
+
+    if (!safe_atomic_load_user32_locked(&access, destination, &actual))
+    {
+        result = LINUX_EFAULT;
+    }
+    else
+    {
+        for (;;)
+        {
+            const uint32_t previous = actual;
+            uint32_t       next     = argument;
+
+            switch (command)
+            {
+                case 1:
+                    next = previous + argument;
+                    break;
+                case 2:
+                    next = previous | argument;
+                    break;
+                case 3:
+                    next = previous & ~argument;
+                    break;
+                case 4:
+                    next = previous ^ argument;
+                    break;
+            }
+
+            if (!safe_atomic_compare_exchange_user32_locked(&access, destination, &actual, next))
+            {
+                result = LINUX_EFAULT;
+                break;
+            }
+
+            if (actual != previous)
+            {
+                continue;
+            }
+
+            // Linux reports an invalid comparison after the atomic update.
+            if (compare > 5)
+            {
+                result = LINUX_ENOSYS;
+                break;
+            }
+
+            const int32_t old     = (int32_t) previous;
+            bool          matches = false;
+
+            switch (compare)
+            {
+                case 0:
+                    matches = old == expected;
+                    break;
+                case 1:
+                    matches = old != expected;
+                    break;
+                case 2:
+                    matches = old < expected;
+                    break;
+                case 3:
+                    matches = old <= expected;
+                    break;
+                case 4:
+                    matches = old > expected;
+                    break;
+                case 5:
+                    matches = old >= expected;
+                    break;
+            }
+
+            // WAKE_OP shares legacy WAKE's nonpositive-count behavior.
+            const uint32_t firstLimit  = wakeCount > 0 ? (uint32_t) wakeCount : 1U;
+            const uint32_t secondLimit = secondCount > 0 ? (uint32_t) secondCount : 1U;
+            woken = WakeKeyLocked(access.space, address, firstLimit, UINT32_MAX, notify);
+
+            if (matches)
+            {
+                woken += WakeKeyLocked(access.space, destination, secondLimit, UINT32_MAX, notify + woken);
+            }
+
+            result = woken;
+            break;
+        }
+    }
+
+    spinlock_release_preempt(&Lock);
+    end_user_memory(&access);
+    NotifyWaiters(notify, woken);
+    return result;
 }
 
 uint64_t SynchronizationManager::SetRobustList(uint64_t head)
@@ -258,7 +486,7 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
         }
     }
 
-    task->robustHead        = head;
+    __atomic_store_n(&task->robustHead, head, __ATOMIC_RELEASE);
     task->retirementContext = this;
     task->retirementCleanup = head != 0 ? CleanupRobust : nullptr;
 
@@ -273,7 +501,7 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
 
 uint64_t SynchronizationManager::GetRobustList(int32_t tid, uint64_t* head, uint64_t* length)
 {
-    if (Resources == nullptr || Resources->taskManager == nullptr)
+    if (Resources == nullptr || Resources->taskManager == nullptr || Resources->processManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
@@ -290,22 +518,54 @@ uint64_t SynchronizationManager::GetRobustList(int32_t tid, uint64_t* head, uint
         return LINUX_ESRCH;
     }
 
-    if (tid != 0 && (uint64_t) tid != task->id)
+    if (tid == 0 || (uint64_t) tid == task->id)
     {
-        return LINUX_EOPNOTSUPP;
+        *head   = __atomic_load_n(&task->robustHead, __ATOMIC_ACQUIRE);
+        *length = 24;
+        return 0;
     }
 
-    *head   = task->robustHead;
-    *length = 24;
-    return 0;
+    if ((uint32_t) tid >= TaskManager::MAX_TASKS)
+    {
+        return LINUX_ESRCH;
+    }
+
+    process_t* process = Resources->processManager->AcquireCurrentMemoryProcess(false);
+
+    if (process == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    task_t*  target = &Resources->taskManager->GetTasks()[tid];
+    uint64_t result = LINUX_ESRCH;
+
+    if (Resources->taskManager->RetainForDispatch(target))
+    {
+        if (target->process != process)
+        {
+            // Cross-process inspection needs a ptrace/dumpability policy.
+            result = LINUX_EOPNOTSUPP;
+        }
+        else
+        {
+            *head   = __atomic_load_n(&target->robustHead, __ATOMIC_ACQUIRE);
+            *length = 24;
+            result  = 0;
+        }
+
+        Resources->taskManager->ReleaseDispatchClaim(target);
+    }
+
+    Resources->processManager->ReleaseMemoryProcess(process);
+    return result;
 }
 
 void SynchronizationManager::CleanupRobust(void* context, task_t* task)
 {
     auto           manager  = static_cast<SynchronizationManager*>(context);
     process_t*     owner    = task->robustOwner;
-    const uint64_t address  = task->robustHead;
-    task->robustHead        = 0;
+    const uint64_t address  = __atomic_exchange_n(&task->robustHead, 0ULL, __ATOMIC_ACQ_REL);
     task->robustOwner       = nullptr;
     task->retirementCleanup = nullptr;
 

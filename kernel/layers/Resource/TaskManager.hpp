@@ -42,6 +42,9 @@ struct task_t
     char             name[16];
     process_t*       process;
     uint64_t         signalMask;
+    // Interrupted masked waits restore this through the handler's signal frame.
+    uint64_t         signalSavedMask;
+    bool             signalRestoreMask;
     uint64_t         signalPending;
     uint64_t         signalSequence;
     signal_sender_t* signalSenders;

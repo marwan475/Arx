@@ -3626,6 +3626,105 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     return ok;
 }
 
+static bool test_time_real_expiration(process_t* process, uint64_t base)
+{
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
+    TimeManager*       clock      = resources->timeManager;
+    SignalManager*     signals    = dispatcher->GetLogicLayerCaps()->signalManager;
+    task_t*            task       = resources->taskManager->GetCurrentTask();
+    time_timespec_t    now        = {};
+
+    if (clock == nullptr || clock->ReadClock(1, &now) != 0)
+    {
+        return true;
+    }
+
+    const uint64_t alarmBit = 1ULL << 13;
+    const uint64_t oldMask  = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+    signal_action_t previous = {};
+    signal_action_t action   = {base + 512, 0x04000004, base + 768, 0};
+    bool ok = memory_expect(signals->Action(14, &action, &previous) == 0, "real timer signal handler fixture");
+    __atomic_store_n(&task->signalMask, oldMask | alarmBit, __ATOMIC_RELEASE);
+    time_itimerval_t request = {{0, 0}, {10, 0}};
+    time_fixture_store(process, base + 256, &request, sizeof(request));
+    const bool armed = memory_call(SYSCALL_setitimer, 0, base + 256) == 0;
+    ok &= memory_expect(armed, "single-shot real timer arming");
+
+    if (armed)
+    {
+        spinlock_acquire_preempt(&process->timerLock);
+        const uint64_t deadline = process->realTimerDeadline;
+        spinlock_release_preempt(&process->timerLock);
+        ok &= memory_expect(!clock->ExpireRealTimer(process, deadline - 1) && clock->ExpireRealTimer(process, deadline) && !clock->ExpireRealTimer(process, deadline), "real timer expires once at deadline");
+        ok &= memory_expect((__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) & alarmBit) != 0 && process->signalSenders[13].code == 128, "real timer queues kernel SIGALRM");
+        memory_call(SYSCALL_getitimer, 0, base + 320);
+        time_itimerval_t actual = {};
+        time_fixture_load(process, base + 320, &actual, sizeof(actual));
+        ok &= memory_expect(actual.value.seconds == 0 && actual.value.microseconds == 0, "expired single-shot timer is disarmed");
+        ok &= memory_expect(memory_call(SYSCALL_alarm, 0) == 0 && (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) & alarmBit) != 0, "timer cancellation preserves already pending SIGALRM");
+        __atomic_fetch_and(&process->signalPending, ~alarmBit, __ATOMIC_RELEASE);
+    }
+
+    request = {{1, 0}, {10, 0}};
+    time_fixture_store(process, base + 256, &request, sizeof(request));
+    const bool periodic = memory_call(SYSCALL_setitimer, 0, base + 256) == 0;
+    ok &= memory_expect(periodic, "periodic real timer arming");
+
+    if (periodic)
+    {
+        // Exercise the retained timer at its exact deadline. The scheduler
+        // uses the same expiration method with the current monotonic sample.
+        spinlock_acquire_preempt(&process->timerLock);
+        const uint64_t deadline = process->realTimerDeadline;
+        spinlock_release_preempt(&process->timerLock);
+        ok &= memory_expect(clock->ExpireRealTimer(process, deadline) && !process->realTimerArmed && process->realTimerExpired, "periodic timer waits for pending signal consumption");
+
+#if defined(__x86_64__)
+        alignas(16) uint8_t floating[512] = {};
+        const uint32_t mxcsr             = 0x1f80;
+        const uint32_t mxcsrMask         = 0xffbf;
+        memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
+        memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number       = SYSCALL_getitimer;
+        frame.user_cs              = USER_CS;
+        frame.user_ss              = USER_SS;
+        frame.user_rflags          = 0x202;
+        frame.user_rip             = base + 1024;
+        frame.user_rsp             = base + 2 * PAGE_SIZE - 16;
+        frame.fxstate              = (uint64_t) floating;
+        __atomic_store_n(&task->signalMask, oldMask & ~alarmBit, __ATOMIC_RELEASE);
+        ok &= memory_expect(signals->Deliver(&frame, 0) == 0 && frame.arg0 == 14 && process->realTimerArmed && !process->realTimerExpired, "SIGALRM delivery rearms periodic timer");
+        frame.user_rsp += 8;
+        ok &= memory_expect(signals->Restore(&frame) == 0, "real timer signal frame restores context");
+#else
+        clock->RestartRealTimer(process);
+        ok &= memory_expect(process->realTimerArmed, "periodic timer rearm");
+#endif
+
+        memory_call(SYSCALL_setitimer, 0, 0);
+        __atomic_fetch_and(&process->signalPending, ~alarmBit, __ATOMIC_RELEASE);
+    }
+
+    request = {{0, 0}, {0, 10000}};
+    time_fixture_store(process, base + 256, &request, sizeof(request));
+    __atomic_store_n(&task->signalMask, oldMask & ~alarmBit, __ATOMIC_RELEASE);
+    const bool waiting = memory_call(SYSCALL_setitimer, 0, base + 256) == 0;
+    ok &= memory_expect(waiting, "parked real timer fixture");
+
+    if (waiting)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_poll, 0, 0, UINT64_MAX) == (uint64_t) -4, "real timer tick interrupts parked event wait with SIGALRM");
+    }
+
+    memory_call(SYSCALL_setitimer, 0, 0);
+    __atomic_fetch_and(&process->signalPending, ~alarmBit, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->signalMask, oldMask, __ATOMIC_RELEASE);
+    (void) signals->Action(14, &previous, nullptr);
+    return ok;
+}
+
 static bool test_time_timer(process_t* process, uint64_t number)
 {
     uint64_t base = memory_map(2);
@@ -3648,13 +3747,25 @@ static bool test_time_timer(process_t* process, uint64_t number)
     }
 
     time_fixture_store(process, input, &request, sizeof(request));
-    ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, output) == 0 && memory_call(SYSCALL_getitimer, 0, output) == 0, "disarmed timer stores interval");
+    ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, output) == 0 && memory_call(SYSCALL_getitimer, 0, output) == 0, "disarmed real timer clears interval");
     time_fixture_load(process, output, &value, sizeof(value));
-    ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds == 0, "disarmed interval roundtrip");
+    ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0 && value.value.seconds == 0, "disarmed real timer interval roundtrip");
+    TimeManager*    clock     = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->timeManager;
+    time_timespec_t now       = {};
+    const bool     available = clock != nullptr && clock->ReadClock(1, &now) == 0;
+    ok &= test_time_real_expiration(process, base);
 
     if (number == SYSCALL_alarm)
     {
-        ok &= memory_expect(memory_call(number, 1) == LINUX_ENOSYS && memory_call(number, 0) == 0, "alarm arming unsupported and cancellation succeeds");
+        if (available)
+        {
+            ok &= memory_expect(memory_call(number, 2) == 0 && memory_call(number, 1) == 2 && memory_call(number, 0) == 1 && memory_call(number, 0) == 0, "alarm arm, replacement and cancellation return remaining seconds");
+            ok &= memory_expect(memory_call(number, (1ULL << 32) | 2) == 0 && memory_call(number, 0) == 2, "alarm uses unsigned 32-bit seconds");
+        }
+        else
+        {
+            ok &= memory_expect(memory_call(number, 1) == LINUX_ENOSYS && memory_call(number, 0) == 0, "alarm reports unavailable clock and permits disarmed cancellation");
+        }
         memory_call(SYSCALL_getitimer, 0, output);
         time_fixture_load(process, output, &value, sizeof(value));
         ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0, "alarm cancellation clears real timer interval");
@@ -3666,10 +3777,27 @@ static bool test_time_timer(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, base + 2 * PAGE_SIZE - 4) == LINUX_EFAULT, "timer invalid old-value output");
     request.value.seconds = 1;
     time_fixture_store(process, input, &request, sizeof(request));
-    ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input) == static_cast<uint64_t>(-95), "timer arming unsupported");
+    ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input) == (available ? 0 : LINUX_ENOSYS), "real timer arming uses monotonic clock");
     memory_call(SYSCALL_getitimer, 0, output);
     time_fixture_load(process, output, &value, sizeof(value));
-    ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds == 0, "failed timer operations preserve state");
+    if (available)
+    {
+        ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds <= 1 && (value.value.seconds != 0 || value.value.microseconds != 0), "armed real timer reports remaining duration");
+        ok &= memory_expect(memory_call(SYSCALL_setitimer, 1, input) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_setitimer, 2, input) == LINUX_EOPNOTSUPP, "CPU timers await process CPU accounting");
+        memory_call(SYSCALL_setitimer, 0, 0);
+        request = {{7, 99}, {5, 0}};
+        time_fixture_store(process, input, &request, sizeof(request));
+        ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "timer bad old-value output reports EFAULT");
+        memory_call(SYSCALL_getitimer, 0, output);
+        time_fixture_load(process, output, &value, sizeof(value));
+        ok &= memory_expect(value.interval.seconds == 7 && value.interval.microseconds == 99 && (value.value.seconds != 0 || value.value.microseconds != 0), "timer output fault preserves committed new timer");
+        memory_call(SYSCALL_setitimer, 0, 0);
+    }
+
+    request = {{0, 0}, {INT64_MAX, 0}};
+    time_fixture_store(process, input, &request, sizeof(request));
+    ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input) == LINUX_EOVERFLOW, "real timer rejects unrepresentable duration");
+
     request = {{0, 1000000}, {0, 0}};
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input) == LINUX_EINVAL, "timer microsecond validation");
@@ -3677,7 +3805,7 @@ static bool test_time_timer(process_t* process, uint64_t number)
     time_fixture_store(process, input, &request, sizeof(request));
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, input) == 0, "timer aliased input and previous output");
     time_fixture_load(process, input, &value, sizeof(value));
-    ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123, "timer alias receives old interval");
+    ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0, "timer alias receives old disarmed interval");
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, 0, output) == 0, "Linux null new-value cancels timer");
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
     ok &= memory_expect(memory_call(SYSCALL_getitimer, 0, output) == LINUX_EFAULT, "timer readonly output rejected");
@@ -3918,6 +4046,77 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
     return ok;
 }
 
+static bool test_event_counter_vector(process_t* process, uint64_t fd, uint64_t base)
+{
+    const uint64_t metadata = base + 384;
+    const uint64_t first    = base + 256;
+    const uint64_t second   = base + PAGE_SIZE + 64;
+    uint64_t       values[2] = {5, 7};
+    file_iovec_t   vectors[3] = {{base + 64, 8}, {base + 72, 8}, {0, 0}};
+    time_fixture_store(process, base + 64, values, sizeof(values));
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    bool ok = memory_expect(memory_call(SYSCALL_writev, fd, metadata, 3) == 16, "eventfd writev increments once per eight-byte vector");
+    vectors[0] = {0, 0};
+    vectors[1] = {first, 3};
+    vectors[2] = {second, 13};
+    uint8_t untouched[13];
+    memset(untouched, 0xcc, sizeof(untouched));
+    time_fixture_store(process, second, untouched, sizeof(untouched));
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, metadata, 3) == 8, "eventfd readv scatters one eight-byte counter");
+    uint64_t actual = 0;
+    time_fixture_load(process, first, &actual, 3);
+    time_fixture_load(process, second, reinterpret_cast<uint8_t*>(&actual) + 3, 5);
+    time_fixture_load(process, second, untouched, sizeof(untouched));
+    ok &= memory_expect(actual == 12 && untouched[5] == 0xcc && untouched[12] == 0xcc, "eventfd readv preserves bytes beyond counter");
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, metadata, 3) == (uint64_t) -11, "empty eventfd readv EAGAIN");
+
+    vectors[0] = {base + 64, 4};
+    vectors[1] = {base + 68, 4};
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_writev, fd, metadata, 2) == LINUX_EINVAL, "eventfd writev does not combine short increments");
+    vectors[0] = {base + 64, 8};
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_writev, fd, metadata, 2) == 8, "eventfd writev returns progress before invalid later increment");
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, first, 8) == 8, "eventfd partial writev counter readback");
+    time_fixture_load(process, first, &actual, sizeof(actual));
+    ok &= memory_expect(actual == 5, "eventfd partial writev commits only successful increment");
+
+    vectors[0] = {first, 3};
+    vectors[1] = {second, 5};
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    memory_call(SYSCALL_write, fd, base + 64, 8);
+    const uint64_t sentinel = UINT64_MAX;
+    time_fixture_store(process, first, &sentinel, sizeof(sentinel));
+    memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, metadata, 2) == LINUX_EFAULT, "eventfd readv validates every output segment before scatter");
+    time_fixture_load(process, first, &actual, sizeof(actual));
+    ok &= memory_expect(actual == sentinel, "eventfd failed scatter preserves earlier output segment");
+    memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 3);
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, metadata, 2) == 8, "eventfd failed scatter preserves counter");
+    vectors[1].length = 4;
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, metadata, 2) == LINUX_EINVAL, "eventfd short aggregate readv rejected");
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, CANONICAL_KERNEL_BASE, 1) == LINUX_EFAULT && memory_call(SYSCALL_readv, fd, metadata, 1025) == LINUX_EINVAL, "eventfd vector metadata validation");
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, CANONICAL_KERNEL_BASE, 0) == 0 && memory_call(SYSCALL_writev, fd, CANONICAL_KERNEL_BASE, 0) == 0, "eventfd zero vector count ignores pointer");
+
+    memory_call(SYSCALL_fcntl, fd, 4, 2);
+    vectors[1].length = 5;
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= event_with_peer(process, fd, false, [&]() { return memory_expect(memory_call(SYSCALL_readv, fd, metadata, 2) == 8, "parked eventfd readv wakes on peer write"); });
+    values[0] = UINT64_MAX - 1;
+    time_fixture_store(process, base + 64, values, sizeof(values));
+    memory_call(SYSCALL_write, fd, base + 64, 8);
+    values[0] = 1;
+    time_fixture_store(process, base + 64, values, sizeof(values));
+    vectors[0] = {base + 64, 8};
+    time_fixture_store(process, metadata, vectors, sizeof(vectors));
+    ok &= event_with_peer(process, fd, true, [&]() { return memory_expect(memory_call(SYSCALL_writev, fd, metadata, 1) == 8, "parked eventfd writev wakes on peer read"); });
+    memory_call(SYSCALL_fcntl, fd, 4, 2 | 04000);
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, first, 8) == 8, "eventfd vector fixture drain");
+    return ok;
+}
+
 static bool test_event_counter(process_t* process, uint64_t number)
 {
     const uint64_t base = memory_map(2);
@@ -3973,7 +4172,8 @@ static bool test_event_counter(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_lseek, fd, 123, 0) == 0, "eventfd no-op seek");
     uint64_t vector[2] = {base, 8};
     time_fixture_store(process, base + 128, vector, sizeof(vector));
-    ok &= memory_expect(memory_call(SYSCALL_readv, fd, base + 128, 1) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_pread64, fd, base, 8, 0) == (uint64_t) -29, "eventfd unsupported vector/positioned I/O is explicit");
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, base + 128, 1) == (uint64_t) -11 && memory_call(SYSCALL_pread64, fd, base, 8, 0) == (uint64_t) -29, "eventfd empty vector read and unsupported positioned I/O");
+    ok &= test_event_counter_vector(process, fd, base);
     // Clear NONBLOCK and exercise an actual parked read with another process.
     memory_call(SYSCALL_fcntl, fd, 4, 2);
     ok &= event_with_peer(process, fd, false, [&]() { return memory_expect(memory_call(SYSCALL_read, fd, output, 8) == 8, "blocking eventfd read wakes on peer write"); });
@@ -4003,7 +4203,9 @@ static bool test_event_counter(process_t* process, uint64_t number)
 
         if ((int64_t) semaphore >= 0)
         {
-            ok &= memory_expect(memory_call(SYSCALL_read, semaphore, base, 8) == 8, "eventfd semaphore first read");
+            const file_iovec_t vectors[2] = {{base, 3}, {base + 3, 5}};
+            time_fixture_store(process, base + 384, vectors, sizeof(vectors));
+            ok &= memory_expect(memory_call(SYSCALL_readv, semaphore, base + 384, 2) == 8, "eventfd semaphore scatter read");
             time_fixture_load(process, base, &value, sizeof(value));
             ok &= memory_expect(value == 1 && memory_call(SYSCALL_read, semaphore, base, 8) == 8 && memory_call(SYSCALL_read, semaphore, base, 8) == (uint64_t) -11, "eventfd semaphore decrements by one");
             memory_call(SYSCALL_close, semaphore);
@@ -4016,6 +4218,111 @@ static bool test_event_counter(process_t* process, uint64_t number)
     processes->ChangeFileLimit(process, &limit, &old);
     ok &= memory_expect(memory_call(number, 0, 0) == LINUX_EMFILE, "eventfd descriptor limit rollback");
     processes->ChangeFileLimit(process, &old, nullptr);
+    return ok;
+}
+
+static bool test_event_temporary_mask(process_t* process, uint64_t number, uint64_t base, uint64_t epfd = 0)
+{
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
+    SignalManager*     signals    = dispatcher->GetLogicLayerCaps()->signalManager;
+    task_t*            task       = resources->taskManager->GetCurrentTask();
+
+    const uint64_t originalMask    = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+    const uint64_t originalPending = __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE);
+    const uint64_t originalSaved   = task->signalSavedMask;
+    const bool     originalRestore = task->signalRestoreMask;
+    const uint64_t originalDepth   = task->signalDepth;
+    const uint64_t processPending  = __atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE);
+    const uint64_t blockedMask     = (1ULL << 9) | (1ULL << 11);
+
+    signal_action_t previous = {};
+    signal_action_t action   = {base + 1280, 0x04000000, base + 1536, 0};
+    const uint64_t  installed = signals->Action(10, &action, &previous);
+
+    if (!memory_expect(installed == 0, "event signal handler fixture"))
+    {
+        return false;
+    }
+
+    __atomic_store_n(&task->signalMask, blockedMask, __ATOMIC_RELEASE);
+    uint64_t mask      = 0;
+    uint64_t bundle[2] = {base + 1024, sizeof(mask)};
+    time_fixture_store(process, base + 1024, &mask, sizeof(mask));
+    time_fixture_store(process, base + 1056, bundle, sizeof(bundle));
+
+    arch_syscall_frame_t frame = {};
+    frame.syscall_number       = number;
+
+    if (number == SYSCALL_ppoll)
+    {
+        frame.arg3 = base + 1024;
+        frame.arg4 = sizeof(mask);
+    }
+    else if (number == SYSCALL_pselect6)
+    {
+        frame.arg5 = base + 1056;
+    }
+    else
+    {
+        frame.arg0 = epfd;
+        frame.arg1 = base + 1120;
+        frame.arg2 = 1;
+        frame.arg3 = number == SYSCALL_epoll_pwait2 ? 0 : UINT64_MAX;
+        frame.arg4 = base + 1024;
+        frame.arg5 = sizeof(mask);
+    }
+
+    bool ok = memory_expect(signals->BeginTemporaryMask(UINT64_MAX) == 0, "temporary mask installation");
+    ok &= memory_expect((task->signalMask & SIGNAL_UNBLOCKABLE) == 0, "temporary mask cannot block SIGKILL or SIGSTOP");
+    signals->FinishTemporaryMask(false);
+    ok &= memory_expect(task->signalMask == blockedMask && !task->signalRestoreMask, "temporary mask explicit restoration");
+
+    const uint64_t sent = memory_call(SYSCALL_kill, process->id, 10);
+    ok &= memory_expect(sent == 0, "event blocked pending signal fixture");
+
+    if (sent == 0)
+    {
+        ok &= memory_expect(dispatcher_dispatch_syscall(&frame) == (uint64_t) -4, "temporary mask unblocks pending signal before parking");
+        ok &= memory_expect(task->signalMask == blockedMask && !task->signalRestoreMask, "kernel event caller restores mask after EINTR");
+
+#if defined(__x86_64__)
+        alignas(16) uint8_t floating[512] = {};
+        const uint32_t      mxcsr        = 0x1f80;
+        const uint32_t      mxcsrMask    = 0xffbf;
+        memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
+        memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
+        frame.user_cs     = USER_CS;
+        frame.user_ss     = USER_SS;
+        frame.user_rflags = 0x202;
+        frame.user_rip    = base + 1792;
+        frame.user_rsp    = base + 2 * PAGE_SIZE - 16;
+        frame.fxstate     = (uint64_t) floating;
+
+        const uint64_t interrupted = dispatcher_dispatch_syscall(&frame);
+        ok &= memory_expect(interrupted == (uint64_t) -4 && task->signalRestoreMask && task->signalMask == 0, "user event caller defers mask restoration until signal delivery");
+        ok &= memory_expect(signals->Deliver(&frame, interrupted) == 0 && frame.user_rip == action.handler, "event EINTR delivers handler under temporary mask");
+
+        signal_frame_t saved = {};
+        time_fixture_load(process, frame.user_rsp, &saved, sizeof(saved));
+        ok &= memory_expect(saved.uc.mask == blockedMask && saved.uc.context.ax == (uint64_t) -4, "event signal frame saves original mask and EINTR");
+        ok &= memory_expect(!task->signalRestoreMask && task->signalMask == (1ULL << 9), "handler mask derives from temporary mask");
+        frame.user_rsp += 8;
+        ok &= memory_expect(signals->Restore(&frame) == (uint64_t) -4 && task->signalMask == blockedMask, "event sigreturn restores original mask");
+
+        ok &= memory_expect(signals->BeginTemporaryMask(0) == 0, "event no-pending restoration fixture");
+        signals->FinishTemporaryMask(true);
+        ok &= memory_expect(signals->Deliver(&frame, (uint64_t) -4) == (uint64_t) -4 && task->signalMask == blockedMask && !task->signalRestoreMask, "signal return restores deferred mask when pending signal disappears");
+#endif
+    }
+
+    (void) signals->Action(10, &previous, nullptr);
+    __atomic_store_n(&task->signalMask, originalMask, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->signalPending, originalPending, __ATOMIC_RELEASE);
+    __atomic_store_n(&process->signalPending, processPending, __ATOMIC_RELEASE);
+    task->signalSavedMask   = originalSaved;
+    task->signalRestoreMask = originalRestore;
+    task->signalDepth       = originalDepth;
     return ok;
 }
 
@@ -4139,11 +4446,19 @@ static bool test_event_wait(process_t* process, uint64_t number)
     }
 
     prepare();
+    if (precise)
+    {
+        const uint64_t mask      = UINT64_MAX;
+        const uint64_t bundle[2] = {base + 512, sizeof(mask)};
+        time_fixture_store(process, base + 512, &mask, sizeof(mask));
+        time_fixture_store(process, base + 544, bundle, sizeof(bundle));
+    }
+
     ok &= event_with_peer(process, fd, false,
                           [&]()
                           {
                               // Infinite waits need no clock and must be awakened by the producer.
-                              uint64_t result = select ? memory_call(number, fd + 1, input, 0, 0, 0) : precise ? memory_call(number, input, 1, 0) : memory_call(number, input, 1, UINT64_MAX);
+                              uint64_t result = select ? memory_call(number, fd + 1, input, 0, 0, 0, precise ? base + 544 : 0) : precise ? memory_call(number, input, 1, 0, base + 512, 8) : memory_call(number, input, 1, UINT64_MAX);
                               return memory_expect(result == 1, "poll/select parked wait wakes on peer event");
                           });
     memory_call(SYSCALL_read, fd, base, 8);
@@ -4151,12 +4466,19 @@ static bool test_event_wait(process_t* process, uint64_t number)
 
     if (precise)
     {
+        ok &= test_event_temporary_mask(process, number, base);
         uint64_t mask = 0;
         time_fixture_store(process, base + 512, &mask, sizeof(mask));
         uint64_t bundle[2] = {base + 512, 8};
         time_fixture_store(process, base + 544, bundle, sizeof(bundle));
-        uint64_t unsupported = select ? memory_call(number, 0, 0, 0, 0, timeout, base + 544) : memory_call(number, 0, 0, timeout, base + 512, 8);
-        ok &= memory_expect(unsupported == LINUX_EOPNOTSUPP, "event atomic signal masks explicitly unsupported");
+        task_t*        task         = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
+        const uint64_t originalMask = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+        uint64_t       masked       = select ? memory_call(number, 0, 0, 0, 0, timeout, base + 544) : memory_call(number, 0, 0, timeout, base + 512, 8);
+        ok &= memory_expect(masked == 0 && task->signalMask == originalMask && !task->signalRestoreMask, "event temporary signal mask restored after timeout");
+        mask = UINT64_MAX;
+        time_fixture_store(process, base + 512, &mask, sizeof(mask));
+        masked = select ? memory_call(number, 0, 0, 0, 0, CANONICAL_KERNEL_BASE, base + 544) : memory_call(number, 0, 0, CANONICAL_KERNEL_BASE, base + 512, 8);
+        ok &= memory_expect(masked == LINUX_EFAULT && task->signalMask == originalMask && !task->signalRestoreMask, "event temporary mask restored after invalid timeout");
         bundle[1] = 4;
         time_fixture_store(process, base + 544, bundle, sizeof(bundle));
         uint64_t badSize = select ? memory_call(number, 0, 0, 0, 0, timeout, base + 544) : memory_call(number, 0, 0, timeout, base + 512, 4);
@@ -4206,11 +4528,138 @@ static bool test_event_wait(process_t* process, uint64_t number)
     return ok;
 }
 
+static bool test_event_epoll_partial_copy(process_t* process, uint64_t base)
+{
+    const uint64_t epfd    = memory_call(SYSCALL_epoll_create1, 0);
+    const uint64_t first   = memory_call(SYSCALL_eventfd2, 1, 04000);
+    const uint64_t second  = memory_call(SYSCALL_eventfd2, 1, 04000);
+    bool           ready   = (int64_t) epfd >= 0 && (int64_t) first >= 0 && (int64_t) second >= 0;
+    bool           ok      = memory_expect(ready, "epoll partial-copy fixture");
+
+    if (ready)
+    {
+        event_epoll_event_t event = {EVENT_POLL_IN | 0xc0000000U, 1};
+        time_fixture_store(process, base + 2048, &event, sizeof(event));
+        ready = memory_call(SYSCALL_epoll_ctl, epfd, 1, first, base + 2048) == 0;
+        event.data = 2;
+        time_fixture_store(process, base + 2048, &event, sizeof(event));
+        ready &= memory_call(SYSCALL_epoll_ctl, epfd, 1, second, base + 2048) == 0;
+        ok &= memory_expect(ready, "epoll partial-copy watch registration");
+
+        if (ready)
+        {
+            const uint64_t output = base + PAGE_SIZE - sizeof(event);
+            memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
+            ok &= memory_expect(memory_call(SYSCALL_epoll_wait, epfd, output, 2, 0) == 1, "epoll returns copied prefix before later output fault");
+            event_epoll_event_t actual = {};
+            time_fixture_load(process, output, &actual, sizeof(actual));
+            ok &= memory_expect(actual.events == EVENT_POLL_IN && actual.data == 1, "epoll first event copied before disarm");
+            memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 3);
+            ok &= memory_expect(memory_call(SYSCALL_epoll_wait, epfd, base + 2112, 2, 0) == 1, "epoll untransferred edge remains pending after partial output fault");
+            time_fixture_load(process, base + 2112, &actual, sizeof(actual));
+            ok &= memory_expect(actual.data == 2 && memory_call(SYSCALL_epoll_wait, epfd, base + 2112, 2, 0) == 0, "epoll disarms only successfully copied one-shot events");
+        }
+    }
+
+    if ((int64_t) first >= 0)
+    {
+        memory_call(SYSCALL_close, first);
+    }
+
+    if ((int64_t) second >= 0)
+    {
+        memory_call(SYSCALL_close, second);
+    }
+
+    if ((int64_t) epfd >= 0)
+    {
+        memory_call(SYSCALL_close, epfd);
+    }
+
+    return ok;
+}
+
+static bool test_event_nested_epoll(process_t* process, uint64_t base)
+{
+    uint64_t instances[6];
+    bool     ready = true;
+
+    for (size_t i = 0; i < 6; ++i)
+    {
+        instances[i] = memory_call(SYSCALL_epoll_create1, 0);
+        ready &= (int64_t) instances[i] >= 0;
+    }
+
+    const uint64_t counter = memory_call(SYSCALL_eventfd2, 1, 04000);
+    ready &= (int64_t) counter >= 0;
+    bool ok = memory_expect(ready, "nested epoll graph fixture");
+
+    if (ready)
+    {
+        const uint64_t      input  = base + 2048;
+        const uint64_t      output = base + 2112;
+        event_epoll_event_t event  = {EVENT_POLL_IN, 17};
+        time_fixture_store(process, input, &event, sizeof(event));
+
+        for (size_t i = 0; i < 4; ++i)
+        {
+            ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[i], 1, instances[i + 1], input) == 0, "nested epoll accepts five instance levels");
+        }
+
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[4], 1, instances[5], input) == (uint64_t) -40, "nested epoll checks depth through existing ancestors");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[4], 1, instances[0], input) == (uint64_t) -40, "nested epoll rejects transitive cycle");
+        event.events = EVENT_POLL_IN | 0x40000000U;
+        time_fixture_store(process, input, &event, sizeof(event));
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[4], 1, counter, input) == 0, "nested leaf one-shot registration");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 1, "nested epoll propagates readiness");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_wait, instances[4], output, 1, 0) == 1 && memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 0, "nested epoll reflects one-shot disarm");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[4], 3, counter, input) == 0, "nested leaf rearm");
+        event.events = EVENT_POLL_IN | 0x80000000U;
+        time_fixture_store(process, input, &event, sizeof(event));
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[0], 3, instances[1], input) == 0, "nested outer edge registration");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 1 && memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 0, "nested outer edge delivered once");
+        uint64_t value = 1;
+        time_fixture_store(process, base, &value, sizeof(value));
+        ok &= memory_expect(memory_call(SYSCALL_write, counter, base, 8) == 8 && memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 1, "new leaf notification propagates through nested edge");
+        ok &= memory_expect(memory_call(SYSCALL_read, counter, base, 8) == 8, "nested leaf drain");
+        event.events = EVENT_POLL_IN | 0x40000000U;
+        time_fixture_store(process, input, &event, sizeof(event));
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, instances[4], 3, counter, input) == 0 && memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 0, "empty nested graph is not readable");
+        if (ok)
+        {
+            ok &= event_with_peer(process, counter, false, [&]() { return memory_expect(memory_call(SYSCALL_epoll_wait, instances[0], output, 1, UINT64_MAX) == 1, "parked nested edge wakes on peer write"); });
+        }
+        ok &= memory_expect(memory_call(SYSCALL_close, instances[4]) == 0, "nested child final close");
+        instances[4] = UINT64_MAX;
+        ok &= memory_expect(memory_call(SYSCALL_epoll_wait, instances[0], output, 1, 0) == 0, "nested child close detaches parent watch");
+    }
+
+    for (size_t i = 0; i < 6; ++i)
+    {
+        if ((int64_t) instances[i] >= 0)
+        {
+            memory_call(SYSCALL_close, instances[i]);
+        }
+    }
+
+    if ((int64_t) counter >= 0)
+    {
+        memory_call(SYSCALL_close, counter);
+    }
+
+    return ok;
+}
+
 static bool test_event_epoll(process_t* process, uint64_t number)
 {
     const uint64_t base = memory_map(2);
 
     if ((int64_t) base < 0)
+    {
+        return false;
+    }
+
+    if (number == SYSCALL_epoll_ctl && (!test_event_nested_epoll(process, base) || !test_event_epoll_partial_copy(process, base)))
     {
         return false;
     }
@@ -4230,21 +4679,61 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_epoll_create, 0) == LINUX_EINVAL && memory_call(SYSCALL_epoll_create, UINT64_MAX) == LINUX_EINVAL && memory_call(SYSCALL_epoll_create1, 04000) == LINUX_EINVAL, "epoll creation argument validation");
     event_epoll_event_t event = {EVENT_POLL_IN, 0xfedcba9876543210ULL}, actual = {};
     time_fixture_store(process, input, &event, sizeof(event));
+    const uint64_t waitMask = UINT64_MAX;
+    time_fixture_store(process, base + 800, &waitMask, sizeof(waitMask));
     auto control = [&](uint64_t operation, uint64_t target) -> uint64_t { return memory_call(SYSCALL_epoll_ctl, epfd, operation, target, input); };
-    auto wait    = [&](uint64_t count, uint64_t timeout) -> uint64_t { return memory_call(SYSCALL_epoll_wait, epfd, output, count, timeout); };
+    auto wait = [&](uint64_t count, uint64_t milliseconds) -> uint64_t
+    {
+        if (number == SYSCALL_epoll_pwait2)
+        {
+            time_timespec_t duration = {(int64_t) (milliseconds / 1000), (int64_t) ((milliseconds % 1000) * 1000000)};
+            time_fixture_store(process, base + 768, &duration, sizeof(duration));
+            return memory_call(number, epfd, output, count, milliseconds == UINT64_MAX ? 0 : base + 768, base + 800, 8);
+        }
+
+        const uint64_t waitNumber = number == SYSCALL_epoll_pwait ? number : SYSCALL_epoll_wait;
+        return memory_call(waitNumber, epfd, output, count, milliseconds, number == SYSCALL_epoll_pwait ? base + 800 : 0, 8);
+    };
     ok &= memory_expect(wait(1, 0) == 0, "empty epoll zero timeout");
+    if (number == SYSCALL_epoll_pwait || number == SYSCALL_epoll_pwait2)
+    {
+        ok &= test_event_temporary_mask(process, number, base, epfd);
+        task_t*        task         = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
+        const uint64_t originalMask = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+        uint64_t       mask         = UINT64_MAX;
+        time_timespec_t duration    = {};
+        time_fixture_store(process, base + 768, &duration, sizeof(duration));
+        time_fixture_store(process, base + 800, &mask, sizeof(mask));
+        const uint64_t timeout = number == SYSCALL_epoll_pwait2 ? base + 768 : 0;
+        ok &= memory_expect(memory_call(number, epfd, output, 1, timeout, 0, UINT64_MAX) == 0, "epoll null signal mask ignores size");
+        ok &= memory_expect(memory_call(number, epfd, output, 1, timeout, base + 800, 8) == 0 && task->signalMask == originalMask && !task->signalRestoreMask, "epoll temporary mask restored after timeout");
+        ok &= memory_expect(memory_call(number, epfd, output, 1, timeout, base + 800, 4) == LINUX_EINVAL, "epoll signal mask size validation");
+        ok &= memory_expect(memory_call(number, epfd, output, 1, timeout, CANONICAL_KERNEL_BASE, 8) == LINUX_EFAULT, "epoll invalid signal mask buffer");
+        ok &= memory_expect(memory_call(number, epfd, output, 0, timeout, base + 800, 8) == LINUX_EINVAL && task->signalMask == originalMask && !task->signalRestoreMask, "epoll temporary mask restored after invalid count");
+
+        if (number == SYSCALL_epoll_pwait2)
+        {
+            duration = {-1, 0};
+            time_fixture_store(process, base + 768, &duration, sizeof(duration));
+            ok &= memory_expect(memory_call(number, epfd, output, 1, base + 768) == LINUX_EINVAL, "epoll_pwait2 negative seconds");
+            duration = {0, 1000000000};
+            time_fixture_store(process, base + 768, &duration, sizeof(duration));
+            ok &= memory_expect(memory_call(number, epfd, output, 1, base + 768) == LINUX_EINVAL, "epoll_pwait2 invalid nanoseconds");
+            ok &= memory_expect(memory_call(number, epfd, output, 1, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "epoll_pwait2 invalid timespec buffer");
+        }
+    }
     ok &= memory_expect(control(3, fd) == LINUX_ENOENT && control(2, fd) == LINUX_ENOENT, "epoll missing MOD/DEL");
     ok &= memory_expect(control(1, fd) == 0 && control(1, fd) == (uint64_t) -17, "epoll ADD and duplicate EEXIST");
     ok &= memory_expect(wait(1, 0) == 0, "registered empty eventfd is not ready");
     ok &= memory_expect(control(0, fd) == LINUX_EINVAL && control(1, UINT64_MAX) == LINUX_EBADF && control(1, epfd) == LINUX_EINVAL, "epoll operation/fd/self validation");
     ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, epfd, 3, fd, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "epoll bad event input");
-    const uint32_t unsupportedModes[] = {0x80000000U, 0x40000000U, 0x20000000U, 0x10000000U};
+    const uint32_t unsupportedModes[] = {0x20000000U, 0x10000000U};
 
     for (uint32_t unsupported : unsupportedModes)
     {
         event.events = EVENT_POLL_IN | unsupported;
         time_fixture_store(process, input, &event, sizeof(event));
-        ok &= memory_expect(control(3, fd) == LINUX_EOPNOTSUPP, "epoll unsupported ET/ONESHOT/WAKEUP/EXCLUSIVE rejected");
+        ok &= memory_expect(control(3, fd) == LINUX_EOPNOTSUPP, "epoll unsupported WAKEUP/EXCLUSIVE rejected");
     }
 
     event = {EVENT_POLL_IN, 0xfedcba9876543210ULL};
@@ -4253,7 +4742,8 @@ static bool test_event_epoll(process_t* process, uint64_t number)
 
     if ((int64_t) other >= 0)
     {
-        ok &= memory_expect(control(1, other) == LINUX_EOPNOTSUPP, "nested epoll explicitly unsupported");
+        ok &= memory_expect(control(1, other) == 0, "nested epoll registration");
+        ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, other, 1, epfd, input) == (uint64_t) -40, "nested epoll rejects cycles");
         ok &= memory_expect(memory_call(SYSCALL_epoll_ctl, other, 1, fd, input) == 0 && memory_call(SYSCALL_close, other) == 0, "one source can belong to independent epoll instances");
     }
     else
@@ -4284,6 +4774,27 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_epoll_wait, epfd, input, 1, 0) == LINUX_EFAULT, "epoll rejects readonly output across page boundary");
     memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 3);
     ok &= memory_expect(wait(1, 0) == 1, "epoll output fault preserves level readiness");
+    const uint32_t modes[] = {0x80000000U, 0x40000000U, 0xc0000000U};
+
+    for (uint32_t mode : modes)
+    {
+        event = {EVENT_POLL_IN | mode, mode};
+        time_fixture_store(process, input, &event, sizeof(event));
+        ok &= memory_expect(control(3, fd) == 0, "epoll ET/ONESHOT MOD rearm");
+        memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
+        ok &= memory_expect(memory_call(SYSCALL_epoll_wait, epfd, input, 1, 0) == LINUX_EFAULT, "epoll output fault preserves pending edge and one-shot arm");
+        memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 3);
+        ok &= memory_expect(wait(1, 0) == 1 && wait(1, 0) == 0, "epoll edge/one-shot delivers once");
+        time_fixture_load(process, output, &actual, sizeof(actual));
+        ok &= memory_expect(actual.events == EVENT_POLL_IN && actual.data == mode, "epoll private flags excluded from returned mask");
+        value = 1;
+        time_fixture_store(process, base, &value, sizeof(value));
+        ok &= memory_expect(memory_call(SYSCALL_write, fd, base, 8) == 8, "epoll fresh source notification");
+        const uint64_t expected = (mode & 0x40000000U) != 0 ? 0 : 1;
+        ok &= memory_expect(wait(1, 0) == expected && wait(1, 0) == 0, "new writes notify edges but do not rearm one-shot");
+        ok &= memory_expect(control(3, fd) == 0 && wait(1, 0) == 1 && wait(1, 0) == 0, "epoll MOD rechecks existing readiness");
+    }
+
     event = {EVENT_POLL_OUT, 42};
     time_fixture_store(process, input, &event, sizeof(event));
     ok &= memory_expect(control(3, fd) == 0 && wait(1, 0) == 1, "epoll MOD updates interest");
@@ -4388,7 +4899,7 @@ template <uint64_t Number> static bool custom_case_validate_event(const custom_c
     return run_memory_case(
             [](process_t* process)
             {
-                if (Number == SYSCALL_epoll_create || Number == SYSCALL_epoll_create1 || Number == SYSCALL_epoll_ctl || Number == SYSCALL_epoll_wait)
+                if (Number == SYSCALL_epoll_create || Number == SYSCALL_epoll_create1 || Number == SYSCALL_epoll_ctl || Number == SYSCALL_epoll_wait || Number == SYSCALL_epoll_pwait || Number == SYSCALL_epoll_pwait2)
                 {
                     return test_event_epoll(process, Number);
                 }
@@ -4408,8 +4919,8 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
             {"HandleEpoll_create1Request", &EventRequestManager::HandleEpoll_create1Request, SYSCALL_epoll_create1, custom_case_validate_event<SYSCALL_epoll_create1>},
             {"HandleEpoll_ctlRequest", &EventRequestManager::HandleEpoll_ctlRequest, SYSCALL_epoll_ctl, custom_case_validate_event<SYSCALL_epoll_ctl>},
             {"HandleEpoll_waitRequest", &EventRequestManager::HandleEpoll_waitRequest, SYSCALL_epoll_wait, custom_case_validate_event<SYSCALL_epoll_wait>},
-            {"HandleEpoll_pwaitRequest", &EventRequestManager::HandleEpoll_pwaitRequest, SYSCALL_epoll_pwait},
-            {"HandleEpoll_pwait2Request", &EventRequestManager::HandleEpoll_pwait2Request, SYSCALL_epoll_pwait2},
+            {"HandleEpoll_pwaitRequest", &EventRequestManager::HandleEpoll_pwaitRequest, SYSCALL_epoll_pwait, custom_case_validate_event<SYSCALL_epoll_pwait>},
+            {"HandleEpoll_pwait2Request", &EventRequestManager::HandleEpoll_pwait2Request, SYSCALL_epoll_pwait2, custom_case_validate_event<SYSCALL_epoll_pwait2>},
             {"HandleInotify_initRequest", &EventRequestManager::HandleInotify_initRequest, SYSCALL_inotify_init},
             {"HandleInotify_init1Request", &EventRequestManager::HandleInotify_init1Request, SYSCALL_inotify_init1},
             {"HandleInotify_add_watchRequest", &EventRequestManager::HandleInotify_add_watchRequest, SYSCALL_inotify_add_watch},
@@ -4462,6 +4973,10 @@ struct futex_peer_context_t
     uint64_t           result;
     process_t*         isolated;
     uint64_t           wrongProcess;
+    uint32_t           operationMode;
+    uint64_t           mismatch;
+    uint64_t           moved;
+    uint32_t           compareMode;
 };
 
 static void futex_peer_entry(void* argument)
@@ -4472,6 +4987,40 @@ static void futex_peer_entry(void* argument)
     futex_peer_context_t* context = static_cast<futex_peer_context_t*>(argument);
     context->entered              = true;
     context->protectedTask        = !context->resources->taskManager->FreeTask(context->sleeper) && !context->resources->taskManager->ExecuteTask(context->sleeper);
+
+    if (context->operationMode == 131 || context->operationMode == 132)
+    {
+        context->mismatch = context->operationMode == 132 ? memory_call(SYSCALL_futex, context->address, 132, 0, 1, context->address + 4, 8) : 0;
+        context->moved     = memory_call(SYSCALL_futex, context->address, context->operationMode, 0, 1, context->address + 4, 7);
+        context->wrongAddress = memory_call(SYSCALL_futex, context->address, 129, 1);
+        context->wrongBits    = memory_call(SYSCALL_futex, context->address + 4, 138, 1, 0, 0, ~context->bits);
+        context->result       = memory_call(SYSCALL_futex, context->address + 4, 138, 1, 0, 0, context->bits);
+
+        if (context->result == 0)
+        {
+            // A failed requeue must not leave this test parked forever.
+            memory_call(SYSCALL_futex, context->address, 129, 1);
+        }
+
+        context->scheduler->ExitCurrentTask();
+    }
+
+    if (context->operationMode == 133)
+    {
+        const uint32_t mismatch[] = {8, 7, 7, 6, 7, 8};
+        const uint32_t matches[]  = {7, 8, 8, 7, 6, 7};
+        const uint32_t compare    = context->compareMode << 24;
+        context->mismatch = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (7U << 12) | mismatch[context->compareMode]);
+        context->result   = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (11U << 12) | matches[context->compareMode]);
+
+        if (context->result != 1)
+        {
+            memory_call(SYSCALL_futex, context->address, 129, 1);
+        }
+
+        context->scheduler->ExitCurrentTask();
+    }
+
     context->wrongAddress         = memory_call(SYSCALL_futex, context->address + 4, 129, 1);
     cpu_preemption_disable();
     ProcessManager* processes = context->resources->processManager;
@@ -4494,6 +5043,156 @@ static void futex_peer_entry(void* argument)
     context->scheduler->ExitCurrentTask();
 }
 
+static bool test_sync_wake_operation(process_t* process, uint64_t base)
+{
+    const uint64_t destination = base + 128;
+    struct operation_test_t
+    {
+        uint32_t encoding;
+        uint32_t before;
+        uint32_t after;
+    };
+    const operation_test_t tests[] = {
+            {0x000ff000U, 123, 255},
+            {0x00fff000U, 123, UINT32_MAX},
+            {0x10001000U, UINT32_MAX, 0},
+            {0x20100000U, 0x00ff, 0x01ff},
+            {0x3000f000U, 0x00ff, 0x00f0},
+            {0x4000f000U, 0x00ff, 0x00f0},
+            {0x80021000U, 123, 2},
+    };
+    bool ok = true;
+
+    for (const operation_test_t& test : tests)
+    {
+        time_fixture_store(process, destination, &test.before, sizeof(test.before));
+        ok &= memory_expect(memory_call(SYSCALL_futex, base, 133, 0, 0, destination, test.encoding) == 0, "futex wake-op updates word without waiters");
+        uint32_t actual = 0;
+        time_fixture_load(process, destination, &actual, sizeof(actual));
+        ok &= memory_expect(actual == test.after, "futex wake-op arithmetic, sign extension and masked shift");
+    }
+
+    uint32_t word = 3;
+    time_fixture_store(process, destination, &word, sizeof(word));
+    ok &= memory_expect(memory_call(SYSCALL_futex, base, 133, 1, 1, destination, 0x50001000U) == LINUX_ENOSYS, "futex wake-op invalid arithmetic operation");
+    time_fixture_load(process, destination, &word, sizeof(word));
+    ok &= memory_expect(word == 3, "invalid wake-op arithmetic leaves word untouched");
+    ok &= memory_expect(memory_call(SYSCALL_futex, base, 133, 1, 1, destination, 0x0f009000U) == LINUX_ENOSYS, "futex wake-op invalid comparison");
+    time_fixture_load(process, destination, &word, sizeof(word));
+    ok &= memory_expect(word == 9, "invalid wake-op comparison follows atomic update");
+    memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
+    ok &= memory_expect(memory_call(SYSCALL_futex, base, 133, 1, 1, destination, 0x00001000U) == LINUX_EFAULT, "futex wake-op requires writable destination");
+    time_fixture_load(process, destination, &word, sizeof(word));
+    ok &= memory_expect(word == 9, "failed wake-op output access leaves word untouched");
+    memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 3);
+    ok &= memory_expect(memory_call(SYSCALL_futex, base, 133, 1, 1, destination + 1, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, base, 133, 1, 1, base + 2 * PAGE_SIZE, 0) == LINUX_EFAULT, "futex wake-op destination alignment and mapping");
+    return ok;
+}
+
+struct futex_requeue_context_t
+{
+    ResourceLayerCaps* resources;
+    Scheduler*         scheduler;
+    task_t*            sourceTask;
+    task_t*            destinationTask;
+    uint64_t           source;
+    uint64_t           destination;
+    uint64_t           moved;
+    uint64_t           firstWake;
+    uint64_t           secondWake;
+    uint64_t           destinationResult;
+    bool               ordered;
+    uint64_t           completion;
+};
+
+static void futex_destination_entry(void* argument)
+{
+    cpu_preemption_disable();
+    futex_requeue_context_t* context = static_cast<futex_requeue_context_t*>(argument);
+    context->destinationResult = memory_call(SYSCALL_futex, context->destination, 137, 7, 0, 0, 2);
+    __atomic_add_fetch(&context->completion, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->completion);
+    context->scheduler->ExitCurrentTask();
+}
+
+static void futex_requeue_entry(void* argument)
+{
+    cpu_preemption_disable();
+    futex_requeue_context_t* context = static_cast<futex_requeue_context_t*>(argument);
+    context->moved = memory_call(SYSCALL_futex, context->source, 132, 0, 1, context->destination, 7);
+    context->firstWake = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
+    context->ordered = !context->destinationTask->sleepBlocked && context->sourceTask->sleepBlocked;
+    context->secondWake = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
+    memory_call(SYSCALL_futex, context->source, 129, 1);
+    context->scheduler->ExitCurrentTask();
+}
+
+static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
+{
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
+    Scheduler*         scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    futex_requeue_context_t context = {resources, scheduler, resources->taskManager->GetCurrentTask(), nullptr, base + 512, base + 516, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, false};
+    const uint32_t words[2] = {7, 7};
+    time_fixture_store(process, context.source, words, sizeof(words));
+    task_t* peers[2] = {
+            resources->taskManager->CreateKernelTask(futex_destination_entry, &context),
+            resources->taskManager->CreateKernelTask(futex_requeue_entry, &context),
+    };
+    context.destinationTask = peers[0];
+    bool added[2] = {false, false};
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        added[i] = peers[i] != nullptr && resources->processManager->AddTask(process, peers[i]);
+    }
+
+    const bool ready = added[0] && added[1] && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+    bool ok = memory_expect(ready, "futex destination FIFO fixture");
+
+    if (ready)
+    {
+        const uint64_t result = memory_call(SYSCALL_futex, context.source, 137, 7, 0, 0, 2);
+        ok &= memory_expect(result == 0 && context.moved == 1 && context.firstWake == 1 && context.secondWake == 1 && context.ordered, "requeued waiter follows existing destination waiters");
+
+        if (__atomic_load_n(&context.completion, __ATOMIC_ACQUIRE) == 0)
+        {
+            ok &= memory_expect(scheduler->WaitForEvent(&context.completion, 0) == 0, "futex FIFO destination peer completes before fixture release");
+        }
+
+        ok &= memory_expect(context.destinationResult == 0, "existing destination waiter wakes successfully");
+    }
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (added[i])
+        {
+            if (peers[i]->prev != nullptr)
+            {
+                peers[i]->prev->next = peers[i]->next;
+            }
+            else
+            {
+                process->tasks = peers[i]->next;
+            }
+
+            if (peers[i]->next != nullptr)
+            {
+                peers[i]->next->prev = peers[i]->prev;
+            }
+
+            peers[i]->next = peers[i]->prev = nullptr;
+        }
+
+        if (peers[i] != nullptr)
+        {
+            ok &= memory_expect(resources->taskManager->FreeTask(peers[i]), "futex FIFO peer cleanup");
+        }
+    }
+
+    return ok;
+}
+
 static bool test_sync_futex(process_t* process)
 {
     const uint64_t base = memory_map(2);
@@ -4508,11 +5207,16 @@ static bool test_sync_futex(process_t* process)
     uint32_t       word    = 7;
     time_fixture_store(process, address, &word, sizeof(word));
     bool ok = memory_expect(memory_call(SYSCALL_futex, address, 128, 8) == (uint64_t) -11, "futex compare mismatch EAGAIN");
+    ok &= test_sync_wake_operation(process, base);
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0 && memory_call(SYSCALL_futex, address, 129, 0) == 0, "futex wake with no waiters/zero count");
     ok &= memory_expect(memory_call(SYSCALL_futex, address + 1, 128, 7) == LINUX_EINVAL && memory_call(SYSCALL_futex, CANONICAL_KERNEL_BASE, 128, 7) == LINUX_EFAULT && memory_call(SYSCALL_futex, base + 2 * PAGE_SIZE, 128, 7) == LINUX_EFAULT, "futex alignment/kernel/unmapped word validation");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 137, 7, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 138, 1, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 129, UINT64_MAX) == 0, "futex bitsets and empty legacy wake count");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 132, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS,
-                        "futex shared/PI/requeue/unsupported clock modes explicit");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS,
+                        "futex shared/PI/unsupported clock modes explicit");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 131, 0, 1, address + 4) == 0 && memory_call(SYSCALL_futex, address, 132, 0, 1, address + 4, 8) == (uint64_t) -11, "futex requeue empty queue and compare mismatch");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 132, 0, 1, address + 4, 7) == 0 && memory_call(SYSCALL_futex, address, 131, 0, 0, address) == 0, "futex compare requeue and identical private keys");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 131, UINT64_MAX, 1, address + 4) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 132, 0, UINT64_MAX, address + 4, 7) == LINUX_EINVAL, "futex requeue negative counts");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 131, 0, 1, address + 1) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 132, 0, 1, CANONICAL_KERNEL_BASE, 7) == LINUX_EFAULT, "futex requeue destination validation");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 7, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "futex invalid timeout buffer");
     time_timespec_t duration = {-1, 0};
     time_fixture_store(process, timeout, &duration, sizeof(duration));
@@ -4563,11 +5267,16 @@ static bool test_sync_futex(process_t* process)
         return memory_expect(false, "futex private-key process isolation fixture");
     }
 
-    const uint32_t waitOperations[] = {128U, 137U};
+    const uint32_t waitOperations[] = {128U, 137U, 131U, 132U, 133U, 0x10085U, 0x20085U, 0x30085U, 0x40085U, 0x50085U};
 
     for (uint32_t operation : waitOperations)
     {
+        word = 7;
+        time_fixture_store(process, address, &word, sizeof(word));
         futex_peer_context_t context = {scheduler, resources, resources->taskManager->GetCurrentTask(), address, 2, operation == 137, false, false, UINT64_MAX, UINT64_MAX, UINT64_MAX, isolated, UINT64_MAX};
+        const uint32_t command       = operation & 0xffffU;
+        context.operationMode        = command >= 131 && command <= 133 ? command : 0;
+        context.compareMode          = operation >> 16;
         task_t*              peer    = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
         const bool           added   = peer != nullptr && resources->processManager->AddTask(process, peer);
         const bool           ready   = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
@@ -4578,8 +5287,23 @@ static bool test_sync_futex(process_t* process)
             // Same process/address space: FUTEX_PRIVATE keys must not match a
             // different process simply because it maps the same virtual address.
             const uint32_t mask   = operation == 128 ? UINT32_MAX : context.bits;
-            const uint64_t result = memory_call(SYSCALL_futex, address, operation, 7, 0, 0, mask);
-            ok &= memory_expect(result == 0 && context.entered && context.protectedTask && context.wrongAddress == 0 && context.wrongProcess == 0 && context.result == 1, "futex real parked wait/peer wake, process isolation and task lifetime");
+            const uint32_t wait   = context.operationMode != 0 ? 137 : operation;
+            const uint64_t result = memory_call(SYSCALL_futex, address, wait, 7, 0, 0, mask);
+
+            if (context.operationMode == 131 || context.operationMode == 132)
+            {
+                ok &= memory_expect(result == 0 && context.entered && context.protectedTask && context.moved == 1 && context.wrongAddress == 0 && context.wrongBits == 0 && context.result == 1, "futex requeue moves parked waiter and preserves bitset");
+                ok &= memory_expect(context.mismatch == (operation == 132 ? (uint64_t) -11 : 0), "futex compare mismatch leaves waiter on source");
+            }
+            else if (context.operationMode == 133)
+            {
+                time_fixture_load(process, address, &word, sizeof(word));
+                ok &= memory_expect(result == 0 && context.mismatch == 0 && context.result == 1 && word == 11, "futex wake-op condition tests old value before atomic update");
+            }
+            else
+            {
+                ok &= memory_expect(result == 0 && context.entered && context.protectedTask && context.wrongAddress == 0 && context.wrongProcess == 0 && context.result == 1, "futex real parked wait/peer wake, process isolation and task lifetime");
+            }
 
             if (operation == 137)
             {
@@ -4616,6 +5340,9 @@ static bool test_sync_futex(process_t* process)
 
     ok &= memory_expect(resources->processManager->FreeProcess(isolated), "futex private-key process cleanup");
     resources->virtualMemoryManager->DestroyUserAddressSpace(isolatedSpace);
+    ok &= test_sync_requeue_fifo(process, base);
+    word = 7;
+    time_fixture_store(process, address, &word, sizeof(word));
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 128, 8) == (uint64_t) -11, "futex compare permits readable readonly word");
     memory_call(SYSCALL_mprotect, base, PAGE_SIZE, 0);
@@ -4667,7 +5394,43 @@ static bool test_sync_robust(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, lengthAddress, lengthAddress) == 0, "robust aliased outputs permitted");
     time_fixture_load(process, lengthAddress, &head, sizeof(head));
     ok &= memory_expect(head == 0, "robust outputs follow Linux length-then-head order");
-    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, UINT64_MAX, headAddress, lengthAddress) == LINUX_ESRCH && memory_call(SYSCALL_get_robust_list, tid + 1, headAddress, lengthAddress) == LINUX_EOPNOTSUPP, "robust other-task queries explicit");
+    ok &= memory_expect(memory_call(SYSCALL_get_robust_list, UINT64_MAX, headAddress, lengthAddress) == LINUX_ESRCH && memory_call(SYSCALL_get_robust_list, TaskManager::MAX_TASKS, headAddress, lengthAddress) == LINUX_ESRCH, "robust invalid task identifiers");
+    ResourceLayerCaps* resources = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps();
+    task_t*            sibling   = resources->taskManager->AllocateTask();
+    const bool         attached  = sibling != nullptr && resources->processManager->AddTask(process, sibling);
+    ok &= memory_expect(attached, "robust sibling query fixture");
+
+    if (attached)
+    {
+        __atomic_store_n(&sibling->robustHead, base + 128, __ATOMIC_RELEASE);
+        ok &= memory_expect(memory_call(SYSCALL_get_robust_list, sibling->id, headAddress, lengthAddress) == 0, "robust sibling task query");
+        time_fixture_load(process, headAddress, &head, sizeof(head));
+        ok &= memory_expect(head == base + 128 && sibling->dispatchUsers == 0, "robust sibling snapshot and lifetime claim release");
+        __atomic_store_n(&sibling->robustHead, 0ULL, __ATOMIC_RELEASE);
+
+        if (sibling->prev != nullptr)
+        {
+            sibling->prev->next = sibling->next;
+        }
+        else
+        {
+            process->tasks = sibling->next;
+        }
+
+        if (sibling->next != nullptr)
+        {
+            sibling->next->prev = sibling->prev;
+        }
+
+        sibling->next = sibling->prev = nullptr;
+    }
+
+    if (sibling != nullptr)
+    {
+        const uint64_t siblingId = sibling->id;
+        ok &= memory_expect(resources->taskManager->FreeTask(sibling), "robust sibling fixture cleanup");
+        ok &= memory_expect(memory_call(SYSCALL_get_robust_list, siblingId, headAddress, lengthAddress) == LINUX_ESRCH, "robust retired sibling is absent");
+    }
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, CANONICAL_KERNEL_BASE, lengthAddress) == LINUX_EFAULT && memory_call(SYSCALL_get_robust_list, 0, headAddress, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "robust invalid output pointers");
     memory_call(SYSCALL_mprotect, base + PAGE_SIZE, PAGE_SIZE, 1);
     ok &= memory_expect(memory_call(SYSCALL_get_robust_list, 0, headAddress, lengthAddress) == LINUX_EFAULT, "robust readonly output across page");

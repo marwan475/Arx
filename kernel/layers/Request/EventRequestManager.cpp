@@ -2,6 +2,7 @@
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/SignalManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TimeManager.hpp"
@@ -12,9 +13,7 @@ EventRequestManager::EventRequestManager(ResourceLayerCaps* resources, LogicLaye
 {
 }
 
-namespace
-{
-uint64_t check_event_signal_mask(uint64_t mask, uint64_t size)
+uint64_t EventRequestManager::BeginWaitMask(uint64_t mask, uint64_t size)
 {
     if (mask == 0)
     {
@@ -33,11 +32,21 @@ uint64_t check_event_signal_mask(uint64_t mask, uint64_t size)
         return LINUX_EFAULT;
     }
 
-    // Atomic signal-mask replacement needs the pending-signal subsystem.
-    return LINUX_EOPNOTSUPP;
+    if (Logic == nullptr || Logic->signalManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return Logic->signalManager->BeginTemporaryMask(value);
 }
 
-} // namespace
+void EventRequestManager::FinishWaitMask(const arch_syscall_frame_t* frame, uint64_t result)
+{
+    // On EINTR, select the handler with the temporary mask and save the
+    // original mask in its signal frame. Kernel callers restore immediately.
+    const bool deferRestore = result == (uint64_t) -4 && arch_signal_user_return(frame);
+    Logic->signalManager->FinishTemporaryMask(deferRestore);
+}
 
 uint64_t EventRequestManager::WaitRequest(const arch_syscall_frame_t* frame, bool select, bool precise)
 {
@@ -51,9 +60,12 @@ uint64_t EventRequestManager::WaitRequest(const arch_syscall_frame_t* frame, boo
         return LINUX_ENOSYS;
     }
 
+    uint64_t mask = 0;
+
     if (precise)
     {
-        uint64_t mask = frame->arg3, size = frame->arg4;
+        uint64_t size = frame->arg4;
+        mask          = frame->arg3;
 
         if (select)
         {
@@ -77,7 +89,7 @@ uint64_t EventRequestManager::WaitRequest(const arch_syscall_frame_t* frame, boo
             }
         }
 
-        uint64_t result = check_event_signal_mask(mask, size);
+        const uint64_t result = BeginWaitMask(mask, size);
 
         if (result != 0)
         {
@@ -85,6 +97,18 @@ uint64_t EventRequestManager::WaitRequest(const arch_syscall_frame_t* frame, boo
         }
     }
 
+    const uint64_t result = WaitRequestBody(frame, select, precise);
+
+    if (mask != 0)
+    {
+        FinishWaitMask(frame, result);
+    }
+
+    return result;
+}
+
+uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame, bool select, bool precise)
+{
     uint32_t nfds;
     {
         FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
@@ -484,6 +508,11 @@ uint64_t EventRequestManager::HandleEpoll_ctlRequest(const arch_syscall_frame_t*
 
 uint64_t EventRequestManager::HandleEpoll_waitRequest(const arch_syscall_frame_t* frame)
 {
+    return EpollWaitRequest(frame, false, false);
+}
+
+uint64_t EventRequestManager::EpollWaitRequest(const arch_syscall_frame_t* frame, bool precise, bool masked)
+{
     if (frame == nullptr)
     {
         return LINUX_EINVAL;
@@ -494,6 +523,26 @@ uint64_t EventRequestManager::HandleEpoll_waitRequest(const arch_syscall_frame_t
         return LINUX_ENOSYS;
     }
 
+    const uint64_t mask   = masked ? frame->arg4 : 0;
+    const uint64_t status = BeginWaitMask(mask, frame->arg5);
+
+    if (status != 0)
+    {
+        return status;
+    }
+
+    const uint64_t result = EpollWaitRequestBody(frame, precise);
+
+    if (mask != 0)
+    {
+        FinishWaitMask(frame, result);
+    }
+
+    return result;
+}
+
+uint64_t EventRequestManager::EpollWaitRequestBody(const arch_syscall_frame_t* frame, bool precise)
+{
     const int32_t count = (int32_t) frame->arg2;
 
     if (count <= 0 || (uint32_t) count > INT32_MAX / sizeof(event_epoll_event_t))
@@ -508,22 +557,48 @@ uint64_t EventRequestManager::HandleEpoll_waitRequest(const arch_syscall_frame_t
         return LINUX_EFAULT;
     }
 
-    uint64_t      deadline     = UINT64_MAX;
-    const int32_t milliseconds = (int32_t) frame->arg3;
+    uint64_t       deadline = UINT64_MAX;
+    time_timespec_t duration = {};
+    bool           finite   = false;
 
-    if (milliseconds == 0)
+    if (precise)
+    {
+        finite = frame->arg3 != 0;
+
+        if (finite && !safe_read_user(frame->arg3, &duration, sizeof(duration)))
+        {
+            return LINUX_EFAULT;
+        }
+
+        if (duration.seconds < 0 || duration.nanoseconds < 0 || duration.nanoseconds >= 1000000000)
+        {
+            return LINUX_EINVAL;
+        }
+    }
+    else
+    {
+        const int32_t milliseconds = (int32_t) frame->arg3;
+        finite                     = milliseconds >= 0;
+
+        if (finite)
+        {
+            duration.seconds     = milliseconds / 1000;
+            duration.nanoseconds = (milliseconds % 1000) * 1000000LL;
+        }
+    }
+
+    if (finite && duration.seconds == 0 && duration.nanoseconds == 0)
     {
         deadline = 0;
     }
-    else if (milliseconds > 0)
+    else if (finite)
     {
         if (Resources == nullptr || Resources->timeManager == nullptr)
         {
             return LINUX_ENOSYS;
         }
 
-        time_timespec_t duration = {milliseconds / 1000, (milliseconds % 1000) * 1000000LL};
-        const uint64_t  status   = Resources->timeManager->CalculateSleepDeadline(1, false, duration, &deadline);
+        const uint64_t status = Resources->timeManager->CalculateSleepDeadline(1, false, duration, &deadline);
 
         if (status != 0)
         {
@@ -536,32 +611,17 @@ uint64_t EventRequestManager::HandleEpoll_waitRequest(const arch_syscall_frame_t
         }
     }
 
-    event_epoll_event_t* events = static_cast<event_epoll_event_t*>(vmalloc(bytes));
-
-    if (events == nullptr)
-    {
-        return LINUX_ENOMEM;
-    }
-
-    uint64_t result = Logic->eventManager->WaitEpoll((int32_t) frame->arg0, events, (size_t) count, deadline);
-
-    if ((int64_t) result > 0 && !safe_write_user(frame->arg1, events, (size_t) result * sizeof(event_epoll_event_t)))
-    {
-        result = LINUX_EFAULT;
-    }
-
-    vfree(events);
-    return result;
+    return Logic->eventManager->WaitEpoll((int32_t) frame->arg0, frame->arg1, (size_t) count, deadline);
 }
 
 uint64_t EventRequestManager::HandleEpoll_pwaitRequest(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    return EpollWaitRequest(frame, false, true);
 }
 
 uint64_t EventRequestManager::HandleEpoll_pwait2Request(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    return EpollWaitRequest(frame, true, true);
 }
 
 uint64_t EventRequestManager::HandleInotify_initRequest(const arch_syscall_frame_t* frame)

@@ -219,6 +219,11 @@ static bool validate_user_memory(const user_memory_access_t* access, uint64_t ad
     return true;
 }
 
+bool safe_user_memory_accessible_locked(const user_memory_access_t* access, uint64_t address, size_t length, bool write)
+{
+    return validate_user_memory(access, address, length, write);
+}
+
 static bool copy_user_locked(const user_memory_access_t* access, uint64_t address, void* buffer, size_t length, bool write)
 {
     if (buffer == NULL || !validate_user_memory(access, address, length, write))

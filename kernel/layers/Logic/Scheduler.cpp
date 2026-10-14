@@ -3,6 +3,7 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+#include "layers/Resource/TimeManager.hpp"
 
 extern "C"
 {
@@ -87,6 +88,29 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
 
     uint64_t now            = 0;
     bool     clockAvailable = arch_time_read_monotonic(&now);
+
+    if (clockAvailable && ResourceLayerImportCaps->timeManager != nullptr)
+    {
+        ProcessManager* processManager = ResourceLayerImportCaps->processManager;
+
+        for (uint64_t id = 0; id < processManager->GetCapacity(); ++id)
+        {
+            process_t* process = processManager->AcquireProcess(id);
+
+            if (process == nullptr)
+            {
+                continue;
+            }
+
+            if (ResourceLayerImportCaps->timeManager->ExpireRealTimer(process, now))
+            {
+                WakeSignalWaiters(process);
+            }
+
+            processManager->ReleaseMemoryProcess(process);
+        }
+    }
+
     LockQueues();
     size_t* link = &SleepHeads[cpuId];
 

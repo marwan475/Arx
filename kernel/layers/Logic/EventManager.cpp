@@ -13,6 +13,8 @@ struct event_epoll_watch_t
     file_t*              file; // Weak: FileClosing detaches this before the target is freed.
     int32_t              descriptor;
     event_epoll_event_t  event;
+    bool                 armed;
+    bool                 pending;
     event_epoll_watch_t* next;
 };
 
@@ -24,6 +26,9 @@ struct event_epoll_t
     event_epoll_watch_t* head;
     event_epoll_watch_t* tail;
     event_epoll_t*       next;
+    uint64_t             topologyGeneration;
+    size_t               topologyDepth;
+    uint64_t             notificationGeneration;
 };
 
 namespace
@@ -31,6 +36,9 @@ namespace
 constexpr uint32_t NONBLOCK    = 04000;
 constexpr uint32_t CLOEXEC     = 02000000;
 constexpr uint64_t COUNTER_MAX = UINT64_MAX - 1;
+constexpr uint32_t EPOLL_EDGE  = 1U << 31;
+constexpr uint32_t EPOLL_ONCE  = 1U << 30;
+constexpr size_t   EPOLL_DEPTH = 5;
 struct event_counter_t
 {
     inode_t       inode;
@@ -41,7 +49,7 @@ struct event_counter_t
 };
 } // namespace
 
-EventManager::EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs) : Resources(resources), SchedulerManager(scheduler), Vfs(vfs), Generation(0), EpollLock{}, Epolls(nullptr)
+EventManager::EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs) : Resources(resources), SchedulerManager(scheduler), Vfs(vfs), Generation(0), TopologyGeneration(0), NotificationGeneration(0), EpollLock{}, Epolls(nullptr)
 {
 }
 
@@ -57,6 +65,54 @@ void EventManager::Notify()
     if (SchedulerManager != nullptr)
     {
         SchedulerManager->WakeEventWaiters(&Generation);
+    }
+}
+
+void EventManager::NotifySource(file_t* file, uint32_t events)
+{
+    spinlock_acquire_preempt(&EpollLock);
+    ++NotificationGeneration;
+
+    if (NotificationGeneration == 0)
+    {
+        for (event_epoll_t* epoll = Epolls; epoll != nullptr; epoll = epoll->next)
+        {
+            epoll->notificationGeneration = 0;
+        }
+
+        ++NotificationGeneration;
+    }
+
+    NotifySourceLocked(file, events, 0);
+    spinlock_release_preempt(&EpollLock);
+    Notify();
+}
+
+void EventManager::NotifySourceLocked(file_t* file, uint32_t events, size_t depth)
+{
+    if (depth >= EPOLL_DEPTH)
+    {
+        return;
+    }
+
+    for (event_epoll_t* epoll = Epolls; epoll != nullptr; epoll = epoll->next)
+    {
+        bool changed = false;
+
+        for (event_epoll_watch_t* watch = epoll->head; watch != nullptr; watch = watch->next)
+        {
+            if (watch->file == file && watch->armed && (events & (watch->event.events | EVENT_POLL_ERR | EVENT_POLL_HUP)) != 0)
+            {
+                watch->pending = true;
+                changed        = true;
+            }
+        }
+
+        if (changed && epoll->notificationGeneration != NotificationGeneration)
+        {
+            epoll->notificationGeneration = NotificationGeneration;
+            NotifySourceLocked(epoll->file, EVENT_POLL_IN, depth + 1);
+        }
     }
 }
 
@@ -159,7 +215,7 @@ uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
     }
 
     static const file_operations_t operations = {
-            nullptr, nullptr, nullptr, CounterSeek, nullptr, nullptr, nullptr, CounterRelease, CounterPoll, CounterRead, CounterWrite,
+            nullptr, nullptr, nullptr, CounterSeek, nullptr, nullptr, nullptr, CounterRelease, CounterPoll, CounterRead, CounterWrite, CounterReadVector, CounterWriteVector,
     };
     event_counter_t* counter = static_cast<event_counter_t*>(kzalloc(sizeof(event_counter_t)));
     file_t*          file    = static_cast<file_t*>(kzalloc(sizeof(file_t)));
@@ -218,6 +274,25 @@ uint64_t EventManager::CounterRead(file_t* file, uint64_t address, uint64_t coun
         return LINUX_EINVAL;
     }
 
+    const file_iovec_t vector = {address, count};
+    return CounterReadVector(file, &vector, 1);
+}
+
+uint64_t EventManager::CounterReadVector(file_t* file, const file_iovec_t* vectors, size_t count)
+{
+    size_t available = 0;
+
+    for (size_t i = 0; i < count && available < sizeof(uint64_t); ++i)
+    {
+        const uint64_t remaining = sizeof(uint64_t) - available;
+        available += vectors[i].length < remaining ? vectors[i].length : remaining;
+    }
+
+    if (available < sizeof(uint64_t))
+    {
+        return LINUX_EINVAL;
+    }
+
     event_counter_t* counter = static_cast<event_counter_t*>(file->privateData);
 
     for (;;)
@@ -230,6 +305,21 @@ uint64_t EventManager::CounterRead(file_t* file, uint64_t address, uint64_t coun
             return LINUX_ESRCH;
         }
 
+        size_t checked = 0;
+
+        for (size_t i = 0; i < count && checked < sizeof(uint64_t); ++i)
+        {
+            const size_t remaining = sizeof(uint64_t) - checked;
+            const size_t bytes     = vectors[i].length < remaining ? (size_t) vectors[i].length : remaining;
+
+            if (bytes != 0 && !safe_user_memory_accessible_locked(&access, vectors[i].address, bytes, true))
+            {
+                break;
+            }
+
+            checked += bytes;
+        }
+
         spinlock_acquire_preempt(&counter->lock);
         uint64_t result = (uint64_t) -11; // EAGAIN
 
@@ -237,14 +327,29 @@ uint64_t EventManager::CounterRead(file_t* file, uint64_t address, uint64_t coun
         {
             const uint64_t value = counter->semaphore ? 1 : counter->value;
 
-            if (!safe_write_user_locked(&access, address, &value, sizeof(value)))
+            size_t copied = 0;
+
+            for (size_t i = 0; i < count && checked == sizeof(value) && copied < sizeof(value); ++i)
             {
-                result = LINUX_EFAULT;
+                const size_t remaining = sizeof(value) - copied;
+                const size_t bytes     = vectors[i].length < remaining ? (size_t) vectors[i].length : remaining;
+
+                if (bytes != 0 && !safe_write_user_locked(&access, vectors[i].address, reinterpret_cast<const uint8_t*>(&value) + copied, bytes))
+                {
+                    break;
+                }
+
+                copied += bytes;
             }
-            else
+
+            if (copied == sizeof(value))
             {
                 counter->value -= value;
                 result = sizeof(value);
+            }
+            else
+            {
+                result = LINUX_EFAULT;
             }
         }
 
@@ -253,7 +358,7 @@ uint64_t EventManager::CounterRead(file_t* file, uint64_t address, uint64_t coun
 
         if (result == sizeof(uint64_t))
         {
-            counter->manager->Notify();
+            counter->manager->NotifySource(file, EVENT_POLL_OUT);
         }
 
         if (result != (uint64_t) -11 || (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK))
@@ -306,7 +411,7 @@ uint64_t EventManager::CounterWrite(file_t* file, uint64_t address, uint64_t cou
 
         if (fits)
         {
-            counter->manager->Notify();
+            counter->manager->NotifySource(file, EVENT_POLL_IN);
             return sizeof(value);
         }
 
@@ -327,6 +432,32 @@ uint64_t EventManager::CounterWrite(file_t* file, uint64_t address, uint64_t cou
 void EventManager::CounterRelease(file_t* file)
 {
     kfree(file->privateData);
+}
+
+uint64_t EventManager::CounterWriteVector(file_t* file, const file_iovec_t* vectors, size_t count)
+{
+    // Linux eventfd has a scalar write callback: writev processes each nonempty
+    // vector as a separate eight-byte increment and returns partial progress.
+    uint64_t total = 0;
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (vectors[i].length == 0)
+        {
+            continue;
+        }
+
+        const uint64_t result = CounterWrite(file, vectors[i].address, vectors[i].length);
+
+        if ((int64_t) result < 0)
+        {
+            return total != 0 ? total : result;
+        }
+
+        total += result;
+    }
+
+    return total;
 }
 
 file_t* EventManager::RetainDescriptor(int32_t fd)
@@ -397,6 +528,32 @@ uint64_t EventManager::CreateEpoll(uint32_t flags)
     return (uint64_t) descriptor;
 }
 
+bool EventManager::CheckEpollDepth(event_epoll_t* epoll, event_epoll_t* owner, event_epoll_t* target, size_t depth)
+{
+    if (depth > EPOLL_DEPTH)
+    {
+        return false;
+    }
+
+    if (epoll->topologyGeneration == TopologyGeneration && epoll->topologyDepth >= depth)
+    {
+        return true;
+    }
+
+    epoll->topologyGeneration = TopologyGeneration;
+    epoll->topologyDepth      = depth;
+
+    for (event_epoll_watch_t* watch = epoll->head; watch != nullptr; watch = watch->next)
+    {
+        if (watch->file->operations->Poll == EpollPoll && !CheckEpollDepth(static_cast<event_epoll_t*>(watch->file->privateData), owner, target, depth + 1))
+        {
+            return false;
+        }
+    }
+
+    return epoll != owner || CheckEpollDepth(target, owner, target, depth + 1);
+}
+
 uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd, const event_epoll_event_t* event)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
@@ -429,17 +586,14 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
             return LINUX_EINVAL;
         }
 
-        if (target->operations != nullptr && target->operations->Poll == EpollPoll)
-        {
-            return LINUX_EOPNOTSUPP;
-        }
-
         // Only sources with an explicit readiness callback can be watched.
         // Synchronous regular files use VFS's default readiness, but Linux
         // rejects them for epoll registration.
 
         if (target->operations == nullptr || target->operations->Poll == nullptr)
+        {
             return (uint64_t) -1; // EPERM
+        }
         event_epoll_watch_t* added = operation == 1 ? static_cast<event_epoll_watch_t*>(kzalloc(sizeof(event_epoll_watch_t))) : nullptr;
 
         if (operation == 1 && added == nullptr)
@@ -461,27 +615,66 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
         uint64_t status = 0;
 
         if (operation == 1 && *link != nullptr)
+        {
             status = (uint64_t) -17; // EEXIST
+        }
         else if (operation != 1 && *link == nullptr)
+        {
             status = LINUX_ENOENT;
+        }
         else if (operation != 2 && event == nullptr)
+        {
             status = LINUX_EINVAL;
-        else if (operation != 2 && (event->events & ~0x3ffU) != 0)
+        }
+        else if (operation != 2 && (event->events & ~(0x3ffU | 0x2000U | EPOLL_EDGE | EPOLL_ONCE)) != 0)
+        {
             status = LINUX_EOPNOTSUPP;
+        }
         else if (operation == 1 && target->closeObserver != nullptr && (target->closeObserver != FileClosing || target->closeObserverContext != this))
+        {
             status = LINUX_EOPNOTSUPP;
-        else if (operation == 1)
+        }
+
+        if (status == 0 && operation == 1 && target->operations->Poll == EpollPoll)
+        {
+            ++TopologyGeneration;
+
+            if (TopologyGeneration == 0)
+            {
+                for (event_epoll_t* instance = Epolls; instance != nullptr; instance = instance->next)
+                {
+                    instance->topologyGeneration = 0;
+                }
+
+                ++TopologyGeneration;
+            }
+
+            for (event_epoll_t* instance = Epolls; instance != nullptr; instance = instance->next)
+            {
+                if (!CheckEpollDepth(instance, epoll, static_cast<event_epoll_t*>(target->privateData), 1))
+                {
+                    status = (uint64_t) -40; // ELOOP
+                    break;
+                }
+            }
+        }
+
+        if (status == 0 && operation == 1)
         {
             added->file       = target;
             added->descriptor = fd;
             added->event      = *event;
+            added->armed      = true;
+            added->pending    = true;
 
             if (epoll->tail != nullptr)
             {
                 epoll->tail->next = added;
             }
             else
+            {
                 epoll->head = added;
+            }
             epoll->tail = added;
             added       = nullptr;
             // The caller retains target until after unlocking. Once installed,
@@ -493,9 +686,13 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
                 target->closeObserver        = FileClosing;
             }
         }
-        else if (operation == 3)
-            (*link)->event = *event; // MOD
-        else                         // DEL ignores the userspace event argument.
+        else if (status == 0 && operation == 3)
+        {
+            (*link)->event   = *event;
+            (*link)->armed   = true;
+            (*link)->pending = true;
+        }
+        else if (status == 0) // DEL ignores the userspace event argument.
         {
             event_epoll_watch_t* removed = *link;
             *link                        = removed->next;
@@ -513,7 +710,7 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
 
         if (status == 0)
         {
-            Notify();
+            NotifySource(file, EVENT_POLL_IN);
         }
 
         return status;
@@ -524,28 +721,53 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
     return result;
 }
 
-uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, event_epoll_event_t* events, size_t count)
+uint32_t EventManager::WatchReadiness(event_epoll_watch_t* watch)
+{
+    if (!watch->armed || ((watch->event.events & EPOLL_EDGE) != 0 && !watch->pending))
+    {
+        return 0;
+    }
+
+    const uint32_t readiness = watch->file->operations->Poll == EpollPoll ? (ScanEpoll(static_cast<event_epoll_t*>(watch->file->privateData), nullptr, 0, 0) != 0 ? EVENT_POLL_IN : 0) : Vfs->Poll(watch->file);
+    return readiness & (watch->event.events | EVENT_POLL_ERR | EVENT_POLL_HUP);
+}
+
+uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, const user_memory_access_t* access, uint64_t address, size_t count)
 {
     // Caller holds EpollLock. Final-close observers use the same lock, so weak
     // target pointers remain valid throughout each Poll callback.
     uint64_t              ready = 0;
-    event_epoll_watch_t*  last  = epoll->tail;
-    event_epoll_watch_t** link  = &epoll->head;
+    event_epoll_watch_t*   last  = epoll->tail;
+    event_epoll_watch_t**  link  = &epoll->head;
 
     while (*link != nullptr)
     {
         event_epoll_watch_t* watch = *link;
         const bool           end   = watch == last;
-        const uint32_t       mask  = Vfs->Poll(watch->file) & (watch->event.events | EVENT_POLL_ERR | EVENT_POLL_HUP);
+        const uint32_t       mask  = WatchReadiness(watch);
 
         if (mask != 0)
         {
-            if (events == nullptr)
+            if (access == nullptr)
             {
                 return 1;
             }
 
-            events[ready++] = {mask, watch->event.data};
+            const event_epoll_event_t event = {mask, watch->event.data};
+
+            if (!safe_write_user_locked(access, address + ready * sizeof(event), &event, sizeof(event)))
+            {
+                return ready != 0 ? ready : LINUX_EFAULT;
+            }
+
+            ++ready;
+            watch->pending = false;
+
+            if ((watch->event.events & EPOLL_ONCE) != 0)
+            {
+                watch->armed = false;
+            }
+
             // Move returned entries to the tail for round-robin fairness.
 
             if (watch != epoll->tail)
@@ -556,7 +778,9 @@ uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, event_epoll_event_t* even
                 watch->next       = nullptr;
             }
             else
+            {
                 link = &watch->next;
+            }
 
             if (ready == count)
             {
@@ -564,7 +788,9 @@ uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, event_epoll_event_t* even
             }
         }
         else
+        {
             link = &watch->next;
+        }
 
         if (end)
         {
@@ -575,7 +801,7 @@ uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, event_epoll_event_t* even
     return ready;
 }
 
-uint64_t EventManager::WaitEpoll(int32_t epfd, event_epoll_event_t* events, size_t count, uint64_t deadline)
+uint64_t EventManager::WaitEpoll(int32_t epfd, uint64_t address, size_t count, uint64_t deadline)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
@@ -596,7 +822,7 @@ uint64_t EventManager::WaitEpoll(int32_t epfd, event_epoll_event_t* events, size
             return LINUX_EINVAL;
         }
 
-        if (events == nullptr || count == 0)
+        if (count == 0)
         {
             return LINUX_EINVAL;
         }
@@ -606,9 +832,25 @@ uint64_t EventManager::WaitEpoll(int32_t epfd, event_epoll_event_t* events, size
         for (;;)
         {
             const uint64_t sequence = Sequence();
+            user_memory_access_t access;
+
+            // Memory precedes EpollLock, which precedes a source's state lock.
+            // Release all three before parking or dropping a file reference.
+            if (!begin_user_memory(&access))
+            {
+                return LINUX_ESRCH;
+            }
+
             spinlock_acquire_preempt(&EpollLock);
-            const uint64_t ready = ScanEpoll(epoll, events, count);
+            const uint64_t ready = ScanEpoll(epoll, &access, address, count);
+            const bool     more  = (int64_t) ready > 0 && ScanEpoll(epoll, nullptr, 0, 0) != 0;
             spinlock_release_preempt(&EpollLock);
+            end_user_memory(&access);
+
+            if (more)
+            {
+                NotifySource(file, EVENT_POLL_IN);
+            }
 
             if (ready != 0 || deadline == 0)
             {
@@ -654,7 +896,7 @@ uint32_t EventManager::EpollPoll(file_t* file)
     event_epoll_t* epoll   = static_cast<event_epoll_t*>(file->privateData);
     EventManager*  manager = epoll->manager;
     spinlock_acquire_preempt(&manager->EpollLock);
-    const uint32_t ready = manager->ScanEpoll(epoll, nullptr, 0) ? EVENT_POLL_IN : 0;
+    const uint32_t ready = manager->ScanEpoll(epoll, nullptr, 0, 0) ? EVENT_POLL_IN : 0;
     spinlock_release_preempt(&manager->EpollLock);
     return ready;
 }

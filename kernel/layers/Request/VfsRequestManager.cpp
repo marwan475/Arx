@@ -1120,8 +1120,116 @@ uint64_t VfsRequestManager::HandlePwrite64Request(const arch_syscall_frame_t* fr
     return perform_positioned_user_buffer_io(ResourceCaps->virtualMemoryManager, currentProcess->addressSpace, LogicCaps->virtualFileSystem, file, (uintptr_t) frame->arg1, count, true, (uint64_t) offset);
 }
 
+static uint64_t perform_anonymous_vector_io(ResourceLayerCaps* resources, LogicLayerCaps* logic, const arch_syscall_frame_t* frame, bool write, bool* handled)
+{
+    *handled = false;
+
+    if (frame == nullptr || resources == nullptr || resources->processManager == nullptr || logic == nullptr || logic->virtualFileSystem == nullptr)
+    {
+        return 0;
+    }
+
+    file_t* file = nullptr;
+    uint64_t (*callback)(file_t*, const file_iovec_t*, size_t) = nullptr;
+    {
+        FileDescriptorGuard guard(resources->processManager->GetCurrentProcess());
+        file_descriptor_t*  descriptor = resources->processManager->GetFileDescriptor(resources->processManager->GetCurrentProcess(), frame->arg0);
+
+        if (descriptor == nullptr)
+        {
+            return 0;
+        }
+
+        file = static_cast<file_t*>(descriptor->file);
+
+        if (file->operations == nullptr)
+        {
+            return 0;
+        }
+
+        callback = write ? file->operations->WriteVectorUser : file->operations->ReadVectorUser;
+
+        if (callback == nullptr)
+        {
+            return 0;
+        }
+
+        *handled = true;
+
+        if (!logic->virtualFileSystem->Retain(file))
+        {
+            return LINUX_EBADF;
+        }
+    }
+
+    file_iovec_t* vectors = nullptr;
+    const uint64_t result = [&]() -> uint64_t
+    {
+        const int64_t count = (int64_t) frame->arg2;
+
+        if (count < 0 || count > LINUX_IOV_MAX)
+        {
+            return LINUX_EINVAL;
+        }
+
+        if (count == 0)
+        {
+            return 0;
+        }
+
+        const size_t bytes = (size_t) count * sizeof(file_iovec_t);
+        vectors            = static_cast<file_iovec_t*>(vmalloc(bytes));
+
+        if (vectors == nullptr)
+        {
+            return LINUX_ENOMEM;
+        }
+
+        if (!safe_read_user(frame->arg1, vectors, bytes))
+        {
+            return LINUX_EFAULT;
+        }
+
+        constexpr uint64_t maximum = 0x7ffff000;
+        uint64_t           total   = 0;
+
+        for (int64_t i = 0; i < count; ++i)
+        {
+            if (vectors[i].length > INT64_MAX)
+            {
+                return LINUX_EINVAL;
+            }
+
+            if (vectors[i].length != 0 && !range_within_u64(vectors[i].address, vectors[i].length, CANONICAL_USER_BASE, CANONICAL_USER_END))
+            {
+                return LINUX_EFAULT;
+            }
+
+            if (vectors[i].length > maximum - total)
+            {
+                vectors[i].length = maximum - total;
+            }
+
+            total += vectors[i].length;
+        }
+
+        return total != 0 ? callback(file, vectors, (size_t) count) : 0;
+    }();
+    vfree(vectors);
+    logic->virtualFileSystem->Close(file);
+    return result;
+}
+
 uint64_t VfsRequestManager::HandleReadvRequest(const arch_syscall_frame_t* frame)
 {
+    bool           handled;
+    const uint64_t anonymousResult = perform_anonymous_vector_io(ResourceCaps, LogicCaps, frame, false, &handled);
+
+    if (handled)
+    {
+        return anonymousResult;
+    }
+
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
 
     if (frame == nullptr)
@@ -1167,6 +1275,14 @@ uint64_t VfsRequestManager::HandleReadvRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleWritevRequest(const arch_syscall_frame_t* frame)
 {
+    bool           handled;
+    const uint64_t anonymousResult = perform_anonymous_vector_io(ResourceCaps, LogicCaps, frame, true, &handled);
+
+    if (handled)
+    {
+        return anonymousResult;
+    }
+
     FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
 
     if (frame == nullptr)

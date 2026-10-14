@@ -66,7 +66,7 @@ extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64
         return result;
     }
 
-    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write;
+    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write || frame->syscall_number == SYSCALL_readv || frame->syscall_number == SYSCALL_writev;
     return logic->signalManager->Deliver(frame, result, restartable);
 }
 

@@ -15,6 +15,8 @@ public:
     SignalManager(ResourceLayerCaps* resources, Scheduler* scheduler);
     uint64_t Action(int signal, const signal_action_t* action, signal_action_t* previous);
     uint64_t Mask(int operation, const uint64_t* mask, uint64_t* previous);
+    uint64_t BeginTemporaryMask(uint64_t mask);
+    void     FinishTemporaryMask(bool deferRestore);
     uint64_t Stack(const signal_stack_t* stack, signal_stack_t* previous, uint64_t rsp);
     uint64_t Send(int32_t pid, int32_t tid, int signal);
     uint64_t Pause();

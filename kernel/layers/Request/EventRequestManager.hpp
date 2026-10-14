@@ -31,6 +31,11 @@ public:
 
 private:
     uint64_t           WaitRequest(const arch_syscall_frame_t* frame, bool select, bool precise);
+    uint64_t           WaitRequestBody(const arch_syscall_frame_t* frame, bool select, bool precise);
+    uint64_t           EpollWaitRequest(const arch_syscall_frame_t* frame, bool precise, bool masked);
+    uint64_t           EpollWaitRequestBody(const arch_syscall_frame_t* frame, bool precise);
+    uint64_t           BeginWaitMask(uint64_t mask, uint64_t size);
+    void               FinishWaitMask(const arch_syscall_frame_t* frame, uint64_t result);
     ResourceLayerCaps* Resources;
     LogicLayerCaps*    Logic;
 };

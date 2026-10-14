@@ -7,6 +7,9 @@
 struct ResourceLayerCaps;
 struct file_t;
 struct event_epoll_t;
+struct event_epoll_watch_t;
+struct file_iovec_t;
+struct user_memory_access;
 class Scheduler;
 class VirtualFileSystem;
 
@@ -48,9 +51,12 @@ public:
     uint64_t CreateCounter(uint32_t initial, uint32_t flags);
     uint64_t CreateEpoll(uint32_t flags);
     uint64_t ControlEpoll(int32_t epfd, int32_t operation, int32_t fd, const event_epoll_event_t* event);
-    uint64_t WaitEpoll(int32_t epfd, event_epoll_event_t* events, size_t count, uint64_t deadline);
+    uint64_t WaitEpoll(int32_t epfd, uint64_t address, size_t count, uint64_t deadline);
     uint64_t Poll(event_pollfd_t* descriptors, size_t count, uint64_t deadline);
     void     Notify();
+    // Producers publish state first, then notify outside their state locks.
+    // Edge-triggered watches require the source-specific notification path.
+    void     NotifySource(file_t* file, uint32_t events);
     uint64_t Sequence() const;
     uint64_t Wait(uint64_t expected, uint64_t deadline = UINT64_MAX);
 
@@ -60,16 +66,23 @@ private:
     static void        EpollRelease(file_t* file);
     static uint32_t    EpollPoll(file_t* file);
     static int64_t     EpollSeek(file_t* file, int64_t offset, int whence);
-    uint64_t           ScanEpoll(event_epoll_t* epoll, event_epoll_event_t* events, size_t count);
+    bool               CheckEpollDepth(event_epoll_t* epoll, event_epoll_t* owner, event_epoll_t* target, size_t depth);
+    void               NotifySourceLocked(file_t* file, uint32_t events, size_t depth);
+    uint32_t           WatchReadiness(event_epoll_watch_t* watch);
+    uint64_t           ScanEpoll(event_epoll_t* epoll, const user_memory_access* access, uint64_t address, size_t count);
     static uint32_t    CounterPoll(file_t* file);
     static int64_t     CounterSeek(file_t* file, int64_t offset, int whence);
     static uint64_t    CounterRead(file_t* file, uint64_t address, uint64_t count);
     static uint64_t    CounterWrite(file_t* file, uint64_t address, uint64_t count);
+    static uint64_t    CounterReadVector(file_t* file, const file_iovec_t* vectors, size_t count);
+    static uint64_t    CounterWriteVector(file_t* file, const file_iovec_t* vectors, size_t count);
     static void        CounterRelease(file_t* file);
     ResourceLayerCaps* Resources;
     Scheduler*         SchedulerManager;
     VirtualFileSystem* Vfs;
     uint64_t           Generation;
+    uint64_t           TopologyGeneration;
+    uint64_t           NotificationGeneration;
     spinlock_t         EpollLock;
     event_epoll_t*     Epolls;
 };

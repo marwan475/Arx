@@ -56,6 +56,9 @@ extern "C" void kmain(void)
 
 static void KernelPostInit(void)
 {
+#if defined(__x86_64__)
+    (void) lapic_timer_calibrate();
+#endif
     smp_selftests();
 
     if (arch_cpu_id() == platform.bsp_id)

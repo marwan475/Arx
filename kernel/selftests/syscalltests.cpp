@@ -3110,7 +3110,19 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
                     managerName, tests[index].name, tests[index].syscallNumber, &frame, result,
             };
             stats->customCaseUsed++;
-            if (tests[index].customValidator(&customCtx) && userFixture.valid)
+            const bool traceWait = strcmp(managerName, "time") == 0 || strcmp(managerName, "event") == 0;
+            uint64_t started = 0, finished = 0;
+            const bool haveStart = traceWait && arch_time_read_monotonic(&started);
+            if (traceWait) KDEBUG("[selftest] running %s::%s\n", managerName, tests[index].name);
+            const bool passed = tests[index].customValidator(&customCtx) && userFixture.valid;
+            if (traceWait)
+            {
+                if (haveStart && arch_time_read_monotonic(&finished) && finished >= started)
+                    KDEBUG("[selftest] finished %s::%s elapsed=%llu ms result=%s\n", managerName, tests[index].name,
+                        (unsigned long long) ((finished - started) / 1000000), passed ? "PASS" : "FAIL");
+                else KDEBUG("[selftest] finished %s::%s result=%s (clock unavailable)\n", managerName, tests[index].name, passed ? "PASS" : "FAIL");
+            }
+            if (passed)
             {
                 stats->customCasePass++;
                 if (!unavailable)

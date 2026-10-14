@@ -34,6 +34,7 @@
 #define LAPIC_REG_LVT_LINT1 0x360
 #define LAPIC_REG_LVT_ERROR 0x370
 #define LAPIC_REG_INITIAL_COUNT 0x380
+#define LAPIC_REG_CURRENT_COUNT 0x390
 #define LAPIC_REG_DIVIDE_CONFIG 0x3E0
 
 #define LAPIC_SVR_SW_ENABLE (1U << 8)
@@ -289,6 +290,7 @@ typedef struct arch_platform_info
 
 void     lapic_init(void);
 void     lapic_timer_init(void);
+bool     lapic_timer_calibrate(void);
 void     lapic_eoi(void);
 void     arch_syscall_init(void);
 void     arch_syscall_set_kernel_stack(uint64_t kernel_rsp);

@@ -19,10 +19,10 @@ public:
     void ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection);
     void DiscardAnonymousPage(virt_addr_space_t* space, uint64_t address);
     void ReleaseAnonymousPages(virt_addr_space_t* space);
-    void MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space);
+    bool MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space);
     void UnmapPage(virt_addr_t va, virt_addr_space_t* space);
 
-    void MapRange(virt_addr_t vaStart, phys_addr_t paStart, uint64_t size, uint64_t flags, virt_addr_space_t* space);
+    bool MapRange(virt_addr_t vaStart, phys_addr_t paStart, uint64_t size, uint64_t flags, virt_addr_space_t* space);
     void UnmapRange(virt_addr_t vaStart, uint64_t size, virt_addr_space_t* space);
 
     void ProtectPage(virt_addr_t va, uint64_t flags, virt_addr_space_t* space);

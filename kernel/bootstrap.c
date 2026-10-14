@@ -102,7 +102,12 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     if (boot_info->smp.cpu_count > 0 && boot_info->smp.cpus != 0)
     {
-        platform.bsp_id = boot_info->smp.bsp_id;
+        platform.bsp_id = 0;
+#if defined(__x86_64__)
+        struct boot_smp_cpu_info** cpus = (struct boot_smp_cpu_info**) boot_info->smp.cpus;
+        for (size_t i = 0; i < platform.cpu_count; ++i)
+            platform.cpus[i].hardware_id = cpus[i]->lapic_id;
+#endif
     }
     else
     {
@@ -142,7 +147,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_pci_devices();
 
-    platform.cpus[arch_cpu_id()].initialized = true;
+    __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
 
     arch_smp_init(boot_info);
 
@@ -152,7 +157,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     {
         for (size_t i = 0; i < platform.cpu_count; i++)
         {
-            if (!platform.cpus[i].initialized)
+            if (!__atomic_load_n(&platform.cpus[i].initialized, __ATOMIC_ACQUIRE))
             {
                 waiting_for_other_cpus = true;
                 break;
@@ -178,7 +183,7 @@ void smp_platform_init(void)
 
     kterm_printf("Arx kernel: cpu %u smp_platform_init initialization complete\n", (unsigned) arch_cpu_id());
 
-    platform.cpus[arch_cpu_id()].initialized = true;
+    __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
 
     cpu_init_stack(platform_init_complete, 0);
 }
@@ -187,8 +192,8 @@ void platform_init_complete(void* arg)
 {
     // Platform initialization complete
 
-    platform.cpus_initialized++;
-    while (platform.cpus_initialized < platform.cpu_count)
+    __atomic_fetch_add(&platform.cpus_initialized, 1, __ATOMIC_ACQ_REL);
+    while (__atomic_load_n(&platform.cpus_initialized, __ATOMIC_ACQUIRE) < platform.cpu_count)
     {
         arch_pause();
     }
@@ -204,7 +209,7 @@ void platform_init_complete(void* arg)
     }
     else
     {
-        while (platform.bsp_kmain_exited == 0)
+        while (__atomic_load_n(&platform.bsp_kmain_exited, __ATOMIC_ACQUIRE) == 0)
         {
             arch_pause();
         }

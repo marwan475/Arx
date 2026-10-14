@@ -196,7 +196,7 @@ void pmm_init(struct boot_info* boot_info)
     buddy_allocator_init(zone);
     kprintf("Arx kernel: buddy allocator initialized\n");
 
-    uint8_t num_cpus                 = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    uint8_t num_cpus                 = platform.cpu_count;
     platform.numa_nodes[0].cpu_count = num_cpus;
     for (uint8_t i = 0; i < num_cpus; i++)
     {
@@ -351,20 +351,20 @@ void* pmm_alloc(size_t size)
         return NULL;
     }
 
-    spinlock_acquire(&zone->lock);
+    spinlock_acquire_preempt(&zone->lock);
 
     uint64_t pfn = buddy_alloc(zone, order);
 
     if (pfn == PMM_INVALID_PFN)
     {
-        spinlock_release(&zone->lock);
+        spinlock_release_preempt(&zone->lock);
         return NULL;
     }
 
     zone->free_pages -= order_size(order);
     zone->used_pages += order_size(order);
 
-    spinlock_release(&zone->lock);
+    spinlock_release_preempt(&zone->lock);
     virt_addr_t hhdm_va = pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
     return (void*) hhdm_va;
 }
@@ -393,7 +393,7 @@ void pmm_free(void* addr)
     phys_addr_t pa      = hhdm_to_pa(hhdm_va, zone->hhdm_present, zone->hhdm_offset);
     uint64_t    pfn     = pa_to_pfn(pa);
 
-    spinlock_acquire(&zone->lock);
+    spinlock_acquire_preempt(&zone->lock);
 
     size_t allocated_order = zone->buddy_metadata[pfn].order;
 
@@ -402,5 +402,5 @@ void pmm_free(void* addr)
     zone->free_pages += order_size(allocated_order);
     zone->used_pages -= order_size(allocated_order);
 
-    spinlock_release(&zone->lock);
+    spinlock_release_preempt(&zone->lock);
 }

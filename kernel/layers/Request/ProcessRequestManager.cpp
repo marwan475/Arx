@@ -17,6 +17,7 @@ namespace
 {
 static void close_process_file_descriptors(process_t* process, VirtualFileSystem* virtualFileSystem)
 {
+    FileDescriptorGuard descriptors(process);
     if (process == nullptr || virtualFileSystem == nullptr)
     {
         return;
@@ -68,31 +69,26 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
         close_process_file_descriptors(currentProcess, LogicCaps->virtualFileSystem);
     }
 
-    if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
-    {
-        if (LogicCaps->scheduler->KillProcess(currentProcess->id, status))
-        {
-            return 0;
-        }
-    }
-
-    currentProcess->exited     = true;
-    currentProcess->exitStatus = status;
-
-    // For kernel/selftest tasks, keep legacy returnable behavior so in-kernel
-    // test harnesses can continue executing.
+    // Kernel test callers return to their harness on the existing context.
     if (!currentTask->isUserTask)
     {
+        currentProcess->exitStatus = status;
+        __atomic_store_n(&currentProcess->exited, true, __ATOMIC_RELEASE);
         return 0;
     }
+
+    if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
+    {
+        (void) LogicCaps->scheduler->KillProcess(currentProcess->id, status);
+    }
+
+    currentProcess->exitStatus = status;
+    __atomic_store_n(&currentProcess->exited, true, __ATOMIC_RELEASE);
 
     // User-task exit should not return to userspace.
     if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
     {
-        const uint8_t cpuId = arch_cpu_id();
-        while (LogicCaps->scheduler->RunNextReadyProcess(cpuId))
-        {
-        }
+        LogicCaps->scheduler->ExitCurrentTask();
     }
 
     for (;;)

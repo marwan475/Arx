@@ -229,30 +229,30 @@ static bool aarch64_get_or_alloc_table(uint64_t* entry, phys_addr_t* table_pa)
     return true;
 }
 
-void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
+bool __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
 {
     if (!aarch64_is_canonical_va(va))
     {
         kprintf("Arx kernel: arch_map_page rejected non-canonical AArch64 VA: 0x%llx\n", (unsigned long long) va);
-        return;
+        return false;
     }
 
     if (!aarch64_is_page_aligned(va) || !aarch64_is_page_aligned(pa) || !aarch64_is_page_aligned((uint64_t) page_table))
     {
         kprintf("Arx kernel: arch_map_page rejected unaligned AArch64 VA/PA/page_table\n");
-        return;
+        return false;
     }
 
     if (page_table == 0)
     {
         kprintf("Arx kernel: arch_map_page rejected null AArch64 page_table\n");
-        return;
+        return false;
     }
 
     if (!aarch64_is_pa_encodable(pa) || !aarch64_is_pa_encodable((uint64_t) page_table))
     {
         kprintf("Arx kernel: arch_map_page rejected non-encodable AArch64 PA/page_table\n");
-        return;
+        return false;
     }
 
     const uint64_t sanitized_flags = (flags & AARCH64_PTE_ALLOWED_MAP_FLAGS) | (1ULL << AARCH64_PTE_BIT_AF);
@@ -268,7 +268,7 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
     {
         kprintf("Arx kernel: arch_map_page failed at L0[%llu]\n", (unsigned long long) l0_index);
-        return;
+        return false;
     }
     uint64_t* l1 = aarch64_table_from_pa(l1_pa);
 
@@ -276,7 +276,7 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
     {
         kprintf("Arx kernel: arch_map_page failed at L1[%llu]\n", (unsigned long long) l1_index);
-        return;
+        return false;
     }
     uint64_t* l2 = aarch64_table_from_pa(l2_pa);
 
@@ -284,7 +284,7 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
     {
         kprintf("Arx kernel: arch_map_page failed at L2[%llu]\n", (unsigned long long) l2_index);
-        return;
+        return false;
     }
     uint64_t* l3 = aarch64_table_from_pa(l3_pa);
 
@@ -296,12 +296,12 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
         if ((old_pte & AARCH64_PTE_TABLE_OR_PAGE) == 0)
         {
             kprintf("Arx kernel: arch_map_page found malformed L3 descriptor at index %llu\n", (unsigned long long) l3_index);
-            return;
+            return false;
         }
 
         if (old_pte == new_pte)
         {
-            return;
+            return true;
         }
 
         l3[l3_index] = 0;
@@ -311,6 +311,7 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
     l3[l3_index] = new_pte;
     aarch64_dsb_ishst();
     aarch64_isb();
+    return true;
 }
 
 void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
@@ -383,35 +384,35 @@ void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_tabl
     aarch64_sync_removed_mapping(va);
 }
 
-void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (size == 0)
     {
-        return;
+        return false;
     }
 
     if (!aarch64_is_page_aligned(va_start) || !aarch64_is_page_aligned(pa_start) || !aarch64_is_page_aligned(size) || !aarch64_is_page_aligned((uint64_t) page_table))
     {
         kprintf("Arx kernel: arch_map_range rejected unaligned AArch64 VA/PA/size/page_table\n");
-        return;
+        return false;
     }
 
     if (page_table == 0)
     {
         kprintf("Arx kernel: arch_map_range rejected null AArch64 page_table\n");
-        return;
+        return false;
     }
 
     if (va_start > UINT64_MAX - size || pa_start > UINT64_MAX - size)
     {
         kprintf("Arx kernel: arch_map_range rejected overflowing AArch64 VA/PA range\n");
-        return;
+        return false;
     }
 
     if (!aarch64_is_canonical_range(va_start, size))
     {
         kprintf("Arx kernel: arch_map_range rejected non-canonical AArch64 VA range starting at 0x%llx\n", (unsigned long long) va_start);
-        return;
+        return false;
     }
 
     const uint64_t    range_end = va_start + size;
@@ -419,12 +420,13 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
     if (!aarch64_is_pa_encodable(pa_start) || !aarch64_is_pa_encodable(last_pa) || !aarch64_is_pa_encodable((uint64_t) page_table))
     {
         kprintf("Arx kernel: arch_map_range rejected non-encodable AArch64 PA/page_table\n");
-        return;
+        return false;
     }
 
     const uint64_t sanitized_flags = (flags & AARCH64_PTE_ALLOWED_MAP_FLAGS) | (1ULL << AARCH64_PTE_BIT_AF);
     const bool     active_pt       = page_table == arch_get_pt();
 
+    bool        success = true;
     bool        replacement_seen = false;
     bool        post_sync_phase  = false;
     bool        writes_pending   = false;
@@ -441,6 +443,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
         if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
         {
             kprintf("Arx kernel: arch_map_range failed at L0[%llu]\n", (unsigned long long) l0_index);
+            success = false;
             goto out;
         }
         uint64_t* l1 = aarch64_table_from_pa(l1_pa);
@@ -454,6 +457,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
             {
                 kprintf("Arx kernel: arch_map_range failed at L1[%llu]\n", (unsigned long long) l1_index);
+                success = false;
                 goto out;
             }
             uint64_t* l2 = aarch64_table_from_pa(l2_pa);
@@ -467,6 +471,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                 if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
                 {
                     kprintf("Arx kernel: arch_map_range failed at L2[%llu]\n", (unsigned long long) l2_index);
+                    success = false;
                     goto out;
                 }
                 uint64_t*      l3          = aarch64_table_from_pa(l3_pa);
@@ -482,6 +487,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                     if ((old_pte & AARCH64_PTE_VALID) != 0 && (old_pte & AARCH64_PTE_TABLE_OR_PAGE) == 0)
                     {
                         kprintf("Arx kernel: arch_map_range found malformed L3 descriptor at index %llu\n", (unsigned long long) (l3_index + entry));
+                        success = false;
                         goto out;
                     }
 
@@ -526,6 +532,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             if (!aarch64_get_or_alloc_table(&l0[l0_index], &l1_pa))
             {
                 kprintf("Arx kernel: arch_map_range failed at L0[%llu] during remap\n", (unsigned long long) l0_index);
+                success = false;
                 goto out;
             }
             uint64_t* l1 = aarch64_table_from_pa(l1_pa);
@@ -539,6 +546,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                 if (!aarch64_get_or_alloc_table(&l1[l1_index], &l2_pa))
                 {
                     kprintf("Arx kernel: arch_map_range failed at L1[%llu] during remap\n", (unsigned long long) l1_index);
+                    success = false;
                     goto out;
                 }
                 uint64_t* l2 = aarch64_table_from_pa(l2_pa);
@@ -552,6 +560,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
                     if (!aarch64_get_or_alloc_table(&l2[l2_index], &l3_pa))
                     {
                         kprintf("Arx kernel: arch_map_range failed at L2[%llu] during remap\n", (unsigned long long) l2_index);
+                        success = false;
                         goto out;
                     }
                     uint64_t*      l3          = aarch64_table_from_pa(l3_pa);
@@ -590,6 +599,7 @@ out:
         aarch64_dsb_ishst();
         aarch64_isb();
     }
+    return success;
 }
 
 void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table)

@@ -42,7 +42,7 @@ extern "C"
 #define ARCH_PAGE_FLAG_SET_EXEC(flags) ((flags) &= ~(1ULL << 63))
 #define ARCH_PAGE_FLAG_SET_USER(flags) ((flags) |= (1ULL << 2))
 #define ARCH_PAGE_FLAG_SET_GLOBAL(flags) ((flags) |= (1ULL << 8))
-#define ARCH_PAGE_FLAG_SET_NOCACHE(flags) ((flags) |= (1ULL << 4))
+#define ARCH_PAGE_FLAG_SET_NOCACHE(flags) ((flags) |= (1ULL << 4) | (1ULL << 3))
 #define ARCH_PAGE_FLAG_SET_WRITETHROUGH(flags) ((flags) |= (1ULL << 3))
 #elif defined(__aarch64__)
 #define AARCH64_PAGE_FLAG_ATTRINDX_MASK (0x7ULL << 2)
@@ -66,7 +66,7 @@ extern "C"
     uint8_t arch_cpu_id(void);
 
     // Page table should be raw physical address
-    void arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
+    bool arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
     void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);
 
     // returns/takes physical address of page table
@@ -74,7 +74,7 @@ extern "C"
     void        arch_set_pt(phys_addr_t pt);
 
     // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears
-    void arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
+    bool arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table);
     void arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table);
 
     // Update page flags

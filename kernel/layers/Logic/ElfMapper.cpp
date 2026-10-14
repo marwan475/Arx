@@ -578,10 +578,9 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             ARCH_PAGE_FLAG_SET_USER(pageFlags);
 
             const phys_addr_t pagePhysicalAddress = (phys_addr_t) hhdm_to_pa((uintptr_t) pageBuffer, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-            virtualMemoryManager->MapPage(pageAddress, pagePhysicalAddress, pageFlags, process->addressSpace);
-
-            if (mappedPageCount >= maxPageCount)
+            if (!virtualMemoryManager->MapPage(pageAddress, pagePhysicalAddress, pageFlags, process->addressSpace))
             {
+                physicalMemoryManager->Free(pageBuffer);
                 goto fail;
             }
 

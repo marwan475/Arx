@@ -7,6 +7,13 @@ extern "C"
 #include <platform.h>
 }
 
+static TaskManager* contextTaskManager;
+
+extern "C" void task_context_switch_complete(void)
+{
+    contextTaskManager->CompleteSwitch();
+}
+
 static uint64_t task_save_and_disable_interrupts()
 {
     uint64_t flags = 0;
@@ -66,6 +73,10 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 {
     memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
     task->allocated       = allocated;
+    task->state           = task_t::READY;
+    task->ownerCpu        = -1;
+    task->dispatchUsers   = 0;
+    task->dying           = false;
     task->isUserTask      = false;
     task->sleepPending    = false;
     task->sleepBlocked    = false;
@@ -81,10 +92,12 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 TaskManager::TaskManager()
 {
     ManagerLock = 0;
+    contextTaskManager = this;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
         RunningTasks[i] = nullptr;
+        SwitchingTasks[i] = nullptr;
     }
 
     for (size_t i = 0; i < MAX_TASKS; i++)
@@ -129,15 +142,17 @@ task_t* TaskManager::AllocateTask()
 
 task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch)
 {
-    void* allocatedStack = kmalloc(CPU_KERNEL_STACK_SIZE);
-    if (allocatedStack == nullptr)
+    void* stackRegion = vmalloc(CPU_KERNEL_STACK_SIZE + PAGE_SIZE);
+    if (stackRegion == nullptr)
         return nullptr;
+    vmm_unmap_page((uintptr_t) stackRegion, vmm_kernel_space());
+    void* allocatedStack = (uint8_t*) stackRegion + PAGE_SIZE;
     LockManager();
     task_t* task = AllocateTaskUnlocked();
     if (task == nullptr)
     {
         UnlockManager();
-        kfree(allocatedStack);
+        vfree(stackRegion);
         return nullptr;
     }
     task->stack      = allocatedStack;
@@ -166,7 +181,7 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
     return CreateTask(user_task_bootstrap_entry, nullptr, &launch);
 }
 
-bool TaskManager::FreeTask(task_t* task)
+bool TaskManager::FreeTask(task_t* task, void** retiredStack)
 {
     void* stackToFree = nullptr;
 
@@ -184,7 +199,7 @@ bool TaskManager::FreeTask(task_t* task)
         return false;
     }
 
-    if (!task->allocated || __atomic_load_n(&task->sleepPending, __ATOMIC_ACQUIRE))
+    if (!task->allocated || task->dispatchUsers != 0 || task->state == task_t::RUNNING || task->state == task_t::SWITCHING || __atomic_load_n(&task->sleepPending, __ATOMIC_ACQUIRE))
     {
         UnlockManager();
         return false;
@@ -208,15 +223,21 @@ bool TaskManager::FreeTask(task_t* task)
 
     UnlockManager();
 
-    if (stackToFree != nullptr)
-    {
-        kfree(stackToFree);
-    }
+    if (retiredStack != nullptr)
+        *retiredStack = stackToFree;
+    else
+        ReleaseTaskStack(stackToFree);
 
     return true;
 }
 
-bool TaskManager::ExecuteTask(task_t* task)
+void TaskManager::ReleaseTaskStack(void* stack)
+{
+    if (stack != nullptr)
+        vfree((uint8_t*) stack - PAGE_SIZE);
+}
+
+bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
 {
     if (task == nullptr)
     {
@@ -228,29 +249,41 @@ bool TaskManager::ExecuteTask(task_t* task)
         return false;
     }
 
-    if (!task->allocated || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
-    {
-        return false;
-    }
-
     uint8_t cpuId = arch_cpu_id();
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
         return false;
     }
 
+    LockManager();
+    if (releaseDispatchClaim && task->dispatchUsers != 0)
+        --task->dispatchUsers;
+    if (!task->allocated || (task->dying && !task->sleepPending) || task->state == task_t::SWITCHING
+        || (task->ownerCpu >= 0 && task->ownerCpu != cpuId) || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
+    {
+        UnlockManager();
+        return false;
+    }
     task_t* current = RunningTasks[cpuId];
     if (current == nullptr)
     {
+        UnlockManager();
         return false;
     }
 
     if (current == task)
     {
+        UnlockManager();
         return true;
     }
 
     const uint64_t interruptState = task_save_and_disable_interrupts();
+    current->state = task_t::SWITCHING;
+    SwitchingTasks[cpuId] = current;
+    task->state = task_t::RUNNING;
+    task->ownerCpu = cpuId;
+    __atomic_store_n(&RunningTasks[cpuId], task, __ATOMIC_RELEASE);
+    UnlockManager();
     cpu_info_t*    cpu_info       = &platform.cpus[cpuId];
     current->preemptionDepth      = cpu_info->preemption_depth;
     cpu_info->preemption_depth    = task->preemptionDepth;
@@ -267,7 +300,6 @@ bool TaskManager::ExecuteTask(task_t* task)
         }
     }
 
-    RunningTasks[cpuId] = task;
     arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
 
     // We only reach here after another switch restores this task.
@@ -284,9 +316,21 @@ bool TaskManager::ExecuteTask(task_t* task)
         }
     }
 
-    RunningTasks[cpuId] = current;
     task_restore_interrupts(interruptState);
     return true;
+}
+
+void TaskManager::CompleteSwitch()
+{
+    // Called on the incoming stack after the outgoing context is fully saved,
+    // before interrupts are restored. Only now is the old stack quiescent.
+    LockManager();
+    const uint8_t cpuId = arch_cpu_id();
+    task_t* outgoing = SwitchingTasks[cpuId];
+    if (outgoing != nullptr)
+        outgoing->state = outgoing->dying ? task_t::DYING : task_t::SUSPENDED;
+    SwitchingTasks[cpuId] = nullptr;
+    UnlockManager();
 }
 
 bool TaskManager::MarkSleeping(task_t* task)
@@ -300,6 +344,37 @@ bool TaskManager::MarkSleeping(task_t* task)
     }
     UnlockManager();
     return result;
+}
+
+bool TaskManager::RetainForDispatch(task_t* task)
+{
+    LockManager();
+    const bool valid = task != nullptr && task >= Tasks && task < Tasks + MAX_TASKS && task->allocated
+        && (!task->dying || task->sleepPending);
+    if (valid)
+        ++task->dispatchUsers;
+    UnlockManager();
+    return valid;
+}
+
+void TaskManager::ReleaseDispatchClaim(task_t* task)
+{
+    LockManager();
+    if (task->dispatchUsers != 0)
+        --task->dispatchUsers;
+    UnlockManager();
+}
+
+void TaskManager::MarkDying(task_t* task)
+{
+    LockManager();
+    if (task != nullptr && task->allocated)
+    {
+        task->dying = true;
+        if (task->state != task_t::RUNNING && task->state != task_t::SWITCHING)
+            task->state = task_t::DYING;
+    }
+    UnlockManager();
 }
 
 void TaskManager::FinishSleeping(task_t* task)
@@ -317,7 +392,7 @@ task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
         return nullptr;
     }
 
-    return RunningTasks[cpuId];
+    return __atomic_load_n(&RunningTasks[cpuId], __ATOMIC_ACQUIRE);
 }
 
 task_t* TaskManager::GetCurrentTask() const
@@ -327,8 +402,10 @@ task_t* TaskManager::GetCurrentTask() const
 
 bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
 {
+    LockManager();
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
+        UnlockManager();
         return false;
     }
 
@@ -336,16 +413,27 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
     {
         if (task < &Tasks[0] || task >= &Tasks[MAX_TASKS])
         {
+            UnlockManager();
             return false;
         }
 
-        if (!task->allocated)
+        if (!task->allocated || task->state == task_t::SWITCHING || (task->ownerCpu >= 0 && task->ownerCpu != cpuId))
         {
+            UnlockManager();
             return false;
         }
     }
 
-    RunningTasks[cpuId] = task;
+    task_t* previous = RunningTasks[cpuId];
+    if (previous != nullptr && previous != task)
+        previous->state = task_t::SUSPENDED;
+    if (task != nullptr)
+    {
+        task->state = task_t::RUNNING;
+        task->ownerCpu = cpuId;
+    }
+    __atomic_store_n(&RunningTasks[cpuId], task, __ATOMIC_RELEASE);
+    UnlockManager();
     return true;
 }
 

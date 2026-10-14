@@ -139,6 +139,18 @@ static void vmm_test(void)
     ARCH_PAGE_FLAG_SET_READ(map_flags);
     ARCH_PAGE_FLAG_SET_WRITE(map_flags);
 
+#if defined(__x86_64__)
+    const virt_addr_t invalid_addresses[] = {0x0000800000000000ULL, 0xffff000000000000ULL};
+    for (size_t i = 0; i < sizeof(invalid_addresses) / sizeof(invalid_addresses[0]); ++i)
+    {
+        if (vmm_map_page(invalid_addresses[i], page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space)
+            || vmm_virt_to_phys(invalid_addresses[i], platform.cpus[arch_cpu_id()].address_space) != 0)
+            vmm_test_log_fail("accepted a noncanonical address", &failures);
+        else
+            passes++;
+    }
+#endif
+
     vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);
     if (vmm_virt_to_phys(test_va, platform.cpus[arch_cpu_id()].address_space) != page_a_pa)
     {

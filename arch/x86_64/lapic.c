@@ -21,11 +21,18 @@ void lapic_init(void)
     }
 
     uint64_t apic_base_msr = x86_read_msr(IA32_APIC_BASE_MSR);
+    if (apic_base_msr & (1ULL << 10))
+    {
+        kprintf("Arx kernel: x2APIC mode is unsupported\n");
+        panic();
+    }
     apic_base_msr |= IA32_APIC_BASE_ENABLE;
     x86_write_msr(IA32_APIC_BASE_MSR, apic_base_msr);
 
     phys_addr_t lapic_pa = align_down(cpu_info->arch_info.acpi_lapic_base_addr, PAGE_SIZE);
-    virt_addr_t lapic_va = vmm_map_direct_mmio_page(lapic_pa, cpu_info->address_space, true);
+    virt_addr_t lapic_va = vmm_map_direct_mmio_page(lapic_pa, cpu_info->address_space);
+    if (lapic_va == 0)
+        panic();
 
     volatile uint8_t* lapic_base = (volatile uint8_t*) (uintptr_t) lapic_va;
 

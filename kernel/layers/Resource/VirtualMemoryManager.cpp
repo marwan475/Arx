@@ -7,9 +7,9 @@ extern "C"
 #include <platform.h>
 }
 
-void VirtualMemoryManager::MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
+bool VirtualMemoryManager::MapPage(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
 {
-    vmm_map_page(va, pa, flags, space);
+    return vmm_map_page(va, pa, flags, space);
 }
 
 void VirtualMemoryManager::UnmapPage(virt_addr_t va, virt_addr_space_t* space)
@@ -17,9 +17,9 @@ void VirtualMemoryManager::UnmapPage(virt_addr_t va, virt_addr_space_t* space)
     vmm_unmap_page(va, space);
 }
 
-void VirtualMemoryManager::MapRange(virt_addr_t vaStart, phys_addr_t paStart, uint64_t size, uint64_t flags, virt_addr_space_t* space)
+bool VirtualMemoryManager::MapRange(virt_addr_t vaStart, phys_addr_t paStart, uint64_t size, uint64_t flags, virt_addr_space_t* space)
 {
-    vmm_map_range(vaStart, paStart, size, flags, space);
+    return vmm_map_range(vaStart, paStart, size, flags, space);
 }
 
 void VirtualMemoryManager::UnmapRange(virt_addr_t vaStart, uint64_t size, virt_addr_space_t* space)
@@ -121,8 +121,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     memset(page, 0, PAGE_SIZE);
     const phys_addr_t physicalAddress = hhdm_to_pa(reinterpret_cast<uintptr_t>(page), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
     // Intermediate tables remain writable/user-accessible; protection is leaf-only.
-    MapPage(address, physicalAddress, anonymous_page_flags(3), space);
-    if (VirtToPhys(address, space) != physicalAddress)
+    if (!MapPage(address, physicalAddress, anonymous_page_flags(3), space))
     {
         pmm_free(page);
         FreeRegion(space, address);

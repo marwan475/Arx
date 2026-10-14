@@ -19,9 +19,9 @@ static bool validate_user_memory(const user_memory_access_t* access, uint64_t ad
         return false;
     for (uint64_t page = align_down(address, PAGE_SIZE); length != 0 && page < address + length; page += PAGE_SIZE)
     {
-        spinlock_acquire(&access->space->lock);
+        spinlock_acquire_preempt(&access->space->lock);
         bool accessible = arch_user_page_accessible(page, access->space->pt, write);
-        spinlock_release(&access->space->lock);
+        spinlock_release_preempt(&access->space->lock);
         if (!accessible)
             return false;
     }
@@ -136,7 +136,7 @@ bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinati
             return false;
         }
 
-        memcpy(destination + pageOffset, sourceBytes + offset, (size_t) chunkSize);
+        memcpy(destination, sourceBytes + offset, (size_t) chunkSize);
         offset += chunkSize;
     }
 
@@ -149,12 +149,15 @@ bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinati
 // https://en.cppreference.com/w/c/variadic/va_list.html
 int kprintf(const char* format, ...)
 {
-    spinlock_acquire(&kprintf_lock);
+    const bool emergency = platform.cpus != NULL && platform.cpus[arch_cpu_id()].emergency_logging;
+    if (!emergency)
+        spinlock_acquire_preempt(&kprintf_lock);
     va_list args;
     va_start(args, format);
     const int written = vprintf_(format, args);
     va_end(args);
-    spinlock_release(&kprintf_lock);
+    if (!emergency)
+        spinlock_release_preempt(&kprintf_lock);
     return written;
 }
 
@@ -171,7 +174,7 @@ void kterm_write(const char* msg)
         return;
     }
 
-    spinlock_acquire(&platform.terminal_lock);
+    spinlock_acquire_preempt(&platform.terminal_lock);
 
     if (platform.terminal_context != NULL)
     {
@@ -194,7 +197,7 @@ void kterm_write(const char* msg)
         }
     }
 
-    spinlock_release(&platform.terminal_lock);
+    spinlock_release_preempt(&platform.terminal_lock);
 }
 
 int kterm_printf(const char* format, ...)
@@ -353,158 +356,77 @@ uintptr_t hhdm_to_pa(uintptr_t hhdm_addr, bool hhdm_present, uint64_t hhdm_offse
     }
 }
 
-static void free_virtual_backing(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
+static void release_virtual_region(virt_addr_space_t* space, virt_addr_t base, size_t mapped_size, virt_backing_block_t* blocks)
 {
-    for (size_t offset = 0; offset < mapped_size;)
+    if (mapped_size != 0)
+        vmm_unmap_range(base, mapped_size, space);
+    while (blocks != NULL)
     {
-        const virt_addr_t va   = base + offset;
-        const phys_addr_t pa   = vmm_virt_to_phys(va, address_space);
-        size_t            step = PAGE_SIZE;
-
-        if (pa != 0)
-        {
-            const uint64_t pfn = pa >> PAGE_SHIFT;
-            if (pfn < zone->max_pfn)
-            {
-                page_t* page = &zone->buddy_metadata[pfn];
-                if (page->flags == PMM_PAGE_USED && page->order <= MAX_ORDER)
-                {
-                    const uint64_t block_pages = (uint64_t) 1ULL << page->order;
-                    if ((pfn & (block_pages - 1)) == 0)
-                    {
-                        pmm_free((void*) (uintptr_t) pa_to_hhdm(pa, zone->hhdm_present, zone->hhdm_offset));
-                        step = (size_t) block_pages * PAGE_SIZE;
-                    }
-                }
-            }
-        }
-
-        if (step == 0)
-        {
-            step = PAGE_SIZE;
-        }
-
-        offset += step;
+        virt_backing_block_t* next = blocks->next;
+        pmm_free(blocks->pointer);
+        kfree(blocks);
+        blocks = next;
     }
-}
-
-static void rollback_vmalloc(zone_t* zone, virt_addr_space_t* address_space, virt_addr_t base, size_t mapped_size)
-{
-    free_virtual_backing(zone, address_space, base, mapped_size);
-
-    if (mapped_size > 0)
-    {
-        vmm_unmap_range(base, mapped_size, address_space);
-    }
-
-    vmm_free_region(address_space, base);
+    vmm_free_region(space, base);
 }
 
 void* vmalloc(size_t size)
 {
-    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
-    if (cpu->numa_node == NULL || cpu->address_space == NULL)
-    {
+    if (size == 0 || size > SIZE_MAX - (PAGE_SIZE - 1))
         return NULL;
-    }
-
-    zone_t*            zone          = &cpu->numa_node->zone;
-    virt_addr_space_t* address_space = cpu->address_space;
-
-    if (zone == NULL || address_space == NULL)
-    {
-        return NULL;
-    }
-
-    if (size == 0)
-    {
-        return NULL;
-    }
-
-    size_t aligned_size = align_up(size, PAGE_SIZE);
-    if (aligned_size == 0)
-    {
-        return NULL;
-    }
-
-    virt_addr_t base = vmm_reserve_region(address_space, aligned_size, VIRT_ADDR_KERNEL);
+    virt_addr_space_t* space = vmm_kernel_space();
+    const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+    const size_t aligned_size = align_up(size, PAGE_SIZE);
+    spinlock_acquire_preempt(&space->operation_lock);
+    virt_addr_t base = vmm_reserve_region(space, aligned_size, VIRT_ADDR_KERNEL);
     if (base == 0)
     {
+        spinlock_release_preempt(&space->operation_lock);
         return NULL;
     }
-
-    const uint64_t page_flags = vmm_kernel_page_flags(false, true);
-
-    size_t mapped_size      = 0;
-    size_t max_chunk_size   = ((size_t) 1ULL << MAX_ORDER) * PAGE_SIZE;
-    size_t max_order_chunks = aligned_size / max_chunk_size;
-    size_t remainder_size   = aligned_size % max_chunk_size;
-
-    for (size_t i = 0; i < max_order_chunks; i++)
+    virt_backing_block_t* blocks = NULL;
+    size_t mapped_size = 0;
+    while (mapped_size < aligned_size)
     {
-        void* chunk_hhdm = pmm_alloc(max_chunk_size);
-        if (chunk_hhdm == NULL)
+        const size_t max_chunk = ((size_t) 1 << MAX_ORDER) * PAGE_SIZE;
+        const size_t remaining = aligned_size - mapped_size;
+        const size_t chunk = remaining < max_chunk ? remaining : max_chunk;
+        virt_backing_block_t* block = kmalloc(sizeof(*block));
+        if (block == NULL)
+            goto fail;
+        block->pointer = pmm_alloc(chunk);
+        if (block->pointer == NULL)
         {
-            rollback_vmalloc(zone, address_space, base, mapped_size);
-            return NULL;
+            kfree(block);
+            goto fail;
         }
-
-        phys_addr_t pa = hhdm_to_pa((uintptr_t) chunk_hhdm, zone->hhdm_present, zone->hhdm_offset);
-        vmm_map_range(base + mapped_size, pa, max_chunk_size, page_flags, address_space);
-        mapped_size += max_chunk_size;
+        block->next = blocks;
+        blocks = block;
+        const phys_addr_t pa = hhdm_to_pa((uintptr_t) block->pointer, zone->hhdm_present, zone->hhdm_offset);
+        const bool mapped = vmm_map_range(base + mapped_size, pa, chunk, vmm_kernel_page_flags(false, true), space);
+        mapped_size += chunk; // Include any partially installed range in rollback.
+        if (!mapped)
+            goto fail;
     }
-
-    if (remainder_size > 0)
-    {
-        void* chunk_hhdm = pmm_alloc(remainder_size);
-        if (chunk_hhdm == NULL)
-        {
-            rollback_vmalloc(zone, address_space, base, mapped_size);
-            return NULL;
-        }
-
-        phys_addr_t pa = hhdm_to_pa((uintptr_t) chunk_hhdm, zone->hhdm_present, zone->hhdm_offset);
-        vmm_map_range(base + mapped_size, pa, remainder_size, page_flags, address_space);
-        mapped_size += remainder_size;
-    }
-
+    vmm_find_region(space, base)->blocks = blocks;
+    spinlock_release_preempt(&space->operation_lock);
     return (void*) (uintptr_t) base;
+fail:
+    release_virtual_region(space, base, mapped_size, blocks);
+    spinlock_release_preempt(&space->operation_lock);
+    return NULL;
 }
 
-void vfree(void* ptr)
+void vfree(void* pointer)
 {
-    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
-    if (cpu->numa_node == NULL || cpu->address_space == NULL)
-    {
+    if (pointer == NULL)
         return;
-    }
-
-    zone_t*            zone          = &cpu->numa_node->zone;
-    virt_addr_space_t* address_space = cpu->address_space;
-
-    if (zone == NULL || address_space == NULL)
-    {
-        return;
-    }
-
-    if (ptr == NULL)
-    {
-        return;
-    }
-
-    virt_region_t* region = vmm_find_region(address_space, (virt_addr_t) (uintptr_t) ptr);
-    if (region == NULL)
-    {
-        return;
-    }
-
-    const virt_addr_t region_start = region->start;
-    const size_t      region_size  = region->size;
-
-    free_virtual_backing(zone, address_space, region_start, region_size);
-
-    vmm_unmap_range(region_start, region_size, address_space);
-    vmm_free_region(address_space, region_start);
+    virt_addr_space_t* space = vmm_kernel_space();
+    spinlock_acquire_preempt(&space->operation_lock);
+    virt_region_t* region = vmm_find_region(space, (uintptr_t) pointer);
+    if (region != NULL && region->start == (uintptr_t) pointer && region->blocks != NULL)
+        release_virtual_region(space, region->start, region->size, region->blocks);
+    spinlock_release_preempt(&space->operation_lock);
 }
 
 void* kmalloc(size_t size)
@@ -522,9 +444,9 @@ void* kmalloc(size_t size)
 
     kernel_heap_t* heap = &cpu->numa_node->heap;
 
-    spinlock_acquire(&heap->lock);
+    spinlock_acquire_preempt(&heap->lock);
     void* ptr = heap_alloc(heap, size);
-    spinlock_release(&heap->lock);
+    spinlock_release_preempt(&heap->lock);
 
     return ptr;
 }
@@ -556,7 +478,7 @@ void kfree(void* ptr)
 
     kernel_heap_t* heap = &cpu->numa_node->heap;
 
-    spinlock_acquire(&heap->lock);
+    spinlock_acquire_preempt(&heap->lock);
     heap_free(heap, ptr);
-    spinlock_release(&heap->lock);
+    spinlock_release_preempt(&heap->lock);
 }

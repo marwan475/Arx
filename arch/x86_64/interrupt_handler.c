@@ -106,7 +106,7 @@ static void ipi_broadcast_exception(void)
         }
 
         cpu_info_t* target_cpu_info = &platform.cpus[cpu_id];
-        if (!target_cpu_info->initialized || !target_cpu_info->arch_info.acpi_has_lapic)
+        if (!__atomic_load_n(&target_cpu_info->initialized, __ATOMIC_ACQUIRE) || !target_cpu_info->arch_info.acpi_has_lapic)
         {
             continue;
         }
@@ -144,6 +144,7 @@ static void handle_ipi(registers_t* reg)
         memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
         spinlock_release(&cpu_info->ipi_lock);
 
+        cpu_info->emergency_logging = true;
         blue_screen();
         panic();
     }
@@ -155,6 +156,11 @@ static void handle_ipi(registers_t* reg)
 
 void ISRHANDLER(registers_t* reg)
 {
+    // Spurious delivery has no in-service bit and must not receive an EOI.
+    if (reg->interrupt_number == 0xFF)
+    {
+        return;
+    }
     if (reg->interrupt_number >= 32)
     {
         lapic_eoi();
@@ -180,6 +186,7 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number < 32)
     {
+        platform.cpus[arch_cpu_id()].emergency_logging = true;
         ipi_broadcast_exception();
         blue_screen();
     }

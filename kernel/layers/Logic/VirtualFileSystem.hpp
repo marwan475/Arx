@@ -184,6 +184,8 @@ public:
     file_t*   Open(const vfs_path_t& start, const char* path, uint64_t flags);
     int64_t   Read(file_t* file, void* buffer, uint64_t count);
     int64_t   Write(file_t* file, const void* buffer, uint64_t count);
+    int64_t   ReadAt(file_t* file, void* buffer, uint64_t count, uint64_t offset);
+    int64_t   WriteAt(file_t* file, const void* buffer, uint64_t count, uint64_t offset);
     int64_t   Seek(file_t* file, int64_t offset, int whence);
     int64_t   ReadDirectory(file_t* file, directory_entry_t* entry);
     int64_t   Ioctl(file_t* file, uint64_t request, uint64_t argument);
@@ -192,6 +194,7 @@ public:
     int64_t   Close(file_t* file);
 
 private:
+    int64_t   Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset);
     bool      BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity) const;
     mount_t*  FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
     dentry_t* FindOverlayDentry(const dentry_t* parent, const char* name) const;

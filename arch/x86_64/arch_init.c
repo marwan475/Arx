@@ -9,6 +9,10 @@
 
 static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
 
+// Reserved independently of every task and boot stack, available even when
+// allocation or the current stack is damaged.
+static uint8_t double_fault_stacks[BOOT_SMP_MAX_CPUS][4 * PAGE_SIZE] __attribute__((aligned(16)));
+
 static inline void outb(uint16_t port, uint8_t value)
 {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -104,7 +108,7 @@ static void gdt_init()
     }
 
     x86_set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
-    set_tss_ist1(&cpu_info->arch_info.tss, kernel_stack_top);
+    set_tss_ist1(&cpu_info->arch_info.tss, (uintptr_t) &double_fault_stacks[arch_cpu_id()][4 * PAGE_SIZE]);
     cpu_info->arch_info.tss.io_map_base = (uint16_t) sizeof(tss_t);
 
     build_tss_descriptor(&cpu_info->arch_info.tss, &cpu_info->arch_info.tss_descriptor);
@@ -152,7 +156,7 @@ static void set_idt_entry(int interrupt, void (*base)(), uint16_t segment, uint8
     uintptr_t base_addr        = (uintptr_t) base;
     idt[interrupt].offset_low  = (uint16_t) (base_addr & 0xFFFF);
     idt[interrupt].selector    = segment;
-    idt[interrupt].ist         = 0;
+    idt[interrupt].ist         = interrupt == 8 ? 1 : 0;
     idt[interrupt].type_attr   = flags;
     idt[interrupt].offset_mid  = (uint16_t) ((base_addr >> 16) & 0xFFFF);
     idt[interrupt].offset_high = (uint32_t) ((base_addr >> 32) & 0xFFFFFFFF);
@@ -259,6 +263,13 @@ static bool init_arch_acpi()
 
 bool arch_init(void)
 {
+    // Cache-type bits select architectural PAT index 3 (UC). Reject an
+    // incompatible boot PAT rather than reinterpret live boot mappings.
+    if (((x86_read_msr(0x277) >> 24) & 0xFF) != 0)
+    {
+        kprintf("Arx kernel: boot PAT index 3 must be UC\n");
+        return false;
+    }
     if ((uint64_t) arch_cpu_id() == platform.bsp_id)
     {
         if (!init_arch_acpi())

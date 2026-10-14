@@ -54,6 +54,12 @@ void InterruptRequestManager::HandleScheduleRequest()
     }
 
     process_t* currentProcess = processManager->GetCurrentProcess();
+    if (currentProcess != nullptr && currentProcess->exited && resourceLayerCaps->taskManager != nullptr)
+    {
+        task_t* currentTask = resourceLayerCaps->taskManager->GetCurrentTask();
+        if (currentTask != nullptr && currentTask->isUserTask)
+            scheduler->ExitCurrentTask();
+    }
     if (currentProcess != nullptr)
     {
         (void) scheduler->EnqueueProcess(cpuId, currentProcess->id);

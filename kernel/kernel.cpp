@@ -40,7 +40,7 @@ extern "C" void kmain(void)
 
     BootstrapPostInitTasks(dispatcher);
 
-    platform.bsp_kmain_exited = 1;
+    __atomic_store_n(&platform.bsp_kmain_exited, 1, __ATOMIC_RELEASE);
 
     if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
     {

@@ -5,6 +5,8 @@
 #include <platform.h>
 #include <uacpi/acpi.h>
 
+static spinlock_t ioapic_lock;
+
 static volatile uint8_t* ioapic_get_base(void)
 {
     cpu_info_t* cpu_info = &platform.cpus[arch_cpu_id()];
@@ -58,6 +60,7 @@ static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
         return;
     }
 
+    spinlock_acquire_preempt(&ioapic_lock);
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
     uint32_t ioapic_ver                              = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
     uint32_t max_redir                               = (ioapic_ver >> 16) & 0xFF;
@@ -84,8 +87,9 @@ static void ioapic_set_vector_mask(uint8_t vector, uint8_t masked)
 
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = low_index;
         REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN)    = low;
-        return;
+        break;
     }
+    spinlock_release_preempt(&ioapic_lock);
 }
 
 void ioapic_mask_vector(uint8_t vector)
@@ -118,18 +122,20 @@ uint32_t ioapic_register_device(uint32_t gsi)
         return 0;
     }
 
+    spinlock_acquire_preempt(&ioapic_lock);
     uint32_t vector = platform.vector_base;
     if (vector >= 0xFF)
     {
+        spinlock_release_preempt(&ioapic_lock);
         return 0;
     }
 
     uint16_t flags        = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
-    uint8_t  bsp_lapic_id = platform.cpus[0].arch_info.acpi_lapic_id;
+    uint8_t  bsp_lapic_id = platform.cpus[platform.bsp_id].arch_info.acpi_lapic_id;
 
     route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 0);
     platform.vector_base++;
-
+    spinlock_release_preempt(&ioapic_lock);
     return vector;
 }
 
@@ -184,10 +190,13 @@ void ioapic_init(void)
     }
 
     phys_addr_t ioapic_pa = align_down(platform.arch_info.acpi_ioapic_base_addr, PAGE_SIZE);
-    virt_addr_t ioapic_va = vmm_map_direct_mmio_page(ioapic_pa, cpu_info->address_space, true);
+    virt_addr_t ioapic_va = vmm_map_direct_mmio_page(ioapic_pa, cpu_info->address_space);
+    if (ioapic_va == 0)
+        panic();
 
     volatile uint8_t* ioapic_base = (volatile uint8_t*) (uintptr_t) ioapic_va;
 
+    spinlock_acquire_preempt(&ioapic_lock);
     REG(uint32_t, ioapic_base + IOAPIC_REG_IOREGSEL) = IOAPIC_REG_VER;
     uint32_t ioapic_ver                              = REG(uint32_t, ioapic_base + IOAPIC_REG_IOWIN);
     uint32_t max_redir                               = (ioapic_ver >> 16) & 0xFF;
@@ -203,7 +212,7 @@ void ioapic_init(void)
     platform.vector_base                  = VECTOR_DEVICE_BASE;
 
     uint32_t ioapic_gsi_base = platform.arch_info.acpi_ioapic_gsi_base;
-    uint8_t  bsp_lapic_id    = platform.cpus[0].arch_info.acpi_lapic_id;
+    uint8_t  bsp_lapic_id    = platform.cpus[platform.bsp_id].arch_info.acpi_lapic_id;
 
     // mask all entries
     for (uint32_t i = 0; i <= max_redir; i++)
@@ -221,6 +230,7 @@ void ioapic_init(void)
     route_legacy_irqs(ioapic_base, max_redir, ioapic_gsi_base, bsp_lapic_id);
 
     platform.arch_info.ioapic_initialized = 1;
+    spinlock_release_preempt(&ioapic_lock);
 
     kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) platform.arch_info.acpi_ioapic_id, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr, (unsigned) platform.arch_info.acpi_ioapic_gsi_base, (unsigned) max_redir);
 }

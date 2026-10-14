@@ -3,6 +3,7 @@
 #include <device/device.h>
 #include <klib/klib.h>
 #include <platform.h>
+#include <memory/vmm.h>
 #include <uacpi/kernel_api.h>
 
 #define PCI_CONFIG_SPACE_FUNCTION_SIZE 4096
@@ -109,7 +110,7 @@ static void pci_unmap_regions(void)
     {
         if (platform.arch_info.pci_regions[i].mapped_base != NULL && platform.arch_info.pci_regions[i].mapped_size != 0)
         {
-            uacpi_kernel_unmap(platform.arch_info.pci_regions[i].mapped_base, platform.arch_info.pci_regions[i].mapped_size);
+            // Direct-map UC aliases remain reserved for the device lifetime.
             platform.arch_info.pci_regions[i].mapped_base = NULL;
             platform.arch_info.pci_regions[i].mapped_size = 0;
         }
@@ -133,7 +134,19 @@ static bool pci_map_regions(void)
         bus_count = (uint64_t) (platform.arch_info.pci_regions[i].end_bus - platform.arch_info.pci_regions[i].start_bus) + 1;
         map_size  = bus_count << 20;
 
-        mapped = uacpi_kernel_map((uacpi_phys_addr) platform.arch_info.pci_regions[i].base_address, map_size);
+        const uint64_t bus_offset = (uint64_t) platform.arch_info.pci_regions[i].start_bus << 20;
+        const uint64_t base = platform.arch_info.pci_regions[i].base_address;
+        if (base > UINT64_MAX - bus_offset || base + bus_offset > UINT64_MAX - map_size || ((base + bus_offset) & (PAGE_SIZE - 1)) != 0)
+            return false;
+        mapped = NULL;
+        for (uint64_t offset = 0; offset < map_size; offset += PAGE_SIZE)
+        {
+            const virt_addr_t va = vmm_map_direct_mmio_page(base + bus_offset + offset, vmm_kernel_space());
+            if (va == 0)
+                return false;
+            if (offset == 0)
+                mapped = (void*) (uintptr_t) va;
+        }
         if (mapped == NULL)
         {
             kprintf("PCI: failed to map ECAM region %u\n", (unsigned) i);

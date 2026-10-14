@@ -108,6 +108,13 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     }
 
     g_task_test_ctx.manager = manager;
+    if (manager->FreeTask(bspTask))
+    {
+        fails++;
+        selftest_record_failure_detail("FreeTask reclaimed the running task");
+        goto cleanup;
+    }
+    passes++;
     g_task_test_ctx.taskA   = nullptr;
     g_task_test_ctx.taskB   = nullptr;
     g_task_test_ctx.bspTask = bspTask;

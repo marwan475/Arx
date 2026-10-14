@@ -113,7 +113,7 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
         return false;
     cpu_info_t* cpu  = &platform.cpus[arch_cpu_id()];
     phys_addr_t page = align_down(address, PAGE_SIZE);
-    virt_addr_t base = vmm_map_direct_mmio_page(page, cpu->address_space, false);
+    virt_addr_t base = vmm_map_direct_mmio_page(page, cpu->address_space);
     if (vmm_virt_to_phys(base, cpu->address_space) != page)
         return false;
     volatile uint8_t* registers    = (volatile uint8_t*) (uintptr_t) (base + (address - page));

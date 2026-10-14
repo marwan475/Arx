@@ -48,6 +48,8 @@ typedef struct ipi_request_data
 typedef struct cpu_info
 {
     uint8_t            id;
+    uint32_t           hardware_id;
+    bool               emergency_logging;
     bool               initialized;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;

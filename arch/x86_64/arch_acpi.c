@@ -65,7 +65,6 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
     struct acpi_entry_hdr* entry;
     uacpi_u8*              table_end;
     size_t                 lapic_count;
-    size_t                 lapic_stored_count;
     uint64_t               lapic_base_addr;
     uacpi_status           status;
 
@@ -92,7 +91,6 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
     entry              = madt->entries;
     table_end          = (uacpi_u8*) madt + madt->hdr.length;
     lapic_count        = 0;
-    lapic_stored_count = 0;
 
     uacpi_u8*    cursor = (uacpi_u8*) entry;
     uacpi_status walk_status;
@@ -109,14 +107,15 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 
             lapic = (struct acpi_madt_lapic*) entry;
 
-            if (lapic_stored_count < BOOT_SMP_MAX_CPUS)
+            for (size_t logical = 0; logical < platform.cpu_count; ++logical)
             {
-                platform.cpus[lapic_stored_count].arch_info.acpi_has_lapic       = 1;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
-                platform.cpus[lapic_stored_count].arch_info.acpi_processor_uid   = lapic->uid;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_id        = lapic->id;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_flags     = lapic->flags;
-                lapic_stored_count++;
+                if (platform.cpus[logical].hardware_id != lapic->id)
+                    continue;
+                platform.cpus[logical].arch_info.acpi_has_lapic       = 1;
+                platform.cpus[logical].arch_info.acpi_lapic_base_addr = lapic_base_addr;
+                platform.cpus[logical].arch_info.acpi_processor_uid   = lapic->uid;
+                platform.cpus[logical].arch_info.acpi_lapic_id        = lapic->id;
+                platform.cpus[logical].arch_info.acpi_lapic_flags     = lapic->flags;
             }
 
             lapic_count++;

@@ -7,6 +7,7 @@ global arch_init_context
 global arch_task_entry_trampoline
 global arch_save_switch_and_execute_context
 extern task_exit
+extern task_context_switch_complete
 
 ; struct arch_task_context layout (x86_64):
 ; 0: rbx 8: rbp 16: r12 24: r13 32: r14 40: r15 48: rip 56: rsp
@@ -74,6 +75,14 @@ arch_save_switch_and_execute_context:
     lea rax, [rsp + 8]
     mov [rdi + CTX_RSP], rax
 
+    ; The old stack is no longer in use. Publish quiescence on the incoming
+    ; stack before restoring registers or enabling interrupts.
+    mov rsp, [rsi + CTX_RSP]
+    push rsi
+    sub rsp, 8
+    call task_context_switch_complete
+    add rsp, 8
+    pop rsi
     fxrstor64 [rsi + CTX_FX_STATE]
 
     mov rbx, [rsi + CTX_RBX]

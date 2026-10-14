@@ -22,9 +22,11 @@ public:
     bool     ScheduleProcess(uint64_t processId);
     bool     EnqueueProcess(uint8_t cpuId, uint64_t processId);
     bool     RunNextReadyProcess(uint8_t cpuId);
-    bool     KillProcess(uint64_t processId, int32_t exitStatus);
+    bool     KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false);
     uint64_t SleepUntil(uint64_t monotonicDeadline);
     void     WakeSleepingTasks(uint8_t cpuId);
+    [[noreturn]] void ExitCurrentTask();
+    void     ReapExitedProcesses();
 
 private:
     void        InitializeBspProcessAndTask();

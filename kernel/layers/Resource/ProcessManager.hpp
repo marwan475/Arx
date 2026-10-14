@@ -57,6 +57,8 @@ struct process_t
     bool               hasParent;
     uint64_t           parentId;
     bool               exited;
+    bool               reclaiming;
+    int16_t            ownerCpu;
     int32_t            exitStatus;
     virt_addr_space_t* addressSpace;
     void*              elfMetadata;
@@ -67,9 +69,26 @@ struct process_t
     int64_t            timerIntervalMicroseconds[3];
     task_t*            tasks;
     file_descriptor_t* fileDescriptors;
+    spinlock_t         fileDescriptorLock;
     uint64_t           fileDescriptorCount;
     uint32_t           umask;
     char               cwdPath[256];
+};
+
+// A descriptor pointer is borrowed only inside this transaction. Holding the
+// table lock keeps its file reference alive and prevents table relocation.
+class FileDescriptorGuard
+{
+public:
+    explicit FileDescriptorGuard(process_t* process);
+    ~FileDescriptorGuard();
+    FileDescriptorGuard(const FileDescriptorGuard&) = delete;
+    FileDescriptorGuard& operator=(const FileDescriptorGuard&) = delete;
+private:
+    process_t* Process;
+    process_t* Previous;
+    bool Owner;
+    static process_t* Active[BOOT_SMP_MAX_CPUS];
 };
 
 class ProcessManager
@@ -83,7 +102,7 @@ public:
 
     process_t*                AllocateProcess();
     process_t*                CreateProcess(virt_addr_space_t* addressSpace);
-    bool                      FreeProcess(process_t* process);
+    bool                      FreeProcess(process_t* process, bool onlyIfExited = false);
     bool                      AddTask(process_t* process, task_t* task);
     int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags);
     int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd);

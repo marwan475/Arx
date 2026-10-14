@@ -31,6 +31,29 @@ static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t
 }
 } // namespace
 
+process_t* FileDescriptorGuard::Active[BOOT_SMP_MAX_CPUS] = {};
+
+FileDescriptorGuard::FileDescriptorGuard(process_t* process) : Process(process), Previous(nullptr), Owner(false)
+{
+    cpu_preemption_disable();
+    const uint8_t cpu = arch_cpu_id();
+    Previous = Active[cpu];
+    Owner = process != nullptr && Previous != process;
+    if (Owner)
+        spinlock_acquire(&process->fileDescriptorLock);
+    if (process != nullptr)
+        Active[cpu] = process;
+}
+
+FileDescriptorGuard::~FileDescriptorGuard()
+{
+    if (Process != nullptr)
+        Active[arch_cpu_id()] = Previous;
+    if (Owner)
+        spinlock_release(&Process->fileDescriptorLock);
+    cpu_preemption_enable();
+}
+
 void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
 {
     process->allocated    = allocated;
@@ -38,6 +61,8 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->hasParent    = false;
     process->parentId     = 0;
     process->exited       = false;
+    process->reclaiming   = false;
+    process->ownerCpu     = -1;
     process->exitStatus   = 0;
     process->addressSpace = nullptr;
     process->elfMetadata  = nullptr;
@@ -48,6 +73,7 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     memset(process->timerIntervalMicroseconds, 0, sizeof(process->timerIntervalMicroseconds));
     process->tasks               = nullptr;
     process->fileDescriptors     = nullptr;
+    process->fileDescriptorLock  = 0;
     process->fileDescriptorCount = 0;
     process->umask               = 0022U;
     memset(process->cwdPath, 0, sizeof(process->cwdPath));
@@ -180,7 +206,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
     return process;
 }
 
-bool ProcessManager::FreeProcess(process_t* process)
+bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 {
     file_descriptor_t* descriptorsToFree = nullptr;
 
@@ -198,27 +224,24 @@ bool ProcessManager::FreeProcess(process_t* process)
         return false;
     }
 
-    if (!process->allocated || process->memoryUsers)
+    if (!process->allocated || (onlyIfExited && !process->exited) || process->memoryUsers || IsProcessRunning(process))
     {
         UnlockManager();
         return false;
     }
-
-    if (process->addressSpace != nullptr && IsProcessRunning(process))
+    for (task_t* task = process->tasks; task != nullptr; task = task->next)
     {
-        for (virt_region_t* region = process->addressSpace->user_used_regions; region != nullptr; region = region->next)
+        if (task->allocated)
         {
-            if (region->backing != nullptr)
-            {
-                UnlockManager();
-                return false;
-            }
+            UnlockManager();
+            return false;
         }
     }
 
     // Pin the slot and reject new memory operations while teardown runs.
     // Do not retain ManagerLock across page-table operations and IPI waits.
     process->memoryUsers            = 1;
+    process->reclaiming             = true;
     const bool wasExited            = process->exited;
     process->exited                 = true;
     virt_addr_space_t* addressSpace = process->addressSpace;
@@ -304,6 +327,7 @@ file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_
 
 bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex)
 {
+    FileDescriptorGuard descriptors(process);
     if (process == nullptr)
     {
         return false;
@@ -342,6 +366,8 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
         newCount *= 2ULL;
     }
 
+    if (newCount > SIZE_MAX / sizeof(file_descriptor_t))
+        return false;
     file_descriptor_t* newTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * newCount);
     if (newTable == nullptr)
     {
@@ -363,6 +389,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
 
 int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd)
 {
+    FileDescriptorGuard descriptors(process);
     if (process == nullptr || file == nullptr)
     {
         return -1;
@@ -538,7 +565,11 @@ bool ProcessManager::BuildUserInitialStack(process_t* process, const process_use
         goto fail;
     }
 
-    stackCursor -= metadataByteCount;
+    stackCursor = align_down(stackCursor - metadataByteCount, 16);
+    if (stackCursor < layout->stackBase)
+    {
+        goto fail;
+    }
     writeCursor = stackCursor;
 
     if (!push_word_to_process_stack(process->addressSpace, &writeCursor, layout->argc))
@@ -608,55 +639,7 @@ fail:
 
 bool ProcessManager::ActivateProcessAddressSpace(process_t* process)
 {
-    virt_addr_space_t* targetAddressSpace = nullptr;
-
-    if (process == nullptr)
-    {
-        return false;
-    }
-
-    if (process < &Processes[0] || process >= &Processes[MAX_PROCESSES])
-    {
-        return false;
-    }
-
-    if (!process->allocated)
-    {
-        return false;
-    }
-
-    uint8_t cpuId = arch_cpu_id();
-    if (cpuId >= BOOT_SMP_MAX_CPUS)
-    {
-        return false;
-    }
-
-    if (process->addressSpace == nullptr)
-    {
-        return false;
-    }
-
-    process_t* current = RunningProcesses[cpuId];
-    if (current == nullptr)
-    {
-        RunningProcesses[cpuId]            = process;
-        targetAddressSpace                 = process->addressSpace;
-        platform.cpus[cpuId].address_space = targetAddressSpace;
-        vmm_switch_addr_space(targetAddressSpace);
-        return true;
-    }
-
-    if (current == process)
-    {
-        platform.cpus[cpuId].address_space = process->addressSpace;
-        return true;
-    }
-
-    RunningProcesses[cpuId]            = process;
-    targetAddressSpace                 = process->addressSpace;
-    platform.cpus[cpuId].address_space = targetAddressSpace;
-    vmm_switch_addr_space(targetAddressSpace);
-    return true;
+    return process != nullptr && process->addressSpace != nullptr && SetRunningProcess(arch_cpu_id(), process);
 }
 
 task_t* ProcessManager::GetTasks(process_t* process) const
@@ -686,7 +669,7 @@ process_t* ProcessManager::GetRunningProcess(uint8_t cpuId) const
         return nullptr;
     }
 
-    return RunningProcesses[cpuId];
+    return __atomic_load_n(&RunningProcesses[cpuId], __ATOMIC_ACQUIRE);
 }
 
 process_t* ProcessManager::GetCurrentProcess() const
@@ -719,14 +702,24 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
             return false;
         }
 
-        if (process->exited && process->memoryUsers != 0)
+        if (process->reclaiming || (process->ownerCpu >= 0 && process->ownerCpu != cpuId))
+        {
+            UnlockManager();
+            return false;
+        }
+        process->ownerCpu = cpuId;
+    }
+
+    // Claim execution under the same manager lock used by teardown.
+    for (size_t other = 0; process != nullptr && other < BOOT_SMP_MAX_CPUS; ++other)
+    {
+        if (other != cpuId && RunningProcesses[other] == process)
         {
             UnlockManager();
             return false;
         }
     }
-
-    RunningProcesses[cpuId] = process;
+    __atomic_store_n(&RunningProcesses[cpuId], process, __ATOMIC_RELEASE);
 
     if (process != nullptr && process->addressSpace != nullptr && cpuId == arch_cpu_id())
     {
@@ -763,7 +756,7 @@ bool ProcessManager::IsProcessRunning(const process_t* process) const
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; ++i)
     {
-        if (RunningProcesses[i] == process)
+        if (__atomic_load_n(&RunningProcesses[i], __ATOMIC_ACQUIRE) == process)
         {
             return true;
         }
@@ -795,7 +788,7 @@ bool ProcessManager::TryReapExitedProcess(uint64_t processId)
         return false;
     }
 
-    return FreeProcess(process);
+    return FreeProcess(process, true);
 }
 
 size_t ProcessManager::GetCapacity() const

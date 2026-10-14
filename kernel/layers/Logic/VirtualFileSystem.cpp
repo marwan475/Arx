@@ -422,30 +422,30 @@ static int vfs_dentry_cache_eq_fn(const void* key1, const void* key2, uint32_t k
 
 static bool vfs_file_ref_acquire(file_t* file)
 {
-    spinlock_acquire(&file->refLock);
+    spinlock_acquire_preempt(&file->refLock);
     if (file->refCount == 0)
     {
-        spinlock_release(&file->refLock);
+        spinlock_release_preempt(&file->refLock);
         return false;
     }
 
     file->refCount++;
-    spinlock_release(&file->refLock);
+    spinlock_release_preempt(&file->refLock);
     return true;
 }
 
 static bool vfs_file_ref_release(file_t* file, bool* isLastReference)
 {
-    spinlock_acquire(&file->refLock);
+    spinlock_acquire_preempt(&file->refLock);
     if (file->refCount == 0)
     {
-        spinlock_release(&file->refLock);
+        spinlock_release_preempt(&file->refLock);
         return false;
     }
 
     file->refCount--;
     *isLastReference = (file->refCount == 0);
-    spinlock_release(&file->refLock);
+    spinlock_release_preempt(&file->refLock);
     return true;
 }
 
@@ -456,8 +456,8 @@ static bool vfs_file_io_begin(file_t* file)
         return false;
     }
 
-    spinlock_acquire(&file->ioLock);
-    spinlock_acquire(&file->inode->ioLock);
+    spinlock_acquire_preempt(&file->ioLock);
+    spinlock_acquire_preempt(&file->inode->ioLock);
     return true;
 }
 
@@ -579,8 +579,8 @@ static bool vfs_split_parent_and_leaf(const char* path, char* parentOut, size_t 
 
 static void vfs_file_io_end(file_t* file)
 {
-    spinlock_release(&file->inode->ioLock);
-    spinlock_release(&file->ioLock);
+    spinlock_release_preempt(&file->inode->ioLock);
+    spinlock_release_preempt(&file->ioLock);
 }
 
 VirtualFileSystem::VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps)
@@ -598,7 +598,7 @@ VirtualFileSystem::~VirtualFileSystem()
 {
     if (DentryCache != nullptr)
     {
-        spinlock_acquire(&DentryCacheLock);
+        spinlock_acquire_preempt(&DentryCacheLock);
         khint_t k;
         khp_foreach(DentryCache, k)
         {
@@ -622,16 +622,16 @@ VirtualFileSystem::~VirtualFileSystem()
                 kfree(dentry);
             }
         }
-        spinlock_release(&DentryCacheLock);
+        spinlock_release_preempt(&DentryCacheLock);
 
         khp_destroy(DentryCache);
         DentryCache = nullptr;
     }
 
-    spinlock_acquire(&OverlayDentryLock);
+    spinlock_acquire_preempt(&OverlayDentryLock);
     vfs_overlay_dentry_entry_t* overlay = OverlayDentryHead;
     OverlayDentryHead                   = nullptr;
-    spinlock_release(&OverlayDentryLock);
+    spinlock_release_preempt(&OverlayDentryLock);
 
     while (overlay != nullptr)
     {
@@ -674,7 +674,7 @@ dentry_t* VirtualFileSystem::FindOverlayDentry(const dentry_t* parent, const cha
         return nullptr;
     }
 
-    spinlock_acquire(&OverlayDentryLock);
+    spinlock_acquire_preempt(&OverlayDentryLock);
     for (vfs_overlay_dentry_entry_t* entry = OverlayDentryHead; entry != nullptr; entry = entry->next)
     {
         dentry_t* dentry = entry->dentry;
@@ -685,12 +685,12 @@ dentry_t* VirtualFileSystem::FindOverlayDentry(const dentry_t* parent, const cha
 
         if (dentry->parent == parent && strcmp(dentry->name, name) == 0)
         {
-            spinlock_release(&OverlayDentryLock);
+            spinlock_release_preempt(&OverlayDentryLock);
             return dentry;
         }
     }
 
-    spinlock_release(&OverlayDentryLock);
+    spinlock_release_preempt(&OverlayDentryLock);
     return nullptr;
 }
 
@@ -707,7 +707,7 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
         return false;
     }
 
-    spinlock_acquire(&OverlayDentryLock);
+    spinlock_acquire_preempt(&OverlayDentryLock);
     for (vfs_overlay_dentry_entry_t* it = OverlayDentryHead; it != nullptr; it = it->next)
     {
         dentry_t* existing = it->dentry;
@@ -718,7 +718,7 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
 
         if (existing->parent == dentry->parent && strcmp(existing->name, dentry->name) == 0)
         {
-            spinlock_release(&OverlayDentryLock);
+            spinlock_release_preempt(&OverlayDentryLock);
             kfree(entry);
             return false;
         }
@@ -727,7 +727,7 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
     entry->dentry     = dentry;
     entry->next       = OverlayDentryHead;
     OverlayDentryHead = entry;
-    spinlock_release(&OverlayDentryLock);
+    spinlock_release_preempt(&OverlayDentryLock);
     return true;
 }
 
@@ -924,7 +924,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
         }
     }
 
-    spinlock_acquire(&DentryCacheLock);
+    spinlock_acquire_preempt(&DentryCacheLock);
 
     dentry_key_t key;
     key.parent = dentry->parent;
@@ -934,7 +934,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
     khint_t k      = khp_put(DentryCache, &key, &absent);
     if (k == khp_end(DentryCache))
     {
-        spinlock_release(&DentryCacheLock);
+        spinlock_release_preempt(&DentryCacheLock);
         if (duplicatedName != nullptr)
         {
             kfree(duplicatedName);
@@ -946,7 +946,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
     {
         dentry_t* existing = nullptr;
         khp_get_val(DentryCache, k, &existing);
-        spinlock_release(&DentryCacheLock);
+        spinlock_release_preempt(&DentryCacheLock);
         if (duplicatedName != nullptr)
         {
             kfree(duplicatedName);
@@ -962,7 +962,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
     }
 
     khp_set_val(DentryCache, k, &dentry);
-    spinlock_release(&DentryCacheLock);
+    spinlock_release_preempt(&DentryCacheLock);
     if (duplicatedName != nullptr)
     {
         kfree(duplicatedName);
@@ -983,7 +983,7 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
         return overlay;
     }
 
-    spinlock_acquire(&DentryCacheLock);
+    spinlock_acquire_preempt(&DentryCacheLock);
 
     // khashp's generic get/put equality handling is inconsistent in this tree,
     // so match (parent,name) explicitly while holding the cache lock.
@@ -1005,11 +1005,11 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
 
         dentry_t* value = nullptr;
         khp_get_val(DentryCache, k, &value);
-        spinlock_release(&DentryCacheLock);
+        spinlock_release_preempt(&DentryCacheLock);
         return value;
     }
 
-    spinlock_release(&DentryCacheLock);
+    spinlock_release_preempt(&DentryCacheLock);
     return nullptr;
 }
 
@@ -1809,23 +1809,27 @@ file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint6
 
 int64_t VirtualFileSystem::Read(file_t* file, void* buffer, uint64_t count)
 {
-    if (file == nullptr || file->operations == nullptr || file->operations->Read == nullptr)
-    {
-        return -1;
-    }
-
-    if (!vfs_file_io_begin(file))
-    {
-        return -1;
-    }
-    const int64_t result = file->operations->Read(file, buffer, count);
-    vfs_file_io_end(file);
-    return result;
+    return Transfer(file, buffer, count, false, nullptr);
 }
 
 int64_t VirtualFileSystem::Write(file_t* file, const void* buffer, uint64_t count)
 {
-    if (file == nullptr || file->operations == nullptr || file->operations->Write == nullptr)
+    return Transfer(file, const_cast<void*>(buffer), count, true, nullptr);
+}
+
+int64_t VirtualFileSystem::ReadAt(file_t* file, void* buffer, uint64_t count, uint64_t offset)
+{
+    return Transfer(file, buffer, count, false, &offset);
+}
+
+int64_t VirtualFileSystem::WriteAt(file_t* file, const void* buffer, uint64_t count, uint64_t offset)
+{
+    return Transfer(file, const_cast<void*>(buffer), count, true, &offset);
+}
+
+int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset)
+{
+    if (file == nullptr || file->operations == nullptr || (write ? file->operations->Write == nullptr : file->operations->Read == nullptr))
     {
         return -1;
     }
@@ -1834,7 +1838,17 @@ int64_t VirtualFileSystem::Write(file_t* file, const void* buffer, uint64_t coun
     {
         return -1;
     }
-    const int64_t result = file->operations->Write(file, buffer, count);
+    const uint64_t savedOffset = file->offset;
+    int64_t result = 0;
+    if (offset != nullptr)
+    {
+        result = *offset > INT64_MAX || file->operations->Seek == nullptr ? -29 : file->operations->Seek(file, (int64_t) *offset, 0);
+    }
+    if (offset == nullptr || result >= 0)
+        result = write ? file->operations->Write(file, buffer, count) : file->operations->Read(file, buffer, count);
+    // The entire save/seek/transfer/restore transaction owns both I/O locks.
+    if (offset != nullptr)
+        file->offset = savedOffset;
     vfs_file_io_end(file);
     return result;
 }

@@ -156,6 +156,15 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->syscallActive   = 0;
     task->preemptionDepth = 0;
     task->id              = id;
+    task->process = nullptr;
+    task->signalMask = task->signalPending = task->signalSequence = 0;
+    task->signalStack = {0, 2, 0, 0};
+    task->signalDepth = 0;
+    task->signalSenders = nullptr;
+    task->robustHead = 0;
+    task->robustOwner = nullptr;
+    task->retirementContext = nullptr;
+    task->retirementCleanup = nullptr;
     memset(task->name, 0, sizeof(task->name));
     memcpy(task->name, "Arx", 3);
     memset(&task->taskContext, 0, sizeof(task->taskContext));
@@ -166,6 +175,7 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 
 TaskManager::TaskManager()
 {
+    static_assert(sizeof(TaskManager) <= 131072, "TaskManager must fit the largest heap object");
     ManagerLock        = 0;
     contextTaskManager = this;
 
@@ -259,6 +269,7 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
 bool TaskManager::FreeTask(task_t* task, void** retiredStack)
 {
     void* stackToFree = nullptr;
+    signal_sender_t* sendersToFree = nullptr;
 
     LockManager();
 
@@ -280,12 +291,26 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack)
         return false;
     }
 
+    if (task->retirementCleanup != nullptr)
+    {
+        auto cleanup = task->retirementCleanup;
+        void* context = task->retirementContext;
+        task->retirementCleanup = nullptr;
+        task->dying = true;
+        task->state = task_t::DYING;
+        ++task->dispatchUsers;
+        UnlockManager();
+        cleanup(context, task);
+        LockManager();
+        --task->dispatchUsers;
+    }
     if (task->stack != nullptr)
     {
         stackToFree = task->stack;
         task->stack = nullptr;
     }
 
+    sendersToFree = task->signalSenders;
     ResetTaskSlot(task, (uint64_t) (task - &Tasks[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -297,6 +322,7 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack)
     }
 
     UnlockManager();
+    kfree(sendersToFree);
 
     if (retiredStack != nullptr)
         *retiredStack = stackToFree;
@@ -436,6 +462,42 @@ void TaskManager::ReleaseDispatchClaim(task_t* task)
     if (task->dispatchUsers != 0)
         --task->dispatchUsers;
     UnlockManager();
+}
+
+bool TaskManager::CleanupRetiredTask(task_t* task)
+{
+    LockManager();
+    if (task == nullptr || task < &Tasks[0] || task >= &Tasks[MAX_TASKS]
+        || !task->allocated || !task->dying || task->dispatchUsers != 0
+        || task->state == task_t::RUNNING || task->state == task_t::SWITCHING
+        || __atomic_load_n(&task->sleepPending, __ATOMIC_ACQUIRE))
+    {
+        UnlockManager();
+        return false;
+    }
+    auto cleanup = task->retirementCleanup;
+    void* context = task->retirementContext;
+    task->retirementCleanup = nullptr;
+    ++task->dispatchUsers;
+    UnlockManager();
+    if (cleanup != nullptr) cleanup(context, task);
+    LockManager();
+    --task->dispatchUsers;
+    UnlockManager();
+    return true;
+}
+
+void TaskManager::CleanupCurrentTask()
+{
+    cpu_preemption_disable();
+    task_t* task = GetCurrentTask();
+    if (task != nullptr && task->retirementCleanup != nullptr)
+    {
+        auto cleanup = task->retirementCleanup;
+        task->retirementCleanup = nullptr;
+        cleanup(task->retirementContext, task);
+    }
+    cpu_preemption_enable();
 }
 
 void TaskManager::MarkDying(task_t* task)

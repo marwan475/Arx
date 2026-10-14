@@ -61,10 +61,16 @@ ISRCOMMON:
     mov rbx, rsp
     and rsp, -16
     sub rsp, 512
+    xor eax,eax
+    mov rdi,rsp
+    mov ecx,64
+    rep stosq
     fxsave64 [rsp]
     fninit
     ldmxcsr [rel interrupt_kernel_mxcsr]
 
+    mov rdi,rbx
+    mov rsi,rsp
     call ISRHANDLER
 
     fxrstor64 [rsp]

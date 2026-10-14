@@ -86,16 +86,40 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
         const bool     exited  = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
         const bool     changed = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
         const bool     timed   = entry.deadline != UINT64_MAX;
-        if ((timed && !clockAvailable) || exited || changed || (timed && entry.deadline <= now))
+        const bool interrupted = pending_signals(entry.process, entry.task) != 0;
+        if ((timed && !clockAvailable) || exited || interrupted || changed || (timed && entry.deadline <= now))
         {
             *link         = entry.next;
             entry.next    = NO_SLEEPER;
             entry.waiting = false;
-            entry.result  = exited ? static_cast<uint64_t>(-3) : timed && !clockAvailable && !changed ? static_cast<uint64_t>(-38) : 0;
+            entry.result  = exited ? static_cast<uint64_t>(-3) : interrupted ? static_cast<uint64_t>(-4) : timed && !clockAvailable && !changed ? static_cast<uint64_t>(-38) : 0;
             __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
         }
         else
             link = &entry.next;
+    }
+    UnlockQueues();
+}
+
+void Scheduler::WakeSignalWaiters(process_t* process)
+{
+    LockQueues();
+    for (uint8_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
+    {
+        size_t* link = &SleepHeads[cpu];
+        while (*link != NO_SLEEPER)
+        {
+            sleep_entry_t& entry = SleepQueue[*link];
+            if (entry.process == process && pending_signals(process, entry.task) != 0)
+            {
+                *link = entry.next;
+                entry.next = NO_SLEEPER;
+                entry.waiting = false;
+                entry.result = (uint64_t) -4;
+                __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
+            }
+            else link = &entry.next;
+        }
     }
     UnlockQueues();
 }
@@ -118,6 +142,7 @@ void Scheduler::ReapExitedProcesses()
     cpu_preemption_disable();
     if (IdleTasks[cpuId] == nullptr)
         panic();
+    tasks->CleanupCurrentTask();
     tasks->MarkDying(tasks->GetCurrentTask());
     (void) ResourceLayerImportCaps->processManager->SetRunningProcess(cpuId, nullptr);
     platform.cpus[cpuId].address_space = IdleAddressSpace;
@@ -201,6 +226,14 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     }
     LockQueues();
     // Close the readiness-scan/parking race under the wakeup queue lock.
+    if (pending_signals(process, task) != 0)
+    {
+        UnlockQueues();
+        taskManager->FinishSleeping(task);
+        processManager->ReleaseMemoryProcess(process);
+        cpu_preemption_enable();
+        return (uint64_t) -4;
+    }
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
     {
         UnlockQueues();
@@ -648,14 +681,16 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         return false;
     }
 
-    process_t* table   = processManager->GetProcesses();
-    process_t* process = &table[processId];
+    process_t* process = processManager->AcquireProcess(processId);
+    if (process == nullptr) return false;
     LockQueues();
-    if (!process->allocated || (onlyIfExited && !process->exited))
+    if (process->retirementActive || (onlyIfExited && !process->exited))
     {
         UnlockQueues();
+        processManager->ReleaseMemoryProcess(process);
         return false;
     }
+    process->retirementActive = true;
 
     if (!onlyIfExited)
         process->exitStatus = exitStatus;
@@ -665,7 +700,10 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     {
         RemoveProcessFromQueue(&ReadyQueues[cpu], processId);
     }
-    // Retirement and dispatch claims share QueueLock.
+    // Mark before unlocking so new dispatch claims cannot start. Cleanup may
+    // touch user memory and wake futexes; no scheduler lock may span it.
+    for (task_t* task = process->tasks; task != nullptr; task = task->next) taskManager->MarkDying(task);
+    UnlockQueues();
     void*   retiredStacks[TaskManager::MAX_TASKS];
     size_t  retiredCount = 0;
     task_t* iter         = process->tasks;
@@ -674,9 +712,12 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         task_t* next = iter->next;
 
         task_t* previous = iter->prev;
-        taskManager->MarkDying(iter);
         void* retired = nullptr;
-        if (taskManager->FreeTask(iter, &retired))
+        // Run callbacks before taking QueueLock, then retire and unlink under
+        // the same lock used when attaching a newly allocated task slot.
+        const bool cleaned = taskManager->CleanupRetiredTask(iter);
+        LockQueues();
+        if (cleaned && taskManager->FreeTask(iter, &retired))
         {
             if (retired != nullptr)
                 retiredStacks[retiredCount++] = retired;
@@ -694,16 +735,20 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
                 next->prev = previous;
             }
         }
+        UnlockQueues();
 
         iter = next;
     }
 
+    LockQueues();
     const bool reap = process->tasks == nullptr;
+    process->retirementActive = false;
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a
     // timer handler can finish their short queue transaction and accept IPIs.
     for (size_t i = 0; i < retiredCount; ++i)
         TaskManager::ReleaseTaskStack(retiredStacks[i]);
+    processManager->ReleaseMemoryProcess(process);
     if (reap)
         (void) processManager->TryReapExitedProcess(processId);
 

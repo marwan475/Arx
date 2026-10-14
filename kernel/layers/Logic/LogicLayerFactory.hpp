@@ -6,6 +6,8 @@ class VirtualFileSystem;
 class ElfMapper;
 class CredentialManager;
 class EventManager;
+class SynchronizationManager;
+class SignalManager;
 
 struct LogicLayerCaps
 {
@@ -14,6 +16,8 @@ struct LogicLayerCaps
     ElfMapper*         elfMapper;
     CredentialManager* credentialManager;
     EventManager*      eventManager;
+    SynchronizationManager* synchronizationManager;
+    SignalManager* signalManager;
 };
 
 class LogicLayerFactory

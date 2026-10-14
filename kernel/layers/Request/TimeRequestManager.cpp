@@ -90,18 +90,17 @@ uint64_t TimeRequestManager::HandleClock_nanosleepRequest(const arch_syscall_fra
     int32_t flags = static_cast<int32_t>(frame->arg1);
     if ((clock != 0 && clock != 1) || (flags != 0 && flags != 1))
         return LINUX_EINVAL;
-    // rem is only written on EINTR; signal delivery is not implemented yet.
-    return SleepRequest(clock, flags == 1, frame->arg2);
+    return SleepRequest(clock, flags == 1, frame->arg2, frame->arg3);
 }
 
 uint64_t TimeRequestManager::HandleNanosleepRequest(const arch_syscall_frame_t* frame)
 {
     if (frame == nullptr)
         return LINUX_EINVAL;
-    return SleepRequest(1, false, frame->arg0);
+    return SleepRequest(1, false, frame->arg0, frame->arg1);
 }
 
-uint64_t TimeRequestManager::SleepRequest(int clock, bool absolute, uint64_t requestAddress)
+uint64_t TimeRequestManager::SleepRequest(int clock, bool absolute, uint64_t requestAddress, uint64_t remainderAddress)
 {
     TimeManager* manager = GetTimeManager();
     if (manager == nullptr)
@@ -115,7 +114,16 @@ uint64_t TimeRequestManager::SleepRequest(int clock, bool absolute, uint64_t req
         return result;
     if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
         return LINUX_ENOSYS;
-    return LogicCaps->scheduler->SleepUntil(deadline);
+    result = LogicCaps->scheduler->SleepUntil(deadline);
+    if (result == (uint64_t) -4 && !absolute && remainderAddress != 0)
+    {
+        uint64_t now;
+        if (!arch_time_read_monotonic(&now)) return LINUX_ENOSYS;
+        uint64_t left=deadline > now ? deadline-now : 0;
+        time_timespec_t remaining={(int64_t) (left/1000000000), (int64_t) (left%1000000000)};
+        if (!safe_write_user(remainderAddress,&remaining,sizeof(remaining))) return LINUX_EFAULT;
+    }
+    return result;
 }
 
 uint64_t TimeRequestManager::HandleGetitimerRequest(const arch_syscall_frame_t* frame)

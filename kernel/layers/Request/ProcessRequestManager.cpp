@@ -63,6 +63,7 @@ uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* fr
     }
 
     const int32_t status = frame != nullptr ? (int32_t) frame->arg0 : 0;
+    ResourceCaps->taskManager->CleanupCurrentTask();
 
     if (LogicCaps != nullptr && LogicCaps->virtualFileSystem != nullptr)
     {

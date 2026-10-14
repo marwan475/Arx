@@ -154,7 +154,7 @@ static void handle_ipi(registers_t* reg)
     spinlock_release(&cpu_info->ipi_lock);
 }
 
-void ISRHANDLER(registers_t* reg)
+static void handle_interrupt(registers_t* reg)
 {
     // Spurious delivery has no in-service bit and must not receive an EOI.
     if (reg->interrupt_number == 0xFF)
@@ -205,4 +205,20 @@ void ISRHANDLER(registers_t* reg)
 
     kprintf("Arx kernel: received interrupt: %llu\n", (unsigned long long) reg->interrupt_number);
     panic();
+}
+
+extern void arch_signal_interrupt(registers_t* reg, void* floating);
+void ISRHANDLER(registers_t* reg, void* floating)
+{
+    handle_interrupt(reg);
+    if ((reg->cs & 3) == 3)
+    {
+        // The user frame/FPU image are on the kernel stack. Permit IPIs while
+        // signal delivery accesses user mappings, but defer ordinary preemption.
+        cpu_preemption_disable();
+        arch_enable_interrupts();
+        arch_signal_interrupt(reg,floating);
+        arch_disable_interrupts();
+        cpu_preemption_enable();
+    }
 }

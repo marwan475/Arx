@@ -27,7 +27,7 @@ extern arch_syscall_dispatch
 %define SYSCALL_FRAME_USER_RFLAGS_OFFSET 72
 %define SYSCALL_FRAME_USER_RSP_OFFSET 80
 %define SYSCALL_FRAME_USER_SS_OFFSET 88
-%define SYSCALL_FRAME_SIZE 96
+%define SYSCALL_FRAME_SIZE 176
 
 arch_x86_64_syscall_entry:
     swapgs
@@ -37,6 +37,19 @@ arch_x86_64_syscall_entry:
     mov qword [gs:SYSCALL_CTX_USER_RSP_OFFSET], rsp
     mov rsp, qword [gs:SYSCALL_CTX_KERNEL_RSP_OFFSET]
     and rsp, -16
+
+    ; Extension after the existing 96-byte prefix: all other GP registers and
+    ; the kernel FXSAVE address. Required for signal delivery/rt_sigreturn.
+    push qword 0
+    push qword 0
+    push r11
+    push rcx
+    push r15
+    push r14
+    push r13
+    push r12
+    push rbp
+    push rbx
 
     ; Build an iret frame for return to user mode.
     push qword USER_SS_SELECTOR
@@ -55,13 +68,17 @@ arch_x86_64_syscall_entry:
     push rax
 
     ; C ABI: pass pointer to syscall frame in rdi.
-    mov rdi, rsp
-
     ; C may use SSE/x87 even for ordinary memory operations.
     sub rsp, 512
+    xor eax, eax
+    mov rdi, rsp
+    mov ecx, 64
+    rep stosq
     fxsave64 [rsp]
     fninit
     ldmxcsr [rel syscall_kernel_mxcsr]
+    lea rdi, [rsp + 512]
+    mov [rdi + 160], rsp
 
     ; The complete frame is on the kernel stack and rsp is 16-byte aligned.
     ; Permit TLB IPIs while the C handler takes memory-management locks.
@@ -81,6 +98,14 @@ arch_x86_64_syscall_entry:
     mov r10, [rsp + SYSCALL_FRAME_ARG3_OFFSET]
     mov r8,  [rsp + SYSCALL_FRAME_ARG4_OFFSET]
     mov r9,  [rsp + SYSCALL_FRAME_ARG5_OFFSET]
+    mov rbx, [rsp + 96]
+    mov rbp, [rsp + 104]
+    mov r12, [rsp + 112]
+    mov r13, [rsp + 120]
+    mov r14, [rsp + 128]
+    mov r15, [rsp + 136]
+    mov rcx, [rsp + 144]
+    mov r11, [rsp + 152]
 
     add rsp, 56
 

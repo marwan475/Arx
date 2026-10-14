@@ -96,6 +96,8 @@ extern "C"
     bool begin_user_memory(user_memory_access_t* access);
     void end_user_memory(user_memory_access_t* access);
     bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address, void* destination, size_t length);
+    bool safe_atomic_load_user32_locked(const user_memory_access_t* access, uint64_t address, uint32_t* value);
+    bool safe_atomic_compare_exchange_user32_locked(const user_memory_access_t* access, uint64_t address, uint32_t* expected, uint32_t desired);
     bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length);
 
     // Explicit-address-space initialization; caller owns mapping lifetime.

@@ -88,6 +88,7 @@ struct process_t
     uint64_t              parentId;
     bool                  exited;
     bool                  reclaiming;
+    bool                  retirementActive;
     int16_t               ownerCpu;
     int32_t               exitStatus;
     virt_addr_space_t*    addressSpace;
@@ -107,7 +108,20 @@ struct process_t
     process_credentials_t credentials;
     process_group_list_t* supplementaryGroups;
     char                  cwdPath[256];
+    spinlock_t signalLock;
+    uint64_t signalPending;
+    uint64_t signalIgnored;
+    signal_action_t signalActions[32];
+    signal_sender_t signalSenders[32];
 };
+
+inline uint64_t pending_signals(const process_t* process, const task_t* task)
+{
+    if (process == nullptr || task == nullptr) return 0;
+    return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE))
+        & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE)
+        & ~__atomic_load_n(&process->signalIgnored, __ATOMIC_ACQUIRE);
+}
 
 // A descriptor pointer is borrowed only inside this transaction. Holding the
 // table lock keeps its file reference alive and prevents table relocation.
@@ -153,6 +167,7 @@ public:
     bool       SetRunningProcess(uint8_t cpuId, process_t* process);
     process_t* GetCurrentProcess() const;
     process_t* AcquireCurrentMemoryProcess(bool requireExclusive = true);
+    process_t* AcquireProcess(uint64_t id);
     void       ReleaseMemoryProcess(process_t* process);
     uint64_t   GetCurrentProgramBreak() const;
 

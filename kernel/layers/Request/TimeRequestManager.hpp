@@ -25,7 +25,7 @@ public:
 
 private:
     TimeManager*       GetTimeManager() const;
-    uint64_t           SleepRequest(int clock, bool absolute, uint64_t requestAddress);
+    uint64_t           SleepRequest(int clock, bool absolute, uint64_t requestAddress, uint64_t remainderAddress);
     ResourceLayerCaps* ResourceCaps;
     LogicLayerCaps*    LogicCaps;
 };

@@ -217,6 +217,9 @@ typedef struct arch_syscall_frame
     uint64_t user_rflags;
     uint64_t user_rsp;
     uint64_t user_ss;
+    uint64_t rbx, rbp, r12, r13, r14, r15, rcx, r11;
+    uint64_t fxstate;
+    uint64_t reserved;
 } arch_syscall_frame_t;
 
 struct arch_task_context

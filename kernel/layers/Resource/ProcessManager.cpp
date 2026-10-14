@@ -62,6 +62,12 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->parentId     = 0;
     process->exited       = false;
     process->reclaiming   = false;
+    process->retirementActive = false;
+    process->signalLock = 0;
+    process->signalPending = 0;
+    process->signalIgnored = SIGNAL_DEFAULT_IGNORED;
+    memset(process->signalActions, 0, sizeof(process->signalActions));
+    memset(process->signalSenders, 0, sizeof(process->signalSenders));
     process->ownerCpu     = -1;
     process->exitStatus   = 0;
     process->addressSpace = nullptr;
@@ -86,6 +92,7 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
 
 ProcessManager::ProcessManager()
 {
+    static_assert(sizeof(ProcessManager) <= 131072, "ProcessManager must fit the largest heap object");
     ManagerLock = 0;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -309,7 +316,7 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
         return false;
     }
 
-    if (!process->allocated || !task->allocated)
+    if (!process->allocated || process->exited || !task->allocated)
     {
         return false;
     }
@@ -328,6 +335,7 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
     }
 
     ILIST_APPEND(process->tasks, task);
+    task->process = process;
     return true;
 }
 
@@ -884,6 +892,16 @@ bool ProcessManager::TryReapExitedProcess(uint64_t processId)
 size_t ProcessManager::GetCapacity() const
 {
     return MAX_PROCESSES;
+}
+
+process_t* ProcessManager::AcquireProcess(uint64_t id)
+{
+    LockManager();
+    process_t* process = id < MAX_PROCESSES ? &Processes[id] : nullptr;
+    if (process == nullptr || !process->allocated || process->reclaiming) process = nullptr;
+    else ++process->memoryUsers;
+    UnlockManager();
+    return process;
 }
 
 process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)

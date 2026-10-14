@@ -26,6 +26,7 @@ public:
     uint64_t          SleepUntil(uint64_t monotonicDeadline);
     uint64_t          WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX);
     void              WakeEventWaiters(const uint64_t* sequence);
+    void              WakeSignalWaiters(process_t* process);
     void              WakeSleepingTasks(uint8_t cpuId);
     [[noreturn]] void ExitCurrentTask();
     void              ReapExitedProcesses();

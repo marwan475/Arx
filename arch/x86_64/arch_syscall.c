@@ -21,7 +21,9 @@
 extern uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled);
 extern uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
 
-_Static_assert(sizeof(arch_syscall_frame_t) == 96, "syscall frame size must match entry assembly");
+_Static_assert(sizeof(arch_syscall_frame_t) == 176, "syscall frame size must match entry assembly");
+_Static_assert(offsetof(arch_syscall_frame_t, rbx) == 96 && offsetof(arch_syscall_frame_t, fxstate) == 160, "signal register extension offsets");
+extern uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64_t result);
 _Static_assert(offsetof(arch_syscall_frame_t, arg3) == 32, "R10 syscall argument offset");
 _Static_assert(offsetof(arch_info_t, syscall_ctx.active) - offsetof(arch_info_t, syscall_ctx) == 16, "syscall active GS offset");
 _Static_assert(offsetof(struct arch_task_context, rflags) == 64, "context RFLAGS offset");
@@ -100,5 +102,6 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
         return selftestResult;
     }
 
-    return dispatcher_dispatch_syscall(frame);
+    uint64_t result = dispatcher_dispatch_syscall(frame);
+    return dispatcher_signal_return((arch_syscall_frame_t*) frame, result);
 }

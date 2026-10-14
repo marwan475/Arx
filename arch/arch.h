@@ -9,6 +9,7 @@
 #error Unsupported architecture
 #endif
 
+#include <klib/signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <uacpi/status.h>
@@ -59,6 +60,16 @@ extern "C"
 #else
 #error Unsupported architecture
 #endif
+
+    // Architecture owns the user context ABI; status is separate from the restored return value.
+    uint64_t arch_signal_validate_action(const signal_action_t* action);
+    uint64_t arch_signal_stack_pointer(const arch_syscall_frame_t* frame);
+    bool arch_signal_user_return(const arch_syscall_frame_t* frame);
+    uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result,
+        const signal_action_t* action, const signal_stack_t* stack,
+        const signal_sender_t* sender, uint64_t mask, int signal, bool restartable);
+    uint64_t arch_signal_restore(arch_syscall_frame_t* frame, uint64_t* result,
+        uint64_t* mask, signal_stack_t* stack);
 
     void arch_halt(void);
     void arch_pause(void);

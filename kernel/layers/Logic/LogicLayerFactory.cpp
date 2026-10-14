@@ -4,6 +4,8 @@
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SynchronizationManager.hpp"
+#include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
@@ -16,6 +18,8 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->signalManager;
+        delete LogicLayerExportCaps->synchronizationManager;
         delete LogicLayerExportCaps->eventManager;
         delete LogicLayerExportCaps->credentialManager;
         delete LogicLayerExportCaps->elfMapper;
@@ -44,6 +48,8 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->elfMapper         = new ElfMapper(resourceLayerCaps);
     LogicLayerExportCaps->credentialManager = new CredentialManager(resourceLayerCaps);
     LogicLayerExportCaps->eventManager      = new EventManager(resourceLayerCaps, LogicLayerExportCaps->scheduler, LogicLayerExportCaps->virtualFileSystem);
+    LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->signalManager = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
 
     return LogicLayerExportCaps;
 }

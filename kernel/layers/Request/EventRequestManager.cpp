@@ -216,7 +216,7 @@ uint64_t EventRequestManager::WaitRequest(const arch_syscall_frame_t* frame, boo
     }();
     vfree(descriptors);
     vfree(sets);
-    if ((int64_t) result >= 0 && timeoutAddress != 0 && deadline != 0 && deadline != UINT64_MAX)
+    if (((int64_t) result >= 0 || result == (uint64_t) -4) && timeoutAddress != 0 && deadline != 0 && deadline != UINT64_MAX)
     {
         time_timespec_t now;
         if (Resources->timeManager != nullptr && Resources->timeManager->ReadClock(1, &now) == 0)

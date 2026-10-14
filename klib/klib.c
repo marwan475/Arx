@@ -188,6 +188,26 @@ bool safe_read_user_locked(const user_memory_access_t* access, uint64_t address,
     return copy_user_locked(access, address, destination, length, false);
 }
 
+bool safe_atomic_load_user32_locked(const user_memory_access_t* access, uint64_t address, uint32_t* value)
+{
+    if (value == NULL || (address & 3) != 0 || !validate_user_memory(access, address, sizeof(*value), false)) return false;
+    const phys_addr_t physical = vmm_virt_to_phys(address, access->space);
+    if (physical == 0) return false;
+    const uint32_t* word = (const uint32_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+    *value = __atomic_load_n(word, __ATOMIC_ACQUIRE);
+    return true;
+}
+
+bool safe_atomic_compare_exchange_user32_locked(const user_memory_access_t* access, uint64_t address, uint32_t* expected, uint32_t desired)
+{
+    if (expected == NULL || (address & 3) != 0 || !validate_user_memory(access, address, sizeof(*expected), true)) return false;
+    const phys_addr_t physical = vmm_virt_to_phys(address, access->space);
+    if (physical == 0) return false;
+    uint32_t* word = (uint32_t*) pa_to_hhdm(physical, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+    (void) __atomic_compare_exchange_n(word, expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return true;
+}
+
 bool safe_write_user_locked(const user_memory_access_t* access, uint64_t address, const void* source, size_t length)
 {
     return copy_user_locked(access, address, (void*) source, length, true);

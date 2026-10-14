@@ -5,6 +5,9 @@
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "layers/Resource/SignalState.hpp"
+
+struct process_t;
 
 struct task_t
 {
@@ -36,6 +39,17 @@ struct task_t
     uint32_t                 preemptionDepth;
     uint64_t                 id;
     char                     name[16];
+    process_t* process;
+    uint64_t signalMask;
+    uint64_t signalPending;
+    uint64_t signalSequence;
+    signal_sender_t* signalSenders;
+    signal_stack_t signalStack;
+    uint64_t signalDepth;
+    uint64_t robustHead;
+    process_t* robustOwner;
+    void* retirementContext;
+    void (*retirementCleanup)(void*, task_t*);
     struct arch_task_context taskContext;
     void*                    stack;
     task_t*                  next;
@@ -53,6 +67,8 @@ public:
     task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);
     task_t*     CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
     bool        FreeTask(task_t* task, void** retiredStack = nullptr);
+    void        CleanupCurrentTask();
+    bool        CleanupRetiredTask(task_t* task);
     static void ReleaseTaskStack(void* stack);
     bool        ExecuteTask(task_t* task, bool releaseDispatchClaim = false);
     bool        RetainForDispatch(task_t* task);

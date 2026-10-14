@@ -6,6 +6,11 @@
 
 spinlock_t kprintf_lock = 0;
 
+uint64_t extend_counter32(uint64_t previous, uint32_t sample)
+{
+    return previous + (uint32_t) (sample - (uint32_t) previous);
+}
+
 static error_log_buffer_t boot_errors;
 
 static void error_logger_format(char* message, const char* format, va_list args)

@@ -250,6 +250,26 @@ static void sort_u32_test(size_t* passes, size_t* failures)
         (*passes)++;
 }
 
+static void counter32_test(size_t* passes, size_t* failures)
+{
+    uint64_t value = extend_counter32(0xfffffffeULL, 0xffffffffU);
+    value = extend_counter32(value, 0);
+    value = extend_counter32(value, 7);
+    if (value != 0x100000007ULL || extend_counter32(value, 7) != value)
+        klib_test_log_fail("32-bit counter rollover and unchanged sample", failures);
+    else (*passes)++;
+
+    value = extend_counter32(value, 0xfffffffeU);
+    value = extend_counter32(value, 3);
+    if (value != 0x200000003ULL || extend_counter32(value, 4) != 0x200000004ULL)
+        klib_test_log_fail("32-bit counter preserves multiple epochs", failures);
+    else (*passes)++;
+
+    if (extend_counter32(42, 45) != 45 || extend_counter32(0x12345678ffffffffULL, 0) != 0x1234567900000000ULL)
+        klib_test_log_fail("32-bit counter normal increments and high epoch", failures);
+    else (*passes)++;
+}
+
 static void error_logger_test(size_t* passes, size_t* failures)
 {
     // An isolated buffer avoids clearing actual boot errors or printing fake
@@ -318,6 +338,7 @@ void run_klib_selftests(void)
     kmalloc_test(&passes, &failures);
     kzalloc_test(&passes, &failures);
     sort_u32_test(&passes, &failures);
+    counter32_test(&passes, &failures);
     error_logger_test(&passes, &failures);
 
     selftest_case_end("klib_test", (unsigned long long) passes, (unsigned long long) failures);

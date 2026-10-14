@@ -82,6 +82,10 @@ extern "C"
     // Inclusive bounds; validates address arithmetic, not mapping permissions.
     bool range_within_u64(uint64_t address, uint64_t length, uint64_t lower, uint64_t upper);
 
+    // Extend a wrapping sample. Sample at least once per full 32-bit period;
+    // callers sharing previous across CPUs must serialize sampling/publication.
+    uint64_t extend_counter32(uint64_t previous, uint32_t sample);
+
     // Safe current-process copies: validate userspace bounds and page permissions,
     // pin the process, and serialize mapping changes for the complete copy.
     bool safe_read_user(uint64_t address, void* destination, size_t length);

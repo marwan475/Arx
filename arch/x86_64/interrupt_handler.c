@@ -168,6 +168,13 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
+        // Maintain the 32-bit HPET epoch even without sleepers or clock syscalls.
+        // This uses no scheduler locks and must run even while dispatch is deferred.
+        if (arch_cpu_id() == platform.bsp_id)
+        {
+            uint64_t now;
+            (void) arch_time_read_monotonic(&now);
+        }
         // Bootstrap/kernel tasks still require timer dispatch. Defer only
         // active syscalls and explicitly guarded critical sections.
         const cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];

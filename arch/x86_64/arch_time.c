@@ -9,7 +9,14 @@
 static volatile uint8_t* hpet;
 static uint64_t          counter_origin;
 static uint64_t          period_fs;
+static bool              counter_is_64bit;
+static uint64_t          extended_counter32;
 static uint8_t           cmos_index;
+
+static uint64_t hpet_read_counter(volatile uint8_t* registers, bool wide)
+{
+    return wide ? REG(uint64_t, registers + 0xf0) : REG(uint32_t, registers + 0xf0);
+}
 
 static uint8_t cmos_read(uint8_t index)
 {
@@ -129,18 +136,19 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     volatile uint8_t* registers    = (volatile uint8_t*) (uintptr_t) (base + (address - page));
     uint64_t          capabilities = REG(uint64_t, registers);
     uint64_t          period       = capabilities >> 32;
-    if (!(capabilities & (1ULL << 13)) || period == 0 || period > 100000000)
+    if (period == 0 || period > 100000000)
     {
         error_logger("Arx kernel: HPET unavailable: counter64=%u period_fs=%llu\n",
                 (unsigned) ((capabilities >> 13) & 1), (unsigned long long) period);
         return false;
     }
+    const bool wide = (capabilities & (1ULL << 13)) != 0;
     REG(uint64_t, registers + 0x10) |= 1;
-    uint64_t initial   = REG(uint64_t, registers + 0xf0);
+    uint64_t initial   = hpet_read_counter(registers, wide);
     bool     advancing = false;
     for (unsigned i = 0; i < 100000; ++i)
     {
-        if (REG(uint64_t, registers + 0xf0) != initial)
+        if (hpet_read_counter(registers, wide) != initial)
         {
             advancing = true;
             break;
@@ -156,18 +164,40 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     // RTC is interpreted as UTC; no timezone-setting syscall is implemented.
     *realtimeAvailable = read_rtc(realtimeSeconds);
     __asm__ volatile("outb %0, $0x70" : : "a"(cmos_index));
-    counter_origin         = REG(uint64_t, registers + 0xf0);
+    counter_origin         = hpet_read_counter(registers, wide);
     period_fs              = period;
-    hpet                   = registers;
+    counter_is_64bit       = wide;
+    __atomic_store_n(&extended_counter32, counter_origin, __ATOMIC_RELAXED);
+    // AP timer reads may start before initialization finishes. Publish only
+    // after all immutable state and the 32-bit extension baseline are ready.
+    __atomic_store_n(&hpet, registers, __ATOMIC_RELEASE);
     *resolutionNanoseconds = (period + 999999) / 1000000;
+    kprintf("Arx kernel: HPET counter=%u-bit period_fs=%llu\n", wide ? 64U : 32U, (unsigned long long) period);
     return true;
 }
 
 bool arch_time_read_monotonic(uint64_t* nanoseconds)
 {
-    if (hpet == NULL || nanoseconds == NULL)
+    volatile uint8_t* registers = __atomic_load_n(&hpet, __ATOMIC_ACQUIRE);
+    if (registers == NULL || nanoseconds == NULL)
         return false;
-    uint64_t ticks    = REG(uint64_t, hpet + 0xf0) - counter_origin;
+    uint64_t counter;
+    if (counter_is_64bit)
+        counter = hpet_read_counter(registers, true);
+    else
+    {
+        for (;;)
+        {
+            uint64_t previous = __atomic_load_n(&extended_counter32, __ATOMIC_ACQUIRE);
+            // Re-read hardware after every failed CAS. Reusing an older sample
+            // after another CPU advanced the baseline would invent a wrap.
+            const uint32_t sample = (uint32_t) hpet_read_counter(registers, false);
+            counter = extend_counter32(previous, sample);
+            if (__atomic_compare_exchange_n(&extended_counter32, &previous, counter, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                break;
+        }
+    }
+    uint64_t ticks    = counter - counter_origin;
     uint64_t whole    = ticks / 1000000;
     uint64_t fraction = (ticks % 1000000) * period_fs / 1000000;
     if (whole > (UINT64_MAX - fraction) / period_fs)

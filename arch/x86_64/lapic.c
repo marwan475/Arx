@@ -142,15 +142,8 @@ void lapic_eoi(void)
 
 static void lapic_wait_for_delivery(volatile uint8_t* lapic_base)
 {
-#if BOOT_DIAGNOSTICS
-    unsigned spins = 0;
-#endif
     while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
     {
-#if BOOT_DIAGNOSTICS
-        if (spins < (1u << 24) && ++spins == (1u << 24))
-            debug_spin_wait((const void*) (lapic_base + LAPIC_REG_ICR_LOW), NULL);
-#endif
         arch_pause();
     }
 }

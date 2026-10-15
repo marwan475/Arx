@@ -197,9 +197,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
     // operation_lock can be held across synchronous TLB shootdown. Never wait
     // for it with ManagerLock held: a target CPU's timer handler can be waiting
     // for ManagerLock with interrupts disabled, unable to acknowledge the IPI.
-    BOOT_CHECKPOINT("create-process:address-space-lock");
     spinlock_acquire_preempt(&addressSpace->operation_lock);
-    BOOT_CHECKPOINT("create-process:manager-lock");
     LockManager();
 
     // Shared roots currently have no per-process ownership model. Do not attach

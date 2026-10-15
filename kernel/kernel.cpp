@@ -64,19 +64,16 @@ extern "C" void kmain(void)
 
 static void KernelPostInit(void)
 {
-    BOOT_CHECKPOINT("lapic-calibrate");
 #if defined(__x86_64__)
     (void) lapic_timer_calibrate();
 #endif
     smp_selftests();
-    BOOT_CHECKPOINT("smp-complete");
 
     if (arch_cpu_id() == platform.bsp_id)
     {
         // AP tests attach processes to the shared kernel address space. Syscall
         // fixtures create user mappings and acquire memoryUsers in that space;
         // do not overlap the two fixture lifetimes.
-        BOOT_CHECKPOINT("smp-wait-all");
         smp_selftests_wait_for_all_cpus();
         Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
 
@@ -112,7 +109,6 @@ static void KernelPostInit(void)
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
 
-    BOOT_CHECKPOINT(NULL);
     for (;;)
     {
         arch_halt();
@@ -164,7 +160,6 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
             continue;
         }
 
-        BOOT_CHECKPOINT("bootstrap:create-process");
         process_t* process = processManager->CreateProcess(activeSpace);
 
         if (process == nullptr)
@@ -203,7 +198,6 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
             continue;
         }
 
-        BOOT_CHECKPOINT("bootstrap:create-post-init-task");
         task_t* postInitTask = taskManager->CreateKernelTask(KernelPostInitTask, (void*) (uintptr_t) cpuId);
 
         if (postInitTask == nullptr)

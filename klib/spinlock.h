@@ -2,7 +2,6 @@
 #define SPINLOCK_H
 
 #include <arch/arch.h>
-#include <stddef.h>
 #include <stdint.h>
 
 typedef uint8_t spinlock_t;
@@ -13,9 +12,6 @@ extern "C"
 #endif
     void cpu_preemption_disable(void);
     void cpu_preemption_enable(void);
-#if BOOT_DIAGNOSTICS
-    void debug_spin_wait(const void* lock, const void* caller);
-#endif
 #ifdef __cplusplus
 }
 
@@ -23,9 +19,6 @@ extern "C"
 
 static inline void spinlock_acquire(spinlock_t* lock)
 {
-#if BOOT_DIAGNOSTICS
-    unsigned spins = 0;
-#endif
     for (;;)
     {
         uint8_t expected = 0;
@@ -37,13 +30,6 @@ static inline void spinlock_acquire(spinlock_t* lock)
 
         while (__atomic_load_n(lock, __ATOMIC_RELAXED))
         {
-#if BOOT_DIAGNOSTICS
-            // One report per acquisition; keep waiting, never fake completion.
-            if (spins < (1u << 24) && ++spins == (1u << 24))
-            {
-                debug_spin_wait(lock, NULL);
-            }
-#endif
             arch_pause();
         }
     }

@@ -24,14 +24,6 @@ extern "C"
     void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count);
     void debug_pci_devices(void);
 
-#if BOOT_DIAGNOSTICS
-    void debug_boot_checkpoint(const char* operation);
-    void debug_boot_tick(const void* interrupted_pc);
-#define BOOT_CHECKPOINT(operation) debug_boot_checkpoint(operation)
-#else
-#define BOOT_CHECKPOINT(operation) ((void) 0)
-#endif
-
 #ifdef __cplusplus
 }
 #endif

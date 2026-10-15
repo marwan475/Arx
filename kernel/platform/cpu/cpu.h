@@ -59,10 +59,6 @@ typedef struct cpu_info
     uint32_t           preemption_depth;
     void*              kernel_stack_base;
     size_t             kernel_stack_size;
-#if BOOT_DIAGNOSTICS
-    const char*        boot_operation;
-    unsigned           boot_operation_ticks;
-#endif
 } cpu_info_t;
 
 #ifdef __cplusplus

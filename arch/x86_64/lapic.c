@@ -140,7 +140,22 @@ void lapic_eoi(void)
     REG(uint32_t, lapic_base + LAPIC_REG_EOI) = 0;
 }
 
-// we lock target ipi lock but handler needs to unclock it
+static void lapic_wait_for_delivery(volatile uint8_t* lapic_base)
+{
+#if BOOT_DIAGNOSTICS
+    unsigned spins = 0;
+#endif
+    while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
+    {
+#if BOOT_DIAGNOSTICS
+        if (spins < (1u << 24) && ++spins == (1u << 24))
+            debug_spin_wait((const void*) (lapic_base + LAPIC_REG_ICR_LOW), NULL);
+#endif
+        arch_pause();
+    }
+}
+
+// The target handler releases the mailbox after consuming the request.
 void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_data)
 {
     cpu_info_t* source_cpu_info = &platform.cpus[arch_cpu_id()];
@@ -180,16 +195,10 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
     volatile uint8_t* lapic_base  = lapic_get_base(source_cpu_info);
     const uint32_t    destination = ((uint32_t) target_cpu_info->arch_info.acpi_lapic_id) << 24;
 
-    while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
-    {
-        arch_pause();
-    }
+    lapic_wait_for_delivery(lapic_base);
 
     REG(uint32_t, lapic_base + LAPIC_REG_ICR_HIGH) = destination;
     REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW)  = LAPIC_IPI_VECTOR;
 
-    while ((REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS_PENDING) != 0)
-    {
-        arch_pause();
-    }
+    lapic_wait_for_delivery(lapic_base);
 }

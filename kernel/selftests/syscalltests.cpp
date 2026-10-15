@@ -3194,6 +3194,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
         }
 
         kprintf("Arx kernel: requestlayer_selftest run %s::%s syscall=%llu\n", managerName, tests[index].name, (unsigned long long) tests[index].syscallNumber);
+        BOOT_CHECKPOINT(tests[index].name);
 
         // Event validators invoke the real dispatcher themselves. A preliminary
         // zero-argument ppoll/select would block forever; eventfd would leak a fd.
@@ -3811,10 +3812,13 @@ struct sleep_peer_context_t
 
 static void sleep_peer_entry(void* argument)
 {
+    // Observe the parked sleeper before a timer wake can change its state.
+    cpu_preemption_disable();
     sleep_peer_context_t* context = static_cast<sleep_peer_context_t*>(argument);
     context->entered              = true;
     context->protectedLifetime    = !context->taskManager->FreeTask(context->sleepingTask) && !context->processManager->FreeProcess(context->sleeper);
     context->blockedDispatch      = !context->taskManager->ExecuteTask(context->sleepingTask);
+    cpu_preemption_enable();
     process_t* current            = context->processManager->GetCurrentProcess();
     // Leave no ready entry referring to this deliberately suspended test peer.
     context->scheduler->KillProcess(current->id, 0);
@@ -3829,6 +3833,7 @@ static void sleep_peer_entry(void* argument)
 
 static bool test_time_sleep(process_t* process, uint64_t number)
 {
+    BOOT_CHECKPOINT("sleep-test:map");
     uint64_t base = memory_map(2);
 
     if (static_cast<int64_t>(base) < 0)
@@ -3858,14 +3863,19 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     }
 
     sleep_peer_context_t peerContext = {scheduler, resources->processManager, resources->taskManager, process, resources->taskManager->GetCurrentTask(), false, false, false};
+    BOOT_CHECKPOINT("sleep-test:create-peer");
     virt_addr_space_t*   peerSpace   = resources->virtualMemoryManager->CreateUserAddressSpace();
     process_t*           peerProcess = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
     task_t*              peerTask    = resources->taskManager->CreateKernelTask(sleep_peer_entry, &peerContext);
+    // Publish the peer only when the fixture can enter sleep atomically with
+    // respect to timer dispatch. ExecuteTask transfers this guard to the sleeper.
+    cpu_preemption_disable();
     bool                 peerReady   = peerProcess != nullptr && peerTask != nullptr && resources->processManager->AddTask(peerProcess, peerTask) && scheduler->EnqueueProcess(arch_cpu_id(), peerProcess->id);
     ok &= memory_expect(peerReady, "sleep runnable peer fixture");
 
     if (!peerReady)
     {
+        cpu_preemption_enable();
         if (peerTask != nullptr)
         {
             resources->taskManager->FreeTask(peerTask);
@@ -3889,7 +3899,12 @@ static bool test_time_sleep(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_clock_gettime, 1, base + 64) == 0, "sleep monotonic start");
     time_timespec_t before = {}, after = {};
     time_fixture_load(process, base + 64, &before, sizeof(before));
+    BOOT_CHECKPOINT("sleep-test:park");
     ok &= memory_expect(call(input) == 0, "scheduler sleep and ignore remainder on success");
+    cpu_preemption_enable();
+    BOOT_CHECKPOINT("sleep-test:woke");
+    if (!peerContext.entered || !peerContext.protectedLifetime || !peerContext.blockedDispatch)
+        kprintf("Arx kernel: sleep peer probe cpu=%u entered=%u protected=%u blocked=%u\n", (unsigned) arch_cpu_id(), (unsigned) peerContext.entered, (unsigned) peerContext.protectedLifetime, (unsigned) peerContext.blockedDispatch);
     ok &= memory_expect(peerContext.entered && peerContext.protectedLifetime && peerContext.blockedDispatch, "sleep lets a peer run while protecting and blocking the sleeper");
     // If the clock failed before switching, remove the still-queued peer too.
 
@@ -3898,6 +3913,7 @@ static bool test_time_sleep(process_t* process, uint64_t number)
         scheduler->KillProcess(peerProcess->id, 0);
     }
 
+    BOOT_CHECKPOINT("sleep-test:cleanup");
     bool releasedTask    = !peerTask->allocated || resources->taskManager->FreeTask(peerTask);
     bool releasedProcess = !peerProcess->allocated || resources->processManager->FreeProcess(peerProcess);
     ok &= memory_expect(releasedTask && releasedProcess, "sleep peer cleanup");

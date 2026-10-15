@@ -32,6 +32,7 @@ AARCH64_CXX ?= aarch64-linux-gnu-g++
 X86_64_AS ?= nasm
 INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
+BOOT_DIAGNOSTICS ?= 0
 
 UACPI_DIR ?= kernel/platform/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
@@ -40,6 +41,10 @@ UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/platform/acpi/acpi.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
 CFLAGS_COMMON += -DDEBUG=$(DEBUG)
+CFLAGS_COMMON += -DBOOT_DIAGNOSTICS=$(BOOT_DIAGNOSTICS)
+ifeq ($(BOOT_DIAGNOSTICS),1)
+CFLAGS_COMMON += -g
+endif
 
 ifeq ($(DEBUG),1)
 CFLAGS_COMMON += -O0 -ggdb3

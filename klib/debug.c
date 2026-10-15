@@ -1,6 +1,64 @@
 #include <klib/klib.h>
 #include <platform.h>
 
+#if BOOT_DIAGNOSTICS
+#include <klib/printf/printf.h>
+extern void arch_serial_putchar(char c);
+
+void debug_boot_checkpoint(const char* operation)
+{
+    __atomic_store_n(&platform.cpus[arch_cpu_id()].boot_operation, operation, __ATOMIC_RELAXED);
+    __atomic_store_n(&platform.cpus[arch_cpu_id()].boot_operation_ticks, 0, __ATOMIC_RELAXED);
+}
+
+void debug_boot_tick(const void* interrupted_pc)
+{
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+    if (__atomic_load_n(&cpu->boot_operation, __ATOMIC_RELAXED) != NULL && __atomic_load_n(&cpu->boot_operation_ticks, __ATOMIC_RELAXED) < 1000
+        && __atomic_add_fetch(&cpu->boot_operation_ticks, 1, __ATOMIC_RELAXED) == 1000)
+        debug_spin_wait(NULL, interrupted_pc);
+}
+
+void debug_spin_wait(const void* lock, const void* caller)
+{
+    if (platform.cpus == NULL)
+        return;
+    if (caller == NULL)
+        caller = __builtin_return_address(0);
+
+    uint64_t flags = 0;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+#endif
+    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+    const char* operation = __atomic_load_n(&cpu->boot_operation, __ATOMIC_RELAXED);
+    int target = -1;
+    for (size_t i = 0; i < platform.cpu_count; ++i)
+        if (lock == &platform.cpus[i].ipi_lock)
+            target = (int) i;
+
+    const char* target_operation = target >= 0 ? __atomic_load_n(&platform.cpus[target].boot_operation, __ATOMIC_RELAXED) : NULL;
+    char line[320];
+    snprintf_(line, sizeof(line), "\nBOOT WAIT cpu=%u op=%s lock=%p caller=%p flags=%llx preempt=%u ipi_target=%d pending=%u target_op=%s\n",
+              (unsigned) arch_cpu_id(), operation != NULL ? operation : "bootstrap", lock, caller,
+              (unsigned long long) flags, (unsigned) cpu->preemption_depth, target,
+              target >= 0 ? (unsigned) __atomic_load_n(&platform.cpus[target].ipi_request_data.type, __ATOMIC_RELAXED) : 0,
+              target_operation != NULL ? target_operation : "-");
+    // No logger lock, allocation, clock read or blocking console acquisition.
+    // Serial lines may interleave; a busy framebuffer is skipped.
+    for (const char* p = line; *p; ++p)
+        arch_serial_putchar(*p);
+    cpu_preemption_disable();
+    uint8_t expected = 0;
+    if (__atomic_compare_exchange_n(&platform.terminal_lock, &expected, 1, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+    {
+        terminal_write(line, strlen(line));
+        spinlock_release(&platform.terminal_lock);
+    }
+    cpu_preemption_enable();
+}
+#endif
+
 void debug_validate_boot(const struct boot_info* boot_info, uint64_t cpu_count)
 {
     KDEBUG("boot summary cpu_count=%llu smp.cpu_count=%llu smp.cpus=0x%llx bsp_id=0x%llx\n", (unsigned long long) cpu_count, (unsigned long long) boot_info->smp.cpu_count, (unsigned long long) boot_info->smp.cpus, (unsigned long long) boot_info->smp.bsp_id);

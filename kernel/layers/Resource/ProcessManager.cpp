@@ -194,6 +194,12 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
 
     memset(fileDescriptorTable, 0, sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
 
+    // operation_lock can be held across synchronous TLB shootdown. Never wait
+    // for it with ManagerLock held: a target CPU's timer handler can be waiting
+    // for ManagerLock with interrupts disabled, unable to acknowledge the IPI.
+    BOOT_CHECKPOINT("create-process:address-space-lock");
+    spinlock_acquire_preempt(&addressSpace->operation_lock);
+    BOOT_CHECKPOINT("create-process:manager-lock");
     LockManager();
 
     // Shared roots currently have no per-process ownership model. Do not attach
@@ -204,12 +210,12 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
         if (Processes[i].allocated && Processes[i].addressSpace == addressSpace && Processes[i].memoryUsers != 0)
         {
             UnlockManager();
+            spinlock_release_preempt(&addressSpace->operation_lock);
             kfree(fileDescriptorTable);
             return nullptr;
         }
     }
 
-    spinlock_acquire(&addressSpace->operation_lock);
     bool hasAnonymousPages = false;
 
     for (virt_region_t* r = addressSpace->user_used_regions; r; r = r->next)
@@ -220,7 +226,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
             break;
         }
 
-    spinlock_release(&addressSpace->operation_lock);
+    spinlock_release_preempt(&addressSpace->operation_lock);
 
     if (hasAnonymousPages)
     {

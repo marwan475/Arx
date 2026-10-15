@@ -7,6 +7,7 @@
 #include <klib/klib.h>
 #include <platform.h>
 #include <selftests/selftests.h>
+#include "smpfixtures.hpp"
 
 typedef struct smp_pid_vfs_task_context
 {
@@ -112,6 +113,9 @@ static size_t format_pid_payload(uint64_t pid, char* out, size_t outCapacity)
 
 static void smp_pid_vfs_task(void* arg)
 {
+    // This fixture returns by a direct task switch, outside scheduler policy.
+    // Its guard is saved with this task; the return task restores its own depth.
+    cpu_preemption_disable();
     smp_pid_vfs_task_context_t* ctx = (smp_pid_vfs_task_context_t*) arg;
 
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->returnTask == nullptr)
@@ -143,6 +147,7 @@ static void smp_pid_vfs_task(void* arg)
 
     if (!localFail)
     {
+        BOOT_CHECKPOINT("pid-vfs:open");
         opened = ctx->vfs->Open(start, "/test.txt", 0);
 
         if (opened == nullptr)
@@ -154,6 +159,7 @@ static void smp_pid_vfs_task(void* arg)
 
     if (!localFail)
     {
+        BOOT_CHECKPOINT("pid-vfs:add-fd");
         fd = ctx->processManager->AddFileDescriptor(currentProcess, (file_handle_t) opened, FD_FLAG_NONE);
 
         if (fd < 0)
@@ -167,6 +173,7 @@ static void smp_pid_vfs_task(void* arg)
 
     if (!localFail)
     {
+        BOOT_CHECKPOINT("pid-vfs:read");
         fileBytes = ctx->vfs->Read(opened, probe, sizeof(probe));
 
         if (fileBytes <= 0)
@@ -206,18 +213,21 @@ static void smp_pid_vfs_task(void* arg)
         localFail      = 1;
     }
 
+    BOOT_CHECKPOINT("pid-vfs:seek-write");
     if (!localFail && ctx->vfs->Seek(opened, (int64_t) slotOffset, 0) < 0)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SEEK_WRITE;
         localFail      = 1;
     }
 
+    BOOT_CHECKPOINT("pid-vfs:write");
     if (!localFail && ctx->vfs->Write(opened, payload, (uint64_t) payloadLen) != (int64_t) payloadLen)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_WRITE;
         localFail      = 1;
     }
 
+    BOOT_CHECKPOINT("pid-vfs:seek-verify");
     if (!localFail && ctx->vfs->Seek(opened, (int64_t) slotOffset, 0) < 0)
     {
         ctx->failStage = SMP_PIDVFS_TASK_FAIL_SEEK_VERIFY;
@@ -226,6 +236,7 @@ static void smp_pid_vfs_task(void* arg)
 
     if (!localFail)
     {
+        BOOT_CHECKPOINT("pid-vfs:verify");
         const int64_t verifyBytes = ctx->vfs->Read(opened, verify, (uint64_t) payloadLen);
 
         if (verifyBytes != (int64_t) payloadLen || memcmp(verify, payload, payloadLen) != 0)
@@ -243,6 +254,7 @@ static void smp_pid_vfs_task(void* arg)
 
     if (opened != nullptr)
     {
+        BOOT_CHECKPOINT("pid-vfs:close");
         if (ctx->vfs->Close(opened) != 0)
         {
             ctx->failStage = SMP_PIDVFS_TASK_FAIL_CLOSE;
@@ -253,6 +265,7 @@ static void smp_pid_vfs_task(void* arg)
     ctx->passed    = localFail ? 0 : 1;
     ctx->completed = 1;
 
+    BOOT_CHECKPOINT("pid-vfs:return-task");
     (void) ctx->taskManager->ExecuteTask(ctx->returnTask);
 
     for (;;)
@@ -263,6 +276,10 @@ static void smp_pid_vfs_task(void* arg)
 
 extern "C" void smp_selftests(void)
 {
+    // SetRunningProcess/ExecuteTask/restore is a manual transaction. Timer
+    // dispatch in the middle can run a task under the wrong process identity.
+    // Keep interrupts enabled so concurrent allocators can complete shootdowns.
+    cpu_preemption_disable();
     const uint64_t     cpuId             = (uint64_t) arch_cpu_id();
     smp_test_totals_t  totals            = {};
     unsigned long long localFailMask     = 0;
@@ -339,7 +356,7 @@ extern "C" void smp_selftests(void)
                     break;
                 }
 
-                process = processManager->CreateProcess(activeSpace);
+                process = smp_create_test_process(processManager, activeSpace);
 
                 if (process == nullptr)
                 {
@@ -359,6 +376,7 @@ extern "C" void smp_selftests(void)
                 ctx.completed      = 0;
                 ctx.passed         = 0;
 
+                BOOT_CHECKPOINT("pid-vfs:create-task");
                 task = taskManager->CreateKernelTask(smp_pid_vfs_task, &ctx);
 
                 if (task == nullptr)
@@ -379,6 +397,7 @@ extern "C" void smp_selftests(void)
                     break;
                 }
 
+                BOOT_CHECKPOINT("pid-vfs:set-process");
                 if (!processManager->SetRunningProcess((uint8_t) cpuId, process))
                 {
                     fails++;
@@ -388,6 +407,7 @@ extern "C" void smp_selftests(void)
                     break;
                 }
 
+                BOOT_CHECKPOINT("pid-vfs:execute-task");
                 if (!taskManager->ExecuteTask(task))
                 {
                     fails++;
@@ -429,11 +449,16 @@ extern "C" void smp_selftests(void)
 
             if (task != nullptr)
             {
+                BOOT_CHECKPOINT("pid-vfs:free-task");
+                // Unlink before the task slot can be reused on another CPU.
+                if (process != nullptr && task->process == process)
+                    processManager->RemoveTask(process, task);
                 (void) taskManager->FreeTask(task);
             }
 
             if (process != nullptr)
             {
+                BOOT_CHECKPOINT("pid-vfs:free-process");
                 (void) processManager->FreeProcess(process);
             }
 
@@ -514,6 +539,7 @@ extern "C" void smp_selftests(void)
     (void) __atomic_fetch_add(&g_smp_selftests_total_fails, totals.fails, __ATOMIC_RELAXED);
     (void) __atomic_fetch_or(&g_smp_selftests_fail_mask, localFailMask, __ATOMIC_RELAXED);
     (void) __atomic_add_fetch(&g_smp_selftests_finished_cpus, 1ULL, __ATOMIC_ACQ_REL);
+    cpu_preemption_enable();
 }
 
 extern "C" void smp_selftests_wait_for_all_cpus(void)

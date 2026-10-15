@@ -177,6 +177,9 @@ static void handle_interrupt(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
+#if BOOT_DIAGNOSTICS
+        debug_boot_tick((const void*) reg->rip);
+#endif
         // Maintain the 32-bit HPET epoch even without sleepers or clock syscalls.
         // This uses no scheduler locks and must run even while dispatch is deferred.
 

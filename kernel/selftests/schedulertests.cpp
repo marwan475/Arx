@@ -3,6 +3,7 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+#include "smpfixtures.hpp"
 
 extern "C"
 {
@@ -44,6 +45,8 @@ struct smp_scheduler_task_context_t
 
 static void smp_scheduler_task(void* arg)
 {
+    // A direct ExecuteTask back to the probe must not race timer dispatch.
+    cpu_preemption_disable();
     smp_scheduler_task_context_t* ctx = (smp_scheduler_task_context_t*) arg;
 
     if (ctx == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->returnTask == nullptr)
@@ -66,6 +69,7 @@ static void smp_scheduler_task(void* arg)
     kprintf("Arx kernel: smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex, (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
     KDEBUG("smp scheduler confirm cpu=%llu proc[%llu] expected_pid=%llu actual_pid=%llu match=%s\n", (unsigned long long) ctx->cpuId, (unsigned long long) ctx->processIndex, (unsigned long long) ctx->expectedProcessId, actualProcessId, ctx->processMatched ? "yes" : "no");
 
+    BOOT_CHECKPOINT("scheduler-test:return-task");
     (void) ctx->taskManager->ExecuteTask(ctx->returnTask);
 
     for (;;)
@@ -186,7 +190,7 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
 
     for (size_t i = 0; i < SCHED_TEST_PROCESS_COUNT; i++)
     {
-        processes[i] = processManager->CreateProcess(activeSpace);
+        processes[i] = smp_create_test_process(processManager, activeSpace);
 
         if (processes[i] == nullptr)
         {
@@ -210,6 +214,7 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         contexts[i].processIndex      = (uint64_t) i;
         contexts[i].expectedProcessId = processes[i]->id;
 
+        BOOT_CHECKPOINT("scheduler-test:create-task");
         tasks[i] = taskManager->CreateKernelTask(smp_scheduler_task, &contexts[i]);
 
         if (tasks[i] == nullptr)
@@ -300,6 +305,7 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
             break;
         }
 
+        BOOT_CHECKPOINT("scheduler-test:run-next");
         if (!scheduler->RunNextReadyProcess((uint8_t) cpuId))
         {
             fails++;
@@ -360,6 +366,9 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
     {
         if (tasks[i] != nullptr)
         {
+            BOOT_CHECKPOINT("scheduler-test:free-task");
+            if (processes[i] != nullptr && tasks[i]->process == processes[i])
+                processManager->RemoveTask(processes[i], tasks[i]);
             (void) taskManager->FreeTask(tasks[i]);
         }
 

@@ -339,7 +339,7 @@ uint64_t EventManager::RemoveWatch(int32_t fd, int32_t descriptor)
     return result;
 }
 
-void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, const char* name)
+void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, const char* name, uint32_t cookie)
 {
     file_t* changed[MAX_INSTANCES];
     size_t  count = 0;
@@ -354,12 +354,16 @@ void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, con
         bool ready = false;
         for (auto& watch : state->watches)
         {
-            if (watch.inode == nullptr || (watch.mask & mask & 0xfff) == 0 || (watch.inode != inode && watch.inode != parent))
+            const bool deleted        = watch.inode != nullptr && watch.inode == inode && (mask & 0x400) != 0;
+            const bool matches        = (watch.mask & mask & 0xfff) != 0;
+            const bool directoryEvent = (mask & (0x100U | 0x200U | 0x40U | 0x80U)) != 0;
+            if (watch.inode == nullptr || (!matches && !deleted) || (watch.inode != inode && watch.inode != parent) || (directoryEvent && watch.inode != parent))
             {
                 continue;
             }
             notification_record_t record = {};
             record.descriptor            = watch.descriptor;
+            record.cookie                = cookie;
             record.mask                  = mask | (inode != nullptr && inode->type == INODE_DIRECTORY ? 0x40000000U : 0U);
             if (watch.inode == parent && name != nullptr)
             {
@@ -371,12 +375,16 @@ void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, con
                 memcpy(record.name, name, length);
                 record.length = (uint32_t) ((length + 1 + 15) & ~15ULL);
             }
-            enqueue(state, record);
+            if (matches)
+            {
+                enqueue(state, record);
+            }
             ready = true;
-            if (watch.mask & IN_ONESHOT)
+            if (deleted || (watch.mask & IN_ONESHOT))
             {
                 watch         = {};
                 record.mask   = IN_IGNORED;
+                record.cookie = 0;
                 record.length = 0;
                 memset(record.name, 0, sizeof(record.name));
                 enqueue(state, record);

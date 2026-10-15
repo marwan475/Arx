@@ -129,7 +129,7 @@ static void fill_linux_stat_from_inode(const inode_t* inode, linux_stat_t* statB
     linux_stat_t statData = {};
     statData.st_ino       = inode->inodeNumber;
     statData.st_dev       = 1;
-    statData.st_nlink     = 1;
+    statData.st_nlink     = inode->filesystem != nullptr && inode->filesystem->type != nullptr ? inode->linkCount : 1;
     statData.st_mode      = linux_mode_for_inode(inode);
     statData.st_uid       = inode->uid;
     statData.st_gid       = inode->gid;
@@ -430,7 +430,7 @@ static uint64_t perform_user_buffer_io(VirtualMemoryManager* virtualMemoryManage
 
         if (ioResult < 0)
         {
-            return (totalTransferred > 0) ? totalTransferred : (file->operations != nullptr && file->operations->linuxErrors ? (uint64_t) ioResult : normalize_vfs_result(ioResult));
+            return (totalTransferred > 0) ? totalTransferred : ((file->operations != nullptr && file->operations->linuxErrors) || (file->inode != nullptr && file->inode->filesystem != nullptr && file->inode->filesystem->type != nullptr) ? (uint64_t) ioResult : normalize_vfs_result(ioResult));
         }
 
         if (ioResult == 0)
@@ -676,14 +676,15 @@ uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* fram
         return LINUX_ENOTDIR;
     }
 
-    file_t* file = LogicCaps->virtualFileSystem->Open(start, effectivePath, frame->arg2);
+    int64_t openError = 0;
+    file_t* file      = LogicCaps->virtualFileSystem->Open(start, effectivePath, frame->arg2, &openError, (uint32_t) frame->arg3);
 
     if (file == nullptr)
     {
-        return LINUX_ENOENT;
+        return (uint64_t) openError;
     }
 
-    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
+    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), frame->arg2 & LINUX_O_CLOEXEC ? FD_FLAG_CLOEXEC : FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
 
     if (fd < 0)
     {
@@ -876,7 +877,7 @@ uint64_t VfsRequestManager::HandleMkdiratRequest(const arch_syscall_frame_t* fra
         return pathResult;
     }
 
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->Mkdir(start, effectivePath, mode));
+    return (uint64_t) LogicCaps->virtualFileSystem->Mkdir(start, effectivePath, mode);
 }
 
 uint64_t VfsRequestManager::HandleMkdirRequest(const arch_syscall_frame_t* frame)
@@ -1141,7 +1142,7 @@ static uint64_t perform_anonymous_vector_io(ResourceLayerCaps* resources, LogicL
         return 0;
     }
 
-    file_t* file = nullptr;
+    file_t* file                                               = nullptr;
     uint64_t (*callback)(file_t*, const file_iovec_t*, size_t) = nullptr;
     {
         FileDescriptorGuard guard(resources->processManager->GetCurrentProcess());
@@ -1174,8 +1175,8 @@ static uint64_t perform_anonymous_vector_io(ResourceLayerCaps* resources, LogicL
         }
     }
 
-    file_iovec_t* vectors = nullptr;
-    const uint64_t result = [&]() -> uint64_t
+    file_iovec_t*  vectors = nullptr;
+    const uint64_t result  = [&]() -> uint64_t
     {
         const int64_t count = (int64_t) frame->arg2;
 
@@ -1581,7 +1582,7 @@ uint64_t VfsRequestManager::HandleChdirRequest(const arch_syscall_frame_t* frame
         return LINUX_ENOTDIR;
     }
 
-    if (!LogicCaps->virtualFileSystem->BuildAbsolutePathFromDentry(resolved.dentry, currentProcess->cwdPath, sizeof(currentProcess->cwdPath)))
+    if (!LogicCaps->virtualFileSystem->BuildAbsolutePath(resolved, currentProcess->cwdPath, sizeof(currentProcess->cwdPath)))
     {
         return LINUX_ENAMETOOLONG;
     }
@@ -1625,7 +1626,7 @@ uint64_t VfsRequestManager::HandleFchdirRequest(const arch_syscall_frame_t* fram
         return LINUX_ENOTDIR;
     }
 
-    if (!LogicCaps->virtualFileSystem->BuildAbsolutePathFromDentry(file->path.dentry, currentProcess->cwdPath, sizeof(currentProcess->cwdPath)))
+    if (!LogicCaps->virtualFileSystem->BuildAbsolutePath(file->path, currentProcess->cwdPath, sizeof(currentProcess->cwdPath)))
     {
         return LINUX_ENAMETOOLONG;
     }
@@ -1809,7 +1810,7 @@ uint64_t VfsRequestManager::HandleUnlinkatRequest(const arch_syscall_frame_t* fr
         return pathResult;
     }
 
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->Unlink(start, effectivePath, removeDirectory));
+    return (uint64_t) LogicCaps->virtualFileSystem->Unlink(start, effectivePath, removeDirectory);
 }
 
 uint64_t VfsRequestManager::HandleUnlinkRequest(const arch_syscall_frame_t* frame)
@@ -1945,22 +1946,23 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
             // Anonymous stream/event files support changing O_NONBLOCK.
             // Access mode is fixed at creation and cannot be changed by SETFL.
 
-            if ((arg & ~(3ULL | 04000ULL)) != 0)
+            const uint64_t mutableFlags = 04000ULL | (file->inode != nullptr && file->inode->type == INODE_FIFO ? 040000ULL : 0);
+            if ((arg & ~(3ULL | mutableFlags)) != 0)
             {
                 return LINUX_EOPNOTSUPP;
             }
 
             const uint64_t flags = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
-            __atomic_store_n(&file->statusFlags, (flags & ~04000ULL) | (arg & 04000ULL), __ATOMIC_RELAXED);
+            __atomic_store_n(&file->statusFlags, (flags & ~mutableFlags) | (arg & mutableFlags), __ATOMIC_RELAXED);
         }
-        else if (file->operations != nullptr && file->operations->linuxErrors)
+        else if ((file->operations != nullptr && file->operations->linuxErrors) || (file->inode != nullptr && file->inode->filesystem != nullptr && file->inode->filesystem->type != nullptr))
         {
-            if ((arg & ~(3ULL | 04000ULL | 02000ULL)) != 0)
+            const uint64_t previous = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
+            if ((arg & ~(3ULL | 04000ULL | 02000ULL | previous)) != 0)
             {
                 return LINUX_EOPNOTSUPP;
             }
-            const uint64_t previous = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
-            __atomic_store_n(&file->statusFlags, (previous & 3) | (arg & (04000ULL | 02000ULL)), __ATOMIC_RELAXED);
+            __atomic_store_n(&file->statusFlags, (previous & ~(04000ULL | 02000ULL)) | (arg & (04000ULL | 02000ULL)), __ATOMIC_RELAXED);
         }
         else
             __atomic_store_n(&file->statusFlags, arg, __ATOMIC_RELAXED);
@@ -2375,7 +2377,7 @@ uint64_t VfsRequestManager::HandleRenameatRequest(const arch_syscall_frame_t* fr
         }
     }
 
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->Rename(oldStart, effectiveOldPath, newStart, effectiveNewPath));
+    return (uint64_t) LogicCaps->virtualFileSystem->Rename(oldStart, effectiveOldPath, newStart, effectiveNewPath);
 }
 
 uint64_t VfsRequestManager::HandleRenameRequest(const arch_syscall_frame_t* frame)
@@ -2469,7 +2471,7 @@ uint64_t VfsRequestManager::HandleReadlinkatRequest(const arch_syscall_frame_t* 
 
             char basePath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
 
-            if (!LogicCaps->virtualFileSystem->BuildAbsolutePathFromDentry(baseFile->path.dentry, basePath, sizeof(basePath)))
+            if (!LogicCaps->virtualFileSystem->BuildAbsolutePath(baseFile->path, basePath, sizeof(basePath)))
             {
                 return LINUX_ENAMETOOLONG;
             }
@@ -2649,7 +2651,7 @@ uint64_t VfsRequestManager::HandleLinkatRequest(const arch_syscall_frame_t* fram
     }
 
     const bool followSymlink = (flags & LINUX_AT_SYMLINK_FOLLOW) != 0;
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->Link(oldStart, effectiveOldPath, newStart, effectiveNewPath, followSymlink));
+    return (uint64_t) LogicCaps->virtualFileSystem->Link(oldStart, effectiveOldPath, newStart, effectiveNewPath, followSymlink);
 }
 
 uint64_t VfsRequestManager::HandleLinkRequest(const arch_syscall_frame_t* frame)
@@ -2738,7 +2740,7 @@ uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* f
 
             char basePath[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
 
-            if (!LogicCaps->virtualFileSystem->BuildAbsolutePathFromDentry(baseFile->path.dentry, basePath, sizeof(basePath)))
+            if (!LogicCaps->virtualFileSystem->BuildAbsolutePath(baseFile->path, basePath, sizeof(basePath)))
             {
                 return LINUX_ENAMETOOLONG;
             }
@@ -2753,7 +2755,7 @@ uint64_t VfsRequestManager::HandleSymlinkatRequest(const arch_syscall_frame_t* f
     }
 
     const int64_t result = LogicCaps->virtualFileSystem->Symlink({}, target, effectiveLinkPath);
-    return normalize_vfs_result(result);
+    return (uint64_t) result;
 }
 
 uint64_t VfsRequestManager::HandleSymlinkRequest(const arch_syscall_frame_t* frame)
@@ -2954,7 +2956,9 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
     {
         return LINUX_EFAULT;
     }
-    inode_t* inode = nullptr;
+    inode_t*  inode  = nullptr;
+    mount_t*  mount  = nullptr;
+    dentry_t* dentry = nullptr;
     if (descriptorOnly || (path[0] == 0 && (flags & 0x1000)))
     {
         if (dirfd == LINUX_AT_FDCWD && !descriptorOnly)
@@ -2964,7 +2968,9 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
             {
                 return LINUX_ENOENT;
             }
-            inode = resolved.dentry->inode;
+            inode  = resolved.dentry->inode;
+            mount  = resolved.mount;
+            dentry = resolved.dentry;
         }
         else
         {
@@ -2973,7 +2979,9 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
             {
                 return LINUX_EBADF;
             }
-            inode = static_cast<file_t*>(fd->file)->inode;
+            inode  = static_cast<file_t*>(fd->file)->inode;
+            mount  = static_cast<file_t*>(fd->file)->path.mount;
+            dentry = static_cast<file_t*>(fd->file)->path.dentry;
         }
     }
     else
@@ -2992,7 +3000,10 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
         }
         if (flags & 0x100)
         {
-            const int64_t status = LogicCaps->virtualFileSystem->StatNoFollow(start, effectivePath, &inode);
+            vfs_path_t    resolved = {};
+            const int64_t status   = LogicCaps->virtualFileSystem->StatNoFollow(start, effectivePath, &inode, &resolved);
+            mount                  = resolved.mount;
+            dentry                 = resolved.dentry;
             if (status < 0)
             {
                 return normalize_vfs_result(status);
@@ -3005,12 +3016,14 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
             {
                 return LINUX_ENOENT;
             }
-            inode = resolved.dentry->inode;
+            inode  = resolved.dentry->inode;
+            mount  = resolved.mount;
+            dentry = resolved.dentry;
         }
     }
     const uint32_t first  = (uint32_t) (descriptorOnly ? frame->arg1 : frame->arg2);
     const uint32_t second = (uint32_t) (descriptorOnly ? frame->arg2 : frame->arg3);
-    return LogicCaps->virtualFileSystem->ChangeMetadata(inode, ownership, first, second);
+    return LogicCaps->virtualFileSystem->ChangeMetadata(inode, ownership, first, second, mount, dentry);
 }
 
 uint64_t VfsRequestManager::HandleFchownatRequest(const arch_syscall_frame_t* frame)
@@ -3124,7 +3137,7 @@ uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame
     {
         return (uint64_t) -1;
     }
-    char source[512] = {}, target[512] = {}, type[64] = {};
+    char source[512] = {}, target[512] = {}, type[64] = {}, options[4096] = {};
     if (!safe_read_user_string(frame->arg1, target, sizeof(target), nullptr) || (frame->arg0 != 0 && !safe_read_user_string(frame->arg0, source, sizeof(source), nullptr)) || (frame->arg2 != 0 && !safe_read_user_string(frame->arg2, type, sizeof(type), nullptr)))
     {
         return LINUX_EFAULT;
@@ -3138,7 +3151,24 @@ uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame
     {
         return LINUX_ENOENT;
     }
-    return LogicCaps->virtualFileSystem->Mount(source, absolute, frame->arg2 != 0 ? type : nullptr, frame->arg3, frame->arg4);
+    if (frame->arg4 != 0 && !safe_read_user_string(frame->arg4, options, sizeof(options), nullptr))
+    {
+        return LINUX_EFAULT;
+    }
+    char           absoluteSource[512] = {};
+    const uint64_t flags               = (frame->arg3 & 0xffff0000ULL) == 0xc0ed0000ULL ? frame->arg3 & ~0xffff0000ULL : frame->arg3;
+    if ((flags & 8192) || ((flags & 4096) && !(flags & 32)))
+    {
+        if (source[0] == 0)
+        {
+            return LINUX_EINVAL;
+        }
+        if (!LogicCaps->virtualFileSystem->JoinPath(process->cwdPath, source, absoluteSource, sizeof(absoluteSource)))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+    }
+    return LogicCaps->virtualFileSystem->Mount(flags & (4096 | 8192) ? absoluteSource : source, absolute, frame->arg2 != 0 ? type : nullptr, frame->arg3, frame->arg4 != 0 ? options : nullptr);
 }
 
 uint64_t VfsRequestManager::HandleStatfsRequest(const arch_syscall_frame_t* frame)
@@ -3288,7 +3318,7 @@ uint64_t VfsRequestManager::HandleMknodatRequest(const arch_syscall_frame_t* fra
         return pathResult;
     }
 
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->Mknod(start, effectivePath, mode, dev));
+    return (uint64_t) LogicCaps->virtualFileSystem->Mknod(start, effectivePath, mode, dev);
 }
 
 uint64_t VfsRequestManager::HandleMknodRequest(const arch_syscall_frame_t* frame)
@@ -3356,7 +3386,7 @@ uint64_t VfsRequestManager::HandleTruncateRequest(const arch_syscall_frame_t* fr
         effectivePath = effectivePathBuffer;
     }
 
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->TruncatePath({}, effectivePath, (uint64_t) length));
+    return (uint64_t) LogicCaps->virtualFileSystem->TruncatePath({}, effectivePath, (uint64_t) length);
 }
 
 uint64_t VfsRequestManager::HandleFtruncateRequest(const arch_syscall_frame_t* frame)
@@ -3395,14 +3425,13 @@ uint64_t VfsRequestManager::HandleFtruncateRequest(const arch_syscall_frame_t* f
         return LINUX_EINVAL;
     }
 
-    file_t* file = static_cast<file_t*>(descriptor->file);
+    file_t*       file   = static_cast<file_t*>(descriptor->file);
     const int64_t result = LogicCaps->virtualFileSystem->TruncateFile(file, (uint64_t) length);
-    return file->operations != nullptr && file->operations->linuxErrors ? (uint64_t) result : normalize_vfs_result(result);
+    return (file->operations != nullptr && file->operations->linuxErrors) || (file->inode != nullptr && file->inode->filesystem != nullptr && file->inode->filesystem->type != nullptr) ? (uint64_t) result : normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePipeRequest(const arch_syscall_frame_t* frame)
 {
-
     if (frame == nullptr)
     {
         return LINUX_EINVAL;

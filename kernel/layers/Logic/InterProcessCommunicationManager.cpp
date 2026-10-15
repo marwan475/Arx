@@ -12,6 +12,7 @@ namespace
 constexpr size_t   PIPE_CAPACITY = 65536;
 constexpr size_t   PIPE_ATOMIC   = 4096;
 constexpr size_t   MEMORY_PAGES  = 256;
+constexpr uint32_t DIRECT        = 040000;
 constexpr uint32_t NONBLOCK      = 04000;
 constexpr uint32_t CLOEXEC       = 02000000;
 constexpr uint64_t AGAIN         = (uint64_t) -11;
@@ -32,7 +33,20 @@ struct pipe_state_t
     size_t             head;
     size_t             size;
     uint8_t            data[PIPE_CAPACITY];
+    // Packet bits travel with bytes, so changing O_DIRECT affects future writes.
+    uint8_t packet[PIPE_CAPACITY / 4];
 };
+
+uint8_t pipe_packet(const pipe_state_t* pipe, size_t index)
+{
+    return (pipe->packet[index / 4] >> ((index % 4) * 2)) & 3;
+}
+
+void set_pipe_packet(pipe_state_t* pipe, size_t index, uint8_t flags)
+{
+    const unsigned shift    = (index % 4) * 2;
+    pipe->packet[index / 4] = (pipe->packet[index / 4] & ~(3U << shift)) | (flags << shift);
+}
 
 struct memory_file_t
 {
@@ -95,9 +109,9 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     {
         return LINUX_ENOSYS;
     }
-    if ((flags & ~(NONBLOCK | CLOEXEC)) != 0)
+    if ((flags & ~(NONBLOCK | CLOEXEC | DIRECT)) != 0)
     {
-        return (flags & ~(NONBLOCK | CLOEXEC | 040000U | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP;
+        return (flags & ~(NONBLOCK | CLOEXEC | DIRECT | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP;
     }
     pipe_state_t* pipe   = static_cast<pipe_state_t*>(kzalloc(sizeof(pipe_state_t)));
     file_t*       reader = static_cast<file_t*>(kzalloc(sizeof(file_t)));
@@ -124,8 +138,8 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     reader->operations = writer->operations = &PipeOperations;
     reader->privateData = writer->privateData = pipe;
     reader->refCount = writer->refCount = 1;
-    reader->statusFlags                 = flags & NONBLOCK;
-    writer->statusFlags                 = 1 | (flags & NONBLOCK);
+    reader->statusFlags                 = flags & (NONBLOCK | DIRECT);
+    writer->statusFlags                 = 1 | (flags & (NONBLOCK | DIRECT));
     int32_t  descriptors[2]             = {-1, -1};
     uint64_t result                     = 0;
     {
@@ -278,7 +292,7 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     {
         capacity *= 2;
     }
-    uint8_t* staged = static_cast<uint8_t*>(kmalloc(PIPE_CAPACITY));
+    uint8_t* staged = static_cast<uint8_t*>(kmalloc(PIPE_CAPACITY * 2));
     if (staged == nullptr)
     {
         return LINUX_ENOMEM;
@@ -289,9 +303,14 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     {
         for (size_t i = 0; i < pipe->size; ++i)
         {
-            staged[i] = pipe->data[(pipe->head + i) % pipe->capacity];
+            staged[i]                 = pipe->data[(pipe->head + i) % pipe->capacity];
+            staged[PIPE_CAPACITY + i] = pipe_packet(pipe, (pipe->head + i) % pipe->capacity);
         }
         memcpy(pipe->data, staged, pipe->size);
+        for (size_t i = 0; i < pipe->size; ++i)
+        {
+            set_pipe_packet(pipe, i, staged[PIPE_CAPACITY + i]);
+        }
         pipe->head     = 0;
         pipe->capacity = capacity;
         result         = capacity;
@@ -350,9 +369,41 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
             break;
         }
         spinlock_acquire_preempt(&pipe->lock);
-        result       = AGAIN;
-        size_t bytes = write ? pipe->capacity - pipe->size : pipe->size;
-        bytes        = bytes < requested - transferred ? bytes : requested - transferred;
+        result                    = AGAIN;
+        size_t bytes              = write ? pipe->capacity - pipe->size : pipe->size;
+        bytes                     = bytes < requested - transferred ? bytes : requested - transferred;
+        const bool   packetWrite  = write && (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & DIRECT);
+        const size_t packetLength = requested - transferred < PIPE_ATOMIC ? requested - transferred : PIPE_ATOMIC;
+        if (packetWrite)
+        {
+            bytes = pipe->capacity - pipe->size >= packetLength ? packetLength : 0;
+        }
+        size_t consumed = bytes;
+        if (!write && bytes != 0)
+        {
+            const bool packetRead = (pipe_packet(pipe, pipe->head) & 1) != 0;
+            if (packetRead)
+            {
+                consumed = 0;
+                do
+                {
+                    ++consumed;
+                } while (consumed < pipe->size && !(pipe_packet(pipe, (pipe->head + consumed - 1) % pipe->capacity) & 2));
+                bytes = bytes < consumed ? bytes : consumed;
+            }
+            else
+            {
+                for (size_t i = 1; i < bytes; ++i)
+                {
+                    if (pipe_packet(pipe, (pipe->head + i) % pipe->capacity) & 1)
+                    {
+                        bytes = i;
+                        break;
+                    }
+                }
+                consumed = bytes;
+            }
+        }
         if (write && pipe->reader == nullptr)
         {
             result = (uint64_t) -32;
@@ -361,7 +412,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
         {
             result = 0;
         }
-        else if (bytes != 0 && (!write || requested > PIPE_ATOMIC || bytes == requested))
+        else if (bytes != 0 && (!write || packetWrite || requested > PIPE_ATOMIC || bytes == requested))
         {
             if (!write)
             {
@@ -380,14 +431,16 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                 {
                     for (size_t i = 0; i < bytes; ++i)
                     {
-                        pipe->data[(pipe->head + pipe->size + i) % pipe->capacity] = staged[i];
+                        const size_t index = (pipe->head + pipe->size + i) % pipe->capacity;
+                        pipe->data[index]  = staged[i];
+                        set_pipe_packet(pipe, index, packetWrite ? 1 | (i + 1 == bytes ? 2 : 0) : 0);
                     }
                     pipe->size += bytes;
                 }
                 else
                 {
-                    pipe->head = (pipe->head + bytes) % pipe->capacity;
-                    pipe->size -= bytes;
+                    pipe->head = (pipe->head + consumed) % pipe->capacity;
+                    pipe->size -= consumed;
                 }
                 transferred += bytes;
                 result = 0;
@@ -412,7 +465,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
         {
             break;
         }
-        if (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK)
+        if (result == AGAIN && (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK))
         {
             break;
         }

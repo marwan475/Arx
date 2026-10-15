@@ -2418,7 +2418,7 @@ static bool custom_case_validate_unlink(const custom_case_ctx_t* ctx)
 
 static bool custom_case_validate_rmdir(const custom_case_ctx_t* ctx)
 {
-    constexpr uint64_t TEST_LINUX_EROFS = (uint64_t) -30;
+    constexpr uint64_t TEST_LINUX_EBUSY = (uint64_t) -16;
 
     if (ctx == nullptr || ctx->frame == nullptr || ctx->result == LINUX_ENOSYS)
     {
@@ -2434,7 +2434,7 @@ static bool custom_case_validate_rmdir(const custom_case_ctx_t* ctx)
     badPathFrame.arg0                 = 0;
     const uint64_t badPathResult      = dispatcher_dispatch_syscall(&badPathFrame);
 
-    return rmdirResult == TEST_LINUX_EROFS && badPathResult == LINUX_EFAULT;
+    return rmdirResult == TEST_LINUX_EBUSY && badPathResult == LINUX_EFAULT;
 }
 
 static bool custom_case_validate_renameat(const custom_case_ctx_t* ctx)
@@ -3660,11 +3660,11 @@ static bool test_time_real_expiration(process_t* process, uint64_t base)
         return true;
     }
 
-    const uint64_t alarmBit = 1ULL << 13;
-    const uint64_t oldMask  = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+    const uint64_t  alarmBit = 1ULL << 13;
+    const uint64_t  oldMask  = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
     signal_action_t previous = {};
     signal_action_t action   = {base + 512, 0x04000004, base + 768, 0};
-    bool ok = memory_expect(signals->Action(14, &action, &previous) == 0, "real timer signal handler fixture");
+    bool            ok       = memory_expect(signals->Action(14, &action, &previous) == 0, "real timer signal handler fixture");
     __atomic_store_n(&task->signalMask, oldMask | alarmBit, __ATOMIC_RELEASE);
     time_itimerval_t request = {{0, 0}, {10, 0}};
     time_fixture_store(process, base + 256, &request, sizeof(request));
@@ -3702,8 +3702,8 @@ static bool test_time_real_expiration(process_t* process, uint64_t base)
 
 #if defined(__x86_64__)
         alignas(16) uint8_t floating[512] = {};
-        const uint32_t mxcsr             = 0x1f80;
-        const uint32_t mxcsrMask         = 0xffbf;
+        const uint32_t      mxcsr         = 0x1f80;
+        const uint32_t      mxcsrMask     = 0xffbf;
         memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
         memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
         arch_syscall_frame_t frame = {};
@@ -3772,7 +3772,7 @@ static bool test_time_timer(process_t* process, uint64_t number)
     ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0 && value.value.seconds == 0, "disarmed real timer interval roundtrip");
     TimeManager*    clock     = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->timeManager;
     time_timespec_t now       = {};
-    const bool     available = clock != nullptr && clock->ReadClock(1, &now) == 0;
+    const bool      available = clock != nullptr && clock->ReadClock(1, &now) == 0;
     ok &= test_time_real_expiration(process, base);
 
     if (number == SYSCALL_alarm)
@@ -4020,7 +4020,28 @@ static bool test_ipc_pipe(process_t* process, uint64_t base, uint64_t number)
     process->fileLimit.current = 1;
     ok &= memory_expect(memory_call(SYSCALL_pipe2, base, 0) == LINUX_EMFILE && ipc_descriptor_count(process) == before, "pipe second-fd allocation rollback");
     process->fileLimit.current = limit;
-    ok &= memory_expect(memory_call(SYSCALL_pipe2, base, 1) == LINUX_EINVAL && memory_call(SYSCALL_pipe2, base, 040000) == LINUX_EOPNOTSUPP, "pipe invalid flags and packet-mode prerequisite");
+    ok &= memory_expect(memory_call(SYSCALL_pipe2, base, 1) == LINUX_EINVAL && memory_call(SYSCALL_pipe2, base, 0200) == LINUX_EOPNOTSUPP, "pipe invalid flags and notification-pipe prerequisite");
+    if (memory_call(SYSCALL_pipe2, base, 040000 | 04000) == 0)
+    {
+        time_fixture_load(process, base, descriptors, sizeof(descriptors));
+        const uint64_t packetReader = descriptors[0], packetWriter = descriptors[1];
+        ok &= memory_expect(memory_call(SYSCALL_write, packetWriter, base + 128, 7) == 7 && memory_call(SYSCALL_write, packetWriter, base + 128, 9) == 9, "packet pipe queues separate writes");
+        ok &= memory_expect(memory_call(SYSCALL_read, packetReader, base + 512, 3) == 3 && memory_call(SYSCALL_read, packetReader, base + 512, 32) == 9 && memory_call(SYSCALL_read, packetReader, base + 512, 1) == (uint64_t) -11, "short packet read discards only remainder of first packet");
+        ok &= memory_expect(memory_call(SYSCALL_write, packetWriter, base + 128, 4097) == 4097 && memory_call(SYSCALL_read, packetReader, base + 8192, 8192) == 4096 && memory_call(SYSCALL_read, packetReader, base + 512, 32) == 1, "packet writes split at PIPE_BUF");
+        memory_call(SYSCALL_write, packetWriter, base + 128, 7);
+        ok &= memory_expect(memory_call(SYSCALL_read, packetReader, CANONICAL_KERNEL_BASE, 7) == LINUX_EFAULT && memory_call(SYSCALL_read, packetReader, base + 512, 32) == 7, "packet read fault preserves packet");
+        ok &= memory_expect(memory_call(SYSCALL_fcntl, packetWriter, 4, 04000) == 0 && memory_call(SYSCALL_write, packetWriter, base + 128, 7) == 7 && memory_call(SYSCALL_read, packetReader, base + 512, 3) == 3 && memory_call(SYSCALL_read, packetReader, base + 512, 32) == 4,
+                            "fcntl O_DIRECT change affects subsequent writes");
+        memory_call(SYSCALL_fcntl, packetWriter, 4, 04000 | 040000);
+        memory_call(SYSCALL_write, packetWriter, base + 128, 7);
+        ok &= memory_expect(memory_call(SYSCALL_fcntl, packetReader, 1031, 4096) == 4096 && memory_call(SYSCALL_read, packetReader, base + 512, 3) == 3 && memory_call(SYSCALL_read, packetReader, base + 512, 32) == (uint64_t) -11, "pipe resize preserves packet markers");
+        memory_call(SYSCALL_close, packetReader);
+        memory_call(SYSCALL_close, packetWriter);
+    }
+    else
+    {
+        ok &= memory_expect(false, "packet pipe creation");
+    }
     return ok;
 }
 
@@ -4125,6 +4146,398 @@ static bool test_vfs_metadata(process_t* process, uint64_t base, uint64_t number
     return ok;
 }
 
+struct mount_test_backend_t;
+struct mount_test_node_t
+{
+    inode_t               inode;
+    mount_test_backend_t* owner;
+    inode_t*              parent;
+    inode_t*              alias;
+    char                  name[32];
+    char                  bytes[64];
+    bool                  present;
+};
+struct mount_test_backend_t
+{
+    mount_test_node_t root;
+    mount_test_node_t nodes[8];
+};
+static unsigned mount_test_releases = 0;
+static int64_t  mount_test_metadata(inode_t*, uint32_t mode, uint32_t, uint32_t)
+{
+    return mode == 0777 ? -5 : 0;
+}
+static mount_test_node_t* mount_test_find(inode_t* directory, const char* name)
+{
+    auto state = static_cast<mount_test_node_t*>(directory->privateData)->owner;
+    for (auto& node : state->nodes)
+    {
+        if (node.present && node.parent == directory && strcmp(node.name, name) == 0)
+        {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+static inode_t* mount_test_lookup(inode_t* directory, const char* name)
+{
+    auto node = mount_test_find(directory, name);
+    return node != nullptr ? (node->alias != nullptr ? node->alias : &node->inode) : nullptr;
+}
+extern const inode_operations_t mount_test_inode_operations;
+extern const file_operations_t  mount_test_file_operations;
+static int64_t                  mount_test_create(inode_t* directory, const char* name, uint32_t mode, inode_type_t type)
+{
+    auto state = static_cast<mount_test_node_t*>(directory->privateData)->owner;
+    if (strlen(name) >= 32)
+    {
+        return -36;
+    }
+    if (mount_test_find(directory, name) != nullptr)
+    {
+        return -17;
+    }
+    for (auto& node : state->nodes)
+    {
+        if (node.inode.inodeNumber != 0)
+        {
+            continue;
+        }
+        node         = {};
+        node.present = true;
+        node.owner   = state;
+        node.parent  = directory;
+        memcpy(node.name, name, strlen(name) + 1);
+        node.inode.inodeNumber   = &node - state->nodes + 2;
+        node.inode.type          = type;
+        node.inode.mode          = mode & 07777;
+        node.inode.metadataValid = true;
+        node.inode.linkCount     = 1;
+        node.inode.inodeOps      = &mount_test_inode_operations;
+        node.inode.fileOps       = &mount_test_file_operations;
+        node.inode.privateData   = &node;
+        node.inode.filesystem    = directory->filesystem;
+        return 0;
+    }
+    return -28;
+}
+static int64_t mount_test_mkdir(inode_t* directory, const char* name, const inode_creation_attributes_t* attributes)
+{
+    const int64_t result = mount_test_create(directory, name, attributes->mode, INODE_DIRECTORY);
+    if (result == 0)
+    {
+        auto inode = mount_test_lookup(directory, name);
+        inode->uid = attributes->uid;
+        inode->gid = attributes->gid;
+    }
+    return result;
+}
+static int64_t mount_test_mknod(inode_t* directory, const char* name, const inode_creation_attributes_t* attributes, uint64_t)
+{
+    const int64_t result = mount_test_create(directory, name, attributes->mode, INODE_REGULAR);
+    if (result == 0)
+    {
+        auto inode = mount_test_lookup(directory, name);
+        inode->uid = attributes->uid;
+        inode->gid = attributes->gid;
+    }
+    return result;
+}
+static int64_t mount_test_unlink(inode_t* directory, const char* name, bool directoryEntry)
+{
+    auto node = mount_test_find(directory, name);
+    if (node == nullptr)
+    {
+        return -2;
+    }
+    if ((node->inode.type == INODE_DIRECTORY) != directoryEntry)
+    {
+        return directoryEntry ? -20 : -21;
+    }
+    node->present  = false;
+    inode_t* inode = node->alias != nullptr ? node->alias : &node->inode;
+    --inode->linkCount;
+    return 0;
+}
+static int64_t mount_test_rename(inode_t* directory, const char* name, inode_t* destination, const char* newName)
+{
+    auto node = mount_test_find(directory, name);
+    if (node == nullptr)
+    {
+        return -2;
+    }
+    if (strlen(newName) >= 32 || mount_test_find(destination, newName) != nullptr)
+    {
+        return -17;
+    }
+    node->parent = destination;
+    memcpy(node->name, newName, strlen(newName) + 1);
+    return 0;
+}
+static int64_t mount_test_link(inode_t* directory, const char* name, inode_t* inode)
+{
+    const int64_t result = mount_test_create(directory, name, inode->mode, inode->type);
+    if (result == 0)
+    {
+        mount_test_find(directory, name)->alias = inode;
+        ++inode->linkCount;
+    }
+    return result;
+}
+static int64_t mount_test_symlink(inode_t* directory, const char* name, const char* target, const inode_creation_attributes_t* attributes)
+{
+    if (strlen(target) >= 64)
+    {
+        return -36;
+    }
+    const int64_t result = mount_test_create(directory, name, 0777, INODE_SYMLINK);
+    if (result == 0)
+    {
+        auto node = mount_test_find(directory, name);
+        memcpy(node->bytes, target, strlen(target) + 1);
+        node->inode.size = strlen(target);
+        node->inode.uid  = attributes->uid;
+        node->inode.gid  = attributes->gid;
+    }
+    return result;
+}
+static int64_t mount_test_truncate(inode_t* inode, uint64_t size)
+{
+    if (size > 64)
+    {
+        return -27;
+    }
+    auto node = static_cast<mount_test_node_t*>(inode->privateData);
+    if (size < inode->size)
+    {
+        memset(node->bytes + size, 0, 64 - size);
+    }
+    return 0;
+}
+static int64_t mount_test_read(file_t* file, void* output, uint64_t count)
+{
+    auto         node  = static_cast<mount_test_node_t*>(file->inode->privateData);
+    const size_t bytes = file->offset < file->inode->size ? (count < file->inode->size - file->offset ? count : file->inode->size - file->offset) : 0;
+    memcpy(output, node->bytes + file->offset, bytes);
+    file->offset += bytes;
+    return (int64_t) bytes;
+}
+static int64_t mount_test_write(file_t* file, const void* input, uint64_t count)
+{
+    auto         node  = static_cast<mount_test_node_t*>(file->inode->privateData);
+    const size_t bytes = file->offset < 64 ? (count < 64 - file->offset ? count : 64 - file->offset) : 0;
+    memcpy(node->bytes + file->offset, input, bytes);
+    file->offset += bytes;
+    if (file->offset > file->inode->size)
+    {
+        file->inode->size = file->offset;
+    }
+    return (int64_t) bytes;
+}
+const inode_operations_t mount_test_inode_operations = {mount_test_lookup, mount_test_metadata, mount_test_mkdir, mount_test_unlink, mount_test_rename, mount_test_link, mount_test_mknod, mount_test_symlink, mount_test_truncate};
+const file_operations_t  mount_test_file_operations  = {nullptr, mount_test_read, mount_test_write};
+static int64_t           mount_test_mount(filesystem_t* fs, const filesystem_mount_request_t* request)
+{
+    auto state = static_cast<mount_test_backend_t*>(kzalloc(sizeof(mount_test_backend_t)));
+    if (state == nullptr)
+    {
+        return -12;
+    }
+    fs->privateData                 = state;
+    state->root.owner               = state;
+    state->root.inode.type          = INODE_DIRECTORY;
+    state->root.inode.mode          = 0755;
+    state->root.inode.metadataValid = true;
+    state->root.inode.linkCount     = 2;
+    state->root.inode.inodeOps      = &mount_test_inode_operations;
+    state->root.inode.privateData   = &state->root;
+    state->root.inode.filesystem    = fs;
+    fs->rootInode                   = &state->root.inode;
+    mount_test_create(fs->rootInode, "data", 0644, INODE_REGULAR);
+    return request->source != nullptr && strcmp(request->source, "fail") == 0 ? -28 : request->options != nullptr && strcmp(request->options, "test=1") != 0 ? -22 : 0;
+}
+static void mount_test_unmount(filesystem_t* fs)
+{
+    ++mount_test_releases;
+    kfree(fs->privateData);
+}
+static int64_t mount_test_remount(filesystem_t*, uint64_t, const char* options)
+{
+    return options != nullptr && strcmp(options, "reject") == 0 ? -22 : 0;
+}
+static const filesystem_type_t mount_test_type = {"arx-test-backend", mount_test_mount, mount_test_unmount, mount_test_remount};
+
+static bool test_vfs_backend_syscalls(process_t* process, uint64_t base)
+{
+    auto    dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto    resources  = dispatcher->GetResourceLayerCaps();
+    inode_t directory  = {};
+    directory.type     = INODE_DIRECTORY;
+    dentry_t root = {}, points[3] = {};
+    root.name               = "/";
+    root.inode              = &directory;
+    mount_t rootMount       = {};
+    rootMount.root          = &root;
+    const unsigned releases = mount_test_releases;
+    bool           ok       = true;
+    {
+        VirtualFileSystem local(resources);
+        LogicLayerCaps    logic = *dispatcher->GetLogicLayerCaps();
+        logic.virtualFileSystem = &local;
+        VfsRequestManager manager(resources, &logic);
+        ok &= memory_expect(local.SetRootMount(&rootMount) && local.RegisterFileSystemType(&mount_test_type) && !local.RegisterFileSystemType(&mount_test_type), "filesystem registration rejects duplicate names");
+        const char* names[] = {"one", "two", "three"};
+        for (size_t i = 0; i < 3; ++i)
+        {
+            points[i].name   = names[i];
+            points[i].parent = &root;
+            points[i].inode  = &directory;
+            ok &= local.CacheDentry(&points[i]);
+        }
+        auto store = [&](uint64_t offset, const char* text)
+        {
+            time_fixture_store(process, base + offset, text, strlen(text) + 1);
+            return base + offset;
+        };
+        auto mount = [&](const char* source, const char* target, uint64_t flags, const char* options = nullptr)
+        {
+            arch_syscall_frame_t frame = {};
+            frame.arg0                 = source != nullptr ? store(128, source) : 0;
+            frame.arg1                 = store(256, target);
+            frame.arg2                 = store(384, mount_test_type.name);
+            frame.arg3                 = flags;
+            frame.arg4                 = options != nullptr ? store(512, options) : 0;
+            return manager.HandleMountRequest(&frame);
+        };
+        ok &= memory_expect(mount("fail", "/one", 0) == (uint64_t) -28 && mount_test_releases == releases + 1, "failed backend mount releases private state");
+        ok &= memory_expect(mount("device", "/one", 0, "test=1") == 0, "mount registered backend with copied source and options");
+        arch_syscall_frame_t metadata = {};
+        metadata.arg0                 = store(256, "/one/data");
+        metadata.arg1                 = 0600;
+        ok &= memory_expect(manager.HandleChmodRequest(&metadata) == 0, "chmod dispatches to mounted inode callback");
+        vfs_path_t resolved = {};
+        ok &= memory_expect(local.ResolvePath({}, "/one/data", &resolved) && resolved.dentry->inode->mode == 0600, "mounted metadata change is committed");
+        metadata.arg1 = 0777;
+        ok &= memory_expect(manager.HandleChmodRequest(&metadata) == (uint64_t) -5 && resolved.dentry->inode->mode == 0600, "backend metadata failure preserves cached attributes");
+        EventManager notifications(resources, logic.scheduler, &local);
+        local.SetEventManager(&notifications);
+        const uint64_t notify = notifications.CreateInotify(04000);
+        const uint64_t watch  = notifications.AddWatch((int32_t) notify, store(256, "/one"), 0xc0);
+        ok &= memory_expect((int64_t) notify >= 0 && (int64_t) watch > 0, "watch registered filesystem directory");
+        auto call = [&](auto handler, uint64_t first, uint64_t second = 0, uint64_t third = 0)
+        {
+            arch_syscall_frame_t frame = {};
+            frame.arg0                 = first;
+            frame.arg1                 = second;
+            frame.arg2                 = third;
+            return (manager.*handler)(&frame);
+        };
+        ok &= memory_expect(call(&VfsRequestManager::HandleMkdirRequest, store(256, "/one/newdir"), 0750) == 0 && local.ResolvePath({}, "/one/newdir", &resolved) && resolved.dentry->inode->type == INODE_DIRECTORY, "mkdir dispatches to mounted directory callback");
+        ok &= memory_expect(call(&VfsRequestManager::HandleMknodRequest, store(256, "/one/newfile"), 0100600) == 0 && local.ResolvePath({}, "/one/newfile", &resolved), "mknod publishes backend node through lookup");
+        const uint64_t nativeFile = call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/newfile"), 2);
+        ok &= memory_expect((int64_t) nativeFile >= 0 && call(&VfsRequestManager::HandleWriteRequest, nativeFile, store(512, "contents"), 8) == 8 && call(&VfsRequestManager::HandleFtruncateRequest, nativeFile, 3) == 0, "mounted file I/O and inode truncate callback");
+        if ((int64_t) nativeFile >= 0)
+        {
+            auto file = static_cast<file_t*>(ProcessManager::GetFileDescriptor(process, nativeFile)->file);
+            ok &= memory_expect(file->offset == 8 && file->inode->size == 3, "ftruncate preserves file offset while shrinking backend inode");
+            ok &= memory_expect(call(&VfsRequestManager::HandleFcntlRequest, nativeFile, 4, 02000) == 0 && call(&VfsRequestManager::HandleWriteRequest, nativeFile, store(512, "z"), 1) == 1 && file->offset == 4 && file->inode->size == 4 && (file->statusFlags & 3) == 2,
+                                "native append uses inode size and F_SETFL preserves access mode");
+        }
+        const uint64_t inodeWatch = notifications.AddWatch((int32_t) notify, store(256, "/one/newfile"), 4);
+        ok &= memory_expect(call(&VfsRequestManager::HandleLinkRequest, store(128, "/one/newfile"), store(256, "/one/alias")) == 0, "hard link dispatches by source inode");
+        ok &= memory_expect((int64_t) inodeWatch > 0 && call(&VfsRequestManager::HandleReadRequest, notify, base + 1024, 512) == 16, "hard link change emits watched inode attribute event");
+
+        ok &= memory_expect(call(&VfsRequestManager::HandleRenameRequest, store(128, "/one/newfile"), store(256, "/one/renamed")) == 0 && !local.ResolvePath({}, "/one/newfile", &resolved) && local.ResolvePath({}, "/one/renamed", &resolved),
+                            "rename invalidates cached old name and publishes destination");
+        ok &= memory_expect(call(&VfsRequestManager::HandleReadRequest, notify, base + 1024, 512) == 64, "backend rename emits paired directory records");
+        uint32_t moves[16] = {};
+        time_fixture_load(process, base + 1024, moves, sizeof(moves));
+        ok &= memory_expect(moves[1] == 0x40 && moves[9] == 0x80 && moves[2] != 0 && moves[2] == moves[10], "inotify rename pair carries matching nonzero cookie");
+        ok &= memory_expect(call(&VfsRequestManager::HandleSymlinkRequest, store(128, "data"), store(256, "/one/symlink")) == 0 && call(&VfsRequestManager::HandleReadlinkRequest, store(256, "/one/symlink"), base + 1024, 64) == 4, "mounted backend symlink and readlink callbacks");
+        ok &= memory_expect(call(&VfsRequestManager::HandleUnlinkRequest, store(256, "/one/renamed")) == 0 && !local.ResolvePath({}, "/one/renamed", &resolved) && local.ResolvePath({}, "/one/alias", &resolved), "unlink invalidates name while preserving backend hard link");
+        ok &= memory_expect(call(&VfsRequestManager::HandleReadRequest, notify, base + 1024, 512) == 16, "unlink with surviving hard link preserves inode watch");
+
+        ok &= memory_expect(call(&VfsRequestManager::HandleUnlinkRequest, store(256, "/one/alias")) == 0 && call(&VfsRequestManager::HandleRmdirRequest, store(256, "/one/newdir")) == 0, "mounted unlink and rmdir dispatch");
+        ok &= memory_expect(call(&VfsRequestManager::HandleReadRequest, notify, base + 1024, 512) == 16, "unlinked open inode keeps watch until last close");
+        if ((int64_t) nativeFile >= 0)
+        {
+            call(&VfsRequestManager::HandleCloseRequest, nativeFile);
+        }
+        ok &= memory_expect(call(&VfsRequestManager::HandleReadRequest, notify, base + 1024, 512) == 16 && notifications.RemoveWatch((int32_t) notify, (int32_t) inodeWatch) == LINUX_EINVAL, "last close of unlinked inode removes watch");
+        uint32_t removed[4] = {};
+        time_fixture_load(process, base + 1024, removed, sizeof(removed));
+        ok &= memory_expect(removed[0] == inodeWatch && removed[1] == 0x8000, "inode removal queues IN_IGNORED even when DELETE_SELF was not requested");
+
+        char savedCwd[ProcessManager::MAX_CWD_PATH_LENGTH];
+        memcpy(savedCwd, process->cwdPath, sizeof(savedCwd));
+        ok &= memory_expect(call(&VfsRequestManager::HandleChdirRequest, store(256, "/one")) == 0 && strcmp(process->cwdPath, "/one") == 0, "chdir retains mountpoint in working directory path");
+        const uint64_t created = call(&VfsRequestManager::HandleOpenRequest, store(256, "via-open"), 2 | 0100 | 0200 | 02000000, 0640);
+        ok &= memory_expect((int64_t) created >= 0 && call(&VfsRequestManager::HandleOpenRequest, store(256, "via-open"), 2 | 0100 | 0200, 0640) == (uint64_t) -17, "native open creates relative file and honors O_EXCL");
+        if ((int64_t) created >= 0)
+        {
+            ok &= memory_expect(call(&VfsRequestManager::HandleFcntlRequest, created, 1) == 1, "open O_CLOEXEC sets descriptor flag");
+            call(&VfsRequestManager::HandleCloseRequest, created);
+        }
+        const uint64_t truncated = call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/data"), 2 | 01000);
+        ok &= memory_expect((int64_t) truncated >= 0 && local.ResolvePath({}, "/one/data", &resolved) && resolved.dentry->inode->size == 0, "native O_TRUNC dispatches inode truncation");
+        if ((int64_t) truncated >= 0)
+        {
+            call(&VfsRequestManager::HandleCloseRequest, truncated);
+        }
+        vfs_path_t mountedRoot = {};
+        local.ResolvePath({}, "/one", &mountedRoot);
+        ok &= memory_expect(local.ChangeMetadata(mountedRoot.dentry->inode, false, 02777, 0, mountedRoot.mount, mountedRoot.dentry) == 0 && local.ChangeMetadata(mountedRoot.dentry->inode, true, UINT32_MAX, 42, mountedRoot.mount, mountedRoot.dentry) == 0,
+                            "prepare setgid parent for backend creation attributes");
+        const auto     savedCredentials       = process->credentials;
+        const uint32_t savedUmask             = process->umask;
+        process->credentials.user.filesystem  = 99;
+        process->credentials.group.filesystem = 77;
+        process->umask                        = 0077;
+        const uint64_t ownedFile              = call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/owned"), 2 | 0100 | 0200, 0);
+        ok &= memory_expect((int64_t) ownedFile >= 0 && local.ResolvePath({}, "/one/owned", &resolved) && resolved.dentry->inode->uid == 99 && resolved.dentry->inode->gid == 42 && resolved.dentry->inode->mode == 0, "backend receives creator uid and inherited gid; creator may open mode-zero file");
+        if ((int64_t) ownedFile >= 0)
+        {
+            call(&VfsRequestManager::HandleCloseRequest, ownedFile);
+        }
+        ok &= memory_expect(call(&VfsRequestManager::HandleMkdirRequest, store(256, "/one/owned-dir"), 0777) == 0 && local.ResolvePath({}, "/one/owned-dir", &resolved) && resolved.dentry->inode->uid == 99 && resolved.dentry->inode->gid == 42 && resolved.dentry->inode->mode == 02700,
+                            "backend directory attributes include umask and inherited setgid");
+        process->credentials = savedCredentials;
+        process->umask       = savedUmask;
+        local.ChangeMetadata(mountedRoot.dentry->inode, false, 0755, 0, mountedRoot.mount, mountedRoot.dentry);
+        local.ChangeMetadata(mountedRoot.dentry->inode, true, UINT32_MAX, 0, mountedRoot.mount, mountedRoot.dentry);
+        process->credentials.user.filesystem = 99;
+        ok &= memory_expect(call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/via-open"), 2) == LINUX_EACCES && call(&VfsRequestManager::HandleMkdirRequest, store(256, "/one/denied"), 0755) == LINUX_EACCES, "native open and directory mutations enforce filesystem credentials");
+        process->credentials = savedCredentials;
+        memcpy(process->cwdPath, savedCwd, sizeof(savedCwd));
+
+        if ((int64_t) notify >= 0)
+        {
+            call(&VfsRequestManager::HandleCloseRequest, notify);
+        }
+
+        ok &= memory_expect(mount("/one", "/two", 4096) == 0, "bind mounts retain the original backend");
+        // A bind remount does not require a source or filesystem name.
+        arch_syscall_frame_t remount = {};
+        remount.arg1                 = store(256, "/two");
+        remount.arg3                 = 4096 | 32 | 1;
+        ok &= memory_expect(manager.HandleMountRequest(&remount) == 0, "bind remount installs per-mount readonly flag");
+        metadata.arg0 = store(256, "/two/data");
+        metadata.arg1 = 0600;
+        ok &= memory_expect(manager.HandleChmodRequest(&metadata) == (uint64_t) -30, "readonly bind rejects metadata mutation");
+        ok &= memory_expect(call(&VfsRequestManager::HandleOpenRequest, store(256, "/two/data"), 1) == (uint64_t) -30 && call(&VfsRequestManager::HandleLinkRequest, store(128, "/one/data"), store(256, "/two/cross")) == (uint64_t) -18, "readonly open and cross-mount link return native errno");
+
+        metadata.arg0 = store(256, "/one/data");
+        ok &= memory_expect(manager.HandleChmodRequest(&metadata) == 0, "readonly bind leaves original filesystem writable");
+        ok &= memory_expect(mount("/one", "/three", 8192) == 0 && local.ResolvePath({}, "/three/data", &resolved) && !local.ResolvePath({}, "/one/data", &resolved), "move mount changes namespace attachment");
+        ok &= memory_expect(mount(nullptr, "/three", 32 | 1, "reject") == (uint64_t) -22 && mount(nullptr, "/three", 32 | 1) == 0, "filesystem remount calls backend and propagates failure");
+        metadata.arg0 = store(256, "/three/data");
+        ok &= memory_expect(manager.HandleChmodRequest(&metadata) == (uint64_t) -30, "readonly filesystem remount rejects mutation");
+        local.SetEventManager(nullptr);
+    }
+    ok &= memory_expect(mount_test_releases == releases + 2, "VFS teardown releases mounted backend once despite bind alias");
+    return ok;
+}
+
 static bool test_vfs_mount_framework(process_t* process, uint64_t base)
 {
     const char target[] = "/", unknown[] = "arx-unknown", type[] = "cpio";
@@ -4132,12 +4545,13 @@ static bool test_vfs_mount_framework(process_t* process, uint64_t base)
     time_fixture_store(process, base + 256, unknown, sizeof(unknown));
     time_fixture_store(process, base + 384, type, sizeof(type));
     bool ok = memory_expect(memory_call(SYSCALL_mount, 0, base + 128, base + 256, 0) == (uint64_t) -19, "mount unknown filesystem ENODEV");
-    ok &= memory_expect(memory_call(SYSCALL_mount, 0, base + 128, base + 384, 0) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_mount, 0, base + 128, 0, 4096) == LINUX_EOPNOTSUPP, "mount backend and namespace prerequisites are explicit");
+    ok &= memory_expect(memory_call(SYSCALL_mount, 0, base + 128, base + 384, 0) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_mount, 0, base + 128, 0, 4096) == LINUX_EINVAL, "mount boot cpio requires an archive and bind requires a source");
     ok &= memory_expect(memory_call(SYSCALL_mount, 0, CANONICAL_KERNEL_BASE, base + 384, 0) == LINUX_EFAULT && memory_call(SYSCALL_mount, 0, base + 128, base + 384, 1ULL << 40) == LINUX_EINVAL, "mount pointer and flag validation");
     const auto credentials              = process->credentials;
     process->credentials.user.effective = 99;
     ok &= memory_expect(memory_call(SYSCALL_mount, 0, 0, 0, 0) == (uint64_t) -1, "mount requires privilege before inspecting user arguments");
     process->credentials = credentials;
+    ok &= test_vfs_backend_syscalls(process, base);
     return ok;
 }
 
@@ -4354,14 +4768,14 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
 
 static bool test_event_counter_vector(process_t* process, uint64_t fd, uint64_t base)
 {
-    const uint64_t metadata = base + 384;
-    const uint64_t first    = base + 256;
-    const uint64_t second   = base + PAGE_SIZE + 64;
-    uint64_t       values[2] = {5, 7};
+    const uint64_t metadata   = base + 384;
+    const uint64_t first      = base + 256;
+    const uint64_t second     = base + PAGE_SIZE + 64;
+    uint64_t       values[2]  = {5, 7};
     file_iovec_t   vectors[3] = {{base + 64, 8}, {base + 72, 8}, {0, 0}};
     time_fixture_store(process, base + 64, values, sizeof(values));
     time_fixture_store(process, metadata, vectors, sizeof(vectors));
-    bool ok = memory_expect(memory_call(SYSCALL_writev, fd, metadata, 3) == 16, "eventfd writev increments once per eight-byte vector");
+    bool ok    = memory_expect(memory_call(SYSCALL_writev, fd, metadata, 3) == 16, "eventfd writev increments once per eight-byte vector");
     vectors[0] = {0, 0};
     vectors[1] = {first, 3};
     vectors[2] = {second, 13};
@@ -4542,8 +4956,8 @@ static bool test_event_temporary_mask(process_t* process, uint64_t number, uint6
     const uint64_t processPending  = __atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE);
     const uint64_t blockedMask     = (1ULL << 9) | (1ULL << 11);
 
-    signal_action_t previous = {};
-    signal_action_t action   = {base + 1280, 0x04000000, base + 1536, 0};
+    signal_action_t previous  = {};
+    signal_action_t action    = {base + 1280, 0x04000000, base + 1536, 0};
     const uint64_t  installed = signals->Action(10, &action, &previous);
 
     if (!memory_expect(installed == 0, "event signal handler fixture"))
@@ -4594,8 +5008,8 @@ static bool test_event_temporary_mask(process_t* process, uint64_t number, uint6
 
 #if defined(__x86_64__)
         alignas(16) uint8_t floating[512] = {};
-        const uint32_t      mxcsr        = 0x1f80;
-        const uint32_t      mxcsrMask    = 0xffbf;
+        const uint32_t      mxcsr         = 0x1f80;
+        const uint32_t      mxcsrMask     = 0xffbf;
         memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
         memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
         frame.user_cs     = USER_CS;
@@ -4836,17 +5250,17 @@ static bool test_event_wait(process_t* process, uint64_t number)
 
 static bool test_event_epoll_partial_copy(process_t* process, uint64_t base)
 {
-    const uint64_t epfd    = memory_call(SYSCALL_epoll_create1, 0);
-    const uint64_t first   = memory_call(SYSCALL_eventfd2, 1, 04000);
-    const uint64_t second  = memory_call(SYSCALL_eventfd2, 1, 04000);
-    bool           ready   = (int64_t) epfd >= 0 && (int64_t) first >= 0 && (int64_t) second >= 0;
-    bool           ok      = memory_expect(ready, "epoll partial-copy fixture");
+    const uint64_t epfd   = memory_call(SYSCALL_epoll_create1, 0);
+    const uint64_t first  = memory_call(SYSCALL_eventfd2, 1, 04000);
+    const uint64_t second = memory_call(SYSCALL_eventfd2, 1, 04000);
+    bool           ready  = (int64_t) epfd >= 0 && (int64_t) first >= 0 && (int64_t) second >= 0;
+    bool           ok     = memory_expect(ready, "epoll partial-copy fixture");
 
     if (ready)
     {
         event_epoll_event_t event = {EVENT_POLL_IN | 0xc0000000U, 1};
         time_fixture_store(process, base + 2048, &event, sizeof(event));
-        ready = memory_call(SYSCALL_epoll_ctl, epfd, 1, first, base + 2048) == 0;
+        ready      = memory_call(SYSCALL_epoll_ctl, epfd, 1, first, base + 2048) == 0;
         event.data = 2;
         time_fixture_store(process, base + 2048, &event, sizeof(event));
         ready &= memory_call(SYSCALL_epoll_ctl, epfd, 1, second, base + 2048) == 0;
@@ -4988,7 +5402,7 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     const uint64_t waitMask = UINT64_MAX;
     time_fixture_store(process, base + 800, &waitMask, sizeof(waitMask));
     auto control = [&](uint64_t operation, uint64_t target) -> uint64_t { return memory_call(SYSCALL_epoll_ctl, epfd, operation, target, input); };
-    auto wait = [&](uint64_t count, uint64_t milliseconds) -> uint64_t
+    auto wait    = [&](uint64_t count, uint64_t milliseconds) -> uint64_t
     {
         if (number == SYSCALL_epoll_pwait2)
         {
@@ -5004,10 +5418,10 @@ static bool test_event_epoll(process_t* process, uint64_t number)
     if (number == SYSCALL_epoll_pwait || number == SYSCALL_epoll_pwait2)
     {
         ok &= test_event_temporary_mask(process, number, base, epfd);
-        task_t*        task         = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
-        const uint64_t originalMask = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
-        uint64_t       mask         = UINT64_MAX;
-        time_timespec_t duration    = {};
+        task_t*         task         = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
+        const uint64_t  originalMask = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
+        uint64_t        mask         = UINT64_MAX;
+        time_timespec_t duration     = {};
         time_fixture_store(process, base + 768, &duration, sizeof(duration));
         time_fixture_store(process, base + 800, &mask, sizeof(mask));
         const uint64_t timeout = number == SYSCALL_epoll_pwait2 ? base + 768 : 0;
@@ -5440,8 +5854,8 @@ static void futex_peer_entry(void* argument)
 
     if (context->operationMode == 131 || context->operationMode == 132)
     {
-        context->mismatch = context->operationMode == 132 ? memory_call(SYSCALL_futex, context->address, 132, 0, 1, context->address + 4, 8) : 0;
-        context->moved     = memory_call(SYSCALL_futex, context->address, context->operationMode, 0, 1, context->address + 4, 7);
+        context->mismatch     = context->operationMode == 132 ? memory_call(SYSCALL_futex, context->address, 132, 0, 1, context->address + 4, 8) : 0;
+        context->moved        = memory_call(SYSCALL_futex, context->address, context->operationMode, 0, 1, context->address + 4, 7);
         context->wrongAddress = memory_call(SYSCALL_futex, context->address, 129, 1);
         context->wrongBits    = memory_call(SYSCALL_futex, context->address + 4, 138, 1, 0, 0, ~context->bits);
         context->result       = memory_call(SYSCALL_futex, context->address + 4, 138, 1, 0, 0, context->bits);
@@ -5460,8 +5874,8 @@ static void futex_peer_entry(void* argument)
         const uint32_t mismatch[] = {8, 7, 7, 6, 7, 8};
         const uint32_t matches[]  = {7, 8, 8, 7, 6, 7};
         const uint32_t compare    = context->compareMode << 24;
-        context->mismatch = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (7U << 12) | mismatch[context->compareMode]);
-        context->result   = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (11U << 12) | matches[context->compareMode]);
+        context->mismatch         = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (7U << 12) | mismatch[context->compareMode]);
+        context->result           = memory_call(SYSCALL_futex, context->address + 4, 133, 1, 1, context->address, compare | (11U << 12) | matches[context->compareMode]);
 
         if (context->result != 1)
         {
@@ -5471,7 +5885,7 @@ static void futex_peer_entry(void* argument)
         context->scheduler->ExitCurrentTask();
     }
 
-    context->wrongAddress         = memory_call(SYSCALL_futex, context->address + 4, 129, 1);
+    context->wrongAddress = memory_call(SYSCALL_futex, context->address + 4, 129, 1);
     cpu_preemption_disable();
     ProcessManager* processes = context->resources->processManager;
     process_t*      original  = processes->GetCurrentProcess();
@@ -5503,13 +5917,7 @@ static bool test_sync_wake_operation(process_t* process, uint64_t base)
         uint32_t after;
     };
     const operation_test_t tests[] = {
-            {0x000ff000U, 123, 255},
-            {0x00fff000U, 123, UINT32_MAX},
-            {0x10001000U, UINT32_MAX, 0},
-            {0x20100000U, 0x00ff, 0x01ff},
-            {0x3000f000U, 0x00ff, 0x00f0},
-            {0x4000f000U, 0x00ff, 0x00f0},
-            {0x80021000U, 123, 2},
+            {0x000ff000U, 123, 255}, {0x00fff000U, 123, UINT32_MAX}, {0x10001000U, UINT32_MAX, 0}, {0x20100000U, 0x00ff, 0x01ff}, {0x3000f000U, 0x00ff, 0x00f0}, {0x4000f000U, 0x00ff, 0x00f0}, {0x80021000U, 123, 2},
     };
     bool ok = true;
 
@@ -5559,7 +5967,7 @@ static void futex_destination_entry(void* argument)
 {
     cpu_preemption_disable();
     futex_requeue_context_t* context = static_cast<futex_requeue_context_t*>(argument);
-    context->destinationResult = memory_call(SYSCALL_futex, context->destination, 137, 7, 0, 0, 2);
+    context->destinationResult       = memory_call(SYSCALL_futex, context->destination, 137, 7, 0, 0, 2);
     __atomic_add_fetch(&context->completion, 1ULL, __ATOMIC_RELEASE);
     context->scheduler->WakeEventWaiters(&context->completion);
     context->scheduler->ExitCurrentTask();
@@ -5569,28 +5977,28 @@ static void futex_requeue_entry(void* argument)
 {
     cpu_preemption_disable();
     futex_requeue_context_t* context = static_cast<futex_requeue_context_t*>(argument);
-    context->moved = memory_call(SYSCALL_futex, context->source, 132, 0, 1, context->destination, 7);
-    context->firstWake = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
-    context->ordered = !context->destinationTask->sleepBlocked && context->sourceTask->sleepBlocked;
-    context->secondWake = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
+    context->moved                   = memory_call(SYSCALL_futex, context->source, 132, 0, 1, context->destination, 7);
+    context->firstWake               = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
+    context->ordered                 = !context->destinationTask->sleepBlocked && context->sourceTask->sleepBlocked;
+    context->secondWake              = memory_call(SYSCALL_futex, context->destination, 138, 1, 0, 0, 2);
     memory_call(SYSCALL_futex, context->source, 129, 1);
     context->scheduler->ExitCurrentTask();
 }
 
 static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
 {
-    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    ResourceLayerCaps* resources  = dispatcher->GetResourceLayerCaps();
-    Scheduler*         scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
-    futex_requeue_context_t context = {resources, scheduler, resources->taskManager->GetCurrentTask(), nullptr, base + 512, base + 516, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, false};
-    const uint32_t words[2] = {7, 7};
+    Dispatcher*             dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps*      resources  = dispatcher->GetResourceLayerCaps();
+    Scheduler*              scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    futex_requeue_context_t context    = {resources, scheduler, resources->taskManager->GetCurrentTask(), nullptr, base + 512, base + 516, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, false};
+    const uint32_t          words[2]   = {7, 7};
     time_fixture_store(process, context.source, words, sizeof(words));
     task_t* peers[2] = {
             resources->taskManager->CreateKernelTask(futex_destination_entry, &context),
             resources->taskManager->CreateKernelTask(futex_requeue_entry, &context),
     };
     context.destinationTask = peers[0];
-    bool added[2] = {false, false};
+    bool added[2]           = {false, false};
 
     for (size_t i = 0; i < 2; ++i)
     {
@@ -5598,7 +6006,7 @@ static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
     }
 
     const bool ready = added[0] && added[1] && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
-    bool ok = memory_expect(ready, "futex destination FIFO fixture");
+    bool       ok    = memory_expect(ready, "futex destination FIFO fixture");
 
     if (ready)
     {
@@ -5661,8 +6069,7 @@ static bool test_sync_futex(process_t* process)
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 129, 1) == 0 && memory_call(SYSCALL_futex, address, 129, 0) == 0, "futex wake with no waiters/zero count");
     ok &= memory_expect(memory_call(SYSCALL_futex, address + 1, 128, 7) == LINUX_EINVAL && memory_call(SYSCALL_futex, CANONICAL_KERNEL_BASE, 128, 7) == LINUX_EFAULT && memory_call(SYSCALL_futex, base + 2 * PAGE_SIZE, 128, 7) == LINUX_EFAULT, "futex alignment/kernel/unmapped word validation");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 137, 7, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 138, 1, 0, 0, 0) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 129, UINT64_MAX) == 0, "futex bitsets and empty legacy wake count");
-    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS,
-                        "futex shared/PI/unsupported clock modes explicit");
+    ok &= memory_expect(memory_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS && memory_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS, "futex shared/PI/unsupported clock modes explicit");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 131, 0, 1, address + 4) == 0 && memory_call(SYSCALL_futex, address, 132, 0, 1, address + 4, 8) == (uint64_t) -11, "futex requeue empty queue and compare mismatch");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 132, 0, 1, address + 4, 7) == 0 && memory_call(SYSCALL_futex, address, 131, 0, 0, address) == 0, "futex compare requeue and identical private keys");
     ok &= memory_expect(memory_call(SYSCALL_futex, address, 131, UINT64_MAX, 1, address + 4) == LINUX_EINVAL && memory_call(SYSCALL_futex, address, 132, 0, UINT64_MAX, address + 4, 7) == LINUX_EINVAL, "futex requeue negative counts");
@@ -5724,12 +6131,12 @@ static bool test_sync_futex(process_t* process)
         word = 7;
         time_fixture_store(process, address, &word, sizeof(word));
         futex_peer_context_t context = {scheduler, resources, resources->taskManager->GetCurrentTask(), address, 2, operation == 137, false, false, UINT64_MAX, UINT64_MAX, UINT64_MAX, isolated, UINT64_MAX};
-        const uint32_t command       = operation & 0xffffU;
+        const uint32_t       command = operation & 0xffffU;
         context.operationMode        = command >= 131 && command <= 133 ? command : 0;
         context.compareMode          = operation >> 16;
-        task_t*              peer    = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
-        const bool           added   = peer != nullptr && resources->processManager->AddTask(process, peer);
-        const bool           ready   = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+        task_t*    peer              = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
+        const bool added             = peer != nullptr && resources->processManager->AddTask(process, peer);
+        const bool ready             = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
         ok &= memory_expect(ready, "futex runnable sibling task fixture");
 
         if (ready)

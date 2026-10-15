@@ -3883,6 +3883,281 @@ static void test_memory_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
     run_manager_tests("memory", caps->memoryRequestManager, tests, stats);
 }
 
+struct ipc_peer_context_t
+{
+    Scheduler* scheduler;
+    uint64_t   number;
+    uint64_t   args[6];
+    uint64_t   result;
+};
+
+static void ipc_peer_entry(void* argument)
+{
+    cpu_preemption_disable();
+    auto context    = static_cast<ipc_peer_context_t*>(argument);
+    context->result = memory_call(context->number, context->args[0], context->args[1], context->args[2], context->args[3], context->args[4], context->args[5]);
+    context->scheduler->ExitCurrentTask();
+}
+
+template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_context_t* context, Wait wait)
+{
+    auto dispatcher    = static_cast<Dispatcher*>(platform.dispacher);
+    auto resources     = dispatcher->GetResourceLayerCaps();
+    context->scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
+    context->result    = UINT64_MAX;
+    task_t*    peer    = resources->taskManager->CreateKernelTask(ipc_peer_entry, context);
+    const bool added   = peer != nullptr && resources->processManager->AddTask(process, peer);
+    const bool ready   = added && context->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+    bool       ok      = memory_expect(ready, "IPC runnable peer fixture");
+    if (ready)
+    {
+        ok &= wait();
+    }
+    if (added)
+    {
+        if (peer->prev != nullptr)
+        {
+            peer->prev->next = peer->next;
+        }
+        else
+        {
+            process->tasks = peer->next;
+        }
+        if (peer->next != nullptr)
+        {
+            peer->next->prev = peer->prev;
+        }
+        peer->next = peer->prev = nullptr;
+    }
+    if (peer != nullptr)
+    {
+        ok &= memory_expect(resources->taskManager->FreeTask(peer), "IPC peer cleanup");
+    }
+    return ok;
+}
+
+static size_t ipc_descriptor_count(process_t* process)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < process->fileDescriptorCount; ++i)
+    {
+        count += process->fileDescriptors[i].file != nullptr;
+    }
+    return count;
+}
+
+static bool test_ipc_pipe(process_t* process, uint64_t base, uint64_t number)
+{
+    int32_t        descriptors[2] = {-1, -1};
+    const uint32_t flags          = number == SYSCALL_pipe2 ? 04000 | 02000000 : 0;
+    bool           ok             = memory_expect(memory_call(number, base, flags) == 0, "pipe syscall creates both endpoints");
+    time_fixture_load(process, base, descriptors, sizeof(descriptors));
+    if (descriptors[0] < 0 || descriptors[1] < 0)
+    {
+        return false;
+    }
+    const uint64_t reader = descriptors[0], writer = descriptors[1];
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, reader, 3) == (flags & 04000) && memory_call(SYSCALL_fcntl, writer, 3) == (1 | (flags & 04000)) && memory_call(SYSCALL_fcntl, reader, 1) == (uint64_t) ((flags & 02000000) != 0), "pipe access modes and descriptor flags");
+    memory_call(SYSCALL_fcntl, reader, 4, 04000);
+    memory_call(SYSCALL_fcntl, writer, 4, 04001);
+    ok &= memory_expect(memory_call(SYSCALL_read, reader, base + 512, 1) == (uint64_t) -11 && memory_call(SYSCALL_read, writer, base + 512, 1) == LINUX_EBADF && memory_call(SYSCALL_write, reader, base + 512, 1) == LINUX_EBADF, "empty nonblocking pipe and endpoint direction validation");
+    const char text[] = "pipe-data";
+    time_fixture_store(process, base + 128, text, sizeof(text));
+    ok &= memory_expect(memory_call(SYSCALL_write, writer, base + 128, sizeof(text)) == sizeof(text), "pipe write payload");
+    ok &= memory_expect(memory_call(SYSCALL_read, reader, CANONICAL_KERNEL_BASE, sizeof(text)) == LINUX_EFAULT && memory_call(SYSCALL_read, reader, base + 512, sizeof(text)) == sizeof(text), "pipe read fault preserves data");
+    char output[sizeof(text)] = {};
+    time_fixture_load(process, base + 512, output, sizeof(output));
+    ok &= memory_expect(memcmp(text, output, sizeof(text)) == 0, "pipe payload round trip");
+    ok &= memory_expect(memory_call(SYSCALL_lseek, reader, 0, 0) == (uint64_t) -29, "pipe ESPIPE");
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, writer, 1031, 4096) == 4096 && memory_call(SYSCALL_fcntl, reader, 1032) == 4096, "pipe capacity control shared by endpoints");
+    ok &= memory_expect(memory_call(SYSCALL_write, writer, base + 128, 4095) == 4095 && memory_call(SYSCALL_write, writer, base + 128, 2) == (uint64_t) -11, "PIPE_BUF nonblocking writes are atomic");
+    ok &= memory_expect(memory_call(SYSCALL_ioctl, reader, 0x541b, base + 64) == 0, "pipe FIONREAD");
+    int32_t queued = 0;
+    time_fixture_load(process, base + 64, &queued, sizeof(queued));
+    ok &= memory_expect(queued == 4095 && memory_call(SYSCALL_read, reader, base + 8192, 4096) == 4095, "failed atomic pipe write leaves queue unchanged");
+    file_iovec_t vectors[2] = {{base + 128, 2}, {base + 130, 3}};
+    time_fixture_store(process, base + 256, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_writev, writer, base + 256, 2) == 5 && memory_call(SYSCALL_read, reader, base + 512, 5) == 5, "pipe writev gathers into one atomic write");
+    memory_call(SYSCALL_fcntl, reader, 4, 0);
+    ipc_peer_context_t peer = {nullptr, SYSCALL_write, {writer, base + 128, sizeof(text)}, UINT64_MAX};
+    ok &= ipc_with_peer(process, &peer, [&]() { return memory_expect(memory_call(SYSCALL_read, reader, base + 512, sizeof(text)) == sizeof(text) && peer.result == sizeof(text), "blocking pipe read wakes on peer write"); });
+    ok &= memory_expect(memory_call(SYSCALL_write, writer, base + 128, 4096) == 4096, "fill pipe before blocking writer test");
+    memory_call(SYSCALL_fcntl, writer, 4, 1);
+    peer = {nullptr, SYSCALL_read, {reader, base + 8192, 4096}, UINT64_MAX};
+    ok &= ipc_with_peer(process, &peer, [&]() { return memory_expect(memory_call(SYSCALL_write, writer, base + 128, 1) == 1 && peer.result == 4096, "blocking pipe writer wakes after peer drains buffer"); });
+    ok &= memory_expect(memory_call(SYSCALL_read, reader, base + 512, 1) == 1, "drain blocking writer test byte");
+    const uint64_t alias = memory_call(SYSCALL_dup, writer);
+    memory_call(SYSCALL_close, writer);
+    ok &= memory_expect((int64_t) alias >= 0 && memory_call(SYSCALL_write, alias, base + 128, 1) == 1 && memory_call(SYSCALL_read, reader, base + 512, 1) == 1, "dup keeps pipe write endpoint alive");
+    if ((int64_t) alias >= 0)
+    {
+        memory_call(SYSCALL_close, alias);
+    }
+    ok &= memory_expect(memory_call(SYSCALL_read, reader, base + 512, 1) == 0, "last writer close produces pipe EOF");
+    event_pollfd_t poll = {(int32_t) reader, 1, 0};
+    time_fixture_store(process, base + 256, &poll, sizeof(poll));
+    ok &= memory_expect(memory_call(SYSCALL_poll, base + 256, 1, 0) == 1, "pipe close wakes poll");
+    time_fixture_load(process, base + 256, &poll, sizeof(poll));
+    ok &= memory_expect((poll.revents & 0x10) != 0, "pipe POLLHUP");
+    memory_call(SYSCALL_close, reader);
+    if (memory_call(SYSCALL_pipe2, base, 0) == 0)
+    {
+        time_fixture_load(process, base, descriptors, sizeof(descriptors));
+        memory_call(SYSCALL_close, descriptors[0]);
+        auto           task    = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
+        const uint64_t pending = task->signalPending;
+        ok &= memory_expect(memory_call(SYSCALL_write, descriptors[1], base + 128, 1) == (uint64_t) -32 && (task->signalPending & (1ULL << 12)) != 0, "pipe without readers returns EPIPE and queues SIGPIPE");
+        task->signalPending = pending;
+        memory_call(SYSCALL_close, descriptors[1]);
+    }
+    else
+    {
+        ok &= memory_expect(false, "broken-pipe fixture");
+    }
+    const size_t before = ipc_descriptor_count(process);
+    ok &= memory_expect(memory_call(SYSCALL_pipe2, CANONICAL_KERNEL_BASE, 0) == LINUX_EFAULT && ipc_descriptor_count(process) == before, "pipe output fault rolls back both descriptors");
+    const uint64_t limit       = process->fileLimit.current;
+    process->fileLimit.current = 1;
+    ok &= memory_expect(memory_call(SYSCALL_pipe2, base, 0) == LINUX_EMFILE && ipc_descriptor_count(process) == before, "pipe second-fd allocation rollback");
+    process->fileLimit.current = limit;
+    ok &= memory_expect(memory_call(SYSCALL_pipe2, base, 1) == LINUX_EINVAL && memory_call(SYSCALL_pipe2, base, 040000) == LINUX_EOPNOTSUPP, "pipe invalid flags and packet-mode prerequisite");
+    return ok;
+}
+
+static bool test_ipc_memory_file(process_t* process, uint64_t base)
+{
+    const char name[] = "arx-memfd";
+    time_fixture_store(process, base + 128, name, sizeof(name));
+    const uint64_t fd = memory_call(SYSCALL_memfd_create, base + 128, 3);
+    if (!memory_expect((int64_t) fd >= 0, "memfd creates anonymous regular file"))
+    {
+        return false;
+    }
+    bool       ok     = memory_expect(memory_call(SYSCALL_fcntl, fd, 1) == 1 && memory_call(SYSCALL_fcntl, fd, 1034) == 0, "memfd CLOEXEC and initially unsealed state");
+    const char text[] = "memory-file";
+    time_fixture_store(process, base + 512, text, sizeof(text));
+    ok &= memory_expect(memory_call(SYSCALL_write, fd, base + 512, sizeof(text)) == sizeof(text) && memory_call(SYSCALL_pread64, fd, base + 1024, sizeof(text), 0) == sizeof(text), "memfd write and positioned read");
+    char output[sizeof(text)] = {};
+    time_fixture_load(process, base + 1024, output, sizeof(output));
+    ok &= memory_expect(memcmp(text, output, sizeof(text)) == 0 && memory_call(SYSCALL_lseek, fd, 0, 1) == sizeof(text), "memfd positioned read preserves shared file offset");
+    ok &= memory_expect(memory_call(SYSCALL_ftruncate, fd, PAGE_SIZE * 2 + 17) == 0 && memory_call(SYSCALL_pread64, fd, base + 1024, 32, PAGE_SIZE) == 32, "memfd sparse growth");
+    uint8_t zeros[32] = {};
+    time_fixture_load(process, base + 1024, zeros, sizeof(zeros));
+    bool zero = true;
+    for (uint8_t byte : zeros)
+    {
+        zero &= byte == 0;
+    }
+    ok &= memory_expect(zero, "memfd holes read as zero");
+    ok &= memory_expect(memory_call(SYSCALL_ftruncate, fd, 3) == 0 && memory_call(SYSCALL_ftruncate, fd, 32) == 0 && memory_call(SYSCALL_pread64, fd, base + 1024, 29, 3) == 29, "memfd shrink discards partial-page tail");
+    time_fixture_load(process, base + 1024, zeros, 29);
+    zero = true;
+    for (size_t i = 0; i < 29; ++i)
+    {
+        zero &= zeros[i] == 0;
+    }
+    ok &= memory_expect(zero, "memfd truncated bytes do not reappear on growth");
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, fd, 1033, 2 | 4 | 8) == 0 && memory_call(SYSCALL_write, fd, base + 512, 1) == (uint64_t) -1 && memory_call(SYSCALL_ftruncate, fd, 31) == (uint64_t) -1 && memory_call(SYSCALL_ftruncate, fd, 33) == (uint64_t) -1,
+                        "memfd write/grow/shrink seals return EPERM");
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, fd, 1033, 1) == 0 && memory_call(SYSCALL_fcntl, fd, 1033, 16) == (uint64_t) -1, "memfd seal-seal is irreversible");
+    memory_call(SYSCALL_close, fd);
+    const uint64_t fixed = memory_call(SYSCALL_memfd_create, base + 128, 0);
+    ok &= memory_expect((int64_t) fixed >= 0 && memory_call(SYSCALL_fcntl, fixed, 1034) == 1, "memfd defaults to F_SEAL_SEAL");
+    if ((int64_t) fixed >= 0)
+    {
+        memory_call(SYSCALL_close, fixed);
+    }
+    ok &= memory_expect(memory_call(SYSCALL_memfd_create, CANONICAL_KERNEL_BASE, 0) == LINUX_EFAULT && memory_call(SYSCALL_memfd_create, base + 128, 0x8000) == LINUX_EINVAL && memory_call(SYSCALL_memfd_create, base + 128, 4) == LINUX_EOPNOTSUPP, "memfd bad names/flags and hugepage prerequisite");
+    return ok;
+}
+
+static bool test_vfs_metadata(process_t* process, uint64_t base, uint64_t number)
+{
+    const char path[] = "/test.txt", missing[] = "/missing-metadata", empty[] = "";
+    time_fixture_store(process, base + 128, path, sizeof(path));
+    time_fixture_store(process, base + 256, missing, sizeof(missing));
+    time_fixture_store(process, base + 384, empty, sizeof(empty));
+    const uint64_t disk      = memory_call(SYSCALL_open, base + 128, 0, 0);
+    bool           ownership = number == SYSCALL_fchownat || number == SYSCALL_chown || number == SYSCALL_fchown || number == SYSCALL_lchown;
+    bool           direct    = number == SYSCALL_fchown || number == SYSCALL_fchmod;
+    auto           call      = [&](uint64_t pointer, uint64_t fd, uint64_t flags)
+    {
+        if (direct)
+        {
+            return ownership ? memory_call(number, fd, 23, 24) : memory_call(number, fd, 0600);
+        }
+        if (number == SYSCALL_fchownat)
+        {
+            return memory_call(number, fd, pointer, 23, 24, flags);
+        }
+        if (number == SYSCALL_fchmodat || number == SYSCALL_fchmodat2)
+        {
+            return memory_call(number, fd, pointer, 0600, flags);
+        }
+        return ownership ? memory_call(number, pointer, 23, 24) : memory_call(number, pointer, 0600);
+    };
+    bool ok = memory_expect((int64_t) disk >= 0 && call(base + 128, direct ? disk : (uint64_t) -100, 0) == (uint64_t) -30, "metadata changes honor readonly cpio backend");
+    ok &= memory_expect(call(direct ? 0 : base + 256, direct ? UINT32_MAX : (uint64_t) -100, 0) == (direct ? LINUX_EBADF : LINUX_ENOENT), "metadata target resolution precedes mutation");
+    if (!direct)
+    {
+        ok &= memory_expect(call(CANONICAL_KERNEL_BASE, (uint64_t) -100, 0) == LINUX_EFAULT, "metadata syscall rejects kernel path pointer");
+    }
+    if ((int64_t) disk >= 0)
+    {
+        memory_call(SYSCALL_close, disk);
+    }
+    const uint64_t anonymous = memory_call(SYSCALL_memfd_create, base + 384, 0);
+    ok &= memory_expect((int64_t) anonymous >= 0 && memory_call(SYSCALL_fchmod, anonymous, 0640) == 0 && memory_call(SYSCALL_fchown, anonymous, 31, 32) == 0, "anonymous inode metadata is mutable");
+    if ((int64_t) anonymous >= 0)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_fchmodat2, anonymous, base + 384, 0600, 0x1000) == 0 && memory_call(SYSCALL_fchownat, anonymous, 0, UINT32_MAX, UINT32_MAX, 0x1000) == 0, "metadata AT_EMPTY_PATH including null path");
+        ok &= memory_expect(memory_call(SYSCALL_fstat, anonymous, base + 512) == 0, "metadata fstat snapshot");
+        // Linux x86-64 stat mode/uid/gid fields begin at byte 24.
+        uint32_t metadata[3] = {};
+        time_fixture_load(process, base + 512 + 24, metadata, sizeof(metadata));
+        ok &= memory_expect((metadata[0] & 07777) == 0600 && metadata[1] == 31 && metadata[2] == 32, "fstat reports committed mode and ownership");
+        const auto credentials               = process->credentials;
+        process->credentials.user.filesystem = 99;
+        ok &= memory_expect(memory_call(SYSCALL_fchmod, anonymous, 0777) == (uint64_t) -1 && memory_call(SYSCALL_fchown, anonymous, 99, 99) == (uint64_t) -1, "metadata rejects unprivileged nonowner");
+        process->credentials = credentials;
+        memory_call(SYSCALL_close, anonymous);
+    }
+    return ok;
+}
+
+static bool test_vfs_mount_framework(process_t* process, uint64_t base)
+{
+    const char target[] = "/", unknown[] = "arx-unknown", type[] = "cpio";
+    time_fixture_store(process, base + 128, target, sizeof(target));
+    time_fixture_store(process, base + 256, unknown, sizeof(unknown));
+    time_fixture_store(process, base + 384, type, sizeof(type));
+    bool ok = memory_expect(memory_call(SYSCALL_mount, 0, base + 128, base + 256, 0) == (uint64_t) -19, "mount unknown filesystem ENODEV");
+    ok &= memory_expect(memory_call(SYSCALL_mount, 0, base + 128, base + 384, 0) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_mount, 0, base + 128, 0, 4096) == LINUX_EOPNOTSUPP, "mount backend and namespace prerequisites are explicit");
+    ok &= memory_expect(memory_call(SYSCALL_mount, 0, CANONICAL_KERNEL_BASE, base + 384, 0) == LINUX_EFAULT && memory_call(SYSCALL_mount, 0, base + 128, base + 384, 1ULL << 40) == LINUX_EINVAL, "mount pointer and flag validation");
+    const auto credentials              = process->credentials;
+    process->credentials.user.effective = 99;
+    ok &= memory_expect(memory_call(SYSCALL_mount, 0, 0, 0, 0) == (uint64_t) -1, "mount requires privilege before inspecting user arguments");
+    process->credentials = credentials;
+    return ok;
+}
+
+template <uint64_t Number> static bool custom_case_validate_vfs_extensions(const custom_case_ctx_t*)
+{
+    return run_memory_case(
+            [](process_t* process)
+            {
+                process->credentials = {};
+                const uint64_t base  = memory_map(8);
+                if ((int64_t) base < 0)
+                {
+                    return false;
+                }
+                bool ok = Number == SYSCALL_pipe || Number == SYSCALL_pipe2 ? test_ipc_pipe(process, base, Number) : Number == SYSCALL_memfd_create ? test_ipc_memory_file(process, base) : Number == SYSCALL_mount ? test_vfs_mount_framework(process, base) : test_vfs_metadata(process, base, Number);
+                ok &= memory_expect(ipc_descriptor_count(process) == 0, "VFS extension fixture releases every descriptor");
+                return ok;
+            });
+}
+
 static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
     static const request_method_test_t<VfsRequestManager> tests[] = {
@@ -3929,25 +4204,36 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
             {"HandleFaccessatRequest", &VfsRequestManager::HandleFaccessatRequest, SYSCALL_faccessat, custom_case_validate_access_family},
             {"HandleFaccessat2Request", &VfsRequestManager::HandleFaccessat2Request, SYSCALL_faccessat2, custom_case_validate_access_family},
             {"HandleAccessRequest", &VfsRequestManager::HandleAccessRequest, SYSCALL_access, custom_case_validate_access_family},
-            {"HandleFchownatRequest", &VfsRequestManager::HandleFchownatRequest, SYSCALL_fchownat},
-            {"HandleChownRequest", &VfsRequestManager::HandleChownRequest, SYSCALL_chown},
-            {"HandleFchownRequest", &VfsRequestManager::HandleFchownRequest, SYSCALL_fchown},
-            {"HandleLchownRequest", &VfsRequestManager::HandleLchownRequest, SYSCALL_lchown},
-            {"HandleFchmodat2Request", &VfsRequestManager::HandleFchmodat2Request, SYSCALL_fchmodat2},
-            {"HandleFchmodatRequest", &VfsRequestManager::HandleFchmodatRequest, SYSCALL_fchmodat},
-            {"HandleChmodRequest", &VfsRequestManager::HandleChmodRequest, SYSCALL_chmod},
-            {"HandleFchmodRequest", &VfsRequestManager::HandleFchmodRequest, SYSCALL_fchmod},
-            {"HandleMountRequest", &VfsRequestManager::HandleMountRequest, SYSCALL_mount},
+            {"HandleFchownatRequest", &VfsRequestManager::HandleFchownatRequest, SYSCALL_fchownat, custom_case_validate_vfs_extensions<SYSCALL_fchownat>},
+            {"HandleChownRequest", &VfsRequestManager::HandleChownRequest, SYSCALL_chown, custom_case_validate_vfs_extensions<SYSCALL_chown>},
+            {"HandleFchownRequest", &VfsRequestManager::HandleFchownRequest, SYSCALL_fchown, custom_case_validate_vfs_extensions<SYSCALL_fchown>},
+            {"HandleLchownRequest", &VfsRequestManager::HandleLchownRequest, SYSCALL_lchown, custom_case_validate_vfs_extensions<SYSCALL_lchown>},
+            {"HandleFchmodat2Request", &VfsRequestManager::HandleFchmodat2Request, SYSCALL_fchmodat2, custom_case_validate_vfs_extensions<SYSCALL_fchmodat2>},
+            {"HandleFchmodatRequest", &VfsRequestManager::HandleFchmodatRequest, SYSCALL_fchmodat, custom_case_validate_vfs_extensions<SYSCALL_fchmodat>},
+            {"HandleChmodRequest", &VfsRequestManager::HandleChmodRequest, SYSCALL_chmod, custom_case_validate_vfs_extensions<SYSCALL_chmod>},
+            {"HandleFchmodRequest", &VfsRequestManager::HandleFchmodRequest, SYSCALL_fchmod, custom_case_validate_vfs_extensions<SYSCALL_fchmod>},
+            {"HandleMountRequest", &VfsRequestManager::HandleMountRequest, SYSCALL_mount, custom_case_validate_vfs_extensions<SYSCALL_mount>},
             {"HandleStatfsRequest", &VfsRequestManager::HandleStatfsRequest, SYSCALL_statfs, custom_case_validate_statfs},
             {"HandleFstatfsRequest", &VfsRequestManager::HandleFstatfsRequest, SYSCALL_fstatfs, custom_case_validate_fstatfs},
             {"HandleMknodatRequest", &VfsRequestManager::HandleMknodatRequest, SYSCALL_mknodat, custom_case_validate_mknodat},
             {"HandleMknodRequest", &VfsRequestManager::HandleMknodRequest, SYSCALL_mknod, custom_case_validate_mknod},
             {"HandleTruncateRequest", &VfsRequestManager::HandleTruncateRequest, SYSCALL_truncate, custom_case_validate_truncate},
             {"HandleFtruncateRequest", &VfsRequestManager::HandleFtruncateRequest, SYSCALL_ftruncate, custom_case_validate_ftruncate},
-            {"HandlePipeRequest", &VfsRequestManager::HandlePipeRequest, SYSCALL_pipe},
-            {"HandlePipe2Request", &VfsRequestManager::HandlePipe2Request, SYSCALL_pipe2},
-            {"HandleMemfd_createRequest", &VfsRequestManager::HandleMemfd_createRequest, SYSCALL_memfd_create},
+            {"HandlePipeRequest", &VfsRequestManager::HandlePipeRequest, SYSCALL_pipe, custom_case_validate_vfs_extensions<SYSCALL_pipe>},
+            {"HandlePipe2Request", &VfsRequestManager::HandlePipe2Request, SYSCALL_pipe2, custom_case_validate_vfs_extensions<SYSCALL_pipe2>},
+            {"HandleMemfd_createRequest", &VfsRequestManager::HandleMemfd_createRequest, SYSCALL_memfd_create, custom_case_validate_vfs_extensions<SYSCALL_memfd_create>},
     };
+
+    VfsRequestManager unavailable(nullptr, nullptr);
+    for (const auto& test : tests)
+    {
+        arch_syscall_frame_t frame = {};
+        if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->vfsRequestManager != nullptr && (caps->vfsRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
+        {
+            stats->implementedFail++;
+            selftest_record_failure_detail("VFS missing dependency/null-frame validation");
+        }
+    }
 
     run_manager_tests("vfs", caps->vfsRequestManager, tests, stats);
 }
@@ -4928,6 +5214,150 @@ template <uint64_t Number> static bool custom_case_validate_event(const custom_c
             });
 }
 
+static bool test_inotify_framework(process_t* process, uint64_t base, uint64_t number)
+{
+    const uint64_t fd = number == SYSCALL_inotify_init ? memory_call(number) : memory_call(SYSCALL_inotify_init1, 04000 | 02000000);
+    if (!memory_expect((int64_t) fd >= 0, "inotify creates a readable notification descriptor"))
+    {
+        return false;
+    }
+    bool ok = memory_expect(memory_call(SYSCALL_fcntl, fd, 1) == (uint64_t) (number != SYSCALL_inotify_init), "inotify CLOEXEC creation flag");
+    memory_call(SYSCALL_fcntl, fd, 4, 04000);
+    const char path[] = "/test.txt", root[] = "/";
+    time_fixture_store(process, base + 128, path, sizeof(path));
+    time_fixture_store(process, base + 256, root, sizeof(root));
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, base + 1024, 512) == (uint64_t) -11 && memory_call(SYSCALL_inotify_init1, 1) == LINUX_EINVAL, "inotify empty nonblocking read and creation flags");
+    const uint64_t watch = memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0x31);
+    ok &= memory_expect((int64_t) watch > 0 && memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0x10000020) == (uint64_t) -17, "inotify watch allocation and MASK_CREATE collision");
+    ok &= memory_expect(memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0x01000020) == LINUX_ENOTDIR && memory_call(SYSCALL_inotify_add_watch, fd, CANONICAL_KERNEL_BASE, 0x20) == LINUX_EFAULT, "inotify target flags and user path validation");
+    const uint64_t opened = memory_call(SYSCALL_open, base + 128, 0);
+    ok &= memory_expect((int64_t) opened >= 0 && memory_call(SYSCALL_read, opened, base + 512, 4) == 4, "watched VFS open and read");
+    if ((int64_t) opened >= 0)
+    {
+        memory_call(SYSCALL_close, opened);
+    }
+    ok &= memory_expect(memory_call(SYSCALL_ioctl, fd, 0x541b, base + 64) == 0, "inotify FIONREAD reports complete record bytes");
+    uint32_t queued = 0;
+    time_fixture_load(process, base + 64, &queued, sizeof(queued));
+    ok &= memory_expect(queued == 48 && memory_call(SYSCALL_read, fd, base + 1024, 15) == LINUX_EINVAL && memory_call(SYSCALL_read, fd, CANONICAL_KERNEL_BASE, 512) == LINUX_EFAULT, "inotify short/faulting buffers preserve queued events");
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, base + 1024, 512) == 48, "inotify batches open/access/close records");
+    uint32_t events[12] = {};
+    time_fixture_load(process, base + 1024, events, sizeof(events));
+    ok &= memory_expect(events[0] == watch && events[1] == 0x20 && events[3] == 0 && events[4] == watch && events[5] == 1 && events[8] == watch && events[9] == 0x10, "Linux inotify_event 16-byte headers and event ordering");
+    ok &= memory_expect(memory_call(SYSCALL_inotify_rm_watch, fd, watch) == 0 && memory_call(SYSCALL_inotify_rm_watch, fd, watch) == LINUX_EINVAL && memory_call(SYSCALL_read, fd, base + 1024, 512) == 16, "inotify removal queues one IN_IGNORED record");
+    time_fixture_load(process, base + 1024, events, 16);
+    ok &= memory_expect(events[1] == 0x8000, "inotify ignored event wire mask");
+    const uint64_t directoryWatch = memory_call(SYSCALL_inotify_add_watch, fd, base + 256, 0x20 | 0x80000000U);
+    const uint64_t another        = memory_call(SYSCALL_open, base + 128, 0);
+    if ((int64_t) another >= 0)
+    {
+        memory_call(SYSCALL_close, another);
+    }
+    ok &= memory_expect((int64_t) directoryWatch > 0 && memory_call(SYSCALL_read, fd, base + 1024, 512) == 48, "directory oneshot produces padded child event and ignored record");
+    uint8_t record[48] = {};
+    time_fixture_load(process, base + 1024, record, sizeof(record));
+    uint32_t nameLength = 0;
+    memcpy(&nameLength, record + 12, 4);
+    ok &= memory_expect(nameLength == 16 && memcmp(record + 16, "test.txt", 9) == 0 && memory_call(SYSCALL_inotify_rm_watch, fd, directoryWatch) == LINUX_EINVAL, "inotify directory name padding and oneshot teardown");
+    const uint64_t blockingWatch = memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0x20);
+    memory_call(SYSCALL_fcntl, fd, 4, 0);
+    ipc_peer_context_t peer = {nullptr, SYSCALL_open, {base + 128, 0}, UINT64_MAX};
+    ok &= ipc_with_peer(process, &peer, [&]() { return memory_expect(memory_call(SYSCALL_read, fd, base + 1024, 512) == 16 && (int64_t) peer.result >= 0, "blocking inotify read wakes on real peer VFS open"); });
+    if ((int64_t) peer.result >= 0)
+    {
+        memory_call(SYSCALL_close, peer.result);
+    }
+    memory_call(SYSCALL_inotify_rm_watch, fd, blockingWatch);
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, base + 1024, 512) == 16, "drain ignored event before queue overflow test");
+    const uint64_t overflowWatch = memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0x30);
+    for (size_t i = 0; i < 40; ++i)
+    {
+        const uint64_t item = memory_call(SYSCALL_open, base + 128, 0);
+        if ((int64_t) item >= 0)
+        {
+            memory_call(SYSCALL_close, item);
+        }
+    }
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, base + 2048, 2048) == 1024, "inotify queue remains bounded under overflow");
+    uint32_t overflow[4] = {};
+    time_fixture_load(process, base + 2048 + 63 * 16, overflow, sizeof(overflow));
+    ok &= memory_expect(overflow[0] == UINT32_MAX && overflow[1] == 0x4000 && overflow[3] == 0, "inotify queue overflow ABI marker");
+    memory_call(SYSCALL_inotify_rm_watch, fd, overflowWatch);
+    ok &= memory_expect(memory_call(SYSCALL_inotify_add_watch, UINT32_MAX, CANONICAL_KERNEL_BASE, 1) == LINUX_EBADF && memory_call(SYSCALL_inotify_add_watch, fd, base + 128, 0) == LINUX_EINVAL, "inotify descriptor and empty event mask validation");
+    memory_call(SYSCALL_close, fd);
+    return ok;
+}
+
+static bool test_signalfd_framework(process_t* process, uint64_t base, uint64_t number)
+{
+    const uint64_t mask = (1ULL << 9) | (1ULL << 11) | SIGNAL_UNBLOCKABLE;
+    time_fixture_store(process, base + 128, &mask, sizeof(mask));
+    bool           ok = memory_expect(memory_call(SYSCALL_rt_sigprocmask, 0, base + 128, 0, 8) == 0, "block signals before receiving through signalfd");
+    const uint64_t fd = memory_call(number, UINT32_MAX, base + 128, 8, number == SYSCALL_signalfd4 ? 04000 | 02000000 : 0);
+    if (!memory_expect((int64_t) fd >= 0, "signalfd creation"))
+    {
+        return false;
+    }
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, fd, 1) == (uint64_t) (number == SYSCALL_signalfd4), "signalfd creation CLOEXEC");
+    memory_call(SYSCALL_fcntl, fd, 4, 04000);
+    ok &= memory_expect(memory_call(SYSCALL_read, fd, base + 512, 128) == (uint64_t) -11 && memory_call(SYSCALL_read, fd, base + 512, 127) == LINUX_EINVAL, "signalfd no pending record and exact record-size minimum");
+    const uint64_t tid = memory_call(SYSCALL_gettid);
+    ok &= memory_expect(memory_call(SYSCALL_kill, process->id, 10) == 0 && memory_call(SYSCALL_tgkill, process->id, tid, 12) == 0, "queue process and thread directed signalfd signals");
+    event_pollfd_t poll = {(int32_t) fd, 1, 0};
+    time_fixture_store(process, base + 256, &poll, sizeof(poll));
+    ok &= memory_expect(memory_call(SYSCALL_poll, base + 256, 1, 0) == 1 && memory_call(SYSCALL_read, fd, CANONICAL_KERNEL_BASE, 256) == LINUX_EFAULT, "signalfd readiness and fault-safe signal retention");
+    file_iovec_t vectors[2] = {{base + 512, 64}, {base + 1024, 192}};
+    time_fixture_store(process, base + 384, vectors, sizeof(vectors));
+    ok &= memory_expect(memory_call(SYSCALL_readv, fd, base + 384, 2) == 256, "signalfd readv scatters two full records");
+    uint8_t first[128] = {}, second[128] = {};
+    time_fixture_load(process, base + 512, first, 64);
+    time_fixture_load(process, base + 1024, first + 64, 64);
+    time_fixture_load(process, base + 1088, second, 128);
+    uint32_t info[5] = {};
+    memcpy(info, first, sizeof(info));
+    ok &= memory_expect(info[0] == 10 && info[2] == 0 && info[3] == process->id && info[4] == process->credentials.user.real, "signalfd process sender info ABI");
+    memcpy(info, second, sizeof(info));
+    ok &= memory_expect(info[0] == 12 && (int32_t) info[2] == -6 && info[3] == process->id, "signalfd thread sender info ABI");
+    bool zero = true;
+    for (size_t i = 20; i < 128; ++i)
+    {
+        zero &= first[i] == 0 && second[i] == 0;
+    }
+    ok &= memory_expect(zero && memory_call(SYSCALL_read, fd, base + 512, 128) == (uint64_t) -11, "signalfd zeroes reserved fields and consumes signals exactly once");
+    ok &= memory_expect(memory_call(SYSCALL_signalfd4, fd, base + 128, 8, 02000000) == fd && memory_call(SYSCALL_fcntl, fd, 3) == 04000 && memory_call(SYSCALL_fcntl, fd, 1) == (uint64_t) (number == SYSCALL_signalfd4), "updating signalfd mask leaves existing descriptor flags unchanged");
+    memory_call(SYSCALL_fcntl, fd, 4, 0);
+    ipc_peer_context_t peer = {nullptr, SYSCALL_kill, {process->id, 10}, UINT64_MAX};
+    ok &= ipc_with_peer(process, &peer, [&]() { return memory_expect(memory_call(SYSCALL_read, fd, base + 512, 128) == 128 && peer.result == 0, "blocked signalfd wakes for a masked peer signal"); });
+    const uint64_t alarmMask = mask | (1ULL << 13);
+    time_fixture_store(process, base + 128, &alarmMask, sizeof(alarmMask));
+    time_itimerval_t timer = {{0, 0}, {0, 1000}};
+    time_fixture_store(process, base + 2048, &timer, sizeof(timer));
+    ok &= memory_expect(memory_call(SYSCALL_rt_sigprocmask, 0, base + 128, 0, 8) == 0 && memory_call(SYSCALL_signalfd4, fd, base + 128, 8, 0) == fd && memory_call(SYSCALL_setitimer, 0, base + 2048, 0) == 0 && memory_call(SYSCALL_read, fd, base + 512, 128) == 128,
+                        "signalfd wakes for a blocked real-timer signal");
+    time_fixture_load(process, base + 512, info, sizeof(info));
+    ok &= memory_expect(info[0] == 14 && info[2] == 128, "signalfd timer SI_KERNEL record");
+    ok &= memory_expect(memory_call(SYSCALL_signalfd4, fd, base + 128, 4, 0) == LINUX_EINVAL && memory_call(SYSCALL_signalfd4, fd, CANONICAL_KERNEL_BASE, 8, 0) == LINUX_EFAULT && memory_call(SYSCALL_signalfd4, UINT32_MAX, base + 128, 8, 1) == LINUX_EINVAL,
+                        "signalfd sigset size, pointer and flag validation");
+    memory_call(SYSCALL_close, fd);
+    return ok;
+}
+
+template <uint64_t Number> static bool custom_case_validate_notification(const custom_case_ctx_t*)
+{
+    return run_memory_case(
+            [](process_t* process)
+            {
+                auto           task    = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->taskManager->GetCurrentTask();
+                const uint64_t oldMask = task->signalMask, oldPending = task->signalPending;
+                const uint64_t base = memory_map(4);
+                bool           ok   = (int64_t) base >= 0 && (Number == SYSCALL_signalfd || Number == SYSCALL_signalfd4 ? test_signalfd_framework(process, base, Number) : test_inotify_framework(process, base, Number));
+                task->signalMask    = oldMask;
+                task->signalPending = oldPending;
+                ok &= memory_expect(ipc_descriptor_count(process) == 0, "notification fixture releases every descriptor");
+                return ok;
+            });
+}
+
 static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
     static const request_method_test_t<EventRequestManager> tests[] = {
@@ -4941,14 +5371,14 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
             {"HandleEpoll_waitRequest", &EventRequestManager::HandleEpoll_waitRequest, SYSCALL_epoll_wait, custom_case_validate_event<SYSCALL_epoll_wait>},
             {"HandleEpoll_pwaitRequest", &EventRequestManager::HandleEpoll_pwaitRequest, SYSCALL_epoll_pwait, custom_case_validate_event<SYSCALL_epoll_pwait>},
             {"HandleEpoll_pwait2Request", &EventRequestManager::HandleEpoll_pwait2Request, SYSCALL_epoll_pwait2, custom_case_validate_event<SYSCALL_epoll_pwait2>},
-            {"HandleInotify_initRequest", &EventRequestManager::HandleInotify_initRequest, SYSCALL_inotify_init},
-            {"HandleInotify_init1Request", &EventRequestManager::HandleInotify_init1Request, SYSCALL_inotify_init1},
-            {"HandleInotify_add_watchRequest", &EventRequestManager::HandleInotify_add_watchRequest, SYSCALL_inotify_add_watch},
-            {"HandleInotify_rm_watchRequest", &EventRequestManager::HandleInotify_rm_watchRequest, SYSCALL_inotify_rm_watch},
+            {"HandleInotify_initRequest", &EventRequestManager::HandleInotify_initRequest, SYSCALL_inotify_init, custom_case_validate_notification<SYSCALL_inotify_init>},
+            {"HandleInotify_init1Request", &EventRequestManager::HandleInotify_init1Request, SYSCALL_inotify_init1, custom_case_validate_notification<SYSCALL_inotify_init1>},
+            {"HandleInotify_add_watchRequest", &EventRequestManager::HandleInotify_add_watchRequest, SYSCALL_inotify_add_watch, custom_case_validate_notification<SYSCALL_inotify_add_watch>},
+            {"HandleInotify_rm_watchRequest", &EventRequestManager::HandleInotify_rm_watchRequest, SYSCALL_inotify_rm_watch, custom_case_validate_notification<SYSCALL_inotify_rm_watch>},
             {"HandleEventfdRequest", &EventRequestManager::HandleEventfdRequest, SYSCALL_eventfd, custom_case_validate_event<SYSCALL_eventfd>},
             {"HandleEventfd2Request", &EventRequestManager::HandleEventfd2Request, SYSCALL_eventfd2, custom_case_validate_event<SYSCALL_eventfd2>},
-            {"HandleSignalfdRequest", &EventRequestManager::HandleSignalfdRequest, SYSCALL_signalfd},
-            {"HandleSignalfd4Request", &EventRequestManager::HandleSignalfd4Request, SYSCALL_signalfd4},
+            {"HandleSignalfdRequest", &EventRequestManager::HandleSignalfdRequest, SYSCALL_signalfd, custom_case_validate_notification<SYSCALL_signalfd>},
+            {"HandleSignalfd4Request", &EventRequestManager::HandleSignalfd4Request, SYSCALL_signalfd4, custom_case_validate_notification<SYSCALL_signalfd4>},
     };
 
     if (caps->eventRequestManager != nullptr)

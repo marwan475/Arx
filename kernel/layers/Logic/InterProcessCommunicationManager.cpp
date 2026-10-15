@@ -1,0 +1,618 @@
+#include "layers/Logic/InterProcessCommunicationManager.hpp"
+
+#include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/SignalManager.hpp"
+#include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
+
+#include <klib/klib.h>
+
+namespace
+{
+constexpr size_t   PIPE_CAPACITY = 65536;
+constexpr size_t   PIPE_ATOMIC   = 4096;
+constexpr size_t   MEMORY_PAGES  = 256;
+constexpr uint32_t NONBLOCK      = 04000;
+constexpr uint32_t CLOEXEC       = 02000000;
+constexpr uint64_t AGAIN         = (uint64_t) -11;
+
+struct pipe_state_t
+{
+    inode_t            inode;
+    spinlock_t         lock;
+    file_t*            reader;
+    file_t*            writer;
+    EventManager*      events;
+    SignalManager*     signals;
+    ResourceLayerCaps* resources;
+    VirtualFileSystem* vfs;
+    size_t             references;
+    uint32_t           lastReadiness[2];
+    size_t             capacity;
+    size_t             head;
+    size_t             size;
+    uint8_t            data[PIPE_CAPACITY];
+};
+
+struct memory_file_t
+{
+    inode_t  inode;
+    uint32_t seals;
+    uint8_t* pages[MEMORY_PAGES];
+};
+
+uint64_t vector_length(const file_iovec_t* vectors, size_t count, size_t* length)
+{
+    *length = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (vectors[i].length > INT64_MAX - *length)
+        {
+            return LINUX_EINVAL;
+        }
+        *length += vectors[i].length;
+    }
+    return 0;
+}
+
+bool copy_vector(const user_memory_access_t* access, const file_iovec_t* vectors, size_t count, size_t offset, uint8_t* bytes, size_t length, bool write)
+{
+    size_t copied = 0;
+    for (size_t i = 0; i < count && copied < length; ++i)
+    {
+        if (offset >= vectors[i].length)
+        {
+            offset -= vectors[i].length;
+            continue;
+        }
+        const size_t amount = vectors[i].length - offset < length - copied ? vectors[i].length - offset : length - copied;
+        if (vectors[i].address > UINT64_MAX - offset || !(write ? safe_read_user_locked(access, vectors[i].address + offset, bytes + copied, amount) : safe_write_user_locked(access, vectors[i].address + offset, bytes + copied, amount)))
+        {
+            return false;
+        }
+        copied += amount;
+        offset = 0;
+    }
+    return copied == length;
+}
+
+} // namespace
+
+const file_operations_t InterProcessCommunicationManager::PipeOperations = {
+        nullptr, nullptr, nullptr, PipeSeek, nullptr, PipeIoctl, nullptr, PipeRelease, PipePoll, PipeRead, PipeWrite, PipeReadVector, PipeWriteVector, nullptr, PipeControl,
+};
+const file_operations_t InterProcessCommunicationManager::MemoryOperations = {
+        nullptr, MemoryRead, MemoryWrite, MemorySeek, nullptr, nullptr, nullptr, MemoryRelease, nullptr, nullptr, nullptr, nullptr, nullptr, MemoryTruncate, MemoryControl, true,
+};
+
+InterProcessCommunicationManager::InterProcessCommunicationManager(ResourceLayerCaps* resources, VirtualFileSystem* vfs, EventManager* events, SignalManager* signals) : Resources(resources), Vfs(vfs), Events(events), Signals(signals)
+{
+}
+
+uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t flags)
+{
+    if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr || Events == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    if ((flags & ~(NONBLOCK | CLOEXEC)) != 0)
+    {
+        return (flags & ~(NONBLOCK | CLOEXEC | 040000U | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP;
+    }
+    pipe_state_t* pipe   = static_cast<pipe_state_t*>(kzalloc(sizeof(pipe_state_t)));
+    file_t*       reader = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+    file_t*       writer = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+    if (pipe == nullptr || reader == nullptr || writer == nullptr)
+    {
+        kfree(pipe);
+        kfree(reader);
+        kfree(writer);
+        return LINUX_ENOMEM;
+    }
+    process_t* process = Resources->processManager->GetCurrentProcess();
+    Vfs->InitializeAnonymousInode(&pipe->inode, INODE_FIFO, 0600);
+    pipe->reader           = reader;
+    pipe->writer           = writer;
+    pipe->events           = Events;
+    pipe->signals          = Signals;
+    pipe->resources        = Resources;
+    pipe->vfs              = Vfs;
+    pipe->references       = 2;
+    pipe->lastReadiness[1] = EVENT_POLL_OUT | EVENT_POLL_WRNORM;
+    pipe->capacity         = PIPE_CAPACITY;
+    reader->inode = writer->inode = &pipe->inode;
+    reader->operations = writer->operations = &PipeOperations;
+    reader->privateData = writer->privateData = pipe;
+    reader->refCount = writer->refCount = 1;
+    reader->statusFlags                 = flags & NONBLOCK;
+    writer->statusFlags                 = 1 | (flags & NONBLOCK);
+    int32_t  descriptors[2]             = {-1, -1};
+    uint64_t result                     = 0;
+    {
+        FileDescriptorGuard guard(process);
+        for (size_t i = 0; i < 2; ++i)
+        {
+            const int64_t fd = process != nullptr ? Resources->processManager->AddFileDescriptor(process, i == 0 ? reader : writer, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+            if (fd < 0)
+            {
+                result = (uint64_t) fd;
+                break;
+            }
+            descriptors[i] = (int32_t) fd;
+        }
+        if (result == 0 && !safe_write_user(output, descriptors, sizeof(descriptors)))
+        {
+            result = LINUX_EFAULT;
+        }
+        if (result != 0)
+        {
+            for (size_t i = 0; i < 2; ++i)
+            {
+                if (descriptors[i] >= 0)
+                {
+                    *Resources->processManager->GetFileDescriptor(process, descriptors[i]) = {};
+                }
+            }
+        }
+    }
+    if (result != 0)
+    {
+        Vfs->Close(reader);
+        Vfs->Close(writer);
+    }
+    return result;
+}
+
+void InterProcessCommunicationManager::NotifyPipe(void* state)
+{
+    pipe_state_t* pipe     = static_cast<pipe_state_t*>(state);
+    EventManager* events   = pipe->events;
+    file_t*       files[2] = {};
+    spinlock_acquire_preempt(&pipe->lock);
+    files[0]          = pipe->reader;
+    files[1]          = pipe->writer;
+    uint32_t masks[2] = {
+            (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0U) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0U),
+            (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0U) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0U),
+    };
+    for (size_t i = 0; i < 2; ++i)
+    {
+        const uint32_t edges   = masks[i] & ~pipe->lastReadiness[i];
+        pipe->lastReadiness[i] = masks[i];
+        masks[i]               = edges;
+        if (files[i] != nullptr && (edges == 0 || !pipe->vfs->Retain(files[i])))
+        {
+            files[i] = nullptr;
+        }
+    }
+    spinlock_release_preempt(&pipe->lock);
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (files[i] != nullptr)
+        {
+            events->NotifySource(files[i], masks[i]);
+            VirtualFileSystem::Close(files[i]);
+        }
+    }
+    events->Notify();
+}
+
+void InterProcessCommunicationManager::PipeRelease(file_t* file)
+{
+    pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
+    spinlock_acquire_preempt(&pipe->lock);
+    if (pipe->reader == file)
+    {
+        pipe->reader = nullptr;
+    }
+    if (pipe->writer == file)
+    {
+        pipe->writer = nullptr;
+    }
+    spinlock_release_preempt(&pipe->lock);
+    NotifyPipe(pipe);
+    spinlock_acquire_preempt(&pipe->lock);
+    const bool empty = --pipe->references == 0;
+    spinlock_release_preempt(&pipe->lock);
+    if (empty)
+    {
+        kfree(pipe);
+    }
+}
+
+uint32_t InterProcessCommunicationManager::PipePoll(file_t* file)
+{
+    pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
+    spinlock_acquire_preempt(&pipe->lock);
+    const uint32_t result
+            = (file->statusFlags & 3) == 0 ? (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0) : (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0);
+    spinlock_release_preempt(&pipe->lock);
+    return result;
+}
+
+int64_t InterProcessCommunicationManager::PipeSeek(file_t*, int64_t, int)
+{
+    return -29;
+}
+
+int64_t InterProcessCommunicationManager::PipeIoctl(file_t* file, uint64_t request, uint64_t argument)
+{
+    if (request != 0x541b)
+    {
+        return (int64_t) LINUX_ENOTTY;
+    }
+    user_memory_access_t access;
+    if (!begin_user_memory(&access))
+    {
+        return (int64_t) LINUX_ESRCH;
+    }
+    pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
+    spinlock_acquire_preempt(&pipe->lock);
+    const int32_t  size   = (int32_t) pipe->size;
+    const uint64_t result = safe_write_user_locked(&access, argument, &size, sizeof(size)) ? 0 : LINUX_EFAULT;
+    spinlock_release_preempt(&pipe->lock);
+    end_user_memory(&access);
+    return (int64_t) result;
+}
+
+uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t command, uint64_t argument)
+{
+    if (command != 1031 && command != 1032)
+    {
+        return LINUX_EINVAL;
+    }
+    pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
+    if (command == 1032)
+    {
+        spinlock_acquire_preempt(&pipe->lock);
+        const size_t capacity = pipe->capacity;
+        spinlock_release_preempt(&pipe->lock);
+        return capacity;
+    }
+    if (argument > PIPE_CAPACITY)
+    {
+        return (uint64_t) -1;
+    }
+    size_t capacity = PIPE_ATOMIC;
+    while (capacity < argument)
+    {
+        capacity *= 2;
+    }
+    uint8_t* staged = static_cast<uint8_t*>(kmalloc(PIPE_CAPACITY));
+    if (staged == nullptr)
+    {
+        return LINUX_ENOMEM;
+    }
+    spinlock_acquire_preempt(&pipe->lock);
+    uint64_t result = (uint64_t) -16;
+    if (pipe->size <= capacity)
+    {
+        for (size_t i = 0; i < pipe->size; ++i)
+        {
+            staged[i] = pipe->data[(pipe->head + i) % pipe->capacity];
+        }
+        memcpy(pipe->data, staged, pipe->size);
+        pipe->head     = 0;
+        pipe->capacity = capacity;
+        result         = capacity;
+    }
+    spinlock_release_preempt(&pipe->lock);
+    kfree(staged);
+    NotifyPipe(pipe);
+    return result;
+}
+
+uint64_t InterProcessCommunicationManager::PipeRead(file_t* file, uint64_t address, uint64_t count)
+{
+    const file_iovec_t vector = {address, count};
+    return PipeTransfer(file, &vector, 1, false);
+}
+uint64_t InterProcessCommunicationManager::PipeWrite(file_t* file, uint64_t address, uint64_t count)
+{
+    const file_iovec_t vector = {address, count};
+    return PipeTransfer(file, &vector, 1, true);
+}
+uint64_t InterProcessCommunicationManager::PipeReadVector(file_t* file, const file_iovec_t* vectors, size_t count)
+{
+    return PipeTransfer(file, vectors, count, false);
+}
+uint64_t InterProcessCommunicationManager::PipeWriteVector(file_t* file, const file_iovec_t* vectors, size_t count)
+{
+    return PipeTransfer(file, vectors, count, true);
+}
+
+uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file_iovec_t* vectors, size_t count, bool write)
+{
+    if (((__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 3) == 0) == write)
+    {
+        return LINUX_EBADF;
+    }
+    size_t   requested;
+    uint64_t result = vector_length(vectors, count, &requested);
+    if (result != 0 || requested == 0)
+    {
+        return result;
+    }
+    pipe_state_t* pipe   = static_cast<pipe_state_t*>(file->privateData);
+    uint8_t*      staged = static_cast<uint8_t*>(kmalloc(requested < PIPE_CAPACITY ? requested : PIPE_CAPACITY));
+    if (staged == nullptr)
+    {
+        return LINUX_ENOMEM;
+    }
+    size_t transferred = 0;
+    for (;;)
+    {
+        const uint64_t       sequence = pipe->events->Sequence();
+        user_memory_access_t access;
+        if (!begin_user_memory(&access))
+        {
+            result = LINUX_ESRCH;
+            break;
+        }
+        spinlock_acquire_preempt(&pipe->lock);
+        result       = AGAIN;
+        size_t bytes = write ? pipe->capacity - pipe->size : pipe->size;
+        bytes        = bytes < requested - transferred ? bytes : requested - transferred;
+        if (write && pipe->reader == nullptr)
+        {
+            result = (uint64_t) -32;
+        }
+        else if (!write && pipe->size == 0 && pipe->writer == nullptr)
+        {
+            result = 0;
+        }
+        else if (bytes != 0 && (!write || requested > PIPE_ATOMIC || bytes == requested))
+        {
+            if (!write)
+            {
+                for (size_t i = 0; i < bytes; ++i)
+                {
+                    staged[i] = pipe->data[(pipe->head + i) % pipe->capacity];
+                }
+            }
+            if (!copy_vector(&access, vectors, count, transferred, staged, bytes, write))
+            {
+                result = LINUX_EFAULT;
+            }
+            else
+            {
+                if (write)
+                {
+                    for (size_t i = 0; i < bytes; ++i)
+                    {
+                        pipe->data[(pipe->head + pipe->size + i) % pipe->capacity] = staged[i];
+                    }
+                    pipe->size += bytes;
+                }
+                else
+                {
+                    pipe->head = (pipe->head + bytes) % pipe->capacity;
+                    pipe->size -= bytes;
+                }
+                transferred += bytes;
+                result = 0;
+            }
+        }
+        spinlock_release_preempt(&pipe->lock);
+        end_user_memory(&access);
+        if (result == 0)
+        {
+            NotifyPipe(pipe);
+        }
+        if (result == (uint64_t) -32 && pipe->signals != nullptr)
+        {
+            process_t* process = pipe->resources->processManager->GetCurrentProcess();
+            task_t*    task    = pipe->resources->taskManager->GetCurrentTask();
+            if (process != nullptr && task != nullptr)
+            {
+                pipe->signals->Send((int32_t) process->id, (int32_t) task->id, 13);
+            }
+        }
+        if (result != AGAIN && (result != 0 || !write || transferred == requested))
+        {
+            break;
+        }
+        if (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK)
+        {
+            break;
+        }
+        if (result == AGAIN)
+        {
+            result = pipe->events->Wait(sequence);
+            if (result != 0)
+            {
+                break;
+            }
+        }
+    }
+    kfree(staged);
+    return transferred != 0 || result == 0 ? transferred : result;
+}
+
+uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, uint32_t flags)
+{
+    if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    if ((flags & ~(1U | 2U)) != 0)
+    {
+        return (flags & 4U) ? LINUX_EOPNOTSUPP : LINUX_EINVAL;
+    }
+    char   name[250];
+    size_t length = 0;
+    if (!safe_read_user_string(pointer, name, sizeof(name), &length))
+    {
+        // Distinguish an overlong readable name from a fault.
+        for (size_t i = 0; i < sizeof(name); ++i)
+        {
+            char byte;
+            if (pointer > UINT64_MAX - i || !safe_read_user(pointer + i, &byte, 1))
+            {
+                return LINUX_EFAULT;
+            }
+            if (byte == 0)
+            {
+                return LINUX_EFAULT;
+            }
+        }
+        return LINUX_EINVAL;
+    }
+    memory_file_t* memory = static_cast<memory_file_t*>(kzalloc(sizeof(memory_file_t)));
+    file_t*        file   = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+    if (memory == nullptr || file == nullptr)
+    {
+        kfree(memory);
+        kfree(file);
+        return LINUX_ENOMEM;
+    }
+    Vfs->InitializeAnonymousInode(&memory->inode, INODE_REGULAR, 0777);
+    memory->seals     = flags & 2 ? 0 : 1;
+    file->inode       = &memory->inode;
+    file->operations  = &MemoryOperations;
+    file->privateData = memory;
+    file->refCount    = 1;
+    file->statusFlags = 2;
+    FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
+    process_t*          process = Resources->processManager->GetCurrentProcess();
+    const int64_t       fd      = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & 1 ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+    if (fd < 0)
+    {
+        Vfs->Close(file);
+    }
+    return (uint64_t) fd;
+}
+
+int64_t InterProcessCommunicationManager::MemoryRead(file_t* file, void* buffer, uint64_t count)
+{
+    memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    if (file->offset >= memory->inode.size)
+    {
+        return 0;
+    }
+    const size_t bytes = count < memory->inode.size - file->offset ? count : memory->inode.size - file->offset;
+    for (size_t i = 0; i < bytes; ++i)
+    {
+        const size_t address             = file->offset + i;
+        static_cast<uint8_t*>(buffer)[i] = memory->pages[address / PAGE_SIZE] != nullptr ? memory->pages[address / PAGE_SIZE][address % PAGE_SIZE] : 0;
+    }
+    file->offset += bytes;
+    return bytes;
+}
+
+int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* buffer, uint64_t count)
+{
+    memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    if (count == 0)
+    {
+        return 0;
+    }
+    if (memory->seals & (8U | 16U))
+    {
+        return -1;
+    }
+    if (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 02000)
+    {
+        file->offset = memory->inode.size;
+    }
+    if (file->offset > MEMORY_PAGES * PAGE_SIZE || count > MEMORY_PAGES * PAGE_SIZE - file->offset)
+    {
+        return -27;
+    }
+    if ((memory->seals & 4) && file->offset + count > memory->inode.size)
+    {
+        return -1;
+    }
+    size_t copied = 0;
+    while (copied < count)
+    {
+        const size_t address = file->offset + copied;
+        const size_t page    = address / PAGE_SIZE;
+        if (memory->pages[page] == nullptr)
+        {
+            memory->pages[page] = static_cast<uint8_t*>(kzalloc(PAGE_SIZE));
+            if (memory->pages[page] == nullptr)
+            {
+                break;
+            }
+        }
+        const size_t bytes = count - copied < PAGE_SIZE - address % PAGE_SIZE ? count - copied : PAGE_SIZE - address % PAGE_SIZE;
+        memcpy(memory->pages[page] + address % PAGE_SIZE, static_cast<const uint8_t*>(buffer) + copied, bytes);
+        copied += bytes;
+    }
+    file->offset += copied;
+    if (file->offset > memory->inode.size)
+    {
+        memory->inode.size = file->offset;
+    }
+    return copied != 0 ? (int64_t) copied : (int64_t) LINUX_ENOMEM;
+}
+
+int64_t InterProcessCommunicationManager::MemorySeek(file_t* file, int64_t offset, int whence)
+{
+    const int64_t base = whence == 0 ? 0 : whence == 1 ? (int64_t) file->offset : whence == 2 ? (int64_t) file->inode->size : -1;
+    if (whence < 0 || whence > 2 || base < 0 || offset < -base || offset > INT64_MAX - base)
+    {
+        return (int64_t) LINUX_EINVAL;
+    }
+    file->offset = (uint64_t) (base + offset);
+    return (int64_t) file->offset;
+}
+
+int64_t InterProcessCommunicationManager::MemoryTruncate(file_t* file, uint64_t size)
+{
+    memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    if (size > MEMORY_PAGES * PAGE_SIZE)
+    {
+        return -27;
+    }
+    if ((size < memory->inode.size && (memory->seals & 2)) || (size > memory->inode.size && (memory->seals & 4)))
+    {
+        return -1;
+    }
+    if (size < memory->inode.size)
+    {
+        for (size_t page = (size + PAGE_SIZE - 1) / PAGE_SIZE; page < MEMORY_PAGES; ++page)
+        {
+            kfree(memory->pages[page]);
+            memory->pages[page] = nullptr;
+        }
+        if (size % PAGE_SIZE != 0 && memory->pages[size / PAGE_SIZE] != nullptr)
+        {
+            memset(memory->pages[size / PAGE_SIZE] + size % PAGE_SIZE, 0, PAGE_SIZE - size % PAGE_SIZE);
+        }
+    }
+    memory->inode.size = size;
+    return 0;
+}
+
+uint64_t InterProcessCommunicationManager::MemoryControl(file_t* file, uint32_t command, uint64_t argument)
+{
+    memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    spinlock_acquire_preempt(&memory->inode.ioLock);
+    uint64_t result = LINUX_EINVAL;
+    if (command == 1034)
+    {
+        result = memory->seals;
+    }
+    if (command == 1033)
+    {
+        result = (argument & ~31ULL) != 0 ? LINUX_EINVAL : (memory->seals & 1) ? (uint64_t) -1 : 0;
+        if (result == 0)
+        {
+            memory->seals |= argument;
+        }
+    }
+    spinlock_release_preempt(&memory->inode.ioLock);
+    return result;
+}
+
+void InterProcessCommunicationManager::MemoryRelease(file_t* file)
+{
+    memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    for (size_t i = 0; i < MEMORY_PAGES; ++i)
+    {
+        kfree(memory->pages[i]);
+    }
+    kfree(memory);
+}

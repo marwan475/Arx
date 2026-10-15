@@ -1,5 +1,7 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
 
+#include "layers/Logic/EventManager.hpp"
+#include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 extern "C"
@@ -611,6 +613,7 @@ static void vfs_file_io_end(file_t* file)
 VirtualFileSystem::VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps)
 {
     ResourceLayerImportCaps = resourceLayerCaps;
+    EventObserver           = nullptr;
     DentryCacheLock         = 0;
     DentryCache             = khp_init(sizeof(dentry_key_t), sizeof(dentry_t*), vfs_dentry_cache_hash_fn, vfs_dentry_cache_eq_fn);
     OverlayDentryLock       = 0;
@@ -1604,6 +1607,10 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         return VFS_ERR_EXIST;
     }
 
+    if (EventObserver != nullptr)
+    {
+        EventObserver->NotifyVfs(inode, 0x100, parentResolved.dentry->inode, leafName);
+    }
     return 0;
 }
 
@@ -1852,6 +1859,17 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
 
 int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
 {
+    if (file != nullptr && file->operations != nullptr && file->operations->Truncate != nullptr)
+    {
+        if (!vfs_file_io_begin(file))
+        {
+            return VFS_ERR_INVAL;
+        }
+        const int64_t result = file->operations->Truncate(file, size);
+        vfs_file_io_end(file);
+        return result;
+    }
+
     if (file == nullptr || file->path.dentry == nullptr)
     {
         return VFS_ERR_INVAL;
@@ -1906,6 +1924,7 @@ file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint6
     }
 
     memset(file, 0, sizeof(file_t));
+    file->owner       = this;
     file->path        = resolved;
     file->inode       = resolved.dentry->inode;
     file->offset      = 0;
@@ -1930,6 +1949,7 @@ file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint6
         }
     }
 
+    NotifyFile(file, 0x20);
     return file;
 }
 
@@ -1989,6 +2009,10 @@ int64_t VirtualFileSystem::Transfer(file_t* file, void* buffer, uint64_t count, 
     }
 
     vfs_file_io_end(file);
+    if (result > 0)
+    {
+        NotifyFile(file, write ? 2 : 1);
+    }
     return result;
 }
 
@@ -2103,6 +2127,11 @@ int64_t VirtualFileSystem::Close(file_t* file)
         return 0;
     }
 
+    if (file->owner != nullptr)
+    {
+        file->owner->NotifyFile(file, (file->statusFlags & 3) == 0 ? 0x10 : 8);
+    }
+
     if (file->closeObserver != nullptr)
     {
         file->closeObserver(file->closeObserverContext, file);
@@ -2120,4 +2149,148 @@ int64_t VirtualFileSystem::Close(file_t* file)
 void VirtualFileSystem::ReleaseFileHandle(void* file)
 {
     (void) Close(static_cast<file_t*>(file));
+}
+
+uint64_t VirtualFileSystem::ChangeMetadata(inode_t* inode, bool ownership, uint32_t first, uint32_t second)
+{
+    if (inode == nullptr)
+    {
+        return LINUX_ENOENT;
+    }
+    if (inode->filesystem != nullptr)
+    {
+        return (uint64_t) -30;
+    }
+    if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    ProcessManager* processes = ResourceLayerImportCaps->processManager;
+    process_t*      process   = processes->AcquireCurrentCredentials();
+    if (process == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+    const uint32_t caller = process->credentials.user.filesystem;
+    bool           member = second == process->credentials.group.filesystem;
+    for (uint32_t i = 0; process->supplementaryGroups != nullptr && i < process->supplementaryGroups->count; ++i)
+    {
+        member |= second == process->supplementaryGroups->ids[i];
+    }
+    const uint32_t group = process->credentials.group.filesystem;
+    spinlock_acquire_preempt(&inode->ioLock);
+    uint64_t result = 0;
+    if (caller != 0 && (caller != inode->uid || (ownership && ((first != UINT32_MAX && first != inode->uid) || (second != UINT32_MAX && second != inode->gid && !member)))))
+    {
+        result = (uint64_t) -1;
+    }
+    else if (!ownership && inode->type == INODE_SYMLINK)
+    {
+        result = LINUX_EOPNOTSUPP;
+    }
+    else
+    {
+        if (!inode->metadataValid)
+        {
+            inode->mode          = inode->type == INODE_DIRECTORY ? 0755 : inode->type == INODE_SOCKET || inode->type == INODE_SYMLINK ? 0777 : 0644;
+            inode->metadataValid = true;
+        }
+        if (ownership)
+        {
+            if (first != UINT32_MAX)
+            {
+                inode->uid = first;
+            }
+            if (second != UINT32_MAX)
+            {
+                inode->gid = second;
+            }
+            if (inode->type == INODE_REGULAR && (first != UINT32_MAX || second != UINT32_MAX))
+            {
+                inode->mode &= ~06000U;
+            }
+        }
+        else
+        {
+            inode->mode      = first & 07777;
+            bool groupMember = group == inode->gid;
+            for (uint32_t i = 0; process->supplementaryGroups != nullptr && i < process->supplementaryGroups->count; ++i)
+            {
+                groupMember |= process->supplementaryGroups->ids[i] == inode->gid;
+            }
+            if (caller != 0 && !groupMember)
+            {
+                inode->mode &= ~02000U;
+            }
+        }
+    }
+    spinlock_release_preempt(&inode->ioLock);
+    processes->ReleaseCredentials(process);
+    return result;
+}
+
+uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const char* type, uint64_t flags, uint64_t data)
+{
+    (void) source;
+    (void) data;
+    if ((flags & 0xffff0000ULL) == 0xc0ed0000ULL)
+    {
+        flags &= ~0xffff0000ULL;
+    }
+    if ((flags & ~0x03ffffffULL) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+    vfs_path_t resolved = {};
+    if (!ResolvePath({}, target, &resolved) || resolved.dentry == nullptr)
+    {
+        return LINUX_ENOENT;
+    }
+    if ((flags & (4096 | 8192 | 32 | (15ULL << 17))) != 0)
+    {
+        return LINUX_EOPNOTSUPP;
+    }
+    if (type == nullptr || type[0] == 0 || strcmp(type, "cpio") != 0)
+    {
+        return (uint64_t) -19;
+    }
+    // The cpio backend accepts a boot-provided archive, not a userspace block
+    // device or mount data pointer. No mount is installed without a backend.
+    return LINUX_EOPNOTSUPP;
+}
+
+void VirtualFileSystem::SetEventManager(EventManager* events)
+{
+    EventObserver = events;
+}
+
+void VirtualFileSystem::NotifyFile(file_t* file, uint32_t mask)
+{
+    if (EventObserver == nullptr || file == nullptr || file->inode == nullptr)
+    {
+        return;
+    }
+    dentry_t* dentry = file->path.dentry;
+    EventObserver->NotifyVfs(file->inode, mask, dentry != nullptr && dentry->parent != nullptr ? dentry->parent->inode : nullptr, dentry != nullptr ? dentry->name : nullptr);
+}
+
+void VirtualFileSystem::InitializeAnonymousInode(inode_t* inode, inode_type_t type, uint32_t mode)
+{
+    static uint64_t nextInode = 0x100000;
+    inode->inodeNumber        = __atomic_add_fetch(&nextInode, 1ULL, __ATOMIC_RELAXED);
+    inode->type               = type;
+    inode->mode               = mode;
+    inode->metadataValid      = true;
+    if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr)
+    {
+        return;
+    }
+    process_t* process = ResourceLayerImportCaps->processManager->AcquireCurrentCredentials();
+    if (process == nullptr)
+    {
+        return;
+    }
+    inode->uid = process->credentials.user.filesystem;
+    inode->gid = process->credentials.group.filesystem;
+    ResourceLayerImportCaps->processManager->ReleaseCredentials(process);
 }

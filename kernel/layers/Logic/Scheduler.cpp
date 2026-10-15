@@ -1,5 +1,6 @@
 #include "layers/Logic/Scheduler.hpp"
 
+#include "layers/Logic/EventManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
@@ -14,6 +15,7 @@ extern "C"
 Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
 {
     ResourceLayerImportCaps = resourceLayerCaps;
+    Events                  = nullptr;
     QueueLock               = 0;
     IdleAddressSpace        = platform.cpus[platform.bsp_id].address_space;
     memset(SleepQueue, 0, sizeof(SleepQueue));
@@ -165,6 +167,10 @@ void Scheduler::WakeSignalWaiters(process_t* process)
     }
 
     UnlockQueues();
+    if (Events != nullptr)
+    {
+        Events->NotifySignals(process);
+    }
 }
 
 void Scheduler::ReapExitedProcesses()
@@ -932,4 +938,9 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     return true;
+}
+
+void Scheduler::SetEventManager(EventManager* events)
+{
+    Events = events;
 }

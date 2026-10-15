@@ -3,6 +3,7 @@
 #include "layers/Logic/CredentialManager.hpp"
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/InterProcessCommunicationManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/SocketManager.hpp"
@@ -19,6 +20,7 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->interProcessCommunicationManager;
         delete LogicLayerExportCaps->socketManager;
         delete LogicLayerExportCaps->signalManager;
         delete LogicLayerExportCaps->synchronizationManager;
@@ -50,9 +52,13 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->elfMapper              = new ElfMapper(resourceLayerCaps);
     LogicLayerExportCaps->credentialManager      = new CredentialManager(resourceLayerCaps);
     LogicLayerExportCaps->eventManager           = new EventManager(resourceLayerCaps, LogicLayerExportCaps->scheduler, LogicLayerExportCaps->virtualFileSystem);
+    LogicLayerExportCaps->scheduler->SetEventManager(LogicLayerExportCaps->eventManager);
+    LogicLayerExportCaps->virtualFileSystem->SetEventManager(LogicLayerExportCaps->eventManager);
     LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
     LogicLayerExportCaps->signalManager          = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
     LogicLayerExportCaps->socketManager          = new SocketManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
+
+    LogicLayerExportCaps->interProcessCommunicationManager = new InterProcessCommunicationManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
 
     return LogicLayerExportCaps;
 }

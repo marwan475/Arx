@@ -1,5 +1,6 @@
 #include "layers/Request/VfsRequestManager.hpp"
 
+#include "layers/Logic/InterProcessCommunicationManager.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
@@ -101,16 +102,19 @@ static uint32_t linux_mode_for_inode(const inode_t* inode)
         return 0;
     }
 
+    const uint32_t permissions = inode->metadataValid ? inode->mode & 07777U : inode->type == INODE_DIRECTORY ? 0755U : inode->type == INODE_SYMLINK || inode->type == INODE_SOCKET ? 0777U : 0644U;
     switch (inode->type)
     {
+        case INODE_FIFO:
+            return 0010000U | permissions;
         case INODE_SOCKET:
-            return 0140000U | 0777U;
+            return 0140000U | permissions;
         case INODE_DIRECTORY:
-            return LINUX_S_IFDIR | 0755U;
+            return LINUX_S_IFDIR | permissions;
         case INODE_SYMLINK:
-            return LINUX_S_IFLNK | 0777U;
+            return LINUX_S_IFLNK | permissions;
         default:
-            return LINUX_S_IFREG | 0644U;
+            return LINUX_S_IFREG | permissions;
     }
 }
 
@@ -121,19 +125,21 @@ static void fill_linux_stat_from_inode(const inode_t* inode, linux_stat_t* statB
         return;
     }
 
+    spinlock_acquire_preempt((spinlock_t*) &inode->ioLock);
     linux_stat_t statData = {};
     statData.st_ino       = inode->inodeNumber;
     statData.st_dev       = 1;
     statData.st_nlink     = 1;
     statData.st_mode      = linux_mode_for_inode(inode);
-    statData.st_uid       = 0;
-    statData.st_gid       = 0;
+    statData.st_uid       = inode->uid;
+    statData.st_gid       = inode->gid;
     statData.st_rdev      = 0;
     statData.st_size      = (int64_t) inode->size;
     statData.st_blksize   = 4096;
     statData.st_blocks    = (int64_t) ((inode->size + 511ULL) / 512ULL);
 
     *statBuffer = statData;
+    spinlock_release_preempt((spinlock_t*) &inode->ioLock);
 }
 
 static uint8_t linux_dirent_type_for_inode_type(inode_type_t type)
@@ -150,6 +156,8 @@ static uint8_t linux_dirent_type_for_inode_type(inode_type_t type)
             return LINUX_DT_BLK;
         case INODE_SOCKET:
             return 12;
+        case INODE_FIFO:
+            return 1;
         case INODE_REGULAR:
             return LINUX_DT_REG;
         default:
@@ -422,7 +430,7 @@ static uint64_t perform_user_buffer_io(VirtualMemoryManager* virtualMemoryManage
 
         if (ioResult < 0)
         {
-            return (totalTransferred > 0) ? totalTransferred : normalize_vfs_result(ioResult);
+            return (totalTransferred > 0) ? totalTransferred : (file->operations != nullptr && file->operations->linuxErrors ? (uint64_t) ioResult : normalize_vfs_result(ioResult));
         }
 
         if (ioResult == 0)
@@ -1934,7 +1942,7 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
 
         if (file->operations != nullptr && file->operations->ReadUser != nullptr)
         {
-            // Anonymous counter files currently support changing O_NONBLOCK.
+            // Anonymous stream/event files support changing O_NONBLOCK.
             // Access mode is fixed at creation and cannot be changed by SETFL.
 
             if ((arg & ~(3ULL | 04000ULL)) != 0)
@@ -1945,12 +1953,22 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
             const uint64_t flags = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
             __atomic_store_n(&file->statusFlags, (flags & ~04000ULL) | (arg & 04000ULL), __ATOMIC_RELAXED);
         }
+        else if (file->operations != nullptr && file->operations->linuxErrors)
+        {
+            if ((arg & ~(3ULL | 04000ULL | 02000ULL)) != 0)
+            {
+                return LINUX_EOPNOTSUPP;
+            }
+            const uint64_t previous = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED);
+            __atomic_store_n(&file->statusFlags, (previous & 3) | (arg & (04000ULL | 02000ULL)), __ATOMIC_RELAXED);
+        }
         else
             __atomic_store_n(&file->statusFlags, arg, __ATOMIC_RELAXED);
         return 0;
     }
 
-    return LINUX_EINVAL;
+    file_t* file = static_cast<file_t*>(descriptor->file);
+    return file->operations != nullptr && file->operations->Control != nullptr ? file->operations->Control(file, (uint32_t) cmd, arg) : LINUX_EINVAL;
 }
 
 uint64_t VfsRequestManager::HandleDupRequest(const arch_syscall_frame_t* frame)
@@ -2909,11 +2927,95 @@ uint64_t VfsRequestManager::HandleAccessRequest(const arch_syscall_frame_t* fram
     return HandleFaccessat2Request(&faccessat2Frame);
 }
 
+uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, bool ownership, bool descriptorOnly)
+{
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    process_t* process = ResourceCaps->processManager->GetCurrentProcess();
+    if (process == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+    FileDescriptorGuard descriptors(process);
+    const int32_t       dirfd = (int32_t) frame->arg0;
+    const uint32_t      flags = descriptorOnly ? 0x1000U : (uint32_t) (ownership ? frame->arg4 : frame->arg3);
+    if ((flags & ~(0x1000U | 0x100U)) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+    char path[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+    if (!descriptorOnly && !(frame->arg1 == 0 && (flags & 0x1000)) && !safe_read_user_string(frame->arg1, path, sizeof(path), nullptr))
+    {
+        return LINUX_EFAULT;
+    }
+    inode_t* inode = nullptr;
+    if (descriptorOnly || (path[0] == 0 && (flags & 0x1000)))
+    {
+        if (dirfd == LINUX_AT_FDCWD && !descriptorOnly)
+        {
+            vfs_path_t resolved = {};
+            if (!LogicCaps->virtualFileSystem->ResolvePath({}, process->cwdPath, &resolved))
+            {
+                return LINUX_ENOENT;
+            }
+            inode = resolved.dentry->inode;
+        }
+        else
+        {
+            file_descriptor_t* fd = dirfd >= 0 ? ProcessManager::GetFileDescriptor(process, (uint32_t) dirfd) : nullptr;
+            if (fd == nullptr)
+            {
+                return LINUX_EBADF;
+            }
+            inode = static_cast<file_t*>(fd->file)->inode;
+        }
+    }
+    else
+    {
+        if (path[0] == 0)
+        {
+            return LINUX_ENOENT;
+        }
+        vfs_path_t  start                                        = {};
+        char        scratch[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+        const char* effectivePath                                = nullptr;
+        uint64_t    result                                       = prepare_request_path(LogicCaps->virtualFileSystem, process, dirfd, path, scratch, sizeof(scratch), &effectivePath, &start);
+        if (result != 0)
+        {
+            return result;
+        }
+        if (flags & 0x100)
+        {
+            const int64_t status = LogicCaps->virtualFileSystem->StatNoFollow(start, effectivePath, &inode);
+            if (status < 0)
+            {
+                return normalize_vfs_result(status);
+            }
+        }
+        else
+        {
+            vfs_path_t resolved = {};
+            if (!LogicCaps->virtualFileSystem->ResolvePath(start, effectivePath, &resolved) || resolved.dentry == nullptr)
+            {
+                return LINUX_ENOENT;
+            }
+            inode = resolved.dentry->inode;
+        }
+    }
+    const uint32_t first  = (uint32_t) (descriptorOnly ? frame->arg1 : frame->arg2);
+    const uint32_t second = (uint32_t) (descriptorOnly ? frame->arg2 : frame->arg3);
+    return LogicCaps->virtualFileSystem->ChangeMetadata(inode, ownership, first, second);
+}
+
 uint64_t VfsRequestManager::HandleFchownatRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-    (void) frame;
-    return (uint64_t) -38;
+    return MetadataRequest(frame, true);
 }
 
 uint64_t VfsRequestManager::HandleChownRequest(const arch_syscall_frame_t* frame)
@@ -2936,20 +3038,7 @@ uint64_t VfsRequestManager::HandleChownRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleFchownRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-
-    if (frame == nullptr)
-    {
-        return LINUX_EINVAL;
-    }
-
-    arch_syscall_frame_t fchownatFrame = {};
-    fchownatFrame.arg0                 = (uint64_t) frame->arg0;
-    fchownatFrame.arg1                 = (uint64_t) "";
-    fchownatFrame.arg2                 = frame->arg1;
-    fchownatFrame.arg3                 = frame->arg2;
-    fchownatFrame.arg4                 = (uint64_t) LINUX_AT_EMPTY_PATH;
-    return HandleFchownatRequest(&fchownatFrame);
+    return MetadataRequest(frame, true, true);
 }
 
 uint64_t VfsRequestManager::HandleLchownRequest(const arch_syscall_frame_t* frame)
@@ -2972,9 +3061,7 @@ uint64_t VfsRequestManager::HandleLchownRequest(const arch_syscall_frame_t* fram
 
 uint64_t VfsRequestManager::HandleFchmodat2Request(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-    (void) frame;
-    return (uint64_t) -38;
+    return MetadataRequest(frame, false);
 }
 
 uint64_t VfsRequestManager::HandleFchmodatRequest(const arch_syscall_frame_t* frame)
@@ -3013,26 +3100,45 @@ uint64_t VfsRequestManager::HandleChmodRequest(const arch_syscall_frame_t* frame
 
 uint64_t VfsRequestManager::HandleFchmodRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-
-    if (frame == nullptr)
-    {
-        return LINUX_EINVAL;
-    }
-
-    arch_syscall_frame_t fchmodat2Frame = {};
-    fchmodat2Frame.arg0                 = frame->arg0;
-    fchmodat2Frame.arg1                 = (uint64_t) "";
-    fchmodat2Frame.arg2                 = frame->arg1;
-    fchmodat2Frame.arg3                 = (uint64_t) LINUX_AT_EMPTY_PATH;
-    return HandleFchmodat2Request(&fchmodat2Frame);
+    return MetadataRequest(frame, false, true);
 }
 
 uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    process_t* process = ResourceCaps->processManager->AcquireCurrentCredentials();
+    if (process == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+    const bool privileged = process->credentials.user.effective == 0;
+    ResourceCaps->processManager->ReleaseCredentials(process);
+    if (!privileged)
+    {
+        return (uint64_t) -1;
+    }
+    char source[512] = {}, target[512] = {}, type[64] = {};
+    if (!safe_read_user_string(frame->arg1, target, sizeof(target), nullptr) || (frame->arg0 != 0 && !safe_read_user_string(frame->arg0, source, sizeof(source), nullptr)) || (frame->arg2 != 0 && !safe_read_user_string(frame->arg2, type, sizeof(type), nullptr)))
+    {
+        return LINUX_EFAULT;
+    }
+    char absolute[512] = {};
+    if (!LogicCaps->virtualFileSystem->JoinPath(process->cwdPath, target, absolute, sizeof(absolute)))
+    {
+        return LINUX_ENAMETOOLONG;
+    }
+    if (target[0] == 0)
+    {
+        return LINUX_ENOENT;
+    }
+    return LogicCaps->virtualFileSystem->Mount(source, absolute, frame->arg2 != 0 ? type : nullptr, frame->arg3, frame->arg4);
 }
 
 uint64_t VfsRequestManager::HandleStatfsRequest(const arch_syscall_frame_t* frame)
@@ -3290,12 +3396,12 @@ uint64_t VfsRequestManager::HandleFtruncateRequest(const arch_syscall_frame_t* f
     }
 
     file_t* file = static_cast<file_t*>(descriptor->file);
-    return normalize_vfs_result(LogicCaps->virtualFileSystem->TruncateFile(file, (uint64_t) length));
+    const int64_t result = LogicCaps->virtualFileSystem->TruncateFile(file, (uint64_t) length);
+    return file->operations != nullptr && file->operations->linuxErrors ? (uint64_t) result : normalize_vfs_result(result);
 }
 
 uint64_t VfsRequestManager::HandlePipeRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
 
     if (frame == nullptr)
     {
@@ -3310,14 +3416,26 @@ uint64_t VfsRequestManager::HandlePipeRequest(const arch_syscall_frame_t* frame)
 
 uint64_t VfsRequestManager::HandlePipe2Request(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (LogicCaps == nullptr || LogicCaps->interProcessCommunicationManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return LogicCaps->interProcessCommunicationManager->CreatePipe(frame->arg0, (uint32_t) frame->arg1);
 }
 
 uint64_t VfsRequestManager::HandleMemfd_createRequest(const arch_syscall_frame_t* frame)
 {
-    FileDescriptorGuard descriptors(ResourceCaps != nullptr && ResourceCaps->processManager != nullptr ? ResourceCaps->processManager->GetCurrentProcess() : nullptr);
-    (void) frame;
-    return (uint64_t) -38;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (LogicCaps == nullptr || LogicCaps->interProcessCommunicationManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return LogicCaps->interProcessCommunicationManager->CreateMemoryFile(frame->arg0, (uint32_t) frame->arg1);
 }

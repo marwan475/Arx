@@ -244,7 +244,7 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
         return nullptr;
     }
 
-    endpoint->inode.type     = INODE_SOCKET;
+    Vfs->InitializeAnonymousInode(&endpoint->inode, INODE_SOCKET, 0777);
     endpoint->manager        = this;
     endpoint->file           = file;
     endpoint->type           = type;

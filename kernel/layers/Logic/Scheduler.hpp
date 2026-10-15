@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 struct ResourceLayerCaps;
+class EventManager;
 struct task_t;
 struct process_t;
 struct virt_addr_space;
@@ -17,6 +18,7 @@ public:
     ~Scheduler() = default;
 
     void ActivateScheduling();
+    void SetEventManager(EventManager* events);
     bool IsSchedulingActive() const;
 
     bool              ScheduleProcess(uint64_t processId);
@@ -77,4 +79,5 @@ private:
     virt_addr_space* IdleAddressSpace;
 
     ResourceLayerCaps* ResourceLayerImportCaps;
+    EventManager*      Events;
 };

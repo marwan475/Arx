@@ -51,6 +51,8 @@ struct event_counter_t
 
 EventManager::EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs) : Resources(resources), SchedulerManager(scheduler), Vfs(vfs), Generation(0), TopologyGeneration(0), NotificationGeneration(0), EpollLock{}, Epolls(nullptr)
 {
+    NotificationLock = 0;
+    Notifications    = nullptr;
 }
 
 uint64_t EventManager::Sequence() const
@@ -227,7 +229,7 @@ uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
         return LINUX_ENOMEM;
     }
 
-    counter->inode.type = INODE_REGULAR;
+    Vfs->InitializeAnonymousInode(&counter->inode, INODE_REGULAR, 0600);
     counter->value      = initial;
     counter->semaphore  = (flags & 1) != 0;
     counter->manager    = this;
@@ -499,7 +501,7 @@ uint64_t EventManager::CreateEpoll(uint32_t flags)
         return LINUX_ENOMEM;
     }
 
-    epoll->inode.type          = INODE_REGULAR;
+    Vfs->InitializeAnonymousInode(&epoll->inode, INODE_REGULAR, 0600);
     epoll->manager             = this;
     epoll->file                = file;
     file->inode                = &epoll->inode;

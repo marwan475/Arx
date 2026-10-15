@@ -12,6 +12,9 @@ struct file_iovec_t;
 struct user_memory_access;
 class Scheduler;
 class VirtualFileSystem;
+struct inode_t;
+struct process_t;
+struct event_notification_t;
 
 struct event_pollfd_t
 {
@@ -49,6 +52,12 @@ class EventManager
 public:
     EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs);
     uint64_t CreateCounter(uint32_t initial, uint32_t flags);
+    uint64_t CreateInotify(uint32_t flags);
+    uint64_t AddWatch(int32_t fd, uint64_t path, uint32_t mask);
+    uint64_t RemoveWatch(int32_t fd, int32_t watch);
+    uint64_t SignalDescriptor(int32_t fd, uint64_t mask, uint32_t flags);
+    void     NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent = nullptr, const char* name = nullptr);
+    void     NotifySignals(process_t* process);
     uint64_t CreateEpoll(uint32_t flags);
     uint64_t ControlEpoll(int32_t epfd, int32_t operation, int32_t fd, const event_epoll_event_t* event);
     uint64_t WaitEpoll(int32_t epfd, uint64_t address, size_t count, uint64_t deadline);
@@ -61,6 +70,19 @@ public:
     uint64_t Wait(uint64_t expected, uint64_t deadline = UINT64_MAX);
 
 private:
+    static const struct file_operations_t InotifyOperations;
+    static const struct file_operations_t SignalOperations;
+    uint64_t                              InstallNotification(event_notification_t* notification, const struct file_operations_t* operations, uint32_t flags);
+    static void                           NotificationRelease(file_t* file);
+    static uint32_t                       NotificationPoll(file_t* file);
+    static uint64_t                       NotificationRead(file_t* file, uint64_t address, uint64_t count);
+    static uint64_t                       NotificationWrite(file_t* file, uint64_t address, uint64_t count);
+    static uint64_t                       NotificationWriteVector(file_t* file, const file_iovec_t* vectors, size_t count);
+    static uint64_t                       NotificationReadVector(file_t* file, const file_iovec_t* vectors, size_t count);
+    static int64_t                        NotificationSeek(file_t* file, int64_t offset, int whence);
+    static int64_t                        NotificationIoctl(file_t* file, uint64_t request, uint64_t argument);
+    spinlock_t                            NotificationLock;
+    event_notification_t*                 Notifications;
     file_t*            RetainDescriptor(int32_t fd);
     static void        FileClosing(void* context, file_t* file);
     static void        EpollRelease(file_t* file);

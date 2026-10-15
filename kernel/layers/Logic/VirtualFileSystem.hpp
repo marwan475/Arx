@@ -15,6 +15,8 @@ extern "C"
 #include <klib/spinlock.h>
 
 struct ResourceLayerCaps;
+class EventManager;
+class VirtualFileSystem;
 struct filesystem_t;
 struct filesystem_type_t;
 struct file_operations_t;
@@ -30,6 +32,7 @@ enum inode_type_t
     INODE_CHAR_DEVICE,
     INODE_BLOCK_DEVICE,
     INODE_SOCKET,
+    INODE_FIFO,
 };
 
 struct inode_operations_t
@@ -95,6 +98,9 @@ struct file_operations_t
     uint64_t (*WriteUser)(file_t* file, uint64_t address, uint64_t count);
     uint64_t (*ReadVectorUser)(file_t* file, const file_iovec_t* vectors, size_t count);
     uint64_t (*WriteVectorUser)(file_t* file, const file_iovec_t* vectors, size_t count);
+    int64_t (*Truncate)(file_t* file, uint64_t size);
+    uint64_t (*Control)(file_t* file, uint32_t command, uint64_t argument);
+    bool linuxErrors;
 };
 
 struct inode_t
@@ -103,6 +109,10 @@ struct inode_t
     inode_type_t type;
 
     uint64_t size;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
+    bool     metadataValid;
 
     filesystem_t* filesystem;
 
@@ -145,6 +155,7 @@ struct vfs_path_t
 
 struct file_t
 {
+    VirtualFileSystem* owner;
     vfs_path_t path;
 
     inode_t* inode;
@@ -180,6 +191,9 @@ class VirtualFileSystem
 {
 public:
     explicit VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps);
+    void SetEventManager(EventManager* events);
+    void InitializeAnonymousInode(inode_t* inode, inode_type_t type, uint32_t mode);
+    void NotifyFile(file_t* file, uint32_t mask);
     ~VirtualFileSystem();
 
     uint32_t       HashDentryKey(const dentry_t* parent, const char* name) const;
@@ -202,6 +216,8 @@ public:
     int64_t        Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device);
     int64_t        TruncatePath(const vfs_path_t& start, const char* path, uint64_t size);
     int64_t        TruncateFile(file_t* file, uint64_t size);
+    uint64_t       ChangeMetadata(inode_t* inode, bool ownership, uint32_t first, uint32_t second = 0);
+    uint64_t       Mount(const char* source, const char* target, const char* type, uint64_t flags, uint64_t data);
     file_t*        Open(const vfs_path_t& start, const char* path, uint64_t flags);
     int64_t        Read(file_t* file, void* buffer, uint64_t count);
     int64_t        Write(file_t* file, const void* buffer, uint64_t count);
@@ -224,6 +240,7 @@ private:
     bool      AddOverlayDentry(dentry_t* dentry);
 
     ResourceLayerCaps*          ResourceLayerImportCaps;
+    EventManager*               EventObserver;
     mutable spinlock_t          DentryCacheLock;
     khashp_t*                   DentryCache;
     mutable spinlock_t          OverlayDentryLock;

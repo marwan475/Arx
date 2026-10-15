@@ -74,6 +74,7 @@ public:
     uint64_t HandleMemfd_createRequest(const arch_syscall_frame_t* frame);
 
 private:
+    uint64_t           MetadataRequest(const arch_syscall_frame_t* frame, bool ownership, bool descriptorOnly = false);
     ResourceLayerCaps* ResourceCaps;
     LogicLayerCaps*    LogicCaps;
 };

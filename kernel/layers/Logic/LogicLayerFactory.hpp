@@ -9,6 +9,7 @@ class EventManager;
 class SynchronizationManager;
 class SignalManager;
 class SocketManager;
+class InterProcessCommunicationManager;
 
 struct LogicLayerCaps
 {
@@ -20,6 +21,7 @@ struct LogicLayerCaps
     SynchronizationManager* synchronizationManager;
     SignalManager*          signalManager;
     SocketManager*          socketManager;
+    InterProcessCommunicationManager* interProcessCommunicationManager;
 };
 
 class LogicLayerFactory

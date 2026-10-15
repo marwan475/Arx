@@ -626,30 +626,85 @@ uint64_t EventRequestManager::HandleEpoll_pwait2Request(const arch_syscall_frame
 
 uint64_t EventRequestManager::HandleInotify_initRequest(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (Logic == nullptr || Logic->eventManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return Logic->eventManager->CreateInotify(0);
 }
 
 uint64_t EventRequestManager::HandleInotify_init1Request(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (Logic == nullptr || Logic->eventManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return Logic->eventManager->CreateInotify((uint32_t) frame->arg0);
 }
 
 uint64_t EventRequestManager::HandleInotify_add_watchRequest(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (Logic == nullptr || Logic->eventManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return Logic->eventManager->AddWatch((int32_t) frame->arg0, frame->arg1, (uint32_t) frame->arg2);
 }
 
 uint64_t EventRequestManager::HandleInotify_rm_watchRequest(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (Logic == nullptr || Logic->eventManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return Logic->eventManager->RemoveWatch((int32_t) frame->arg0, (int32_t) frame->arg1);
 }
 
 uint64_t EventRequestManager::HandleSignalfdRequest(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    arch_syscall_frame_t request = *frame;
+    request.arg3                 = 0;
+    return HandleSignalfd4Request(&request);
 }
 
 uint64_t EventRequestManager::HandleSignalfd4Request(const arch_syscall_frame_t* frame)
 {
-    return frame == nullptr ? LINUX_EINVAL : LINUX_ENOSYS;
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (Logic == nullptr || Logic->eventManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    if (frame->arg2 != sizeof(uint64_t))
+    {
+        return LINUX_EINVAL;
+    }
+    uint64_t mask;
+    if (!safe_read_user(frame->arg1, &mask, sizeof(mask)))
+    {
+        return LINUX_EFAULT;
+    }
+    return Logic->eventManager->SignalDescriptor((int32_t) frame->arg0, mask, (uint32_t) frame->arg3);
 }

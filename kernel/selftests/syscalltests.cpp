@@ -3126,22 +3126,41 @@ static bool run_memory_case(bool (*test)(process_t*))
 
     if (active)
     {
+        process_t* timerProcess = processManager->AcquireProcess(process->id, true);
+        result &= memory_expect(timerProcess == nullptr, "timer scan skips process without armed timer");
+        processManager->ReleaseProcess(timerProcess);
         process_t* pinned = processManager->AcquireCurrentMemoryProcess();
         result &= memory_expect(pinned == process, "memory syscall fixture pins current process");
 
         if (pinned != nullptr)
         {
             result &= memory_expect(!processManager->FreeProcess(process), "memory syscall lifetime pin blocks teardown");
+            process_t* blockedAlias = processManager->CreateProcess(space);
+            result &= memory_expect(blockedAlias == nullptr, "memory syscall pin blocks shared-root attachment");
+
+            if (blockedAlias != nullptr)
+            {
+                result &= memory_expect(processManager->FreeProcess(blockedAlias), "unexpected shared-root attachment cleanup");
+            }
+
             processManager->ReleaseMemoryProcess(pinned);
         }
 
+        // Timer scans retain process metadata without accessing its mappings.
+        // Hold that same pin to reproduce concurrent alias creation reliably.
+        process_t* retained = processManager->AcquireProcess(process->id);
+        result &= memory_expect(retained == process, "memory syscall fixture retains process metadata");
         process_t* alias = processManager->CreateProcess(space);
+        processManager->ReleaseProcess(retained);
         result &= memory_expect(alias != nullptr, "memory syscall shared-root fixture creates alias");
 
         if (alias != nullptr)
         {
             result &= memory_expect(memory_map(1) == LINUX_ESRCH, "memory syscall shared roots rejected before mutation");
             result &= memory_expect(memory_call(SYSCALL_brk) == process->breakBase, "brk query remains current on unsupported shared root");
+            process_t* retainedAlias = processManager->AcquireProcess(alias->id);
+            result &= memory_expect(retainedAlias == alias && !processManager->FreeProcess(alias), "metadata lifetime pin blocks process teardown");
+            processManager->ReleaseProcess(retainedAlias);
             result &= memory_expect(processManager->FreeProcess(alias), "memory syscall shared-root fixture cleanup");
         }
 

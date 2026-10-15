@@ -96,7 +96,8 @@ struct process_t
     void*                 elfMetadata;
     uint64_t              breakBase;
     uint64_t              programBreak;
-    uint32_t              memoryUsers;
+    uint32_t              memoryUsers;   // Also prevents attaching shared address-space roots.
+    uint32_t              lifetimeUsers; // Retains the process without claiming its mappings.
     spinlock_t            timerLock;
     uint64_t              realTimerDeadline;
     uint64_t              realTimerInterval;
@@ -175,7 +176,8 @@ public:
     bool       SetRunningProcess(uint8_t cpuId, process_t* process);
     process_t* GetCurrentProcess() const;
     process_t* AcquireCurrentMemoryProcess(bool requireExclusive = true);
-    process_t* AcquireProcess(uint64_t id);
+    process_t* AcquireProcess(uint64_t id, bool requireRealTimer = false);
+    void       ReleaseProcess(process_t* process);
     void       ReleaseMemoryProcess(process_t* process);
     uint64_t   GetCurrentProgramBreak() const;
 

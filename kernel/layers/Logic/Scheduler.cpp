@@ -95,7 +95,7 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
 
         for (uint64_t id = 0; id < processManager->GetCapacity(); ++id)
         {
-            process_t* process = processManager->AcquireProcess(id);
+            process_t* process = processManager->AcquireProcess(id, true);
 
             if (process == nullptr)
             {
@@ -107,7 +107,7 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
                 WakeSignalWaiters(process);
             }
 
-            processManager->ReleaseMemoryProcess(process);
+            processManager->ReleaseProcess(process);
         }
     }
 
@@ -727,7 +727,9 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
             if (otherQueue->processIds[cursor] == processId)
             {
                 UnlockQueues();
-                return false;
+                // Timer dispatch may already have queued this process. Its
+                // existing local entry will also dispatch newly added siblings.
+                return otherCpu == cpuId;
             }
 
             cursor = (cursor + 1) % READY_QUEUE_CAPACITY;
@@ -841,7 +843,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     if (process->retirementActive || (onlyIfExited && !process->exited))
     {
         UnlockQueues();
-        processManager->ReleaseMemoryProcess(process);
+        processManager->ReleaseProcess(process);
         return false;
     }
 
@@ -922,7 +924,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         TaskManager::ReleaseTaskStack(retiredStacks[i]);
     }
 
-    processManager->ReleaseMemoryProcess(process);
+    processManager->ReleaseProcess(process);
 
     if (reap)
     {

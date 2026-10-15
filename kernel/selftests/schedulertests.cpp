@@ -242,7 +242,14 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
             break;
         }
 
-        if (!scheduler->EnqueueProcess((uint8_t) cpuId, processes[i]->id))
+        // Keep timer dispatch from consuming the entry between these probes.
+        cpu_preemption_disable();
+        const bool enqueued = scheduler->EnqueueProcess((uint8_t) cpuId, processes[i]->id)
+                              && scheduler->EnqueueProcess((uint8_t) cpuId, processes[i]->id)
+                              && (platform.cpu_count <= 1 || !scheduler->EnqueueProcess((uint8_t) ((cpuId + 1) % platform.cpu_count), processes[i]->id));
+        cpu_preemption_enable();
+
+        if (!enqueued)
         {
             fails++;
 

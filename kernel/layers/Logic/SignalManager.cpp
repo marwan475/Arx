@@ -397,7 +397,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
 
     if (target != nullptr)
     {
-        processes->ReleaseMemoryProcess(target);
+        processes->ReleaseProcess(target);
     }
 
     return result;

@@ -88,6 +88,7 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->breakBase         = 0;
     process->programBreak      = 0;
     process->memoryUsers       = 0;
+    process->lifetimeUsers     = 0;
     process->timerLock         = 0;
     process->realTimerDeadline = 0;
     process->realTimerInterval = 0;
@@ -275,7 +276,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
         return false;
     }
 
-    if (!process->allocated || (onlyIfExited && !process->exited) || process->memoryUsers || IsProcessRunning(process))
+    if (!process->allocated || (onlyIfExited && !process->exited) || process->memoryUsers || process->lifetimeUsers || IsProcessRunning(process))
     {
         UnlockManager();
         return false;
@@ -990,7 +991,7 @@ size_t ProcessManager::GetCapacity() const
     return MAX_PROCESSES;
 }
 
-process_t* ProcessManager::AcquireProcess(uint64_t id)
+process_t* ProcessManager::AcquireProcess(uint64_t id, bool requireRealTimer)
 {
     LockManager();
     process_t* process = id < MAX_PROCESSES ? &Processes[id] : nullptr;
@@ -1001,11 +1002,41 @@ process_t* ProcessManager::AcquireProcess(uint64_t id)
     }
     else
     {
-        ++process->memoryUsers;
+        // Inactive processes need no timer work. Avoid transient references
+        // from every CPU's timer scan interfering with ordinary teardown.
+        bool needed = true;
+
+        if (requireRealTimer)
+        {
+            spinlock_acquire(&process->timerLock);
+            needed = process->realTimerArmed;
+            spinlock_release(&process->timerLock);
+        }
+
+        if (needed)
+        {
+            ++process->lifetimeUsers;
+        }
+        else
+        {
+            process = nullptr;
+        }
     }
 
     UnlockManager();
     return process;
+}
+
+void ProcessManager::ReleaseProcess(process_t* process)
+{
+    LockManager();
+
+    if (process != nullptr && process->lifetimeUsers != 0)
+    {
+        --process->lifetimeUsers;
+    }
+
+    UnlockManager();
 }
 
 process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)

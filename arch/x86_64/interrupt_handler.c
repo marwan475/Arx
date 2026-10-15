@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 #include <layers/Request/InterruptRequestManager.hpp>
+#include <memory/vmm.h>
 #include <platform.h>
 
 extern void dispatcher_handle_interrupt_request(uint64_t interrupt_number);

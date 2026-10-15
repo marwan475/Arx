@@ -181,48 +181,7 @@ static uint64_t request_user_address(const void* buffer, size_t length)
     return fixture != nullptr ? fixture->Address(buffer, length) : 0;
 }
 
-// Exit is deliberately exercised against the harness process. Restore its
-// state even when a validator fails, so one failure cannot poison later cases.
-struct request_process_state_t
-{
-    process_t* process;
-    bool       exited;
-    int32_t    exitStatus;
-    bool       guardExit;
 
-    explicit request_process_state_t(uint64_t syscallNumber) : process(nullptr), exited(false), exitStatus(0), guardExit(syscallNumber == SYSCALL_exit || syscallNumber == SYSCALL_exit_group)
-    {
-        if (!guardExit)
-        {
-            return;
-        }
-
-        cpu_preemption_disable();
-        Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-        ResourceLayerCaps* caps       = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
-        process                       = caps != nullptr && caps->processManager != nullptr ? caps->processManager->GetCurrentProcess() : nullptr;
-
-        if (process != nullptr)
-        {
-            exited     = process->exited;
-            exitStatus = process->exitStatus;
-        }
-    }
-
-    ~request_process_state_t()
-    {
-        if (process != nullptr)
-        {
-            process->exited     = exited;
-            process->exitStatus = exitStatus;
-        }
-
-        if (guardExit)
-        {
-            cpu_preemption_enable();
-        }
-    }
-};
 
 enum expected_result_kind_t
 {
@@ -1440,82 +1399,6 @@ static bool custom_case_validate_sched_getaffinity(const custom_case_ctx_t* ctx)
     shortFrame.arg1                 = sizeof(uint32_t);
     const uint64_t shortResult      = dispatcher_dispatch_syscall(&shortFrame);
     return shortResult == LINUX_EINVAL;
-}
-
-static bool custom_case_validate_exit_like(const custom_case_ctx_t* ctx)
-{
-    if (ctx == nullptr || ctx->frame == nullptr)
-    {
-        return false;
-    }
-
-    if (ctx->result != 0)
-    {
-        return false;
-    }
-
-    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-
-    if (dispatcher == nullptr)
-    {
-        return false;
-    }
-
-    ResourceLayerCaps* resourceCaps = dispatcher->GetResourceLayerCaps();
-
-    if (resourceCaps == nullptr || resourceCaps->processManager == nullptr)
-    {
-        return false;
-    }
-
-    process_t* currentProcess = resourceCaps->processManager->GetCurrentProcess();
-
-    if (currentProcess == nullptr)
-    {
-        return false;
-    }
-
-    if (!currentProcess->exited)
-    {
-        return false;
-    }
-
-    // The next syscall must run in a live process under safe user-copy checks.
-    currentProcess->exited     = false;
-    currentProcess->exitStatus = 0;
-
-    arch_syscall_frame_t openFrame = {};
-    openFrame.syscall_number       = SYSCALL_open;
-    openFrame.arg0                 = request_user_address("/test.txt", sizeof("/test.txt"));
-    openFrame.arg1                 = 0;
-    openFrame.arg2                 = 0;
-    const uint64_t testFd          = dispatcher_dispatch_syscall(&openFrame);
-
-    if ((int64_t) testFd < 0)
-    {
-        return false;
-    }
-
-    arch_syscall_frame_t dispatchedFrame = *(ctx->frame);
-    dispatchedFrame.syscall_number       = ctx->syscallNumber;
-    const uint64_t dispatchResult        = dispatcher_dispatch_syscall(&dispatchedFrame);
-    const bool     dispatchMarkedExited  = currentProcess->exited;
-    bool           descriptorClosed      = false;
-
-    if (testFd < currentProcess->fileDescriptorCount && currentProcess->fileDescriptors != nullptr)
-    {
-        descriptorClosed = (currentProcess->fileDescriptors[testFd].file == nullptr);
-    }
-
-    arch_syscall_frame_t closeFrame = {};
-    closeFrame.syscall_number       = SYSCALL_close;
-    closeFrame.arg0                 = testFd;
-    const uint64_t closeAfterExit   = dispatcher_dispatch_syscall(&closeFrame);
-
-    currentProcess->exited     = false;
-    currentProcess->exitStatus = 0;
-
-    return dispatchResult == 0 && dispatchMarkedExited && descriptorClosed && closeAfterExit == LINUX_EBADF;
 }
 
 static bool custom_case_validate_lseek(const custom_case_ctx_t* ctx)
@@ -3167,8 +3050,16 @@ static bool run_memory_case(bool (*test)(process_t*))
 
         if (alias != nullptr)
         {
-            result &= memory_expect(memory_map(1) == LINUX_ESRCH, "memory syscall shared roots rejected before mutation");
-            result &= memory_expect(memory_call(SYSCALL_brk) == process->breakBase, "brk query remains current on unsupported shared root");
+            process_t* exclusive = processManager->AcquireCurrentMemoryProcess();
+            result &= memory_expect(exclusive == nullptr, "exclusive memory pin rejects shared roots");
+            processManager->ReleaseMemoryProcess(exclusive);
+            const uint64_t shared = memory_map(1);
+            result &= memory_expect((int64_t) shared >= 0 && memory_region(alias, shared) != nullptr, "memory syscall mapping is visible through shared root");
+            if ((int64_t) shared >= 0)
+            {
+                result &= memory_expect(memory_call(SYSCALL_munmap, shared, PAGE_SIZE) == 0, "shared-root mapping cleanup");
+            }
+            result &= memory_expect(memory_call(SYSCALL_brk) == process->breakBase, "brk query remains current on shared root");
             process_t* retainedAlias = processManager->AcquireProcess(alias->id);
             result &= memory_expect(retainedAlias == alias && !processManager->FreeProcess(alias), "metadata lifetime pin blocks process teardown");
             processManager->ReleaseProcess(retainedAlias);
@@ -3287,7 +3178,6 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
 
     for (size_t index = 0; index < N; ++index)
     {
-        request_process_state_t processState(tests[index].syscallNumber);
         request_user_fixture_t  userFixture;
         arch_syscall_frame_t    frame = {};
         frame.syscall_number          = tests[index].syscallNumber;
@@ -3528,6 +3418,20 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
     arch_syscall_frame_t frame = fixture.Frame(number);
     ProcessController* controller = fixture.logic->processController;
 
+    if (number == SYSCALL_exit || number == SYSCALL_exit_group)
+    {
+        // Run the non-returning syscall in a disposable user child. The harness
+        // must stay live, and wait4 must observe the child's exit status.
+        // The immediate in the fixture's mov eax, syscall instruction starts at byte 17.
+        const uint32_t exitNumber = static_cast<uint32_t>(number);
+        if (!copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE + 17, &exitNumber, sizeof(exitNumber)))
+        {
+            return false;
+        }
+        const uint64_t pid = fixture.Spawn();
+        return static_cast<int64_t>(pid) > 0 && fixture.Reap(pid);
+    }
+
     if (number == SYSCALL_fork)
     {
         const uint64_t first = fixture.Spawn();
@@ -3693,10 +3597,19 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
             return false;
         }
 
+        const char nonExecutable[] = "/test.txt";
+        if (!safe_write_user(lifecycle_fixture_t::DATA, nonExecutable, sizeof(nonExecutable))
+            || !memory_expect(dispatcher_dispatch_syscall(&frame) == LINUX_EACCES && fixture.process->addressSpace->pt == oldRoot, "exec rejects nonexecutable archive file without replacing address space")
+            || !safe_write_user(lifecycle_fixture_t::DATA, path, sizeof(path)))
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
         const uint64_t result = dispatcher_dispatch_syscall(&frame);
         fixture.caller->isUserTask = false;
 
-        if (result != 0 || fixture.process->addressSpace->pt == oldRoot || (frame.user_rsp & 15) != 0 || frame.user_rip == lifecycle_fixture_t::CODE)
+        if (!memory_expect(result == 0, "exec succeeds") || !memory_expect(fixture.process->addressSpace->pt != oldRoot, "exec replaces address space") || !memory_expect((frame.user_rsp & 15) == 0 && frame.user_rip != lifecycle_fixture_t::CODE, "exec entry and stack layout"))
         {
             return false;
         }
@@ -3753,9 +3666,13 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
 
 static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
+    static const request_method_test_t<ProcessRequestManager> exitTests[] = {
+            {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, custom_case_validate_process_lifecycle},
+            {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, custom_case_validate_process_lifecycle},
+    };
+    run_manager_tests("process", caps->processRequestManager, exitTests, stats, true, true);
+
     static const request_method_test_t<ProcessRequestManager> tests[] = {
-            {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, custom_case_validate_exit_like},
-            {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, custom_case_validate_exit_like},
             {"HandleForkRequest", &ProcessRequestManager::HandleForkRequest, SYSCALL_fork, custom_case_validate_process_lifecycle},
             {"HandleVforkRequest", &ProcessRequestManager::HandleVforkRequest, SYSCALL_vfork, custom_case_validate_process_lifecycle},
             {"HandleCloneRequest", &ProcessRequestManager::HandleCloneRequest, SYSCALL_clone, custom_case_validate_process_lifecycle},
@@ -4283,10 +4200,12 @@ template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_
     auto resources     = dispatcher->GetResourceLayerCaps();
     context->scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
     context->result    = UINT64_MAX;
-    task_t*    peer    = resources->taskManager->CreateKernelTask(ipc_peer_entry, context);
-    const bool added   = peer != nullptr && resources->processManager->AddTask(process, peer);
-    const bool ready   = added && context->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
-    bool       ok      = memory_expect(ready, "IPC runnable peer fixture");
+    task_t* peer = resources->taskManager->CreateKernelTask(ipc_peer_entry, context);
+    // The fixture owns cleanup; keep the idle reaper from recycling this slot.
+    const bool retained = resources->taskManager->RetainForDispatch(peer);
+    const bool added    = retained && resources->processManager->AddTask(process, peer);
+    const bool ready    = added && context->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+    bool       ok       = memory_expect(ready, "IPC runnable peer fixture");
     if (ready)
     {
         ok &= wait();
@@ -4309,6 +4228,10 @@ template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_
     }
     if (peer != nullptr)
     {
+        if (retained)
+        {
+            resources->taskManager->ReleaseDispatchClaim(peer);
+        }
         ok &= memory_expect(resources->taskManager->FreeTask(peer), "IPC peer cleanup");
     }
     return ok;
@@ -5045,6 +4968,7 @@ struct event_peer_context_t
 
 static void event_peer_entry(void* argument)
 {
+    cpu_preemption_disable();
     event_peer_context_t* context = static_cast<event_peer_context_t*>(argument);
     context->entered              = true;
     context->protectedLifetime    = !context->resources->taskManager->FreeTask(context->sleepingTask) && !context->resources->processManager->FreeProcess(context->sleeper) && !context->resources->taskManager->ExecuteTask(context->sleepingTask);
@@ -5055,14 +4979,9 @@ static void event_peer_entry(void* argument)
         context->result              = memory_call(context->read ? SYSCALL_read : SYSCALL_write, context->descriptor, user, sizeof(value));
     }
 
-    process_t* current = context->resources->processManager->GetCurrentProcess();
-    context->scheduler->KillProcess(current->id, 0);
-
-    for (;;)
-    {
-        context->scheduler->RunNextReadyProcess(arch_cpu_id());
-        arch_halt();
-    }
+    // Leave process teardown to the fixture. Publishing exited here lets idle
+    // reapers race its descriptor-reference and process cleanup assertions.
+    context->scheduler->ExitCurrentTask();
 }
 
 template <typename Wait> static bool event_with_peer(process_t* process, uint64_t fd, bool peerReads, Wait wait)
@@ -5077,7 +4996,9 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
     task_t*              task             = resources->taskManager->CreateKernelTask(event_peer_entry, &context);
     file_t*              sharedFile       = nullptr;
     uint64_t             referencesBefore = 0;
-    bool                 ready            = peer != nullptr && task != nullptr;
+    // Keep the task slot stable until the fixture detaches and frees it.
+    const bool           retained         = resources->taskManager->RetainForDispatch(task);
+    bool                 ready            = peer != nullptr && retained;
 
     if (ready)
     {
@@ -5104,7 +5025,8 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
         }
     }
 
-    ready   = ready && resources->processManager->AddTask(peer, task) && scheduler->EnqueueProcess(arch_cpu_id(), peer->id);
+    const bool added = ready && resources->processManager->AddTask(peer, task);
+    ready            = added && scheduler->EnqueueProcess(arch_cpu_id(), peer->id);
     bool ok = memory_expect(ready, "event runnable producer/consumer fixture");
 
     if (ready)
@@ -5113,17 +5035,21 @@ template <typename Wait> static bool event_with_peer(process_t* process, uint64_
         ok &= memory_expect(context.entered && context.protectedLifetime && context.result == 8, "event wake executes peer and protects parked task/process");
     }
 
-    if (peer != nullptr)
+    if (added)
     {
-        scheduler->KillProcess(peer->id, 0);
+        resources->processManager->RemoveTask(peer, task);
     }
 
-    if (task != nullptr && task->allocated)
+    if (task != nullptr)
     {
+        if (retained)
+        {
+            resources->taskManager->ReleaseDispatchClaim(task);
+        }
         ok &= memory_expect(resources->taskManager->FreeTask(task), "event peer task cleanup");
     }
 
-    if (peer != nullptr && peer->allocated)
+    if (peer != nullptr)
     {
         ok &= memory_expect(resources->processManager->FreeProcess(peer), "event peer process cleanup");
     }
@@ -6377,10 +6303,19 @@ static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
     };
     context.destinationTask = peers[0];
     bool added[2]           = {false, false};
+    bool retained[2]        = {false, false};
 
     for (size_t i = 0; i < 2; ++i)
     {
-        added[i] = peers[i] != nullptr && resources->processManager->AddTask(process, peers[i]);
+        retained[i] = resources->taskManager->RetainForDispatch(peers[i]);
+        added[i]    = retained[i] && resources->processManager->AddTask(process, peers[i]);
+    }
+
+    // Start the destination waiter before the requeue peer. A cursor left by a
+    // previous fixture can otherwise select the requeue peer first.
+    if (added[0] && added[1])
+    {
+        process->taskCursor = peers[0]->id;
     }
 
     const bool ready = added[0] && added[1] && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
@@ -6422,6 +6357,10 @@ static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
 
         if (peers[i] != nullptr)
         {
+            if (retained[i])
+            {
+                resources->taskManager->ReleaseDispatchClaim(peers[i]);
+            }
             ok &= memory_expect(resources->taskManager->FreeTask(peers[i]), "futex FIFO peer cleanup");
         }
     }
@@ -6513,7 +6452,8 @@ static bool test_sync_futex(process_t* process)
         context.operationMode        = command >= 131 && command <= 133 ? command : 0;
         context.compareMode          = operation >> 16;
         task_t*    peer              = resources->taskManager->CreateKernelTask(futex_peer_entry, &context);
-        const bool added             = peer != nullptr && resources->processManager->AddTask(process, peer);
+        const bool retained          = resources->taskManager->RetainForDispatch(peer);
+        const bool added             = retained && resources->processManager->AddTask(process, peer);
         const bool ready             = added && scheduler->EnqueueProcess(arch_cpu_id(), process->id);
         ok &= memory_expect(ready, "futex runnable sibling task fixture");
 
@@ -6567,6 +6507,10 @@ static bool test_sync_futex(process_t* process)
 
         if (peer != nullptr)
         {
+            if (retained)
+            {
+                resources->taskManager->ReleaseDispatchClaim(peer);
+            }
             ok &= memory_expect(resources->taskManager->FreeTask(peer), "futex peer cleanup");
         }
 
@@ -6725,7 +6669,8 @@ template <typename Wait> static bool signal_with_peer(process_t* process, uint64
     auto                  scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
     signal_peer_context_t context    = {resources, scheduler, process, robustHead, UINT64_MAX};
     task_t*               peer       = resources->taskManager->CreateKernelTask(signal_peer_entry, &context);
-    bool                  added      = peer != nullptr && resources->processManager->AddTask(process, peer);
+    const bool            retained   = resources->taskManager->RetainForDispatch(peer);
+    bool                  added      = retained && resources->processManager->AddTask(process, peer);
 
     if (added && robustWord != 0)
     {
@@ -6758,6 +6703,10 @@ template <typename Wait> static bool signal_with_peer(process_t* process, uint64
 
     if (peer != nullptr)
     {
+        if (retained)
+        {
+            resources->taskManager->ReleaseDispatchClaim(peer);
+        }
         ok &= memory_expect(resources->taskManager->FreeTask(peer), "signal peer retirement cleanup");
     }
 
@@ -6793,7 +6742,12 @@ static bool test_signal_case(process_t* process, uint64_t number)
         ok &= memory_expect(memory_call(number, 10, CANONICAL_KERNEL_BASE, 0, 8) == LINUX_EFAULT, "signal action bad user input");
         action.flags |= 2;
         time_fixture_store(process, input, &action, sizeof(action));
-        ok &= memory_expect(memory_call(number, 10, input, 0, 8) == LINUX_EOPNOTSUPP, "unsupported child-reaping action flag rejected");
+        ok &= memory_expect(memory_call(number, 17, input, 0, 8) == 0 && memory_call(number, 17, 0, output, 8) == 0, "child-reaping action flag accepted");
+        time_fixture_load(process, output, &queried, sizeof(queried));
+        ok &= memory_expect(queried.flags == action.flags, "child-reaping action flag round trip");
+        action.flags |= 8; // Unknown action flag.
+        time_fixture_store(process, input, &action, sizeof(action));
+        ok &= memory_expect(memory_call(number, 10, input, 0, 8) == LINUX_EOPNOTSUPP, "unknown signal action flag rejected");
     }
     else if (number == SYSCALL_rt_sigprocmask)
     {
@@ -7638,7 +7592,8 @@ template <typename Wait> static bool socket_with_peer(process_t* process, socket
     context->scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
     context->result    = UINT64_MAX;
     task_t*    peer    = resources->taskManager->CreateKernelTask(socket_peer_entry, context);
-    const bool added   = peer != nullptr && resources->processManager->AddTask(process, peer);
+    const bool retained = resources->taskManager->RetainForDispatch(peer);
+    const bool added   = retained && resources->processManager->AddTask(process, peer);
     const bool ready   = added && context->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
     bool       ok      = memory_expect(ready, "socket runnable peer fixture");
 
@@ -7668,6 +7623,10 @@ template <typename Wait> static bool socket_with_peer(process_t* process, socket
 
     if (peer != nullptr)
     {
+        if (retained)
+        {
+            resources->taskManager->ReleaseDispatchClaim(peer);
+        }
         ok &= memory_expect(resources->taskManager->FreeTask(peer), "socket peer cleanup");
     }
 

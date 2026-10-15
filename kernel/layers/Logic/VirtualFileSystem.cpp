@@ -124,13 +124,17 @@ static inode_t* vfs_wrap_resource_node(filesystem_t* filesystem, ResourceLayerFi
     }
 
     memset(inode, 0, sizeof(inode_t));
-    inode->inodeNumber = info.inodeNumber;
-    inode->type        = vfs_map_resource_node_type(info.type);
-    inode->size        = info.size;
-    inode->linkCount   = 1;
-    inode->filesystem  = filesystem;
-    inode->privateData = inodePrivate;
-    inode->ioLock      = 0;
+    inode->inodeNumber   = info.inodeNumber;
+    inode->type          = vfs_map_resource_node_type(info.type);
+    inode->size          = info.size;
+    inode->mode          = info.mode;
+    inode->uid           = info.uid;
+    inode->gid           = info.gid;
+    inode->metadataValid = true;
+    inode->linkCount     = 1;
+    inode->filesystem    = filesystem;
+    inode->privateData   = inodePrivate;
+    inode->ioLock        = 0;
 
     inodePrivate->backendNode = backendNode;
     inodePrivate->caps        = caps;

@@ -7,6 +7,7 @@ extern "C"
 #include <cpu/cpu.h>
 #include <klib/intrusive_list.h>
 #include <klib/klib.h>
+#include <memory/heap.h>
 #include <memory/vmm.h>
 #include <platform.h>
 }
@@ -129,7 +130,7 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
 
 ProcessManager::ProcessManager()
 {
-    static_assert(sizeof(ProcessManager) <= 131072, "ProcessManager must fit the largest heap object");
+    static_assert(sizeof(ProcessManager) <= HEAP_MAX_OBJECT_SIZE, "ProcessManager must fit the largest heap object");
     ManagerLock = 0;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)

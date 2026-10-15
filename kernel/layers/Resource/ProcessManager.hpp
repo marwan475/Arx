@@ -84,8 +84,9 @@ struct process_group_list_t
 struct process_t
 {
     bool                  allocated;
-    uint64_t              id;
     bool                  hasParent;
+    bool                  ownsAddressSpace;
+    uint64_t              id;
     uint64_t              parentId;
     uint64_t              parentTaskId;
     uint64_t              groupId;
@@ -103,7 +104,6 @@ struct process_t
     bool                  continuedPending;
     int32_t               stopSignal;
     uint64_t              stopSequence;
-    bool                  ownsAddressSpace;
     uint64_t              taskCursor;
     bool                  exited;
     bool                  reclaiming;

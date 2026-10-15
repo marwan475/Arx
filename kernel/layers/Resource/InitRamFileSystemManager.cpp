@@ -10,6 +10,9 @@ namespace
 constexpr size_t CPIO_HEADER_SIZE     = 110;
 constexpr size_t CPIO_MAGIC_SIZE      = 6;
 constexpr size_t CPIO_FILESIZE_OFFSET = 54;
+constexpr size_t CPIO_MODE_OFFSET     = 14;
+constexpr size_t CPIO_UID_OFFSET      = 22;
+constexpr size_t CPIO_GID_OFFSET      = 30;
 constexpr size_t CPIO_NAMESIZE_OFFSET = 94;
 
 constexpr char CPIO_NEWC_MAGIC[] = "070701";
@@ -41,6 +44,9 @@ InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintp
         Archives[i].path = nullptr;
         Archives[i].size = 0;
         Archives[i].data = nullptr;
+        Archives[i].mode = 0;
+        Archives[i].uid  = 0;
+        Archives[i].gid  = 0;
     }
 
     loadArchivesFromCpio(initramfsSize, initramfsAddress);
@@ -58,6 +64,9 @@ void InitRamFileSystemManager::reset()
 
         Archives[i].size = 0;
         Archives[i].data = nullptr;
+        Archives[i].mode = 0;
+        Archives[i].uid  = 0;
+        Archives[i].gid  = 0;
     }
 
     ArchiveCount = 0;
@@ -138,6 +147,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
     {
         const uint8_t* header;
         uint64_t       fileSize;
+        uint64_t       mode, uid, gid;
         uint64_t       nameSize;
         uint64_t       dataOffset;
         uint64_t       nextOffset;
@@ -150,6 +160,11 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         header = base + offset;
 
         if (memcmp(header, CPIO_NEWC_MAGIC, CPIO_MAGIC_SIZE) != 0)
+        {
+            return false;
+        }
+
+        if (!parseHexField(header + CPIO_MODE_OFFSET, 8, &mode) || !parseHexField(header + CPIO_UID_OFFSET, 8, &uid) || !parseHexField(header + CPIO_GID_OFFSET, 8, &gid))
         {
             return false;
         }
@@ -225,6 +240,9 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
             archive->path = path;
             archive->size = fileSize;
+            archive->mode = static_cast<uint32_t>(mode);
+            archive->uid  = static_cast<uint32_t>(uid);
+            archive->gid  = static_cast<uint32_t>(gid);
             archive->data = (uint8_t*) (base + dataOffset);
             ArchiveCount++;
         }

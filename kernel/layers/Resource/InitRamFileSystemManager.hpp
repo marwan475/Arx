@@ -8,6 +8,9 @@ struct initramfs_archive_t
     char*    path;
     uint64_t size;
     uint8_t* data;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
 };
 
 class InitRamFileSystemManager

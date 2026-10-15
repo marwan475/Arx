@@ -317,6 +317,18 @@ bool ResourceFileSystem::GetNodeInfo(resource_node_t* node, resource_node_info_t
     info->inodeNumber = resource_hash_path(node->path, node->isDirectory);
     info->size        = node->size;
     info->type        = node->isDirectory ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
+    info->mode        = node->isDirectory ? 0755 : 0644;
+    info->uid         = 0;
+    info->gid         = 0;
+
+    const initramfs_archive_t* archive = node->fs->initRamManager->find(node->path);
+
+    if (archive != nullptr)
+    {
+        info->mode = archive->mode & 07777;
+        info->uid  = archive->uid;
+        info->gid  = archive->gid;
+    }
     return true;
 }
 

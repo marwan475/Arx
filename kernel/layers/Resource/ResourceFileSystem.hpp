@@ -21,6 +21,9 @@ struct resource_node_info_t
     uint64_t             inodeNumber;
     uint64_t             size;
     resource_node_type_t type;
+    uint32_t             mode;
+    uint32_t             uid;
+    uint32_t             gid;
 };
 
 struct resource_directory_entry_t

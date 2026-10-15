@@ -103,6 +103,8 @@ static uint32_t linux_mode_for_inode(const inode_t* inode)
 
     switch (inode->type)
     {
+        case INODE_SOCKET:
+            return 0140000U | 0777U;
         case INODE_DIRECTORY:
             return LINUX_S_IFDIR | 0755U;
         case INODE_SYMLINK:
@@ -146,6 +148,8 @@ static uint8_t linux_dirent_type_for_inode_type(inode_type_t type)
             return LINUX_DT_CHR;
         case INODE_BLOCK_DEVICE:
             return LINUX_DT_BLK;
+        case INODE_SOCKET:
+            return 12;
         case INODE_REGULAR:
             return LINUX_DT_REG;
         default:

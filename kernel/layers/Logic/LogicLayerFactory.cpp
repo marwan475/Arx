@@ -5,6 +5,7 @@
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
+#include "layers/Logic/SocketManager.hpp"
 #include "layers/Logic/SynchronizationManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -18,6 +19,7 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->socketManager;
         delete LogicLayerExportCaps->signalManager;
         delete LogicLayerExportCaps->synchronizationManager;
         delete LogicLayerExportCaps->eventManager;
@@ -50,6 +52,7 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->eventManager           = new EventManager(resourceLayerCaps, LogicLayerExportCaps->scheduler, LogicLayerExportCaps->virtualFileSystem);
     LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
     LogicLayerExportCaps->signalManager          = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->socketManager          = new SocketManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
 
     return LogicLayerExportCaps;
 }

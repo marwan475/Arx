@@ -29,6 +29,7 @@ enum inode_type_t
     INODE_SYMLINK,
     INODE_CHAR_DEVICE,
     INODE_BLOCK_DEVICE,
+    INODE_SOCKET,
 };
 
 struct inode_operations_t

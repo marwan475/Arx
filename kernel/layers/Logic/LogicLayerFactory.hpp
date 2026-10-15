@@ -8,6 +8,7 @@ class CredentialManager;
 class EventManager;
 class SynchronizationManager;
 class SignalManager;
+class SocketManager;
 
 struct LogicLayerCaps
 {
@@ -18,6 +19,7 @@ struct LogicLayerCaps
     EventManager*           eventManager;
     SynchronizationManager* synchronizationManager;
     SignalManager*          signalManager;
+    SocketManager*          socketManager;
 };
 
 class LogicLayerFactory

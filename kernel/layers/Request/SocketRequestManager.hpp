@@ -3,9 +3,14 @@
 #include <arch/arch.h>
 #include <stdint.h>
 
+struct ResourceLayerCaps;
+struct LogicLayerCaps;
+class SocketManager;
+
 class SocketRequestManager
 {
 public:
+    SocketRequestManager(ResourceLayerCaps* resources = nullptr, LogicLayerCaps* logic = nullptr);
     uint64_t HandleSocketRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleSocketpairRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleBindRequest(const arch_syscall_frame_t* frame);
@@ -22,4 +27,7 @@ public:
     uint64_t HandleSetsockoptRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleGetsocknameRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleGetpeernameRequest(const arch_syscall_frame_t* frame);
+
+private:
+    SocketManager* Manager;
 };

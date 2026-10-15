@@ -44,7 +44,7 @@ RequestLayerCaps* RequestLayerFactory::Create(ResourceLayerCaps* resourceLayerCa
     RequestLayerExportCaps->signalRequestManager     = new SignalRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->systemRequestManager     = new SystemRequestManager(resourceLayerCaps);
-    RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager();
+    RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->interruptRequestManager  = new InterruptRequestManager();
 
     return RequestLayerExportCaps;

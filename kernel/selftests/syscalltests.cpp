@@ -4,9 +4,6 @@
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/SocketManager.hpp"
-#if defined(__x86_64__)
-#include <arch/x86_64/arch_signal.hpp>
-#endif
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -36,6 +33,31 @@ static_assert(offsetof(arch_syscall_frame_t, arg5) == 48, "R9 syscall argument o
 
 namespace
 {
+#if defined(__x86_64__)
+// Independent Linux x86-64 ABI fixture for inspecting delivered user signal frames.
+struct signal_context_fixture_t
+{
+    uint64_t r8, r9, r10, r11, r12, r13, r14, r15, di, si, bp, bx, dx, ax, cx, sp, ip, flags;
+    uint16_t cs, gs, fs, ss;
+    uint64_t err, trapno, oldmask, cr2, fpstate, reserved[8];
+};
+struct signal_ucontext_fixture_t
+{
+    uint64_t                 flags, link;
+    signal_stack_t           stack;
+    signal_context_fixture_t context;
+    uint64_t                 mask;
+};
+struct signal_frame_fixture_t
+{
+    uint64_t                  restorer;
+    signal_ucontext_fixture_t uc;
+    uint8_t                   info[128];
+};
+static_assert(sizeof(signal_context_fixture_t) == 256 && sizeof(signal_ucontext_fixture_t) == 304 && sizeof(signal_frame_fixture_t) == 440, "Linux x86-64 rt signal frame ABI");
+static_assert(offsetof(signal_ucontext_fixture_t, context) == 40 && offsetof(signal_context_fixture_t, r13) == 40, "user fixture R13 context offset");
+#endif
+
 // Validators run in the kernel, but syscall buffers must still pass the real
 // user-page checks. Alias their backing pages temporarily instead of allowing
 // kernel pointers through the production copy helpers. Writes through an alias
@@ -5023,7 +5045,7 @@ static bool test_event_temporary_mask(process_t* process, uint64_t number, uint6
         ok &= memory_expect(interrupted == (uint64_t) -4 && task->signalRestoreMask && task->signalMask == 0, "user event caller defers mask restoration until signal delivery");
         ok &= memory_expect(signals->Deliver(&frame, interrupted) == 0 && frame.user_rip == action.handler, "event EINTR delivers handler under temporary mask");
 
-        signal_frame_t saved = {};
+        signal_frame_fixture_t saved = {};
         time_fixture_load(process, frame.user_rsp, &saved, sizeof(saved));
         ok &= memory_expect(saved.uc.mask == blockedMask && saved.uc.context.ax == (uint64_t) -4, "event signal frame saves original mask and EINTR");
         ok &= memory_expect(!task->signalRestoreMask && task->signalMask == (1ULL << 9), "handler mask derives from temporary mask");
@@ -6523,7 +6545,7 @@ static bool test_signal_case(process_t* process, uint64_t number)
         ok &= memory_expect(memory_call(SYSCALL_kill, process->id, 10) == 0, "signal return pending fixture");
         ok &= memory_expect(signals->Deliver(&f, (uint64_t) -4, true) == 0 && f.user_rip == action.handler && f.arg0 == 10, "signal frame delivery");
         const uint64_t frameAddress = f.user_rsp;
-        signal_frame_t saved        = {};
+        signal_frame_fixture_t saved        = {};
         time_fixture_load(process, frameAddress, &saved, sizeof(saved));
         ok &= memory_expect(saved.uc.context.ax == SYSCALL_futex && saved.uc.context.ip == base + 512 && saved.uc.context.bx == 0x123456789abcdef0ULL && (frameAddress & 15) == 8, "SA_RESTART rewind and full register context");
         f.syscall_number      = SYSCALL_rt_sigreturn;

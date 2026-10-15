@@ -1,8 +1,30 @@
 #pragma once
-#include "layers/Resource/SignalState.hpp"
-
 #include <arch/arch.h>
 #include <stddef.h>
+
+typedef struct signal_action_t
+{
+    uint64_t handler, flags, restorer, mask;
+} signal_action_t;
+
+typedef struct signal_stack_t
+{
+    uint64_t sp;
+    int32_t  flags;
+    uint32_t padding;
+    uint64_t size;
+} signal_stack_t;
+
+typedef struct signal_sender_t
+{
+    int32_t  pid;
+    uint32_t uid;
+    int32_t  code;
+} signal_sender_t;
+
+static_assert(sizeof(signal_action_t) == 32 && sizeof(signal_stack_t) == 24, "Linux LP64 signal ABI");
+constexpr uint64_t SIGNAL_UNBLOCKABLE     = (1ULL << 8) | (1ULL << 18);
+constexpr uint64_t SIGNAL_DEFAULT_IGNORED = (1ULL << 16) | (1ULL << 22) | (1ULL << 27);
 
 struct ResourceLayerCaps;
 class Scheduler;

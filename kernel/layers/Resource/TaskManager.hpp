@@ -1,6 +1,6 @@
 #pragma once
 
-#include "layers/Resource/SignalState.hpp"
+#include "layers/Logic/SignalManager.hpp"
 
 #include <arch/arch.h>
 #include <boot/boot.h>

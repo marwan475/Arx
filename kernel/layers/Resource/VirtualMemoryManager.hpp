@@ -12,6 +12,7 @@ class VirtualMemoryManager
 {
 public:
     virt_addr_space_t* CreateUserAddressSpace();
+    virt_addr_space_t* CloneUserAddressSpace(virt_addr_space_t* source);
     void               DestroyUserAddressSpace(virt_addr_space_t* space);
     // Transaction caller holds space->operation_lock.
     bool IsPageAvailable(virt_addr_space_t* space, uint64_t address);

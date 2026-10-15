@@ -1905,6 +1905,16 @@ uint64_t VirtualFileSystem::CheckInodeAccess(inode_t* inode, uint32_t requested)
     return authorized ? 0 : LINUX_EACCES;
 }
 
+uint64_t VirtualFileSystem::CheckExecutable(file_t* file)
+{
+    if (file == nullptr || file->inode == nullptr || file->inode->type != INODE_REGULAR || (file->path.mount != nullptr && (file->path.mount->flags & 8) != 0))
+    {
+        return LINUX_EACCES;
+    }
+
+    return CheckInodeAccess(file->inode, 1);
+}
+
 uint64_t VirtualFileSystem::CheckDirectoryMutation(const vfs_path_t& parent, const inode_t* victim)
 {
     if (vfs_readonly(parent))

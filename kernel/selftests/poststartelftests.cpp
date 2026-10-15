@@ -94,18 +94,12 @@ static bool setup_user_stack(ResourceLayerCaps* resourceCaps, process_t* process
             return false;
         }
 
-        void* pageBuffer = physicalMemoryManager->Alloc(PAGE_SIZE);
-
-        if (pageBuffer == nullptr)
+        if (!virtualMemoryManager->AllocateAnonymousPage(process->addressSpace, pageVirtualAddress, 3, false))
         {
             return false;
         }
 
-        memset(pageBuffer, 0, PAGE_SIZE);
-
-        const phys_addr_t pagePhysicalAddress = (phys_addr_t) hhdm_to_pa((uintptr_t) pageBuffer, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-        virtualMemoryManager->MapPage(pageVirtualAddress, pagePhysicalAddress, flags, process->addressSpace);
-
+        void* pageBuffer = virtualMemoryManager->FindRegion(process->addressSpace, pageVirtualAddress)->backing;
         pages[i].virtualAddress = pageVirtualAddress;
         pages[i].pagePointer    = pageBuffer;
     }
@@ -132,12 +126,7 @@ static void teardown_user_pages(ResourceLayerCaps* resourceCaps, process_t* proc
     {
         if (pages[i].virtualAddress != 0)
         {
-            virtualMemoryManager->UnmapPage(pages[i].virtualAddress, process->addressSpace);
-        }
-
-        if (pages[i].pagePointer != nullptr)
-        {
-            physicalMemoryManager->Free(pages[i].pagePointer);
+            virtualMemoryManager->ReleaseAnonymousPage(process->addressSpace, pages[i].virtualAddress);
         }
 
         pages[i].virtualAddress = 0;
@@ -181,10 +170,7 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
                 continue;
             }
 
-            virtualMemoryManager->UnmapPage(pageAddress, process->addressSpace);
-
-            void* hhdmAddress = (void*) pa_to_hhdm((uintptr_t) pagePhysicalAddress, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-            physicalMemoryManager->Free(hhdmAddress);
+            virtualMemoryManager->ReleaseAnonymousPage(process->addressSpace, pageAddress);
         }
     }
 }

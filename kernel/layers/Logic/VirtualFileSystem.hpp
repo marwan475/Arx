@@ -267,6 +267,7 @@ public:
     int64_t        Ioctl(file_t* file, uint64_t request, uint64_t argument);
     int64_t        Mmap(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset);
     bool           Retain(file_t* file);
+    uint64_t       CheckExecutable(file_t* file);
     uint32_t       Poll(file_t* file);
     static int64_t Close(file_t* file);
     static void    ReleaseFileHandle(void* file);

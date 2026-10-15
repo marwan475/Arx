@@ -478,7 +478,7 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
 
     if (head != 0 && task->robustOwner == nullptr)
     {
-        task->robustOwner = Resources->processManager->AcquireCurrentMemoryProcess();
+        task->robustOwner = Resources->processManager->AcquireCurrentMemoryProcess(false);
 
         if (task->robustOwner == nullptr)
         {
@@ -488,15 +488,38 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
 
     __atomic_store_n(&task->robustHead, head, __ATOMIC_RELEASE);
     task->retirementContext = this;
-    task->retirementCleanup = head != 0 ? CleanupRobust : nullptr;
+    task->retirementCleanup = head != 0 || task->clearChildTid != 0 ? CleanupRobust : nullptr;
 
-    if (head == 0 && task->robustOwner != nullptr)
+    if (head == 0 && task->clearChildTid == 0 && task->robustOwner != nullptr)
     {
         Resources->processManager->ReleaseMemoryProcess(task->robustOwner);
         task->robustOwner = nullptr;
     }
 
     return 0;
+}
+
+void SynchronizationManager::ConfigureChildTid(task_t* task, process_t* owner, uint64_t address)
+{
+    task->clearChildTid = address;
+
+    if (address != 0 && task->robustOwner == nullptr && owner != nullptr)
+    {
+        Resources->processManager->RetainMemoryProcess(owner);
+        task->robustOwner = owner;
+    }
+
+    if (task->robustHead != 0 || address != 0)
+    {
+        task->retirementContext = this;
+        task->retirementCleanup = CleanupRobust;
+    }
+    else if (task->robustOwner != nullptr)
+    {
+        Resources->processManager->ReleaseMemoryProcess(task->robustOwner);
+        task->robustOwner       = nullptr;
+        task->retirementCleanup = nullptr;
+    }
 }
 
 uint64_t SynchronizationManager::GetRobustList(int32_t tid, uint64_t* head, uint64_t* length)
@@ -537,7 +560,7 @@ uint64_t SynchronizationManager::GetRobustList(int32_t tid, uint64_t* head, uint
         return LINUX_ESRCH;
     }
 
-    task_t*  target = &Resources->taskManager->GetTasks()[tid];
+    task_t*  target = Resources->taskManager->FindTask(static_cast<uint32_t>(tid));
     uint64_t result = LINUX_ESRCH;
 
     if (Resources->taskManager->RetainForDispatch(target))
@@ -566,6 +589,7 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
     auto           manager  = static_cast<SynchronizationManager*>(context);
     process_t*     owner    = task->robustOwner;
     const uint64_t address  = __atomic_exchange_n(&task->robustHead, 0ULL, __ATOMIC_ACQ_REL);
+    const uint64_t clearTid = __atomic_exchange_n(&task->clearChildTid, 0ULL, __ATOMIC_ACQ_REL);
     task->robustOwner       = nullptr;
     task->retirementCleanup = nullptr;
 
@@ -577,6 +601,12 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
     cpu_preemption_disable();
     spinlock_acquire(&owner->addressSpace->operation_lock);
     user_memory_access_t access = {manager->Resources->processManager, owner, owner->addressSpace};
+    const uint32_t zero = 0;
+
+    if (clearTid != 0 && safe_write_user_locked(&access, clearTid, &zero, sizeof(zero)))
+    {
+        manager->WakeKey(owner->addressSpace, clearTid, 1, UINT32_MAX);
+    }
     struct
     {
         uint64_t next;

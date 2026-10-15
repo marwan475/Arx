@@ -1,6 +1,7 @@
 #include "layers/Logic/Scheduler.hpp"
 
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
@@ -119,10 +120,10 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
     while (*link != NO_SLEEPER)
     {
         sleep_entry_t& entry       = SleepQueue[*link];
-        const bool     exited      = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE);
+        const bool     exited      = __atomic_load_n(&entry.process->exited, __ATOMIC_ACQUIRE) || entry.task->dying;
         const bool     changed     = entry.sequence != nullptr && __atomic_load_n(entry.sequence, __ATOMIC_ACQUIRE) != entry.expectedSequence;
         const bool     timed       = entry.deadline != UINT64_MAX;
-        const bool     interrupted = pending_signals(entry.process, entry.task) != 0;
+        const bool     interrupted = !entry.uninterruptible && pending_signals(entry.process, entry.task) != 0;
 
         if ((timed && !clockAvailable) || exited || interrupted || changed || (timed && entry.deadline <= now))
         {
@@ -151,7 +152,7 @@ void Scheduler::WakeSignalWaiters(process_t* process)
         {
             sleep_entry_t& entry = SleepQueue[*link];
 
-            if (entry.process == process && pending_signals(process, entry.task) != 0)
+            if (entry.process == process && !entry.uninterruptible && pending_signals(process, entry.task) != 0)
             {
                 *link         = entry.next;
                 entry.next    = NO_SLEEPER;
@@ -185,6 +186,44 @@ void Scheduler::ReapExitedProcesses()
         {
             (void) KillProcess(i, 0, true);
         }
+        else if (process->allocated)
+        {
+            TaskManager* tasks = ResourceLayerImportCaps->taskManager;
+
+            for (task_t* task = process->tasks; task != nullptr;)
+            {
+                task_t* next = task->next;
+
+                if (tasks->CleanupRetiredTask(task))
+                {
+                    LockQueues();
+                    task_t* previous = task->prev;
+                    void* retired    = nullptr;
+
+                    if (tasks->FreeTask(task, &retired))
+                    {
+                        if (previous != nullptr)
+                        {
+                            previous->next = next;
+                        }
+                        else
+                        {
+                            process->tasks = next;
+                        }
+
+                        if (next != nullptr)
+                        {
+                            next->prev = previous;
+                        }
+                    }
+
+                    UnlockQueues();
+                    TaskManager::ReleaseTaskStack(retired);
+                }
+
+                task = next;
+            }
+        }
     }
 }
 
@@ -201,6 +240,14 @@ void Scheduler::ReapExitedProcesses()
 
     tasks->CleanupCurrentTask();
     tasks->MarkDying(tasks->GetCurrentTask());
+    process_t* process = ResourceLayerImportCaps->processManager->GetCurrentProcess();
+
+    if (process != nullptr && !process->exited)
+    {
+        __atomic_add_fetch(&process->childSequence, 1ULL, __ATOMIC_RELEASE);
+        WakeEventWaiters(&process->childSequence);
+        (void) EnqueueProcess(cpuId, process->id);
+    }
     (void) ResourceLayerImportCaps->processManager->SetRunningProcess(cpuId, nullptr);
     platform.cpus[cpuId].address_space = IdleAddressSpace;
     vmm_switch_addr_space(IdleAddressSpace);
@@ -214,14 +261,14 @@ uint64_t Scheduler::SleepUntil(uint64_t monotonicDeadline)
     return Sleep(monotonicDeadline, nullptr, 0);
 }
 
-uint64_t Scheduler::WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline)
+uint64_t Scheduler::WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline, bool uninterruptible)
 {
     if (sequence == nullptr)
     {
         return static_cast<uint64_t>(-22);
     }
 
-    return Sleep(monotonicDeadline, sequence, expected);
+    return Sleep(monotonicDeadline, sequence, expected, uninterruptible);
 }
 
 void Scheduler::WakeEventWaiters(const uint64_t* sequence)
@@ -257,7 +304,7 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
     UnlockQueues();
 }
 
-uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, uint64_t expected)
+uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, uint64_t expected, bool uninterruptible)
 {
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
     {
@@ -317,7 +364,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     LockQueues();
     // Close the readiness-scan/parking race under the wakeup queue lock.
 
-    if (pending_signals(process, task) != 0)
+    if (!uninterruptible && pending_signals(process, task) != 0)
     {
         UnlockQueues();
         taskManager->FinishSleeping(task);
@@ -335,7 +382,8 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         return 0;
     }
 
-    sleep_entry_t& entry   = SleepQueue[task->id];
+    const size_t taskIndex = static_cast<size_t>(task - taskManager->GetTasks());
+    sleep_entry_t& entry   = SleepQueue[taskIndex];
     entry.process          = process;
     entry.task             = task;
     entry.deadline         = monotonicDeadline;
@@ -345,6 +393,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     entry.cpuId            = cpuId;
     entry.waiting          = true;
     entry.dispatched       = false;
+    entry.uninterruptible  = uninterruptible;
     size_t* link           = &SleepHeads[cpuId];
 
     while (*link != NO_SLEEPER && SleepQueue[*link].deadline <= monotonicDeadline)
@@ -353,7 +402,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     }
 
     entry.next = *link;
-    *link      = task->id;
+    *link      = taskIndex;
     // A blocked task is not a normal ready process. Runnable siblings may be
     // enqueued again by the scheduler independently of this sleeping task.
 
@@ -377,12 +426,12 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     {
         link = &SleepHeads[cpuId];
 
-        while (*link != NO_SLEEPER && *link != task->id)
+        while (*link != NO_SLEEPER && *link != taskIndex)
         {
             link = &SleepQueue[*link].next;
         }
 
-        if (*link == task->id)
+        if (*link == taskIndex)
         {
             *link = entry.next;
         }
@@ -600,7 +649,7 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
     cpu_preemption_disable();
     LockQueues();
 
-    if (!process->allocated || (process->exited && (task == nullptr || !task->sleepPending)))
+    if (!process->allocated || (process->stopped && !process->exited) || (process->exited && (task == nullptr || !task->sleepPending)))
     {
         UnlockQueues();
         cpu_preemption_enable();
@@ -609,11 +658,31 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task)
 
     if (task == nullptr)
     {
-        task = processManager->GetTasks(process);
+        task_t* first = nullptr;
 
-        while (task != nullptr && task->sleepPending)
+        for (task_t* candidate = processManager->GetTasks(process); candidate != nullptr; candidate = candidate->next)
         {
-            task = task->next;
+            if (!candidate->allocated || candidate->dying || candidate->sleepPending || candidate->state == task_t::SWITCHING)
+            {
+                continue;
+            }
+
+            if (first == nullptr || candidate->id < first->id)
+            {
+                first = candidate;
+            }
+
+            if (candidate->id >= process->taskCursor && (task == nullptr || candidate->id < task->id))
+            {
+                task = candidate;
+            }
+        }
+
+        task = task != nullptr ? task : first;
+
+        if (task != nullptr)
+        {
+            process->taskCursor = task->id + 1;
         }
     }
 
@@ -699,7 +768,7 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
 
     task_t* firstTask = processManager->GetTasks(process);
 
-    while (firstTask != nullptr && __atomic_load_n(&firstTask->sleepPending, __ATOMIC_ACQUIRE))
+    while (firstTask != nullptr && (firstTask->dying || __atomic_load_n(&firstTask->sleepPending, __ATOMIC_ACQUIRE)))
     {
         firstTask = firstTask->next;
     }
@@ -755,6 +824,25 @@ bool Scheduler::EnqueueProcess(uint8_t cpuId, uint64_t processId)
     queue->count++;
     UnlockQueues();
     return true;
+}
+
+bool Scheduler::PublishTask(process_t* process, task_t* task)
+{
+    cpu_preemption_disable();
+    LockQueues();
+    const bool attached = process->allocated && !process->exited && ResourceLayerImportCaps->processManager->AddTask(process, task);
+    UnlockQueues();
+    const bool queued = attached && EnqueueProcess(arch_cpu_id(), process->id);
+
+    if (attached && !queued)
+    {
+        LockQueues();
+        ResourceLayerImportCaps->processManager->RemoveTask(process, task);
+        UnlockQueues();
+    }
+
+    cpu_preemption_enable();
+    return queued;
 }
 
 bool Scheduler::RunNextReadyProcess(uint8_t cpuId)
@@ -876,6 +964,27 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     UnlockQueues();
+    NotifyProcessExit(process);
+    {
+        FileDescriptorGuard descriptors(process);
+
+        for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
+        {
+            file_descriptor_t& descriptor = process->fileDescriptors[fd];
+
+            if (descriptor.file != nullptr)
+            {
+                const file_descriptor_t retired = descriptor;
+                descriptor = {};
+
+                if (retired.release != nullptr)
+                {
+                    retired.release(retired.file);
+                }
+            }
+        }
+    }
+
     void*   retiredStacks[TaskManager::MAX_TASKS];
     size_t  retiredCount = 0;
     task_t* iter         = process->tasks;
@@ -919,7 +1028,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     LockQueues();
-    const bool reap           = process->tasks == nullptr;
+    const bool reap           = process->tasks == nullptr && (!process->waitable || process->waitConsumed);
     process->retirementActive = false;
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a
@@ -938,6 +1047,138 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     return true;
+}
+
+void Scheduler::NotifyProcessExit(process_t* process)
+{
+    bool expected = false;
+
+    if (!__atomic_compare_exchange_n(&process->exitNotified, &expected, true, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+    {
+        return;
+    }
+
+    ProcessManager* manager = ResourceLayerImportCaps->processManager;
+    process_t* parent       = process->hasParent ? manager->AcquireProcess(process->parentId) : nullptr;
+
+    if (parent != nullptr && !parent->exited)
+    {
+        spinlock_acquire_preempt(&parent->signalLock);
+        const signal_action_t action = parent->signalActions[16];
+
+        if (process->exitSignal == 17 && (action.handler == 1 || (action.flags & 2) != 0))
+        {
+            process->waitConsumed = true;
+        }
+
+        if (process->exitSignal > 0 && process->exitSignal < 32 && (parent->signalIgnored & (1ULL << (process->exitSignal - 1))) == 0)
+        {
+            parent->signalSenders[process->exitSignal - 1] = {static_cast<int32_t>(process->id), process->credentials.user.real, 1};
+            __atomic_fetch_or(&parent->signalPending, 1ULL << (process->exitSignal - 1), __ATOMIC_RELEASE);
+        }
+
+        spinlock_release_preempt(&parent->signalLock);
+        __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
+        WakeEventWaiters(&parent->childSequence);
+        WakeSignalWaiters(parent);
+    }
+    else
+    {
+        process->waitConsumed = true;
+    }
+
+    if (parent != nullptr)
+    {
+        manager->ReleaseProcess(parent);
+    }
+
+    // PID 1 adopts orphans when present; otherwise the kernel reaps them.
+    process_t* adopter = manager->AcquireProcess(1);
+    bool userInit = false;
+
+    for (task_t* task = adopter != nullptr ? adopter->tasks : nullptr; task != nullptr; task = task->next)
+    {
+        userInit = userInit || (task->allocated && task->isUserTask && !task->dying);
+    }
+
+    for (size_t index = 0; index < manager->GetCapacity(); ++index)
+    {
+        process_t* child = manager->AcquireProcess(index);
+
+        if (child != nullptr)
+        {
+            if (child->hasParent && child->parentId == process->id)
+            {
+                child->hasParent = userInit && adopter != process && !adopter->exited;
+                child->parentId  = child->hasParent ? adopter->id : 0;
+                child->parentTaskId = child->hasParent ? adopter->id : 0;
+
+                if (!child->hasParent)
+                {
+                    child->waitConsumed = true;
+                }
+                else
+                {
+                    __atomic_add_fetch(&adopter->childSequence, 1ULL, __ATOMIC_RELEASE);
+                    WakeEventWaiters(&adopter->childSequence);
+                }
+            }
+
+            manager->ReleaseProcess(child);
+        }
+    }
+
+    if (adopter != nullptr)
+    {
+        manager->ReleaseProcess(adopter);
+    }
+
+    __atomic_add_fetch(&process->execSequence, 1ULL, __ATOMIC_RELEASE);
+    WakeEventWaiters(&process->execSequence);
+}
+
+void Scheduler::ChangeStoppedState(process_t* process, int signal, bool stopped)
+{
+    spinlock_acquire_preempt(&process->signalLock);
+    const bool changed = process->stopped != stopped;
+    process->stopped   = stopped;
+
+    if (changed)
+    {
+        process->stopSignal       = stopped ? signal : process->stopSignal;
+        process->stopPending      = stopped;
+        process->continuedPending = !stopped;
+    }
+
+    spinlock_release_preempt(&process->signalLock);
+    __atomic_add_fetch(&process->stopSequence, 1ULL, __ATOMIC_RELEASE);
+    WakeEventWaiters(&process->stopSequence);
+
+    if (!stopped)
+    {
+        const uint8_t cpu = process->ownerCpu >= 0 ? static_cast<uint8_t>(process->ownerCpu) : arch_cpu_id();
+        (void) EnqueueProcess(cpu, process->id);
+    }
+
+    ProcessManager* manager = ResourceLayerImportCaps->processManager;
+    process_t* parent       = changed && process->hasParent ? manager->AcquireProcess(process->parentId) : nullptr;
+
+    if (parent != nullptr)
+    {
+        spinlock_acquire_preempt(&parent->signalLock);
+
+        if ((parent->signalActions[16].flags & 1) == 0 && (parent->signalIgnored & (1ULL << 16)) == 0)
+        {
+            parent->signalSenders[16] = {static_cast<int32_t>(process->id), process->credentials.user.real, stopped ? 5 : 6};
+            __atomic_fetch_or(&parent->signalPending, 1ULL << 16, __ATOMIC_RELEASE);
+        }
+
+        spinlock_release_preempt(&parent->signalLock);
+        __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
+        WakeEventWaiters(&parent->childSequence);
+        WakeSignalWaiters(parent);
+        manager->ReleaseProcess(parent);
+    }
 }
 
 void Scheduler::SetEventManager(EventManager* events)

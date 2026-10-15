@@ -1,6 +1,7 @@
 #include "layers/Dispatcher.hpp"
 #include "layers/Logic/CredentialManager.hpp"
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/ProcessController.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/SocketManager.hpp"
@@ -314,19 +315,6 @@ template <typename ManagerT> struct request_method_test_t
     uint64_t                syscallNumber;
     custom_case_validator_t customValidator;
 };
-
-static bool custom_case_stub_process_lifecycle(const custom_case_ctx_t* ctx)
-{
-    if (ctx == nullptr)
-    {
-        return false;
-    }
-
-    kprintf("Arx kernel: requestlayer_selftest custom testcase stub %s::%s syscall=%llu result=%lld\n", ctx->managerName, ctx->testName, (unsigned long long) ctx->syscallNumber, (long long) ctx->result);
-
-    // Stub path: until full scenario tests are implemented, keep this non-failing.
-    return true;
-}
 
 static bool resolve_runtime_identity(uint64_t* outPid, uint64_t* outTid)
 {
@@ -3395,27 +3383,395 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
     }
 }
 
+struct lifecycle_fixture_t
+{
+    ResourceLayerCaps* resources;
+    LogicLayerCaps*    logic;
+    process_t*        original;
+    process_t*        process;
+    task_t*           caller;
+    uint64_t          originalTid;
+    bool              originalUser;
+    char              originalName[16];
+    uint64_t          originalFs;
+    uint64_t          originalGs;
+    bool              ready;
+
+    static constexpr uint64_t CODE  = 0x400000;
+    static constexpr uint64_t DATA  = 0x410000;
+    static constexpr uint64_t STACK = 0x420000;
+
+    lifecycle_fixture_t() : resources(nullptr), logic(nullptr), original(nullptr), process(nullptr), caller(nullptr), originalTid(0), originalUser(false), originalFs(0), originalGs(0), ready(false)
+    {
+        cpu_preemption_disable();
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        resources              = dispatcher->GetResourceLayerCaps();
+        logic                  = dispatcher->GetLogicLayerCaps();
+        original               = resources->processManager->GetCurrentProcess();
+        caller                 = resources->taskManager->GetCurrentTask();
+        originalTid            = caller->id;
+        originalUser           = caller->isUserTask;
+        memcpy(originalName, caller->name, sizeof(originalName));
+        (void) resources->taskManager->GetCurrentTlsBase(false, &originalFs);
+        (void) resources->taskManager->GetCurrentTlsBase(true, &originalGs);
+        virt_addr_space_t* space = resources->virtualMemoryManager->CreateUserAddressSpace();
+        process = space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
+
+        if (process == nullptr)
+        {
+            resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+            return;
+        }
+
+        process->ownsAddressSpace = true;
+        resources->processManager->RemoveTask(original, caller);
+        resources->processManager->AddTask(process, caller);
+        resources->processManager->ActivateProcessAddressSpace(process);
+
+        if (!resources->virtualMemoryManager->AllocateAnonymousPage(space, CODE, 7, false) || !resources->virtualMemoryManager->AllocateAnonymousPage(space, DATA, 3, false) || !resources->virtualMemoryManager->AllocateAnonymousPage(space, STACK, 3, false))
+        {
+            return;
+        }
+
+#if defined(__x86_64__)
+        // Child writes its private/shared data page, then exits with status 37.
+        // All addresses are fixture constants, independent of kernel pointers.
+        const uint8_t code[] = {
+            0x48, 0xbb, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xc7, 0x03, 0x78, 0x56, 0x00, 0x00,
+            0xb8, 0x3c, 0x00, 0x00, 0x00,
+            0xbf, 0x25, 0x00, 0x00, 0x00,
+            0x0f, 0x05, 0x0f, 0x0b,
+        };
+        ready = copy_to_process_virtual(space, CODE, code, sizeof(code));
+#endif
+        const uint32_t initial = 0x1234;
+        ready = ready && safe_write_user(DATA, &initial, sizeof(initial));
+    }
+
+    ~lifecycle_fixture_t()
+    {
+        if (process == nullptr)
+        {
+            cpu_preemption_enable();
+            return;
+        }
+
+        resources->taskManager->CleanupCurrentTask();
+        caller->isUserTask = originalUser;
+        resources->taskManager->SetCurrentIdentity(originalTid);
+        memcpy(caller->name, originalName, sizeof(originalName));
+        (void) resources->taskManager->SetCurrentTlsBase(false, originalFs);
+        (void) resources->taskManager->SetCurrentTlsBase(true, originalGs);
+        resources->processManager->RemoveTask(process, caller);
+        resources->processManager->AddTask(original, caller);
+        resources->processManager->ActivateProcessAddressSpace(original);
+
+        for (size_t index = 0; index < resources->processManager->GetCapacity(); ++index)
+        {
+            process_t* child = &resources->processManager->GetProcesses()[index];
+
+            if (child->allocated && child->hasParent && child->parentId == process->id)
+            {
+                child->waitConsumed = true;
+                logic->scheduler->KillProcess(index, 0);
+            }
+        }
+
+        process->waitConsumed = true;
+        logic->scheduler->KillProcess(process->id, 0);
+        cpu_preemption_enable();
+    }
+
+    arch_syscall_frame_t Frame(uint64_t number) const
+    {
+        arch_syscall_frame_t frame = {};
+        frame.syscall_number = number;
+#if defined(__x86_64__)
+        frame.user_cs     = 0x1b;
+        frame.user_ss     = 0x23;
+        frame.user_rflags = 0x202;
+        frame.user_rip    = CODE;
+        frame.user_rsp    = STACK + PAGE_SIZE;
+#endif
+        return frame;
+    }
+
+    uint64_t Spawn() const
+    {
+        arch_syscall_frame_t frame = Frame(SYSCALL_fork);
+        return dispatcher_dispatch_syscall(&frame);
+    }
+
+    bool Reap(uint64_t pid) const
+    {
+        arch_syscall_frame_t frame = Frame(SYSCALL_wait4);
+        frame.arg0 = pid;
+        frame.arg1 = DATA + 64;
+        const uint64_t result = dispatcher_dispatch_syscall(&frame);
+        int32_t status = 0;
+        return result == pid && safe_read_user(DATA + 64, &status, sizeof(status)) && status == (37 << 8);
+    }
+};
+
+static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* context)
+{
+#if defined(__x86_64__)
+    lifecycle_fixture_t fixture;
+
+    if (!fixture.ready)
+    {
+        return false;
+    }
+
+    const uint64_t number = context->syscallNumber;
+    arch_syscall_frame_t frame = fixture.Frame(number);
+    ProcessController* controller = fixture.logic->processController;
+
+    if (number == SYSCALL_fork)
+    {
+        const uint64_t first = fixture.Spawn();
+        uint32_t unchanged = 0;
+
+        if (static_cast<int64_t>(first) <= 0 || !fixture.Reap(first) || !safe_read_user(lifecycle_fixture_t::DATA, &unchanged, sizeof(unchanged)) || unchanged != 0x1234)
+        {
+            return false;
+        }
+
+        const uint64_t pid = dispatcher_dispatch_syscall(&frame);
+
+        if (static_cast<int64_t>(pid) < 0)
+        {
+            return false;
+        }
+
+        process_t* child = fixture.resources->processManager->AcquireProcess(pid);
+
+        if (child == nullptr)
+        {
+            return false;
+        }
+
+        const phys_addr_t before = vmm_virt_to_phys(lifecycle_fixture_t::DATA, fixture.process->addressSpace);
+        bool passed = before == vmm_virt_to_phys(lifecycle_fixture_t::DATA, child->addressSpace);
+        const uint32_t value = 0xabcd;
+        passed = passed && safe_write_user(lifecycle_fixture_t::DATA, &value, sizeof(value));
+        passed = passed && before != vmm_virt_to_phys(lifecycle_fixture_t::DATA, fixture.process->addressSpace);
+        fixture.resources->processManager->ReleaseProcess(child);
+        passed = fixture.Reap(pid) && passed;
+        uint32_t parentValue = 0;
+        return passed && safe_read_user(lifecycle_fixture_t::DATA, &parentValue, sizeof(parentValue)) && parentValue == value;
+    }
+
+    if (number == SYSCALL_vfork)
+    {
+        const uint64_t pid = dispatcher_dispatch_syscall(&frame);
+        uint32_t value = 0;
+        return static_cast<int64_t>(pid) > 0 && safe_read_user(lifecycle_fixture_t::DATA, &value, sizeof(value)) && value == 0x5678 && fixture.Reap(pid);
+    }
+
+    if (number == SYSCALL_clone || number == SYSCALL_clone3)
+    {
+        process_clone_arguments_t arguments = {};
+        arguments.flags     = 0x10f00 | 0x80000 | 0x100000 | 0x200000 | 0x1000000;
+        arguments.stack     = lifecycle_fixture_t::STACK;
+        arguments.stackSize = PAGE_SIZE;
+        arguments.parentTid = lifecycle_fixture_t::DATA + 16;
+        arguments.childTid  = lifecycle_fixture_t::DATA + 20;
+        arguments.tls       = lifecycle_fixture_t::DATA + 128;
+
+        if (number == SYSCALL_clone)
+        {
+            frame.arg0 = arguments.flags;
+            frame.arg1 = arguments.stack + arguments.stackSize;
+            frame.arg2 = arguments.parentTid;
+            frame.arg3 = arguments.childTid;
+            frame.arg4 = arguments.tls;
+        }
+        else
+        {
+            if (!safe_write_user(lifecycle_fixture_t::DATA + 256, &arguments, sizeof(arguments)))
+            {
+                return false;
+            }
+
+            frame.arg0 = lifecycle_fixture_t::DATA + 256;
+            frame.arg1 = sizeof(arguments);
+        }
+
+        const uint64_t tid = dispatcher_dispatch_syscall(&frame);
+
+        if (static_cast<int64_t>(tid) <= 0)
+        {
+            return false;
+        }
+
+        uint32_t written = 0;
+        bool passed = safe_read_user(arguments.parentTid, &written, sizeof(written)) && written == tid;
+        task_t* child = fixture.resources->taskManager->FindTask(tid);
+        passed = passed && child != nullptr && child->process == fixture.process && child->taskContext.fsBase == arguments.tls;
+        const uint64_t sequence = __atomic_load_n(&fixture.process->childSequence, __ATOMIC_ACQUIRE);
+        const uint64_t waited = fixture.logic->scheduler->WaitForEvent(&fixture.process->childSequence, sequence, UINT64_MAX, true);
+        uint32_t marker = 0;
+        passed = waited == 0 && passed && safe_read_user(arguments.childTid, &written, sizeof(written)) && written == 0;
+        passed = passed && safe_read_user(lifecycle_fixture_t::DATA, &marker, sizeof(marker)) && marker == 0x5678;
+        fixture.logic->scheduler->ReapExitedProcesses();
+        return passed;
+    }
+
+    if (number == SYSCALL_wait4 || number == SYSCALL_waitid)
+    {
+        const uint64_t pid = fixture.Spawn();
+
+        if (static_cast<int64_t>(pid) <= 0)
+        {
+            return false;
+        }
+
+        frame.arg0 = number == SYSCALL_waitid ? 1 : pid;
+        frame.arg1 = number == SYSCALL_waitid ? pid : lifecycle_fixture_t::DATA + 64;
+        frame.arg2 = number == SYSCALL_waitid ? lifecycle_fixture_t::DATA + 64 : 1;
+        frame.arg3 = number == SYSCALL_waitid ? 5 : 0;
+        bool passed = dispatcher_dispatch_syscall(&frame) == 0;
+
+        if (number == SYSCALL_wait4)
+        {
+            passed = passed && fixture.logic->signalManager->Send(static_cast<int32_t>(pid), -1, 19) == 0;
+            frame.arg2 = 2;
+            passed = passed && dispatcher_dispatch_syscall(&frame) == pid;
+            int32_t state = 0;
+            passed = passed && safe_read_user(frame.arg1, &state, sizeof(state)) && state == ((19 << 8) | 127);
+            passed = passed && fixture.logic->signalManager->Send(static_cast<int32_t>(pid), -1, 18) == 0;
+            frame.arg2 = 8;
+            passed = passed && dispatcher_dispatch_syscall(&frame) == pid;
+            passed = passed && safe_read_user(frame.arg1, &state, sizeof(state)) && state == 0xffff;
+            frame.arg1 = CANONICAL_KERNEL_BASE;
+            frame.arg2 = 0;
+            passed = passed && dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT;
+            return fixture.Reap(pid) && passed;
+        }
+
+        frame.arg3 = 4 | 0x1000000;
+        passed = passed && dispatcher_dispatch_syscall(&frame) == 0;
+        int32_t info[8] = {};
+        passed = passed && safe_read_user(lifecycle_fixture_t::DATA + 64, info, sizeof(info)) && info[0] == 17 && info[2] == 1 && info[4] == static_cast<int32_t>(pid) && info[6] == 37;
+        frame.arg3 = 4;
+        passed = passed && dispatcher_dispatch_syscall(&frame) == 0;
+        return passed && dispatcher_dispatch_syscall(&frame) == static_cast<uint64_t>(-10);
+    }
+
+    if (number == SYSCALL_set_tid_address)
+    {
+        const uint32_t marker = 123;
+        (void) safe_write_user(lifecycle_fixture_t::DATA, &marker, sizeof(marker));
+        frame.arg0 = lifecycle_fixture_t::DATA;
+        bool passed = dispatcher_dispatch_syscall(&frame) == fixture.caller->id;
+        passed = passed && fixture.caller->clearChildTid == lifecycle_fixture_t::DATA;
+        fixture.resources->taskManager->CleanupCurrentTask();
+        uint32_t value = marker;
+        return passed && safe_read_user(lifecycle_fixture_t::DATA, &value, sizeof(value)) && value == 0;
+    }
+
+    if (number == SYSCALL_execve)
+    {
+        const char path[] = "/test_syscall_exit.elf";
+        const char argument[] = "lifecycle";
+        const uint64_t pointers[] = {lifecycle_fixture_t::DATA + 128, 0};
+        (void) safe_write_user(lifecycle_fixture_t::DATA, path, sizeof(path));
+        (void) safe_write_user(lifecycle_fixture_t::DATA + 128, argument, sizeof(argument));
+        (void) safe_write_user(lifecycle_fixture_t::DATA + 256, pointers, sizeof(pointers));
+        frame.arg0 = lifecycle_fixture_t::DATA;
+        frame.arg1 = lifecycle_fixture_t::DATA + 256;
+        fixture.caller->isUserTask = true;
+        const uint64_t oldRoot = fixture.process->addressSpace->pt;
+        arch_syscall_frame_t invalid = frame;
+        invalid.arg0 = CANONICAL_KERNEL_BASE;
+
+        if (dispatcher_dispatch_syscall(&invalid) != LINUX_EFAULT || fixture.process->addressSpace->pt != oldRoot)
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
+        const uint64_t result = dispatcher_dispatch_syscall(&frame);
+        fixture.caller->isUserTask = false;
+
+        if (result != 0 || fixture.process->addressSpace->pt == oldRoot || (frame.user_rsp & 15) != 0 || frame.user_rip == lifecycle_fixture_t::CODE)
+        {
+            return false;
+        }
+
+        uint64_t words[4] = {};
+
+        if (!safe_read_user(frame.user_rsp, words, sizeof(words)) || words[0] != 1 || words[2] != 0 || words[3] != 0)
+        {
+            return false;
+        }
+
+        char copied[sizeof(argument)] = {};
+        return safe_read_user(words[1], copied, sizeof(copied)) && strcmp(copied, argument) == 0;
+    }
+
+    if (number == SYSCALL_getpgid || number == SYSCALL_getpgrp || number == SYSCALL_getsid)
+    {
+        const uint64_t expected = number == SYSCALL_getsid ? fixture.process->sessionId : fixture.process->groupId;
+        bool passed = dispatcher_dispatch_syscall(&frame) == expected;
+
+        if (number != SYSCALL_getpgrp)
+        {
+            frame.arg0 = INT32_MAX;
+            passed = passed && dispatcher_dispatch_syscall(&frame) == LINUX_ESRCH;
+        }
+
+        return passed;
+    }
+
+    if (number == SYSCALL_setpgid)
+    {
+        const uint64_t child = fixture.Spawn();
+        frame.arg0 = child;
+        frame.arg1 = 0;
+        bool passed = static_cast<int64_t>(child) > 0 && dispatcher_dispatch_syscall(&frame) == 0;
+        passed = passed && controller->Group(0, static_cast<int32_t>(child)) == child;
+        frame.arg1 = UINT32_MAX;
+        return passed && dispatcher_dispatch_syscall(&frame) == LINUX_EINVAL && fixture.Reap(child);
+    }
+
+    if (number == SYSCALL_setsid)
+    {
+        bool passed = dispatcher_dispatch_syscall(&frame) == fixture.process->id;
+        passed = passed && fixture.process->sessionId == fixture.process->id && fixture.process->groupId == fixture.process->id;
+        return passed && dispatcher_dispatch_syscall(&frame) == static_cast<uint64_t>(-1);
+    }
+
+    return false;
+#else
+    (void) context;
+    return true;
+#endif
+}
+
 static void test_process_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats)
 {
     static const request_method_test_t<ProcessRequestManager> tests[] = {
             {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, custom_case_validate_exit_like},
             {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, custom_case_validate_exit_like},
-            {"HandleForkRequest", &ProcessRequestManager::HandleForkRequest, SYSCALL_fork, custom_case_stub_process_lifecycle},
-            {"HandleVforkRequest", &ProcessRequestManager::HandleVforkRequest, SYSCALL_vfork, nullptr},
-            {"HandleCloneRequest", &ProcessRequestManager::HandleCloneRequest, SYSCALL_clone, nullptr},
-            {"HandleClone3Request", &ProcessRequestManager::HandleClone3Request, SYSCALL_clone3, nullptr},
-            {"HandleExecveRequest", &ProcessRequestManager::HandleExecveRequest, SYSCALL_execve, custom_case_stub_process_lifecycle},
-            {"HandleWait4Request", &ProcessRequestManager::HandleWait4Request, SYSCALL_wait4, nullptr},
-            {"HandleWaitidRequest", &ProcessRequestManager::HandleWaitidRequest, SYSCALL_waitid, nullptr},
-            {"HandleSet_tid_addressRequest", &ProcessRequestManager::HandleSet_tid_addressRequest, SYSCALL_set_tid_address, nullptr},
+            {"HandleForkRequest", &ProcessRequestManager::HandleForkRequest, SYSCALL_fork, custom_case_validate_process_lifecycle},
+            {"HandleVforkRequest", &ProcessRequestManager::HandleVforkRequest, SYSCALL_vfork, custom_case_validate_process_lifecycle},
+            {"HandleCloneRequest", &ProcessRequestManager::HandleCloneRequest, SYSCALL_clone, custom_case_validate_process_lifecycle},
+            {"HandleClone3Request", &ProcessRequestManager::HandleClone3Request, SYSCALL_clone3, custom_case_validate_process_lifecycle},
+            {"HandleExecveRequest", &ProcessRequestManager::HandleExecveRequest, SYSCALL_execve, custom_case_validate_process_lifecycle},
+            {"HandleWait4Request", &ProcessRequestManager::HandleWait4Request, SYSCALL_wait4, custom_case_validate_process_lifecycle},
+            {"HandleWaitidRequest", &ProcessRequestManager::HandleWaitidRequest, SYSCALL_waitid, custom_case_validate_process_lifecycle},
+            {"HandleSet_tid_addressRequest", &ProcessRequestManager::HandleSet_tid_addressRequest, SYSCALL_set_tid_address, custom_case_validate_process_lifecycle},
             {"HandleGettidRequest", &ProcessRequestManager::HandleGettidRequest, SYSCALL_gettid, custom_case_validate_process_identity},
             {"HandleGetpidRequest", &ProcessRequestManager::HandleGetpidRequest, SYSCALL_getpid, custom_case_validate_process_identity},
             {"HandleGetppidRequest", &ProcessRequestManager::HandleGetppidRequest, SYSCALL_getppid, custom_case_validate_getppid},
-            {"HandleGetpgidRequest", &ProcessRequestManager::HandleGetpgidRequest, SYSCALL_getpgid, nullptr},
-            {"HandleGetpgrpRequest", &ProcessRequestManager::HandleGetpgrpRequest, SYSCALL_getpgrp, nullptr},
-            {"HandleSetpgidRequest", &ProcessRequestManager::HandleSetpgidRequest, SYSCALL_setpgid, nullptr},
-            {"HandleGetsidRequest", &ProcessRequestManager::HandleGetsidRequest, SYSCALL_getsid, nullptr},
-            {"HandleSetsidRequest", &ProcessRequestManager::HandleSetsidRequest, SYSCALL_setsid, nullptr},
+            {"HandleGetpgidRequest", &ProcessRequestManager::HandleGetpgidRequest, SYSCALL_getpgid, custom_case_validate_process_lifecycle},
+            {"HandleGetpgrpRequest", &ProcessRequestManager::HandleGetpgrpRequest, SYSCALL_getpgrp, custom_case_validate_process_lifecycle},
+            {"HandleSetpgidRequest", &ProcessRequestManager::HandleSetpgidRequest, SYSCALL_setpgid, custom_case_validate_process_lifecycle},
+            {"HandleGetsidRequest", &ProcessRequestManager::HandleGetsidRequest, SYSCALL_getsid, custom_case_validate_process_lifecycle},
+            {"HandleSetsidRequest", &ProcessRequestManager::HandleSetsidRequest, SYSCALL_setsid, custom_case_validate_process_lifecycle},
     };
 
     run_manager_tests("process", caps->processRequestManager, tests, stats);
@@ -6479,7 +6835,7 @@ static bool test_signal_case(process_t* process, uint64_t number)
         task_t* task = resources->taskManager->GetCurrentTask();
         ok &= memory_expect((pending_signals(process, task) & 512) != 0, "signal routed to current process/thread");
         ok &= memory_expect(send(65) == LINUX_EINVAL && send(34) == LINUX_EOPNOTSUPP, "invalid and unsupported realtime signals");
-        ok &= memory_expect(number == SYSCALL_kill ? memory_call(number, 0, 10) == LINUX_EOPNOTSUPP : memory_call(number, process->id, 0, 10) == LINUX_EINVAL, "signal unsupported group/invalid thread targeting");
+        ok &= memory_expect(number == SYSCALL_kill ? memory_call(number, 0, 0) == 0 : memory_call(number, process->id, 0, 10) == LINUX_EINVAL, "signal group lookup and invalid thread targeting");
         signal_action_t ignore = {1, 0, 0, 0};
         time_fixture_store(process, input, &ignore, sizeof(ignore));
         ok &= memory_expect(memory_call(SYSCALL_rt_sigaction, 10, input, 0, 8) == 0 && send(10) == 0 && (pending_signals(process, task) & 512) == 0, "ignored signal discards pending instances");

@@ -187,6 +187,8 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->signalDepth       = 0;
     task->signalSenders     = nullptr;
     task->robustHead        = 0;
+    task->clearChildTid     = 0;
+    task->setChildTid       = 0;
     task->robustOwner       = nullptr;
     task->retirementContext = nullptr;
     task->retirementCleanup = nullptr;
@@ -232,7 +234,7 @@ task_t* TaskManager::AllocateTaskUnlocked()
 {
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
-        if (!Tasks[i].allocated)
+        if (!Tasks[i].allocated && FindTask(i) == nullptr)
         {
             ResetTaskSlot(&Tasks[i], i, true);
             return &Tasks[i];
@@ -300,6 +302,82 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
 {
     const task_t::user_launch_context_t launch = {userRip, userRsp, arg0, arg1};
     return CreateTask(user_task_bootstrap_entry, nullptr, &launch);
+}
+
+#if defined(__x86_64__)
+extern "C" [[noreturn]] void arch_resume_user_frame(const arch_syscall_frame_t* frame);
+
+static void cloned_user_entry(void* argument)
+{
+    task_t* task = static_cast<task_t*>(argument);
+
+    if (task->setChildTid != 0)
+    {
+        const uint32_t tid = static_cast<uint32_t>(task->id);
+        (void) safe_write_user(task->setChildTid, &tid, sizeof(tid));
+        task->setChildTid = 0;
+    }
+
+    auto* frame = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(arch_syscall_frame_t));
+    arch_resume_user_frame(frame);
+}
+#endif
+
+task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id)
+{
+#if defined(__x86_64__)
+    if (frame == nullptr || id >= MAX_TASKS)
+    {
+        return nullptr;
+    }
+
+    void* allocation = vmalloc(CPU_KERNEL_STACK_SIZE + PAGE_SIZE);
+
+    if (allocation == nullptr)
+    {
+        return nullptr;
+    }
+
+    vmm_unmap_page(reinterpret_cast<uintptr_t>(allocation), vmm_kernel_space());
+    LockManager();
+    task_t* task = &Tasks[id];
+
+    if (task->allocated || FindTask(id) != nullptr)
+    {
+        UnlockManager();
+        vfree(allocation);
+        return nullptr;
+    }
+
+    ResetTaskSlot(task, id, true);
+    task->stack      = static_cast<uint8_t*>(allocation) + PAGE_SIZE;
+    task->isUserTask = true;
+    auto* saved     = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(*frame));
+    *saved          = *frame;
+    void* floating = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(saved) - 512);
+    memset(floating, 0, 512);
+
+    if (frame->fxstate != 0)
+    {
+        memcpy(floating, reinterpret_cast<void*>(frame->fxstate), 512);
+    }
+    else
+    {
+        *static_cast<uint16_t*>(floating) = 0x37f;
+        *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(floating) + 24) = 0x1f80;
+    }
+
+    saved->fxstate = reinterpret_cast<uintptr_t>(floating);
+    arch_init_context(&task->taskContext, floating, cloned_user_entry, task);
+    task->taskContext.fsBase     = arch_read_user_tls_base(false);
+    task->taskContext.userGsBase = arch_read_user_tls_base(true);
+    UnlockManager();
+    return task;
+#else
+    (void) frame;
+    (void) id;
+    return nullptr;
+#endif
 }
 
 bool TaskManager::FreeTask(task_t* task, void** retiredStack)
@@ -610,6 +688,26 @@ task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
 task_t* TaskManager::GetCurrentTask() const
 {
     return GetRunningTask(arch_cpu_id());
+}
+
+task_t* TaskManager::FindTask(uint64_t id) const
+{
+    for (size_t index = 0; index < MAX_TASKS; ++index)
+    {
+        if (Tasks[index].allocated && Tasks[index].id == id)
+        {
+            return const_cast<task_t*>(&Tasks[index]);
+        }
+    }
+
+    return nullptr;
+}
+
+void TaskManager::SetCurrentIdentity(uint64_t id)
+{
+    LockManager();
+    GetCurrentTask()->id = id;
+    UnlockManager();
 }
 
 bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)

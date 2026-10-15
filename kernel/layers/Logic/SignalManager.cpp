@@ -50,7 +50,7 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
             return LINUX_EINVAL;
         }
 
-        if ((action->flags & ~(4ULL | RESTORER | ONSTACK | RESTART | NODEFER | RESETHAND)) != 0)
+        if ((action->flags & ~(7ULL | RESTORER | ONSTACK | RESTART | NODEFER | RESETHAND)) != 0)
         {
             return LINUX_EOPNOTSUPP;
         }
@@ -276,17 +276,54 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
         return LINUX_EINVAL;
     }
 
-    if (pid <= 0)
-    {
-        return LINUX_EOPNOTSUPP; // Process groups/sessions are not implemented.
-    }
-
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
     ProcessManager* processes = Resources->processManager;
+    if (pid <= 0)
+    {
+        if (tid >= 0 || pid == INT32_MIN)
+        {
+            return LINUX_EINVAL;
+        }
+
+        process_t* source = processes->GetCurrentProcess();
+
+        if (source == nullptr)
+        {
+            return LINUX_ESRCH;
+        }
+
+        const uint64_t group = pid == 0 ? source->groupId : static_cast<uint64_t>(-static_cast<int64_t>(pid));
+        bool delivered       = false;
+        uint64_t failure     = LINUX_ESRCH;
+
+        for (size_t index = 1; index < processes->GetCapacity(); ++index)
+        {
+            process_t* member = processes->AcquireProcess(index);
+
+            if (member == nullptr)
+            {
+                continue;
+            }
+
+            const bool matches = !member->exited && (pid == -1 ? member->id != 1 && member != source : member->groupId == group);
+
+            if (matches)
+            {
+                const uint64_t result = Send(static_cast<int32_t>(member->id), -1, signal);
+                delivered            = delivered || result == 0;
+                failure              = result != 0 ? result : failure;
+            }
+
+            processes->ReleaseProcess(member);
+        }
+
+        return delivered ? 0 : failure;
+    }
+
     process_t*      source    = processes->AcquireCurrentMemoryProcess(false);
     process_t*      target    = processes->AcquireProcess((uint64_t) pid);
     uint64_t        result    = [&]() -> uint64_t
@@ -304,7 +341,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
         receiver = target->credentials.user;
         spinlock_release_preempt(&target->credentialLock);
 
-        if (sender.effective != 0 && sender.real != receiver.real && sender.real != receiver.saved && sender.effective != receiver.real && sender.effective != receiver.saved)
+        if (!(signal == 18 && source->sessionId == target->sessionId) && sender.effective != 0 && sender.real != receiver.real && sender.real != receiver.saved && sender.effective != receiver.real && sender.effective != receiver.saved)
         {
             return (uint64_t) -1;
         }
@@ -318,7 +355,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
                 return LINUX_ESRCH;
             }
 
-            task = &Resources->taskManager->GetTasks()[tid];
+            task = Resources->taskManager->FindTask(static_cast<uint32_t>(tid));
 
             if (!Resources->taskManager->RetainForDispatch(task))
             {
@@ -334,7 +371,24 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
 
         uint64_t status = 0;
 
-        if (signal >= 32 || (signal >= 18 && signal <= 22))
+        if (signal == 18 || signal == 9)
+        {
+            SchedulerManager->ChangeStoppedState(target, signal, false);
+        }
+
+        if (signal == 19)
+        {
+            SchedulerManager->ChangeStoppedState(target, signal, true);
+
+            if (task != nullptr)
+            {
+                Resources->taskManager->ReleaseDispatchClaim(task);
+            }
+
+            return 0;
+        }
+
+        if (signal >= 32)
         {
             status = LINUX_EOPNOTSUPP; // RT queues and stop/continue are pending.
         }
@@ -425,6 +479,7 @@ uint64_t SignalManager::Pause()
 [[noreturn]] void SignalManager::Terminate(int signal)
 {
     process_t* process = Resources->processManager->GetCurrentProcess();
+    process->terminationSignal = signal;
     (void) SchedulerManager->KillProcess(process->id, 128 + signal);
     SchedulerManager->ExitCurrentTask();
 }
@@ -449,7 +504,22 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
         return result;
     }
 
-    if (process->exited)
+    if (process->exited || task->dying)
+    {
+        SchedulerManager->ExitCurrentTask();
+    }
+
+    while (__atomic_load_n(&process->stopped, __ATOMIC_ACQUIRE) && !process->exited && !task->dying)
+    {
+        const uint64_t sequence = __atomic_load_n(&process->stopSequence, __ATOMIC_ACQUIRE);
+
+        if (process->stopped)
+        {
+            (void) SchedulerManager->WaitForEvent(&process->stopSequence, sequence, UINT64_MAX, true);
+        }
+    }
+
+    if (process->exited || task->dying)
     {
         SchedulerManager->ExitCurrentTask();
     }
@@ -504,6 +574,12 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
 
     if (action.handler == 0)
     {
+        if (signal >= 19 && signal <= 22)
+        {
+            SchedulerManager->ChangeStoppedState(process, signal, true);
+            return Deliver(frame, result, restartable);
+        }
+
         Terminate(signal);
     }
 

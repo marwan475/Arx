@@ -1,8 +1,8 @@
 #include "layers/Request/MemoryRequestManager.hpp"
 
 #include "layers/Request/RequestLayerFactory.hpp"
-#include "layers/Resource/ProcessMemoryManager.hpp"
-#include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Logic/ProcessController.hpp"
+#include "layers/Logic/LogicLayerFactory.hpp"
 
 #include <klib/klib.h>
 
@@ -39,12 +39,12 @@ uint64_t MemoryRequestManager::HandleMmapRequest(const arch_syscall_frame_t* fra
         return LINUX_EINVAL;
     }
 
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    return ResourceCaps->processMemoryManager->MapProcessMemory(frame->arg0, frame->arg1, frame->arg2, frame->arg3, static_cast<int>(frame->arg4), frame->arg5);
+    return LogicCaps->processController->MapProcessMemory(frame->arg0, frame->arg1, frame->arg2, frame->arg3, static_cast<int>(frame->arg4), frame->arg5);
 }
 
 uint64_t MemoryRequestManager::HandleMunmapRequest(const arch_syscall_frame_t* frame)
@@ -54,12 +54,12 @@ uint64_t MemoryRequestManager::HandleMunmapRequest(const arch_syscall_frame_t* f
         return LINUX_EINVAL;
     }
 
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    return ResourceCaps->processMemoryManager->UnmapProcessMemory(frame->arg0, frame->arg1);
+    return LogicCaps->processController->UnmapProcessMemory(frame->arg0, frame->arg1);
 }
 
 uint64_t MemoryRequestManager::HandleMprotectRequest(const arch_syscall_frame_t* frame)
@@ -69,12 +69,12 @@ uint64_t MemoryRequestManager::HandleMprotectRequest(const arch_syscall_frame_t*
         return LINUX_EINVAL;
     }
 
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    return ResourceCaps->processMemoryManager->ProtectProcessMemory(frame->arg0, frame->arg1, frame->arg2);
+    return LogicCaps->processController->ProtectProcessMemory(frame->arg0, frame->arg1, frame->arg2);
 }
 
 uint64_t MemoryRequestManager::HandleMincoreRequest(const arch_syscall_frame_t* frame)
@@ -89,12 +89,12 @@ uint64_t MemoryRequestManager::HandleMincoreRequest(const arch_syscall_frame_t* 
         return static_cast<uint64_t>(-12);
     }
 
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    return ResourceCaps->processMemoryManager->QueryProcessMemoryResidency(frame->arg0, frame->arg1, frame->arg2);
+    return LogicCaps->processController->QueryProcessMemoryResidency(frame->arg0, frame->arg1, frame->arg2);
 }
 
 uint64_t MemoryRequestManager::HandleMadviseRequest(const arch_syscall_frame_t* frame)
@@ -105,20 +105,20 @@ uint64_t MemoryRequestManager::HandleMadviseRequest(const arch_syscall_frame_t* 
         return LINUX_EINVAL;
     }
 
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    return ResourceCaps->processMemoryManager->AdviseProcessMemory(frame->arg0, frame->arg1, frame->arg2);
+    return LogicCaps->processController->AdviseProcessMemory(frame->arg0, frame->arg1, frame->arg2);
 }
 
 uint64_t MemoryRequestManager::HandleBrkRequest(const arch_syscall_frame_t* frame)
 {
-    if (ResourceCaps == nullptr || ResourceCaps->processMemoryManager == nullptr)
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
     {
         return 0;
     }
 
-    return ResourceCaps->processMemoryManager->ResizeProcessBreak(frame != nullptr ? frame->arg0 : 0);
+    return LogicCaps->processController->ResizeProcessBreak(frame != nullptr ? frame->arg0 : 0);
 }

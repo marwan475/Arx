@@ -203,6 +203,17 @@ static void handle_interrupt(registers_t* reg)
         return;
     }
 
+    if (reg->interrupt_number == 14 && (reg->error_code & 7) == 7)
+    {
+        uint64_t address;
+        __asm__ volatile("mov %%cr2, %0" : "=r"(address));
+        arch_enable_interrupts();
+        if (vmm_handle_cow_fault(platform.cpus[arch_cpu_id()].address_space, address))
+        {
+            return;
+        }
+    }
+
     if (reg->interrupt_number < 32)
     {
         platform.cpus[arch_cpu_id()].emergency_logging = true;

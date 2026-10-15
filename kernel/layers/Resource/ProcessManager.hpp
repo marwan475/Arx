@@ -87,6 +87,24 @@ struct process_t
     uint64_t              id;
     bool                  hasParent;
     uint64_t              parentId;
+    uint64_t              parentTaskId;
+    uint64_t              groupId;
+    uint64_t              sessionId;
+    uint64_t              childSequence;
+    uint64_t              execSequence;
+    uint64_t              waitOwner;
+    uint32_t              exitSignal;
+    int32_t               terminationSignal;
+    bool                  waitable;
+    bool                  waitConsumed;
+    bool                  exitNotified;
+    bool                  stopped;
+    bool                  stopPending;
+    bool                  continuedPending;
+    int32_t               stopSignal;
+    uint64_t              stopSequence;
+    bool                  ownsAddressSpace;
+    uint64_t              taskCursor;
     bool                  exited;
     bool                  reclaiming;
     bool                  retirementActive;
@@ -161,9 +179,10 @@ public:
     ProcessManager();
 
     process_t*                AllocateProcess();
-    process_t*                CreateProcess(virt_addr_space_t* addressSpace);
+    process_t*                CreateProcess(virt_addr_space_t* addressSpace, uint64_t preferredId = UINT64_MAX);
     bool                      FreeProcess(process_t* process, bool onlyIfExited = false);
     bool                      AddTask(process_t* process, task_t* task);
+    void                      RemoveTask(process_t* process, task_t* task);
     int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t) = nullptr);
     int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t) = nullptr);
     static file_descriptor_t* GetFileDescriptor(process_t* process, uint64_t fd);
@@ -179,6 +198,7 @@ public:
     process_t* AcquireProcess(uint64_t id, bool requireRealTimer = false);
     void       ReleaseProcess(process_t* process);
     void       ReleaseMemoryProcess(process_t* process);
+    void       RetainMemoryProcess(process_t* process);
     uint64_t   GetCurrentProgramBreak() const;
 
     process_t*       GetProcesses();

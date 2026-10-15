@@ -10,6 +10,82 @@ virt_addr_t USER_VIRTUAL_END;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
+void vmm_release_backing(virt_region_t* region)
+{
+    if (region->shared != NULL)
+    {
+        if (__atomic_sub_fetch(&region->shared->references, 1U, __ATOMIC_ACQ_REL) == 0)
+        {
+            pmm_free(region->shared->pointer);
+            kfree(region->shared);
+        }
+        region->shared = NULL;
+    }
+    else if (region->backing != NULL)
+    {
+        pmm_free(region->backing);
+    }
+}
+
+bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
+{
+    virt_region_t* region = vmm_find_region(space, address);
+
+    if (region == NULL || region->shared == NULL || (region->protection & 2) == 0)
+    {
+        return false;
+    }
+
+    uint64_t flags = 0;
+    ARCH_PAGE_FLAGS_INIT(flags);
+    ARCH_PAGE_FLAG_SET_READ(flags);
+    ARCH_PAGE_FLAG_SET_WRITE(flags);
+    ARCH_PAGE_FLAG_SET_USER(flags);
+    if (region->protection & 4)
+    {
+        ARCH_PAGE_FLAG_SET_EXEC(flags);
+    }
+
+    if (__atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) == 1)
+    {
+        vmm_protect_page(region->start, flags, space);
+        return true;
+    }
+
+    void* page = pmm_alloc(PAGE_SIZE);
+
+    if (page == NULL)
+    {
+        return false;
+    }
+
+    memcpy(page, region->backing, PAGE_SIZE);
+    phys_addr_t physical = hhdm_to_pa((uintptr_t) page, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+
+    if (!vmm_map_page(region->start, physical, flags, space))
+    {
+        pmm_free(page);
+        return false;
+    }
+
+    vmm_release_backing(region);
+    region->backing = page;
+    return true;
+}
+
+bool vmm_handle_cow_fault(virt_addr_space_t* space, virt_addr_t address)
+{
+    if (space == NULL || address > CANONICAL_USER_END)
+    {
+        return false;
+    }
+
+    spinlock_acquire_preempt(&space->operation_lock);
+    bool result = vmm_resolve_cow_locked(space, address);
+    spinlock_release_preempt(&space->operation_lock);
+    return result;
+}
+
 static virt_region_t* alloc_region_struct(metadata_pool_t* metadata_pool, size_t* metadata_count)
 {
     if (metadata_pool == NULL || metadata_count == NULL)

@@ -309,6 +309,20 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
 
     for (uint16_t i = 0; i < header.programHeaderCount; ++i)
     {
+        if (headers[i].type == 3)
+        {
+            if (metadata->interpreter[0] != '\0' || headers[i].fileSize < 2 || headers[i].fileSize > sizeof(metadata->interpreter) || headers[i].offset > fileSize || headers[i].fileSize > fileSize - headers[i].offset || !ReadExactAt(file, headers[i].offset, metadata->interpreter, headers[i].fileSize) || metadata->interpreter[headers[i].fileSize - 1] != '\0')
+            {
+                kfree(headers);
+                return false;
+            }
+        }
+
+        if (headers[i].type == 0x6474e551)
+        {
+            metadata->executableStack = (headers[i].flags & ELF_PF_X) != 0;
+        }
+
         if (headers[i].type == ELF_PH_TYPE_LOAD)
         {
             loadSegmentCount++;
@@ -447,12 +461,31 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         return false;
     }
 
-    if (metadata->type != ELF_TYPE_EXEC)
+    if (metadata->type != ELF_TYPE_EXEC && metadata->type != ELF_TYPE_DYN)
     {
         return false;
     }
 
-    metadata->loadBias   = 0;
+    metadata->loadBias   = metadata->type == ELF_TYPE_EXEC ? 0 : metadata->loadBias != 0 ? metadata->loadBias : 0x40000000;
+
+    if (metadata->type == ELF_TYPE_DYN)
+    {
+        for (uint64_t index = 0; index < metadata->segmentCount; ++index)
+        {
+            const uint64_t alignment = metadata->segments[index].alignment;
+
+            if (alignment > 1)
+            {
+                if (alignment > CANONICAL_USER_END || metadata->loadBias > CANONICAL_USER_END - alignment)
+                {
+                    return false;
+                }
+
+                metadata->loadBias = align_up(metadata->loadBias, alignment);
+            }
+        }
+    }
+
     metadata->entryPoint = metadata->originalEntryPoint;
 
     VirtualMemoryManager*  virtualMemoryManager  = ResourceLayerImportCaps->virtualMemoryManager;
@@ -486,6 +519,11 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         }
 
         mappedAddress = metadata->loadBias + segment.virtualAddress;
+
+        if (!ValidateUserspaceRange(mappedAddress, segment.memorySize) || mappedAddress < 0x10000)
+        {
+            return false;
+        }
 
         if (AddWouldOverflow(mappedAddress, segment.memorySize - 1))
         {
@@ -583,29 +621,12 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
                 goto fail;
             }
 
-            void* pageBuffer = physicalMemoryManager->Alloc(PAGE_SIZE);
-
-            if (pageBuffer == nullptr)
+            if (!virtualMemoryManager->AllocateAnonymousPage(process->addressSpace, pageAddress, 3, false))
             {
                 goto fail;
             }
 
-            memset(pageBuffer, 0, PAGE_SIZE);
-
-            uint64_t pageFlags = 0;
-            ARCH_PAGE_FLAGS_INIT(pageFlags);
-            ARCH_PAGE_FLAG_SET_READ(pageFlags);
-            ARCH_PAGE_FLAG_SET_WRITE(pageFlags);
-            ARCH_PAGE_FLAG_SET_USER(pageFlags);
-
-            const phys_addr_t pagePhysicalAddress = (phys_addr_t) hhdm_to_pa((uintptr_t) pageBuffer, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-
-            if (!virtualMemoryManager->MapPage(pageAddress, pagePhysicalAddress, pageFlags, process->addressSpace))
-            {
-                physicalMemoryManager->Free(pageBuffer);
-                goto fail;
-            }
-
+            void* pageBuffer = virtualMemoryManager->FindRegion(process->addressSpace, pageAddress)->backing;
             mappedPages[mappedPageCount].virtualAddress = pageAddress;
             mappedPages[mappedPageCount].pagePointer    = pageBuffer;
             mappedPages[mappedPageCount].combinedFlags  = segment.flags;
@@ -683,10 +704,24 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             ARCH_PAGE_FLAG_SET_EXEC(protectionFlags);
         }
 
-        virtualMemoryManager->ProtectPage(mappedPages[pageIndex].virtualAddress, protectionFlags, process->addressSpace);
+        const uint32_t protection = 1U | ((mappedPages[pageIndex].combinedFlags & ELF_PF_W) != 0 ? 2U : 0U) | ((mappedPages[pageIndex].combinedFlags & ELF_PF_X) != 0 ? 4U : 0U);
+        virtualMemoryManager->ProtectAnonymousPage(process->addressSpace, mappedPages[pageIndex].virtualAddress, protection);
     }
 
     metadata->entryPoint       = metadata->loadBias + metadata->originalEntryPoint;
+    metadata->programHeaderAddress = 0;
+
+    for (uint64_t index = 0; index < metadata->segmentCount; ++index)
+    {
+        const elf_segment_metadata_t& segment = metadata->segments[index];
+        const uint64_t tableSize = static_cast<uint64_t>(metadata->programHeaderCount) * metadata->programHeaderEntrySize;
+
+        if (metadata->programHeaderOffset >= segment.fileOffset && metadata->programHeaderOffset - segment.fileOffset <= segment.fileSize && tableSize <= segment.fileSize - (metadata->programHeaderOffset - segment.fileOffset))
+        {
+            metadata->programHeaderAddress = segment.mappedAddress + metadata->programHeaderOffset - segment.fileOffset;
+            break;
+        }
+    }
     metadata->executableLoaded = true;
     {
         uint64_t heapEnd = 0;
@@ -719,12 +754,7 @@ fail:
 
     for (uint64_t pageIndex = 0; pageIndex < mappedPageCount; ++pageIndex)
     {
-        virtualMemoryManager->UnmapPage(mappedPages[pageIndex].virtualAddress, process->addressSpace);
-
-        if (mappedPages[pageIndex].pagePointer != nullptr)
-        {
-            physicalMemoryManager->Free(mappedPages[pageIndex].pagePointer);
-        }
+        virtualMemoryManager->ReleaseAnonymousPage(process->addressSpace, mappedPages[pageIndex].virtualAddress);
     }
 
     for (uint64_t segmentIndex = 0; segmentIndex < metadata->segmentCount; ++segmentIndex)

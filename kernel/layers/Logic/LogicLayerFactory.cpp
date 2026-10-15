@@ -5,6 +5,7 @@
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/InterProcessCommunicationManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/ProcessController.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/SocketManager.hpp"
 #include "layers/Logic/SynchronizationManager.hpp"
@@ -20,6 +21,7 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->processController;
         delete LogicLayerExportCaps->interProcessCommunicationManager;
         delete LogicLayerExportCaps->socketManager;
         delete LogicLayerExportCaps->signalManager;
@@ -56,6 +58,7 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->virtualFileSystem->SetEventManager(LogicLayerExportCaps->eventManager);
     LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
     LogicLayerExportCaps->signalManager          = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->processController      = new ProcessController(resourceLayerCaps, LogicLayerExportCaps);
     LogicLayerExportCaps->socketManager          = new SocketManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
 
     LogicLayerExportCaps->interProcessCommunicationManager = new InterProcessCommunicationManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);

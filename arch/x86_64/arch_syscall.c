@@ -39,6 +39,37 @@ uint64_t arch_read_user_tls_base(bool gs)
     return x86_read_msr(gs ? IA32_KERNEL_GS_BASE : 0xc0000100U);
 }
 
+bool arch_user_random_seed(uint64_t seed[2])
+{
+    uint32_t eax = 1;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+
+    if ((ecx & (1U << 30)) == 0)
+    {
+        return false;
+    }
+
+    for (unsigned index = 0; index < 2; ++index)
+    {
+        unsigned char ready = 0;
+
+        for (unsigned retry = 0; retry < 16 && ready == 0; ++retry)
+        {
+            __asm__ volatile("rdrand %0; setc %1" : "=r"(seed[index]), "=qm"(ready) : : "cc");
+        }
+
+        if (ready == 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void arch_write_user_tls_base(bool gs, uint64_t value)
 {
     // Kernel GS stays active; swapgs installs this base on return to userspace.

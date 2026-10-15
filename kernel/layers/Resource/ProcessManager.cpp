@@ -73,6 +73,24 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->id               = id;
     process->hasParent        = false;
     process->parentId         = 0;
+    process->parentTaskId     = 0;
+    process->groupId          = id;
+    process->sessionId        = id;
+    process->childSequence    = 0;
+    process->execSequence     = 0;
+    process->waitOwner        = 0;
+    process->exitSignal       = 17;
+    process->terminationSignal = 0;
+    process->waitable         = false;
+    process->waitConsumed     = false;
+    process->exitNotified     = false;
+    process->stopped          = false;
+    process->stopPending      = false;
+    process->continuedPending = false;
+    process->stopSignal       = 0;
+    process->stopSequence     = 0;
+    process->ownsAddressSpace = false;
+    process->taskCursor       = 0;
     process->exited           = false;
     process->reclaiming       = false;
     process->retirementActive = false;
@@ -159,7 +177,7 @@ process_t* ProcessManager::AllocateProcess()
     return process;
 }
 
-process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
+process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64_t preferredId)
 {
     if (addressSpace == nullptr)
     {
@@ -210,7 +228,20 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
         return nullptr;
     }
 
-    process_t* process = AllocateProcessUnlocked();
+    process_t* process = nullptr;
+
+    if (preferredId < MAX_PROCESSES)
+    {
+        if (!Processes[preferredId].allocated)
+        {
+            process = &Processes[preferredId];
+            ResetProcessSlot(process, preferredId, true);
+        }
+    }
+    else
+    {
+        process = AllocateProcessUnlocked();
+    }
 
     if (process == nullptr)
     {
@@ -235,6 +266,8 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace)
         process->hasParent = true;
         process->parentId  = RunningProcesses[currentCpu]->id;
         process_t* parent  = RunningProcesses[currentCpu];
+        process->groupId   = parent->groupId;
+        process->sessionId = parent->sessionId;
         spinlock_acquire(&parent->credentialLock);
         process->credentials         = parent->credentials;
         process->supplementaryGroups = parent->supplementaryGroups;
@@ -300,7 +333,14 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     virt_addr_space_t* addressSpace = process->addressSpace;
     UnlockManager();
     VirtualMemoryManager memory;
-    memory.ReleaseAnonymousPages(addressSpace);
+    if (process->ownsAddressSpace)
+    {
+        memory.DestroyUserAddressSpace(addressSpace);
+    }
+    else if (addressSpace == nullptr || __atomic_load_n(&addressSpace->references, __ATOMIC_ACQUIRE) <= 1)
+    {
+        memory.ReleaseAnonymousPages(addressSpace);
+    }
     LockManager();
     process->memoryUsers = 0;
     process->exited      = wasExited;
@@ -375,6 +415,29 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
     ILIST_APPEND(process->tasks, task);
     task->process = process;
     return true;
+}
+
+void ProcessManager::RemoveTask(process_t* process, task_t* task)
+{
+    LockManager();
+
+    if (task->prev != nullptr)
+    {
+        task->prev->next = task->next;
+    }
+    else if (process->tasks == task)
+    {
+        process->tasks = task->next;
+    }
+
+    if (task->next != nullptr)
+    {
+        task->next->prev = task->prev;
+    }
+
+    task->next = nullptr;
+    task->prev = nullptr;
+    UnlockManager();
 }
 
 int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t))
@@ -1074,6 +1137,13 @@ void ProcessManager::ReleaseMemoryProcess(process_t* process)
         process->memoryUsers--;
     }
 
+    UnlockManager();
+}
+
+void ProcessManager::RetainMemoryProcess(process_t* process)
+{
+    LockManager();
+    ++process->memoryUsers;
     UnlockManager();
 }
 

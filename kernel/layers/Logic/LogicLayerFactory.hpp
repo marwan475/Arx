@@ -2,6 +2,7 @@
 
 struct ResourceLayerCaps;
 class Scheduler;
+class ProcessController;
 class VirtualFileSystem;
 class ElfMapper;
 class CredentialManager;
@@ -14,6 +15,7 @@ class InterProcessCommunicationManager;
 struct LogicLayerCaps
 {
     Scheduler*              scheduler;
+    ProcessController*      processController;
     VirtualFileSystem*      virtualFileSystem;
     ElfMapper*              elfMapper;
     CredentialManager*      credentialManager;

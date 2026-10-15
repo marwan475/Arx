@@ -28,6 +28,12 @@ typedef struct virt_backing_block
 
 typedef struct virt_region virt_region_t;
 
+typedef struct virt_shared_page
+{
+    uint32_t references;
+    void* pointer;
+} virt_shared_page_t;
+
 typedef struct virt_region
 {
     virt_addr_t           start;
@@ -36,6 +42,7 @@ typedef struct virt_region
     virt_type_t           type;
     bool                  allocated; // used for metadata allocations
     void*                 backing;   // Owned eager anonymous page; null for legacy reservations.
+    virt_shared_page_t*    shared;
     virt_backing_block_t* blocks;    // vmalloc owns whole PMM allocations.
     uint32_t              protection;
     bool                  heap_page;
@@ -49,6 +56,7 @@ typedef struct virt_addr_space
     phys_addr_t     pt;
     spinlock_t      lock;
     spinlock_t      operation_lock; // Serializes process-visible memory transactions.
+    uint32_t        references;
     virt_region_t*  kernel_free_regions;
     virt_region_t*  kernel_used_regions;
     metadata_pool_t kernel_region_metadata_pool;
@@ -85,5 +93,9 @@ virt_addr_t    vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_ty
 void           vmm_free_region(virt_addr_space_t* space, virt_addr_t addr);
 virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr);
 bool           vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr);
+// Caller holds operation_lock. Read-only mappings remain read-only after fork.
+bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address);
+bool vmm_handle_cow_fault(virt_addr_space_t* space, virt_addr_t address);
+void vmm_release_backing(virt_region_t* region);
 
 #endif

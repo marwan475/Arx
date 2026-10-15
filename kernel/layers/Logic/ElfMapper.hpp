@@ -34,6 +34,9 @@ struct elf_metadata_t
     uint64_t programHeaderOffset;
     uint16_t programHeaderEntrySize;
     uint16_t programHeaderCount;
+    uint64_t programHeaderAddress;
+    char     interpreter[256];
+    bool     executableStack;
 
     elf_segment_metadata_t* segments;
     uint64_t                segmentCount;

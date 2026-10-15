@@ -1,11 +1,11 @@
 #pragma once
 #include <arch/arch.h>
 #include <stdint.h>
-struct ResourceLayerCaps;
+struct LogicLayerCaps;
 class MemoryRequestManager
 {
 public:
-    explicit MemoryRequestManager(ResourceLayerCaps* resourceLayerCaps = nullptr) : ResourceCaps(resourceLayerCaps)
+    explicit MemoryRequestManager(LogicLayerCaps* logicLayerCaps = nullptr) : LogicCaps(logicLayerCaps)
     {
     }
 
@@ -17,5 +17,5 @@ public:
     uint64_t HandleBrkRequest(const arch_syscall_frame_t* frame);
 
 private:
-    ResourceLayerCaps* ResourceCaps;
+    LogicLayerCaps* LogicCaps;
 };

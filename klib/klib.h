@@ -20,6 +20,7 @@ static const uint64_t LINUX_ENOENT       = (uint64_t) -2;
 static const uint64_t LINUX_ESRCH        = (uint64_t) -3;
 static const uint64_t LINUX_EIO          = (uint64_t) -5;
 static const uint64_t LINUX_EBADF        = (uint64_t) -9;
+static const uint64_t LINUX_EAGAIN       = (uint64_t) -11;
 static const uint64_t LINUX_ENOMEM       = (uint64_t) -12;
 static const uint64_t LINUX_EACCES       = (uint64_t) -13;
 static const uint64_t LINUX_EFAULT       = (uint64_t) -14;

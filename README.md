@@ -174,6 +174,10 @@ currently all cores wait for the rest of the cores to enter post init then conti
 
 - Logic
     - Scheduler and kernel execution policy
+    - ProcessController
+        - Process creation, execution, waiting, groups and sessions
+        - Process memory mapping, protection and program break policy
+        - Implemented in `ProcessLifecycle.cpp` and `ProcessMemoryManager.cpp`
     - Virtual filesystem semantics (paths, dentries, mounts, open files)
     - ElfMapper
         - Reads ELF metadata from VFS files

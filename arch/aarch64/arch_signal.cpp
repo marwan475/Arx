@@ -1,6 +1,12 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 
+bool arch_user_random_seed(uint64_t seed[2])
+{
+    (void) seed;
+    return false;
+}
+
 // User signal contexts are not implemented on this architecture yet.
 uint64_t arch_signal_validate_action(const signal_action_t*)
 {

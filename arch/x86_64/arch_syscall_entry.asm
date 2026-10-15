@@ -112,6 +112,33 @@ arch_x86_64_syscall_entry:
     swapgs
     iretq
 
+; New clone tasks enter here with a private copy of the parent's user frame.
+global arch_resume_user_frame
+arch_resume_user_frame:
+    cli
+    mov rsp, rdi
+    mov rax, [rsp + 160]
+    fxrstor64 [rax]
+    mov qword [gs:SYSCALL_CTX_ACTIVE_OFFSET], 0
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp + 16]
+    mov rdx, [rsp + 24]
+    mov r10, [rsp + 32]
+    mov r8, [rsp + 40]
+    mov r9, [rsp + 48]
+    mov rbx, [rsp + 96]
+    mov rbp, [rsp + 104]
+    mov r12, [rsp + 112]
+    mov r13, [rsp + 120]
+    mov r14, [rsp + 128]
+    mov r15, [rsp + 136]
+    mov rcx, [rsp + 144]
+    mov r11, [rsp + 152]
+    xor eax, eax
+    add rsp, 56
+    swapgs
+    iretq
+
 section .rodata
 align 4
 syscall_kernel_mxcsr: dd 0x1f80

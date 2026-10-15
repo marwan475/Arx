@@ -108,6 +108,73 @@ bool VirtualMemoryManager::IsPageAvailable(virt_addr_space_t* space, uint64_t ad
     return false;
 }
 
+virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t* source)
+{
+    virt_addr_space_t* child = CreateUserAddressSpace();
+
+    if (child == nullptr)
+    {
+        return nullptr;
+    }
+
+    spinlock_acquire_preempt(&source->operation_lock);
+    bool complete = true;
+
+    for (virt_region_t* region = source->user_used_regions; region != nullptr; region = region->next)
+    {
+        if (region->backing == nullptr || region->size != PAGE_SIZE || !vmm_reserve_page_at(child, region->start))
+        {
+            complete = false;
+            break;
+        }
+
+        if (region->shared == nullptr)
+        {
+            region->shared = static_cast<virt_shared_page_t*>(kmalloc(sizeof(virt_shared_page_t)));
+
+            if (region->shared == nullptr)
+            {
+                FreeRegion(child, region->start);
+                complete = false;
+                break;
+            }
+
+            region->shared->references = 1;
+            region->shared->pointer    = region->backing;
+        }
+
+        virt_region_t* copy = FindRegion(child, region->start);
+        copy->backing       = region->backing;
+        copy->shared        = region->shared;
+        copy->protection    = region->protection;
+        copy->heap_page     = region->heap_page;
+        __atomic_add_fetch(&copy->shared->references, 1U, __ATOMIC_ACQ_REL);
+
+        const uint64_t flags = anonymous_page_flags(region->protection & ~2U);
+        // Revoke the parent's writable translations before publishing the child.
+        ProtectPage(region->start, flags, source);
+
+        if (!MapPage(region->start, VirtToPhys(region->start, source), flags, child))
+        {
+            vmm_release_backing(copy);
+            copy->backing = nullptr;
+            FreeRegion(child, region->start);
+            complete = false;
+            break;
+        }
+    }
+
+    spinlock_release_preempt(&source->operation_lock);
+
+    if (!complete)
+    {
+        DestroyUserAddressSpace(child);
+        return nullptr;
+    }
+
+    return child;
+}
+
 bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection, bool heap)
 {
     if (!IsPageAvailable(space, address) || !vmm_reserve_page_at(space, address))
@@ -151,26 +218,50 @@ void VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uint64
         return;
     }
 
-    void* page = region->backing;
     // Synchronous shootdown completes before physical-page reuse.
     UnmapPage(address, space);
+    vmm_release_backing(region);
     region->backing    = nullptr;
     region->protection = 0;
     region->heap_page  = false;
-    pmm_free(page);
     FreeRegion(space, address);
 }
 
 void VirtualMemoryManager::ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection)
 {
     virt_region_t* region = FindRegion(space, address);
-    ProtectPage(address, anonymous_page_flags(protection), space);
+    const bool shared = region->shared != nullptr && __atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) > 1;
+    ProtectPage(address, anonymous_page_flags(shared ? protection & ~2U : protection), space);
     region->protection = protection;
 }
 
 void VirtualMemoryManager::DiscardAnonymousPage(virt_addr_space_t* space, uint64_t address)
 {
     virt_region_t* region = FindRegion(space, address);
+
+    if (region->shared != nullptr && __atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) > 1)
+    {
+        void* page = pmm_alloc(PAGE_SIZE);
+
+        if (page == nullptr)
+        {
+            return;
+        }
+
+        memset(page, 0, PAGE_SIZE);
+        const phys_addr_t physical = hhdm_to_pa(reinterpret_cast<uintptr_t>(page), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+
+        if (!MapPage(address, physical, anonymous_page_flags(region->protection), space))
+        {
+            pmm_free(page);
+            return;
+        }
+
+        vmm_release_backing(region);
+        region->backing = page;
+        return;
+    }
+
     memset(region->backing, 0, PAGE_SIZE);
 }
 
@@ -212,6 +303,7 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
 
     memset(space, 0, sizeof(*space));
     space->type = VIRT_ADDR_USER;
+    space->references = 1;
     space->pt   = arch_create_user_page_table();
 
     if (space->pt == 0)
@@ -230,6 +322,7 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
         return nullptr;
     }
 
+    memset(freeRegion, 0, sizeof(*freeRegion));
     freeRegion->start         = 0x10000;
     freeRegion->end           = CANONICAL_USER_END + 1;
     freeRegion->size          = freeRegion->end - freeRegion->start;
@@ -244,7 +337,27 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 {
     // Caller has detached this isolated root from every process/CPU.
 
-    if (space == nullptr || space->type != VIRT_ADDR_USER || space->pt == arch_get_pt())
+    if (space == nullptr || space->type != VIRT_ADDR_USER)
+    {
+        return;
+    }
+
+    if (space->pt == arch_get_pt())
+    {
+        uint32_t references = __atomic_load_n(&space->references, __ATOMIC_ACQUIRE);
+
+        while (references > 1)
+        {
+            if (__atomic_compare_exchange_n(&space->references, &references, references - 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            {
+                return;
+            }
+        }
+
+        return;
+    }
+
+    if (__atomic_sub_fetch(&space->references, 1U, __ATOMIC_ACQ_REL) != 0)
     {
         return;
     }
@@ -254,6 +367,7 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 
     if (space->user_used_regions != nullptr)
     {
+        __atomic_store_n(&space->references, 1U, __ATOMIC_RELEASE);
         return;
     }
 

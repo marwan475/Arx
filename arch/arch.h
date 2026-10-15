@@ -109,6 +109,7 @@ extern "C"
     typedef void (*arch_task_entry_t)(void* arg);
     __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
     __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1);
+    bool arch_user_random_seed(uint64_t seed[2]);
     void                           arch_set_user_transition_stack(uint64_t kernel_rsp);
     void                           arch_init_context(struct arch_task_context* context, void* stack_top, arch_task_entry_t entry, void* arg);
     uint64_t                       arch_task_context_stack_pointer(const struct arch_task_context* context);

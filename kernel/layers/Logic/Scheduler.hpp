@@ -23,15 +23,18 @@ public:
 
     bool              ScheduleProcess(uint64_t processId);
     bool              EnqueueProcess(uint8_t cpuId, uint64_t processId);
+    bool              PublishTask(process_t* process, task_t* task);
     bool              RunNextReadyProcess(uint8_t cpuId);
     bool              KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false);
     uint64_t          SleepUntil(uint64_t monotonicDeadline);
-    uint64_t          WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX);
+    uint64_t          WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX, bool uninterruptible = false);
     void              WakeEventWaiters(const uint64_t* sequence);
     void              WakeSignalWaiters(process_t* process);
     void              WakeSleepingTasks(uint8_t cpuId);
     [[noreturn]] void ExitCurrentTask();
     void              ReapExitedProcesses();
+    void              NotifyProcessExit(process_t* process);
+    void              ChangeStoppedState(process_t* process, int signal, bool stopped);
 
 private:
     void        InitializeBspProcessAndTask();
@@ -56,6 +59,7 @@ private:
         uint8_t         cpuId;
         bool            waiting;
         bool            dispatched;
+        bool            uninterruptible;
     };
 
     struct ready_queue_t
@@ -67,7 +71,7 @@ private:
     };
 
     bool     RemoveProcessFromQueue(ready_queue_t* queue, uint64_t processId);
-    uint64_t Sleep(uint64_t deadline, const uint64_t* sequence, uint64_t expected);
+    uint64_t Sleep(uint64_t deadline, const uint64_t* sequence, uint64_t expected, bool uninterruptible = false);
 
     ready_queue_t ReadyQueues[BOOT_SMP_MAX_CPUS];
     bool          SchedulingActive[BOOT_SMP_MAX_CPUS];

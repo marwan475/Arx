@@ -1,6 +1,7 @@
 #include "layers/Request/ProcessRequestManager.hpp"
 
 #include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/ProcessController.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
@@ -13,150 +14,154 @@ extern "C"
 #include <arch/arch.h>
 }
 
-namespace
-{
-static void close_process_file_descriptors(process_t* process, VirtualFileSystem* virtualFileSystem)
-{
-    FileDescriptorGuard descriptors(process);
-
-    if (process == nullptr || virtualFileSystem == nullptr)
-    {
-        return;
-    }
-
-    if (process->fileDescriptors == nullptr || process->fileDescriptorCount == 0)
-    {
-        return;
-    }
-
-    for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
-    {
-        file_descriptor_t* descriptor = &process->fileDescriptors[fd];
-
-        if (descriptor->file == nullptr)
-        {
-            continue;
-        }
-
-        file_t* file      = static_cast<file_t*>(descriptor->file);
-        descriptor->file  = nullptr;
-        descriptor->flags = FD_FLAG_NONE;
-        (void) virtualFileSystem->Close(file);
-    }
-}
-
-} // namespace
-
 ProcessRequestManager::ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps) : ResourceCaps(resourceLayerCaps), LogicCaps(logicLayerCaps)
 {
 }
 
 uint64_t ProcessRequestManager::HandleExitRequest(const arch_syscall_frame_t* frame)
 {
-    if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || ResourceCaps->taskManager == nullptr)
-    {
-        return LINUX_ENOSYS;
-    }
-
-    process_t* currentProcess = ResourceCaps->processManager->GetCurrentProcess();
-    task_t*    currentTask    = ResourceCaps->taskManager->GetCurrentTask();
-
-    if (currentProcess == nullptr || currentTask == nullptr)
-    {
-        return LINUX_ESRCH;
-    }
-
-    const int32_t status = frame != nullptr ? (int32_t) frame->arg0 : 0;
-    ResourceCaps->taskManager->CleanupCurrentTask();
-
-    if (LogicCaps != nullptr && LogicCaps->virtualFileSystem != nullptr)
-    {
-        close_process_file_descriptors(currentProcess, LogicCaps->virtualFileSystem);
-    }
-
-    // Kernel test callers return to their harness on the existing context.
-
-    if (!currentTask->isUserTask)
-    {
-        currentProcess->exitStatus = status;
-        __atomic_store_n(&currentProcess->exited, true, __ATOMIC_RELEASE);
-        return 0;
-    }
-
-    if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
-    {
-        (void) LogicCaps->scheduler->KillProcess(currentProcess->id, status);
-    }
-
-    currentProcess->exitStatus = status;
-    __atomic_store_n(&currentProcess->exited, true, __ATOMIC_RELEASE);
-
-    // User-task exit should not return to userspace.
-
-    if (LogicCaps != nullptr && LogicCaps->scheduler != nullptr)
-    {
-        LogicCaps->scheduler->ExitCurrentTask();
-    }
-
-    for (;;)
-    {
-        arch_pause();
-    }
-
-    return 0;
+    return LogicCaps != nullptr && LogicCaps->processController != nullptr ? LogicCaps->processController->Exit(frame != nullptr ? static_cast<int32_t>(frame->arg0) : 0, false) : LINUX_ENOSYS;
 }
 
 uint64_t ProcessRequestManager::HandleExit_groupRequest(const arch_syscall_frame_t* frame)
 {
-    return HandleExitRequest(frame);
+    return LogicCaps != nullptr && LogicCaps->processController != nullptr ? LogicCaps->processController->Exit(frame != nullptr ? static_cast<int32_t>(frame->arg0) : 0, true) : LINUX_ENOSYS;
 }
 
 uint64_t ProcessRequestManager::HandleForkRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_clone_arguments_t arguments = {};
+    arguments.exitSignal               = 17;
+    return LogicCaps->processController->Clone(frame, arguments);
 }
 
 uint64_t ProcessRequestManager::HandleVforkRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    process_clone_arguments_t arguments = {};
+    arguments.flags                    = 0x4100;
+    arguments.exitSignal               = 17;
+    return LogicCaps->processController->Clone(frame, arguments);
 }
 
 uint64_t ProcessRequestManager::HandleCloneRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+
+    process_clone_arguments_t arguments = {};
+    arguments.flags                    = frame->arg0 & ~255ULL;
+    arguments.exitSignal               = frame->arg0 & 255;
+    arguments.stack                    = frame->arg1;
+    arguments.parentTid                = frame->arg2;
+    arguments.childTid                 = frame->arg3;
+    arguments.tls                      = frame->arg4;
+    return LogicCaps->processController->Clone(frame, arguments);
 }
 
 uint64_t ProcessRequestManager::HandleClone3Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    if (frame == nullptr || frame->arg1 < 64)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (frame->arg1 > PAGE_SIZE)
+    {
+        return static_cast<uint64_t>(-7);
+    }
+
+    process_clone_arguments_t arguments = {};
+    const size_t size                  = frame->arg1 < sizeof(arguments) ? frame->arg1 : sizeof(arguments);
+
+    if (!safe_read_user(frame->arg0, &arguments, size))
+    {
+        return LINUX_EFAULT;
+    }
+
+    for (uint64_t offset = sizeof(arguments); offset < frame->arg1; ++offset)
+    {
+        uint8_t extra;
+
+        if (frame->arg0 > UINT64_MAX - offset || !safe_read_user(frame->arg0 + offset, &extra, 1))
+        {
+            return LINUX_EFAULT;
+        }
+
+        if (extra != 0)
+        {
+            return static_cast<uint64_t>(-7);
+        }
+    }
+
+    if ((arguments.flags & 255) != 0 || (arguments.stack == 0) != (arguments.stackSize == 0) || arguments.stackSize > CANONICAL_USER_END || arguments.stack > CANONICAL_USER_END - arguments.stackSize)
+    {
+        return LINUX_EINVAL;
+    }
+
+    arguments.stack += arguments.stackSize;
+    return LogicCaps->processController->Clone(frame, arguments);
 }
 
 uint64_t ProcessRequestManager::HandleExecveRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return LogicCaps->processController->Execute(const_cast<arch_syscall_frame_t*>(frame));
 }
 
 uint64_t ProcessRequestManager::HandleWait4Request(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return frame != nullptr ? LogicCaps->processController->Wait(static_cast<int32_t>(frame->arg0), frame->arg1, static_cast<uint32_t>(frame->arg2), frame->arg3, false) : LINUX_EINVAL;
 }
 
 uint64_t ProcessRequestManager::HandleWaitidRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return frame != nullptr ? LogicCaps->processController->Wait(static_cast<uint32_t>(frame->arg1), frame->arg2, static_cast<uint32_t>(frame->arg3), frame->arg4, true, static_cast<uint32_t>(frame->arg0)) : LINUX_EINVAL;
 }
 
 uint64_t ProcessRequestManager::HandleSet_tid_addressRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return LogicCaps->processController->SetTidAddress(frame != nullptr ? frame->arg0 : 0);
 }
 
 uint64_t ProcessRequestManager::HandleGettidRequest(const arch_syscall_frame_t* frame)
@@ -223,31 +228,52 @@ uint64_t ProcessRequestManager::HandleGetppidRequest(const arch_syscall_frame_t*
 
 uint64_t ProcessRequestManager::HandleGetpgidRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return LogicCaps->processController->Group(0, frame != nullptr ? static_cast<int32_t>(frame->arg0) : 0);
 }
 
 uint64_t ProcessRequestManager::HandleGetpgrpRequest(const arch_syscall_frame_t* frame)
 {
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
     (void) frame;
-    return (uint64_t) -38;
+    return LogicCaps->processController->Group(0, 0);
 }
 
 uint64_t ProcessRequestManager::HandleSetpgidRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return frame != nullptr ? LogicCaps->processController->Group(1, static_cast<int32_t>(frame->arg0), static_cast<int32_t>(frame->arg1)) : LINUX_EINVAL;
 }
 
 uint64_t ProcessRequestManager::HandleGetsidRequest(const arch_syscall_frame_t* frame)
 {
-    (void) frame;
-    return (uint64_t) -38;
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    return LogicCaps->processController->Group(2, frame != nullptr ? static_cast<int32_t>(frame->arg0) : 0);
 }
 
 uint64_t ProcessRequestManager::HandleSetsidRequest(const arch_syscall_frame_t* frame)
 {
+    if (LogicCaps == nullptr || LogicCaps->processController == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
     (void) frame;
-    (void) LogicCaps;
-    return (uint64_t) -38;
+    return LogicCaps->processController->Group(3, 0);
 }

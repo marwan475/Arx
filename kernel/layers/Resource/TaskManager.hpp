@@ -51,6 +51,8 @@ struct task_t
     signal_stack_t   signalStack;
     uint64_t         signalDepth;
     uint64_t         robustHead;
+    uint64_t         clearChildTid;
+    uint64_t         setChildTid;
     process_t*       robustOwner;
     void*            retirementContext;
     void (*retirementCleanup)(void*, task_t*);
@@ -70,6 +72,7 @@ public:
     task_t*     AllocateTask();
     task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);
     task_t*     CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
+    task_t*     CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id);
     bool        FreeTask(task_t* task, void** retiredStack = nullptr);
     void        CleanupCurrentTask();
     bool        CleanupRetiredTask(task_t* task);
@@ -85,6 +88,8 @@ public:
     task_t* GetRunningTask(uint8_t cpuId) const;
     bool    SetRunningTask(uint8_t cpuId, task_t* task);
     task_t* GetCurrentTask() const;
+    task_t* FindTask(uint64_t id) const;
+    void    SetCurrentIdentity(uint64_t id);
 
     task_t*       GetTasks();
     const task_t* GetTasks() const;

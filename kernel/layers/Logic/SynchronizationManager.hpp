@@ -7,6 +7,7 @@
 struct ResourceLayerCaps;
 struct virt_addr_space;
 struct task_t;
+struct process_t;
 class Scheduler;
 
 class SynchronizationManager
@@ -18,6 +19,7 @@ public:
     uint64_t Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected);
     uint64_t WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation);
     uint64_t SetRobustList(uint64_t head);
+    void     ConfigureChildTid(task_t* task, process_t* owner, uint64_t address);
     uint64_t GetRobustList(int32_t tid, uint64_t* head, uint64_t* length);
 
 private:

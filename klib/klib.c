@@ -206,6 +206,14 @@ static bool validate_user_memory(const user_memory_access_t* access, uint64_t ad
 
     for (uint64_t page = align_down(address, PAGE_SIZE); length != 0 && page < address + length; page += PAGE_SIZE)
     {
+        if (write)
+        {
+            virt_region_t* region = vmm_find_region(access->space, page);
+            if (region != NULL && region->shared != NULL && (region->protection & 2) != 0 && !vmm_resolve_cow_locked(access->space, page))
+            {
+                return false;
+            }
+        }
         spinlock_acquire_preempt(&access->space->lock);
         bool accessible = arch_user_page_accessible(page, access->space->pt, write);
         spinlock_release_preempt(&access->space->lock);
@@ -380,7 +388,7 @@ bool safe_read_user_string(uint64_t address, char* destination, size_t capacity,
     return result;
 }
 
-bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
+static bool copy_to_process_virtual_locked(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
 {
     if (addressSpace == NULL || source == NULL)
     {
@@ -395,6 +403,13 @@ bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinati
         const uint64_t currentVirtualAddress = destinationVirtualAddress + offset;
         const uint64_t pageOffset            = currentVirtualAddress & (PAGE_SIZE - 1);
         const uint64_t chunkSize             = ((size - offset) < (PAGE_SIZE - pageOffset)) ? (size - offset) : (PAGE_SIZE - pageOffset);
+
+        virt_region_t* region = vmm_find_region(addressSpace, currentVirtualAddress);
+
+        if (region != NULL && region->shared != NULL && !vmm_resolve_cow_locked(addressSpace, currentVirtualAddress))
+        {
+            return false;
+        }
 
         phys_addr_t physicalAddress = vmm_virt_to_phys(currentVirtualAddress, addressSpace);
 
@@ -415,6 +430,19 @@ bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinati
     }
 
     return true;
+}
+
+bool copy_to_process_virtual(virt_addr_space_t* addressSpace, uint64_t destinationVirtualAddress, const void* source, uint64_t size)
+{
+    if (addressSpace == NULL || !range_within_u64(destinationVirtualAddress, size, CANONICAL_USER_BASE, CANONICAL_USER_END))
+    {
+        return false;
+    }
+
+    spinlock_acquire_preempt(&addressSpace->operation_lock);
+    const bool result = copy_to_process_virtual_locked(addressSpace, destinationVirtualAddress, source, size);
+    spinlock_release_preempt(&addressSpace->operation_lock);
+    return result;
 }
 
 // klib printf only prints to qemu serial.

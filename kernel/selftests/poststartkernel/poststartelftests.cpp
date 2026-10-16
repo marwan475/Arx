@@ -1,4 +1,6 @@
 #include <selftests/SelfTestManager.hpp>
+#include <selftests/ManagerSuite.hpp>
+#include <selftests/TestFixture.hpp>
 
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
@@ -47,6 +49,8 @@ struct poststart_elf_test_context_t
     volatile int      exitSeen;
     volatile uint64_t exitStatus;
     volatile int      hookArmed;
+    task_t*           fixtureTask;
+    bool              dynamic;
 };
 
 static poststart_elf_test_context_t g_poststart_elf_ctx = {};
@@ -101,7 +105,7 @@ static bool setup_user_stack(ResourceLayerCaps* resourceCaps, process_t* process
             return false;
         }
 
-        void* pageBuffer = virtualMemoryManager->FindRegion(process->addressSpace, pageVirtualAddress)->backing;
+        void* pageBuffer        = virtualMemoryManager->FindRegion(process->addressSpace, pageVirtualAddress)->backing;
         pages[i].virtualAddress = pageVirtualAddress;
         pages[i].pagePointer    = pageBuffer;
     }
@@ -189,8 +193,16 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     *handled = false;
 
-    if (frame == nullptr || !g_poststart_elf_ctx.hookArmed)
+    if (frame == nullptr || !g_poststart_elf_ctx.hookArmed || g_poststart_elf_ctx.taskManager->GetCurrentTask() != g_poststart_elf_ctx.fixtureTask)
     {
+        return 0;
+    }
+
+    if (frame->syscall_number == 0x1338 && g_poststart_elf_ctx.dynamic)
+    {
+        g_poststart_elf_ctx.syscallProbeSeen = 1;
+        g_poststart_elf_ctx.syscallAbiValid  = frame->arg0 == 42;
+        *handled                             = true;
         return 0;
     }
 
@@ -210,7 +222,7 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
         return 0;
     }
 
-    if (frame->syscall_number == SELFTEST_SYSCALL_EXIT)
+    if (frame->syscall_number == SELFTEST_SYSCALL_EXIT || frame->syscall_number == 231)
     {
         g_poststart_elf_ctx.exitSeen   = 1;
         g_poststart_elf_ctx.exitStatus = frame->arg0;
@@ -231,8 +243,9 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
 #endif
 
-extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps)
+static void run_elf_execution_selftest(void* resourceLayerCaps, void* logicLayerCaps, bool dynamic)
 {
+    const char*        caseName    = dynamic ? "poststartkernel/executable/dynamic_interpreter" : "poststartkernel/executable/user_entry_return";
     unsigned long long passes      = 0;
     unsigned long long fails       = 0;
     file_t*            file        = nullptr;
@@ -258,11 +271,11 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     constexpr uint64_t stackPageCount             = USER_STACK_SIZE / PAGE_SIZE;
     mapped_user_page_t stackPages[stackPageCount] = {};
 
-    SelfTestManager::Get().CaseBegin("poststartkernel/executable/user_entry_return");
+    SelfTestManager::Get().CaseBegin(caseName);
 
 #if !defined(__x86_64__)
     kprintf("Arx kernel: poststart_elf_selftest SKIP: currently x86_64-only syscall fixture\n");
-    SelfTestManager::Get().CaseFinish("poststartkernel/executable/user_entry_return", 0, 0, SELFTEST_SKIP);
+    SelfTestManager::Get().CaseFinish(caseName, 0, 0, SELFTEST_SKIP);
     return;
 #else
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
@@ -282,7 +295,7 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
 
     {
         vfs_path_t start = {};
-        file             = logicCaps->virtualFileSystem->Open(start, "/test_syscall_exit.elf", 0);
+        file             = logicCaps->virtualFileSystem->Open(start, dynamic ? "/dynamic_launcher.elf" : "/test_syscall_exit.elf", 0);
 
         if (file == nullptr)
         {
@@ -302,7 +315,17 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
             goto cleanup;
         }
 
-        process = resourceCaps->processManager->CreateProcess(currentSpace);
+        virt_addr_space_t* fixtureSpace = dynamic ? resourceCaps->virtualMemoryManager->CreateUserAddressSpace() : currentSpace;
+        process                         = fixtureSpace != nullptr ? resourceCaps->processManager->CreateProcess(fixtureSpace) : nullptr;
+
+        if (process != nullptr && dynamic)
+        {
+            process->ownsAddressSpace = true;
+        }
+        else if (process == nullptr && dynamic && fixtureSpace != nullptr)
+        {
+            resourceCaps->virtualMemoryManager->DestroyUserAddressSpace(fixtureSpace);
+        }
 
         if (process == nullptr)
         {
@@ -437,6 +460,8 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     passes++;
 
     memset(&g_poststart_elf_ctx, 0, sizeof(g_poststart_elf_ctx));
+    g_poststart_elf_ctx.fixtureTask = userTask;
+    g_poststart_elf_ctx.dynamic     = dynamic;
     g_poststart_elf_ctx.taskManager = resourceCaps->taskManager;
     g_poststart_elf_ctx.bspTask     = resourceCaps->taskManager->GetCurrentTask();
     g_poststart_elf_ctx.hookArmed   = (g_poststart_elf_ctx.bspTask != nullptr) ? 1 : 0;
@@ -491,12 +516,12 @@ cleanup:
         userTask = nullptr;
     }
 
-    if (stackMapped)
+    if (stackMapped && !dynamic)
     {
         teardown_user_pages(resourceCaps, process, stackPages, stackPageCount);
     }
 
-    if (elfMapped)
+    if (elfMapped && !dynamic)
     {
         teardown_elf_segments(resourceCaps, process, &metadata);
     }
@@ -521,6 +546,90 @@ cleanup:
         process = nullptr;
     }
 
-    SelfTestManager::Get().CaseEnd("poststartkernel/executable/user_entry_return", passes, fails);
+    SelfTestManager::Get().CaseEnd(caseName, passes, fails);
 #endif
+}
+
+extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps)
+{
+    auto*        resources = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
+    auto*        logic     = static_cast<LogicLayerCaps*>(logicLayerCaps);
+    ManagerSuite suite("poststartkernel/ElfMapper", resources != nullptr && logic != nullptr && logic->elfMapper != nullptr && logic->virtualFileSystem != nullptr);
+    suite.Run("poststartkernel/ElfMapper/library_backing",
+              [&](TestCase& t)
+              {
+                  TestFixture first(resources);
+                  TestFixture second(resources);
+
+                  if (!first.Valid(t) || !second.Valid(t))
+                  {
+                      return;
+                  }
+
+                  file_t* file = logic->virtualFileSystem->Open({}, "/lib/libarx_dynamic_test.so", 0);
+
+                  if (!t.Check(file != nullptr, "required target musl fixture library exists"))
+                  {
+                      return;
+                  }
+
+                  elf_metadata_t a      = {};
+                  elf_metadata_t b      = {};
+                  bool           loaded = t.Check(logic->elfMapper->ReadElf(file, &a) && logic->elfMapper->ReadElf(file, &b) && logic->elfMapper->LoadLibrary(first.Process, file, &a) && logic->elfMapper->LoadLibrary(second.Process, file, &b), "map same library into independent processes");
+                  logic->virtualFileSystem->Close(file);
+
+                  if (loaded)
+                  {
+                      bool sharedCode   = false;
+                      bool privateWrite = false;
+
+                      for (uint64_t index = 0; index < a.segmentCount; ++index)
+                      {
+                          const auto& segment = a.segments[index];
+
+                          for (uint64_t address = align_down(segment.mappedAddress, PAGE_SIZE); address < segment.mappedAddress + segment.memorySize; address += PAGE_SIZE)
+                          {
+                              auto* left  = resources->virtualMemoryManager->FindRegion(first.Space, address);
+                              auto* right = resources->virtualMemoryManager->FindRegion(second.Space, address - a.loadBias + b.loadBias);
+
+                              if (left == nullptr || right == nullptr || left->shared == nullptr || left->backing != right->backing)
+                              {
+                                  continue;
+                              }
+
+                              if ((left->protection & 4) != 0)
+                              {
+                                  sharedCode = true;
+                                  t.Check(resources->virtualMemoryManager->VirtToPhys(address, first.Space) == resources->virtualMemoryManager->VirtToPhys(address - a.loadBias + b.loadBias, second.Space), "code uses identical physical page after file close");
+                              }
+
+                              if ((left->protection & 2) != 0 && !privateWrite)
+                              {
+                                  uint8_t original = static_cast<uint8_t*>(right->backing)[0];
+                                  spinlock_acquire_preempt(&first.Space->operation_lock);
+                                  bool copied = vmm_resolve_cow_locked(first.Space, address);
+                                  spinlock_release_preempt(&first.Space->operation_lock);
+                                  left = resources->virtualMemoryManager->FindRegion(first.Space, address);
+
+                                  if (t.Check(copied && left->backing != right->backing, "writable library page copies on private write"))
+                                  {
+                                      static_cast<uint8_t*>(left->backing)[0] = original ^ 0xff;
+                                      t.Check(static_cast<uint8_t*>(right->backing)[0] == original, "other process retains original library data");
+                                      privateWrite = true;
+                                  }
+                              }
+                          }
+                      }
+
+                      t.Check(sharedCode, "library has shared executable backing");
+                      t.Check(privateWrite, "library has writable backing exercised through COW");
+                      t.Equal(first.Process->programBreak, 0, "library mapping leaves heap unchanged");
+                  }
+
+                  kfree(a.segments);
+                  kfree(b.segments);
+              });
+
+    run_elf_execution_selftest(resourceLayerCaps, logicLayerCaps, false);
+    run_elf_execution_selftest(resourceLayerCaps, logicLayerCaps, true);
 }

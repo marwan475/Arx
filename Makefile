@@ -1,5 +1,6 @@
 
 override MAKEFILES :=
+.DEFAULT_GOAL := all
 
 BOOT_DIR ?= boot
 BOOT_CFG ?= $(BOOT_DIR)/limine.conf
@@ -71,6 +72,10 @@ BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 INITRAMFS_DIR ?= initramfs
 INITRAMFS_IMAGE ?= $(BIN_DIR)/initramfs.cpio
+MUSL_CC ?= musl-gcc
+MUSL_RUNTIME ?= /lib/ld-musl-x86_64.so.1
+DYNAMIC_FIXTURE_SOURCES := $(wildcard kernel/selftests/usertests/*) scripts/build-dynamic-fixtures.sh
+DYNAMIC_ROOT := $(BUILD_DIR)/userspace/x86_64
 INITRAMFS_CONTENTS := $(shell find $(INITRAMFS_DIR) -type f 2>/dev/null)
 USER_TEST_ELF_SRC ?= $(INITRAMFS_DIR)/test_syscall_exit.S
 USER_TEST_ELF ?= $(INITRAMFS_DIR)/test_syscall_exit.elf
@@ -153,19 +158,36 @@ DEP_FILES := $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
 
 -include $(filter %.d,$(DEP_FILES))
 
-all: x86_64 aarch64 initramfs
+all: x86_64 initramfs
 
-initramfs: $(USER_TEST_ELF) $(INITRAMFS_IMAGE)
+initramfs: $(INITRAMFS_IMAGE)
 
 $(USER_TEST_ELF): $(USER_TEST_ELF_SRC)
 	@mkdir -p $(INITRAMFS_DIR)
 	$(X86_64_CC) -nostdlib -static -Wl,-n,-e,_start,-Ttext-segment=0x400000 -o $@ $<
 
-$(INITRAMFS_IMAGE): $(INITRAMFS_CONTENTS) $(USER_TEST_ELF)
+# Check musl even on incremental builds; a missing dependency must not be
+# hidden by an existing archive. Fixture recipes run before archive creation.
+.PHONY: require-musl
+require-musl:
+	@sh scripts/build-dynamic-fixtures.sh --check "$(MUSL_CC)" "$(MUSL_RUNTIME)"
+
+$(BUILD_DIR)/musl-fixture.config: require-musl
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n' "$(MUSL_CC)" "$(MUSL_RUNTIME)" > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+
+$(DYNAMIC_ROOT)/.stamp: Makefile $(DYNAMIC_FIXTURE_SOURCES) $(wildcard $(MUSL_RUNTIME)) $(BUILD_DIR)/musl-fixture.config | require-musl
+	sh scripts/build-dynamic-fixtures.sh --build "$(MUSL_CC)" "$(MUSL_RUNTIME)" "$(DYNAMIC_ROOT)" kernel/selftests/usertests
+	$(X86_64_CC) -nostdlib -static -Wl,-e,_start -o $(DYNAMIC_ROOT)/dynamic_launcher.elf kernel/selftests/usertests/dynamic_launcher.S
+	@touch $@
+
+$(INITRAMFS_IMAGE): Makefile $(INITRAMFS_CONTENTS) $(USER_TEST_ELF) $(DYNAMIC_ROOT)/.stamp | require-musl
 	@mkdir -p $(BIN_DIR)
 	@test -d "$(INITRAMFS_DIR)" || { echo "Error: missing $(INITRAMFS_DIR)" >&2; exit 1; }
 	@command -v cpio >/dev/null 2>&1 || { echo "Error: cpio not found." >&2; exit 1; }
 	@cd "$(INITRAMFS_DIR)" && find . -print | cpio -o -H newc > "$(abspath $@)"
+	@cd "$(DYNAMIC_ROOT)" && find . -mindepth 1 ! -name .stamp -print | cpio -o -A -H newc -F "$(abspath $@)"
 
 prepare-iso-tools:
 	@command -v parted >/dev/null 2>&1 || { echo "Error: parted not found." >&2; exit 1; }

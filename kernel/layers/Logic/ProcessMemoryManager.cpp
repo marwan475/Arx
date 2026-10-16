@@ -47,7 +47,7 @@ static bool memory_range_end(uint64_t address, uint64_t length, uint64_t* outEnd
 static bool owns_anonymous_page(VirtualMemoryManager* virtualMemoryManager, virt_addr_space_t* space, uint64_t address)
 {
     virt_region_t* region = virtualMemoryManager->FindRegion(space, address);
-    return region != nullptr && region->backing != nullptr;
+    return region != nullptr && (region->backing != nullptr || region->object != nullptr);
 }
 
 static bool memory_range_available(VirtualMemoryManager* virtualMemoryManager, virt_addr_space_t* space, uint64_t address, uint64_t length)
@@ -389,8 +389,8 @@ uint64_t ProcessController::QueryProcessMemoryResidency(uint64_t address, uint64
 
     for (uint64_t page = address; page < end; page += PAGE_SIZE)
     {
-        // Eager pages, including PROT_NONE pages, retain resident physical backing.
-        const uint8_t resident = owns_anonymous_page(virtualMemoryManager, space, page) || virtualMemoryManager->VirtToPhys(page, space) != 0 ? 1 : 0;
+        const virt_region_t* region = virtualMemoryManager->FindRegion(space, page);
+        const uint8_t resident = (region != nullptr && region->backing != nullptr) || virtualMemoryManager->VirtToPhys(page, space) != 0 ? 1 : 0;
 
         if (!safe_write_user_locked(&access, vector++, &resident, sizeof(resident)))
         {

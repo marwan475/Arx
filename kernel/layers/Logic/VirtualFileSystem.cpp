@@ -3033,9 +3033,11 @@ int64_t VirtualFileSystem::AcquireMappingBacking(file_t* file, uint64_t offset, 
 
     int64_t                status    = 0;
     virt_backing_object_t* candidate = nullptr;
-    // Allow the zero-filled tail of the last file page, but no page wholly
-    // beyond EOF until mapping invalidation and SIGBUS are implemented.
-    if (file->inode->size == 0 || file->inode->size > UINT64_MAX - (PAGE_SIZE - 1) || offset >= align_up(file->inode->size, PAGE_SIZE) || length > align_up(file->inode->size, PAGE_SIZE) - offset)
+    // ELF interpreters reserve spans beyond EOF before replacing their BSS
+    // pages with anonymous mappings. VMM keeps those file pages nonresident.
+    if (length == 0 || offset > UINT64_MAX - length
+        || (shared && (file->inode->size == 0 || file->inode->size > UINT64_MAX - (PAGE_SIZE - 1)
+                       || offset >= align_up(file->inode->size, PAGE_SIZE) || length > align_up(file->inode->size, PAGE_SIZE) - offset)))
     {
         status = -95;
     }

@@ -311,7 +311,8 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
     {
         if (headers[i].type == 3)
         {
-            if (metadata->interpreter[0] != '\0' || headers[i].fileSize < 2 || headers[i].fileSize > sizeof(metadata->interpreter) || headers[i].offset > fileSize || headers[i].fileSize > fileSize - headers[i].offset || !ReadExactAt(file, headers[i].offset, metadata->interpreter, headers[i].fileSize) || metadata->interpreter[headers[i].fileSize - 1] != '\0')
+            if (metadata->interpreter[0] != '\0' || headers[i].fileSize < 2 || headers[i].fileSize > sizeof(metadata->interpreter) || headers[i].offset > fileSize || headers[i].fileSize > fileSize - headers[i].offset
+                || !ReadExactAt(file, headers[i].offset, metadata->interpreter, headers[i].fileSize) || metadata->interpreter[headers[i].fileSize - 1] != '\0')
             {
                 kfree(headers);
                 return false;
@@ -441,6 +442,21 @@ bool ElfMapper::ReadElf(file_t* file, elf_metadata_t* metadata)
 
 bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t* metadata)
 {
+    return LoadImage(process, file, metadata, metadata != nullptr ? metadata->loadBias : 0, true);
+}
+
+bool ElfMapper::LoadLibrary(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias)
+{
+    if (metadata == nullptr || metadata->type != ELF_TYPE_DYN)
+    {
+        return false;
+    }
+
+    return LoadImage(process, file, metadata, requestedLoadBias, false);
+}
+
+bool ElfMapper::LoadImage(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias, bool initializeHeap)
+{
     if (process == nullptr || file == nullptr || metadata == nullptr)
     {
         return false;
@@ -466,36 +482,145 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         return false;
     }
 
-    metadata->loadBias   = metadata->type == ELF_TYPE_EXEC ? 0 : metadata->loadBias != 0 ? metadata->loadBias : 0x40000000;
+    VirtualMemoryManager* virtualMemoryManager = ResourceLayerImportCaps->virtualMemoryManager;
 
-    if (metadata->type == ELF_TYPE_DYN)
+    // Acquire file backing before the address-space transaction.
+    // Synthetic/read-only backends without GetBacking retain the
+    // anonymous-copy path; real file backends must not bypass cache failures.
+    struct backing_guard_t
     {
-        for (uint64_t index = 0; index < metadata->segmentCount; ++index)
+        virt_backing_object_t* object  = nullptr;
+        uint32_t               maximum = 7;
+        ~backing_guard_t()
         {
-            const uint64_t alignment = metadata->segments[index].alignment;
-
-            if (alignment > 1)
+            if (object != nullptr)
             {
-                if (alignment > CANONICAL_USER_END || metadata->loadBias > CANONICAL_USER_END - alignment)
-                {
-                    return false;
-                }
-
-                metadata->loadBias = align_up(metadata->loadBias, alignment);
+                VirtualFileSystem::ReleaseMappingBacking(object, false, maximum);
             }
+        }
+    } backing;
+
+    if (file->operations != nullptr && file->operations->GetBacking != nullptr)
+    {
+        if (file->owner == nullptr || file->inode == nullptr || file->inode->size == 0 || file->owner->AcquireMappingBacking(file, 0, file->inode->size, 1, false, &backing.object, &backing.maximum) != 0)
+        {
+            return false;
         }
     }
 
-    metadata->entryPoint = metadata->originalEntryPoint;
+    struct transaction_guard_t
+    {
+        virt_addr_space_t* space;
+        explicit transaction_guard_t(virt_addr_space_t* addressSpace) : space(addressSpace)
+        {
+            spinlock_acquire_preempt(&space->operation_lock);
+        }
+        ~transaction_guard_t()
+        {
+            spinlock_release_preempt(&space->operation_lock);
+        }
+    } transaction(process->addressSpace);
 
-    VirtualMemoryManager*  virtualMemoryManager  = ResourceLayerImportCaps->virtualMemoryManager;
-    PhysicalMemoryManager* physicalMemoryManager = ResourceLayerImportCaps->physicalMemoryManager;
+    uint64_t minimum   = UINT64_MAX;
+    uint64_t maximum   = 0;
+    uint64_t alignment = PAGE_SIZE;
+
+    for (uint64_t index = 0; index < metadata->segmentCount; ++index)
+    {
+        const elf_segment_metadata_t& segment = metadata->segments[index];
+
+        if (segment.fileSize > segment.memorySize || AddWouldOverflow(segment.virtualAddress, segment.memorySize) || (segment.alignment > 1 && !IsPowerOfTwo(segment.alignment))
+            || (backing.object != nullptr && (segment.fileOffset > backing.object->size || segment.fileSize > backing.object->size - segment.fileOffset)))
+        {
+            return false;
+        }
+
+        if (segment.alignment > alignment)
+        {
+            alignment = segment.alignment;
+        }
+
+        if (segment.memorySize == 0)
+        {
+            continue;
+        }
+
+        minimum      = MinU64(minimum, align_down(segment.virtualAddress, PAGE_SIZE));
+        uint64_t end = segment.virtualAddress + segment.memorySize;
+
+        if (end > CANONICAL_USER_END)
+        {
+            return false;
+        }
+
+        end     = align_up(end, PAGE_SIZE);
+        maximum = end > maximum ? end : maximum;
+    }
+
+    if (minimum == UINT64_MAX || alignment > CANONICAL_USER_END)
+    {
+        return false;
+    }
+
+    const bool automatic = metadata->type == ELF_TYPE_DYN && requestedLoadBias == 0;
+    uint64_t   bias      = metadata->type == ELF_TYPE_EXEC ? 0 : automatic ? align_up(UINT64_C(0x40000000), alignment) : requestedLoadBias;
+
+    if (bias % alignment != 0)
+    {
+        return false;
+    }
+
+    // Check the entire image span, including holes, and skip occupied regions
+    // rather than walking every page of an exhausted virtual address space.
+    for (;;)
+    {
+        if (maximum > CANONICAL_USER_END + 1 || bias > CANONICAL_USER_END + 1 - maximum || bias + minimum < 0x10000)
+        {
+            return false;
+        }
+
+        bool     available = true;
+        uint64_t next      = bias;
+
+        for (uint64_t address = bias + minimum; address < bias + maximum; address += PAGE_SIZE)
+        {
+            if (!virtualMemoryManager->IsPageAvailable(process->addressSpace, address))
+            {
+                available             = false;
+                virt_region_t* region = virtualMemoryManager->FindRegion(process->addressSpace, address);
+                uint64_t       end    = region != nullptr ? region->end : address + PAGE_SIZE;
+                next                  = align_up(end - minimum, alignment);
+                break;
+            }
+        }
+
+        if (available)
+        {
+            break;
+        }
+
+        if (!automatic || next <= bias)
+        {
+            return false;
+        }
+
+        bias = next;
+    }
+
+    if (metadata->originalEntryPoint > CANONICAL_USER_END || bias > CANONICAL_USER_END - metadata->originalEntryPoint)
+    {
+        return false;
+    }
+
+    metadata->loadBias   = bias;
+    metadata->entryPoint = metadata->originalEntryPoint;
 
     struct mapped_page_state_t
     {
         uint64_t virtualAddress;
         void*    pagePointer;
         uint32_t combinedFlags;
+        bool     fileBacked;
     };
 
     uint64_t maxPageCount = 0;
@@ -535,6 +660,11 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         const uint64_t mapSize  = mapEnd - mapStart;
 
         if (mapSize % PAGE_SIZE != 0)
+        {
+            return false;
+        }
+
+        if (mapSize / PAGE_SIZE > SIZE_MAX / sizeof(mapped_page_state_t) - maxPageCount)
         {
             return false;
         }
@@ -621,15 +751,68 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
                 goto fail;
             }
 
-            if (!virtualMemoryManager->AllocateAnonymousPage(process->addressSpace, pageAddress, 3, false))
+            bool     shareable     = backing.object != nullptr;
+            bool     hasFileBytes  = false;
+            uint64_t backingOffset = 0;
+            uint32_t combinedFlags = 0;
+
+            // A page can use canonical file backing only if every contributing
+            // segment agrees on its file offset and no segment needs BSS zeros.
+            // Mixed/unaligned pages are composed privately below.
+            for (uint64_t index = 0; index < metadata->segmentCount; ++index)
+            {
+                const elf_segment_metadata_t& other = metadata->segments[index];
+                const uint64_t                start = metadata->loadBias + other.virtualAddress;
+                const uint64_t                end   = start + other.memorySize;
+
+                if (other.memorySize == 0 || start >= pageAddress + PAGE_SIZE || end <= pageAddress)
+                {
+                    continue;
+                }
+
+                combinedFlags |= other.flags;
+                const uint64_t fileEnd = start + other.fileSize;
+
+                if (other.memorySize > other.fileSize && fileEnd < pageAddress + PAGE_SIZE && end > pageAddress)
+                {
+                    shareable = false;
+                }
+
+                if (other.fileSize == 0 || fileEnd <= pageAddress)
+                {
+                    continue;
+                }
+
+                if ((start & (PAGE_SIZE - 1)) != (other.fileOffset & (PAGE_SIZE - 1)))
+                {
+                    shareable = false;
+                    continue;
+                }
+
+                const uint64_t offset = align_down(other.fileOffset, PAGE_SIZE) + pageAddress - align_down(start, PAGE_SIZE);
+
+                if (hasFileBytes && offset != backingOffset)
+                {
+                    shareable = false;
+                }
+
+                backingOffset = offset;
+                hasFileBytes  = true;
+            }
+
+            shareable                 = shareable && hasFileBytes;
+            const uint32_t protection = 1U | ((combinedFlags & ELF_PF_W) != 0 ? 2U : 0U) | ((combinedFlags & ELF_PF_X) != 0 ? 4U : 0U);
+
+            if (shareable ? !virtualMemoryManager->MapBackingPage(process->addressSpace, pageAddress, backing.object, backingOffset, protection, false, backing.maximum) : !virtualMemoryManager->AllocateAnonymousPage(process->addressSpace, pageAddress, 3, false))
             {
                 goto fail;
             }
 
-            void* pageBuffer = virtualMemoryManager->FindRegion(process->addressSpace, pageAddress)->backing;
+            void* pageBuffer                            = virtualMemoryManager->FindRegion(process->addressSpace, pageAddress)->backing;
             mappedPages[mappedPageCount].virtualAddress = pageAddress;
             mappedPages[mappedPageCount].pagePointer    = pageBuffer;
-            mappedPages[mappedPageCount].combinedFlags  = segment.flags;
+            mappedPages[mappedPageCount].combinedFlags  = combinedFlags;
+            mappedPages[mappedPageCount].fileBacked     = shareable;
             mappedPageCount++;
         }
 
@@ -642,11 +825,6 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
             const uint64_t pageOffset = destination & (PAGE_SIZE - 1);
             const uint64_t chunkSize  = MinU64(PAGE_SIZE - pageOffset, bytesToCopy);
 
-            if (!ReadExactAt(file, sourceOffset, scratch, chunkSize))
-            {
-                goto fail;
-            }
-
             const uint64_t pageAddress = align_down(destination, PAGE_SIZE);
             int64_t        pageIndex   = findMappedPageIndex(pageAddress);
 
@@ -655,7 +833,15 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
                 goto fail;
             }
 
-            memcpy((uint8_t*) mappedPages[(uint64_t) pageIndex].pagePointer + pageOffset, scratch, (size_t) chunkSize);
+            if (!mappedPages[(uint64_t) pageIndex].fileBacked)
+            {
+                if (!ReadExactAt(file, sourceOffset, scratch, chunkSize))
+                {
+                    goto fail;
+                }
+
+                memcpy((uint8_t*) mappedPages[(uint64_t) pageIndex].pagePointer + pageOffset, scratch, (size_t) chunkSize);
+            }
 
             destination += chunkSize;
             sourceOffset += chunkSize;
@@ -708,13 +894,13 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         virtualMemoryManager->ProtectAnonymousPage(process->addressSpace, mappedPages[pageIndex].virtualAddress, protection);
     }
 
-    metadata->entryPoint       = metadata->loadBias + metadata->originalEntryPoint;
+    metadata->entryPoint           = metadata->loadBias + metadata->originalEntryPoint;
     metadata->programHeaderAddress = 0;
 
     for (uint64_t index = 0; index < metadata->segmentCount; ++index)
     {
-        const elf_segment_metadata_t& segment = metadata->segments[index];
-        const uint64_t tableSize = static_cast<uint64_t>(metadata->programHeaderCount) * metadata->programHeaderEntrySize;
+        const elf_segment_metadata_t& segment   = metadata->segments[index];
+        const uint64_t                tableSize = static_cast<uint64_t>(metadata->programHeaderCount) * metadata->programHeaderEntrySize;
 
         if (metadata->programHeaderOffset >= segment.fileOffset && metadata->programHeaderOffset - segment.fileOffset <= segment.fileSize && tableSize <= segment.fileSize - (metadata->programHeaderOffset - segment.fileOffset))
         {
@@ -723,6 +909,7 @@ bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t*
         }
     }
     metadata->executableLoaded = true;
+    if (initializeHeap)
     {
         uint64_t heapEnd = 0;
 
@@ -759,7 +946,8 @@ fail:
 
     for (uint64_t segmentIndex = 0; segmentIndex < metadata->segmentCount; ++segmentIndex)
     {
-        metadata->segments[segmentIndex].mapped = false;
+        metadata->segments[segmentIndex].mapped        = false;
+        metadata->segments[segmentIndex].mappedAddress = 0;
     }
 
     metadata->executableLoaded = false;

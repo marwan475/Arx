@@ -193,6 +193,33 @@ static bool test_memory_mmap(process_t* process)
             syscall_call(SYSCALL_munmap, readonlyShared, PAGE_SIZE);
         }
 
+        // musl first maps the whole library span, including pages beyond
+        // EOF, then replaces BSS with MAP_FIXED anonymous memory.
+        const uint64_t beyond = syscall_call(SYSCALL_mmap, 0, 3 * PAGE_SIZE, 3, 2, fd);
+        ok &= expect(static_cast<int64_t>(beyond) >= 0, "private file mmap reserves beyond EOF");
+
+        if (static_cast<int64_t>(beyond) >= 0)
+        {
+            virt_region_t* tail = fixture_region(process, beyond + 2 * PAGE_SIZE);
+            ok &= expect(tail != nullptr && tail->object != nullptr && tail->backing == nullptr
+                         && fixture_vmm()->VirtToPhys(beyond + 2 * PAGE_SIZE, process->addressSpace) == 0, "EOF reservation consumes no resident page");
+            ok &= expect(syscall_call(SYSCALL_mprotect, beyond + 2 * PAGE_SIZE, PAGE_SIZE, 3) == 0
+                         && fixture_vmm()->VirtToPhys(beyond + 2 * PAGE_SIZE, process->addressSpace) == 0, "mprotect keeps EOF reservation inaccessible");
+            auto* clone = fixture_vmm()->CloneUserAddressSpace(process->addressSpace);
+            ok &= expect(clone != nullptr, "fork preserves nonresident file reservations");
+
+            if (clone != nullptr)
+            {
+                auto* clonedTail = fixture_vmm()->FindRegion(clone, beyond + 2 * PAGE_SIZE);
+                ok &= expect(clonedTail != nullptr && clonedTail->object == tail->object && clonedTail->backing == nullptr, "fork retains EOF backing ownership without allocating bytes");
+                fixture_vmm()->DestroyUserAddressSpace(clone);
+            }
+
+            ok &= expect(syscall_call(SYSCALL_mmap, beyond + PAGE_SIZE, 2 * PAGE_SIZE, 3, 0x32, UINT64_MAX) == beyond + PAGE_SIZE
+                         && fixture_bytes(process, beyond + PAGE_SIZE) != nullptr && *fixture_bytes(process, beyond + PAGE_SIZE) == 0, "anonymous BSS replaces EOF reservation");
+            ok &= expect(syscall_call(SYSCALL_munmap, beyond, 3 * PAGE_SIZE) == 0, "unmap releases file span and replaced BSS");
+        }
+
         ok &= expect(syscall_call(SYSCALL_close, fd) == 0, "mmap file fixture closes");
 
         if (static_cast<int64_t>(mapped) >= 0)

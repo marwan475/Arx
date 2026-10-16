@@ -122,13 +122,13 @@ virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t
 
     for (virt_region_t* region = source->user_used_regions; region != nullptr; region = region->next)
     {
-        if (region->backing == nullptr || region->size != PAGE_SIZE || !vmm_reserve_page_at(child, region->start))
+        if ((region->backing == nullptr && region->object == nullptr) || region->size != PAGE_SIZE || !vmm_reserve_page_at(child, region->start))
         {
             complete = false;
             break;
         }
 
-        if (region->shared == nullptr)
+        if (region->shared == nullptr && region->backing != nullptr)
         {
             region->shared = static_cast<virt_shared_page_t*>(kmalloc(sizeof(virt_shared_page_t)));
 
@@ -153,7 +153,10 @@ virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t
         copy->backing_offset     = region->backing_offset;
         copy->shared_mapping     = region->shared_mapping;
         copy->maximum_protection = region->maximum_protection;
-        __atomic_add_fetch(&copy->shared->references, 1U, __ATOMIC_ACQ_REL);
+        if (copy->shared != nullptr)
+        {
+            __atomic_add_fetch(&copy->shared->references, 1U, __ATOMIC_ACQ_REL);
+        }
 
         if (copy->object != nullptr)
         {
@@ -170,7 +173,7 @@ virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t
         // Revoke the parent's writable translations before publishing the child.
         ProtectPage(region->start, flags, source);
 
-        if (!MapPage(region->start, VirtToPhys(region->start, source), flags, child))
+        if (region->backing != nullptr && !MapPage(region->start, VirtToPhys(region->start, source), flags, child))
         {
             vmm_release_backing(copy);
             copy->backing = nullptr;
@@ -242,7 +245,7 @@ int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uin
 {
     virt_region_t* region = FindRegion(space, address);
 
-    if (region == nullptr || region->backing == nullptr)
+    if (region == nullptr || (region->backing == nullptr && region->object == nullptr))
     {
         return 0;
     }
@@ -250,7 +253,7 @@ int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uin
     // Synchronous shootdown completes before physical-page reuse.
     UnmapPage(address, space);
 
-    if (region->shared_mapping)
+    if (region->shared_mapping && region->backing != nullptr)
     {
         const int64_t status = vmm_flush_object(region->object);
 
@@ -274,6 +277,13 @@ int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uin
 void VirtualMemoryManager::ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection)
 {
     virt_region_t* region = FindRegion(space, address);
+    if (region->backing == nullptr && region->object != nullptr)
+    {
+        // Reserved file page beyond EOF: mprotect cannot make it resident.
+        region->protection = protection;
+        return;
+    }
+
     const bool     shared = !region->shared_mapping && region->shared != nullptr && __atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) > 1;
     ProtectPage(address, anonymous_page_flags(shared ? protection & ~2U : protection), space);
     region->protection = protection;
@@ -446,36 +456,42 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
 
     const uint64_t size = __atomic_load_n(&object->size, __ATOMIC_ACQUIRE);
 
-    if (size == 0 || offset / PAGE_SIZE > (size - 1) / PAGE_SIZE)
+    const bool beyondEnd = size == 0 || offset / PAGE_SIZE > (size - 1) / PAGE_SIZE;
+    if (beyondEnd && (!object->file || shared))
     {
         return false;
     }
 
-    auto* page = GetBackingPage(object, offset);
+    auto* page = beyondEnd ? nullptr : GetBackingPage(object, offset);
 
-    if (page == nullptr || !IsPageAvailable(space, address) || !vmm_reserve_page_at(space, address))
+    if ((!beyondEnd && page == nullptr) || !IsPageAvailable(space, address) || !vmm_reserve_page_at(space, address))
     {
         return false;
     }
 
-    const phys_addr_t physical = hhdm_to_pa(reinterpret_cast<uintptr_t>(page->pointer), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
-
-    if (!MapPage(address, physical, anonymous_page_flags(3), space))
+    if (page != nullptr)
     {
-        FreeRegion(space, address);
+        const phys_addr_t physical = hhdm_to_pa(reinterpret_cast<uintptr_t>(page->pointer), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
 
-        return false;
+        if (!MapPage(address, physical, anonymous_page_flags(3), space))
+        {
+            FreeRegion(space, address);
+            return false;
+        }
     }
 
     auto* region               = FindRegion(space, address);
-    region->backing            = page->pointer;
+    region->backing            = page != nullptr ? page->pointer : nullptr;
     region->shared             = page;
     region->object             = object;
     region->backing_offset     = offset;
     region->shared_mapping     = shared;
     region->protection         = protection;
     region->maximum_protection = maximumProtection;
-    __atomic_add_fetch(&page->references, 1U, __ATOMIC_ACQ_REL);
+    if (page != nullptr)
+    {
+        __atomic_add_fetch(&page->references, 1U, __ATOMIC_ACQ_REL);
+    }
     vmm_retain_object(object);
     __atomic_add_fetch(&object->mappings, 1U, __ATOMIC_ACQ_REL);
 
@@ -483,12 +499,18 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
     {
         __atomic_add_fetch(&object->writable_mappings, 1U, __ATOMIC_ACQ_REL);
         // Conservative tracking covers CPU stores as well as kernel user-copy.
-        spinlock_acquire_preempt(&object->lock);
-        page->dirty = true;
-        spinlock_release_preempt(&object->lock);
+        if (page != nullptr)
+        {
+            spinlock_acquire_preempt(&object->lock);
+            page->dirty = true;
+            spinlock_release_preempt(&object->lock);
+        }
     }
 
-    ProtectPage(address, anonymous_page_flags(shared ? protection : protection & ~2U), space);
+    if (page != nullptr)
+    {
+        ProtectPage(address, anonymous_page_flags(shared ? protection : protection & ~2U), space);
+    }
 
     return true;
 }
@@ -556,7 +578,7 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
     {
         virt_region_t* next = region->next;
 
-        if (region->backing != nullptr)
+        if (region->backing != nullptr || region->object != nullptr)
         {
             ReleaseAnonymousPage(space, region->start, true);
         }

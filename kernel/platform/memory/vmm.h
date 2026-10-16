@@ -63,7 +63,7 @@ typedef struct virt_region
     size_t                 size;
     virt_type_t            type;
     bool                   allocated; // used for metadata allocations
-    void*                  backing;   // Resident page bytes; null for legacy reservations.
+    void*                  backing;   // Resident bytes; null for EOF/legacy reservations.
     virt_shared_page_t*    shared;
     virt_backing_object_t* object;
     uint64_t               backing_offset;

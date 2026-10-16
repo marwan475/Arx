@@ -1150,8 +1150,7 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
 
         result = files->CheckExecutable(file);
         bool valid = result == 0 && Logic->elfMapper->ReadElf(file, &image.interpreter);
-        image.interpreter.loadBias = 0x700000000000;
-        valid = valid && image.interpreter.interpreter[0] == '\0' && Logic->elfMapper->LoadExecutable(image.process, file, &image.interpreter);
+        valid = valid && image.interpreter.interpreter[0] == '\0' && Logic->elfMapper->LoadLibrary(image.process, file, &image.interpreter, 0x700000000000);
         files->Close(file);
 
         if (!valid)

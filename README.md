@@ -2,8 +2,8 @@
 Multiarch 64 bit Kernel in development
 
 Targets:
-- x86_64
-- aarch64
+- x86_64 (currently supported)
+- aarch64 (experimental)
 
 ## Design
 
@@ -228,21 +228,62 @@ Flow:
 4. Logic builds root VFS mount/namespace.
 
 ### ELF Loading
-- `ElfMapper` lives in Logic and follows a two-phase flow:
-    - `ReadElf(file_t*, elf_metadata_t*)`
-        - Reads and validates ELF64 header
-        - Parses program headers
-        - Extracts `PT_LOAD` segments into metadata
-    - `LoadExecutable(process_t*, file_t*, elf_metadata_t*)`
-        - Maps `PT_LOAD` segments into a process address space
-        - Copies `p_filesz` bytes from file
-        - Zero-fills `p_memsz - p_filesz`
-        - Applies user page permissions from `PF_R/PF_W/PF_X`
-- Not implemented yet:
-    - Dynamic linker / `DT_NEEDED`
-    - Relocations and symbol resolution
-    - TLS setup
-    - argv/envp/auxv and user stack argument layout
+
+`ElfMapper` lives in Logic. Call `ReadElf(file, metadata)` first, with
+zero-initialized metadata, then either:
+
+- `LoadExecutable(process, file, metadata)` maps the main executable and sets
+  its initial heap break.
+- `LoadLibrary(process, file, metadata, requestedLoadBias = 0)` maps an `ET_DYN`
+  image without changing the heap. Zero selects a free aligned image span;
+  a nonzero bias must fit exactly and satisfy segment alignment.
+
+Both use canonical VFS file backing for compatible file pages, private COW
+mappings for writable data, and private zero-filled pages for BSS or mixed
+segment pages. Failed loads remove their new mappings. The caller owns the
+open file and metadata (including `metadata.segments`); successful mappings
+retain backing independently until unmap, exec, or address-space destruction.
+Loading a file twice creates separate virtual mappings sharing clean pages.
+Address selection is deterministic; it does not implement ASLR.
+
+On x86_64, exec maps `PT_INTERP` through `LoadLibrary`, supplies the executable's
+program headers, entry point, interpreter base, argv/envp and auxiliary vector,
+and enters the userspace interpreter. The interpreter handles `DT_NEEDED`,
+symbol resolution, relocations, TLS and constructors through ordinary syscalls.
+The kernel does not maintain a second library cache or perform dynamic linking.
+
+Private file `mmap` permits spans beyond EOF as nonresident reservations, which
+musl replaces with anonymous BSS pages. These reservations survive fork and
+protection changes without gaining physical pages. Shared mappings beyond EOF
+remain unsupported. Accessing an unreplaced EOF reservation does not yet deliver
+Linux `SIGBUS`; it follows Arx's existing unhandled page-fault path. This is a
+bounded ELF/process-startup compatibility milestone, not full Linux ABI support.
+
+### Building and testing (x86_64)
+
+Every image build, including debug builds, requires a musl compiler and runtime.
+Defaults are `MUSL_CC=musl-gcc` and
+`MUSL_RUNTIME=/lib/ld-musl-x86_64.so.1`. Override these when musl is installed
+elsewhere:
+
+```sh
+make -j6 MUSL_CC=/path/to/musl-gcc MUSL_RUNTIME=/path/to/libc.so
+```
+
+The default build produces the supported x86_64 image. Existing AArch64 targets
+remain experimental; this dynamic execution milestone adds no AArch64 support.
+
+The build compiles a PIE executable and shared test library against musl, and
+packages them, a static execve launcher, the interpreter, and its license in
+initramfs. Missing musl fails the build; execution coverage is never silently
+omitted on x86_64. musl is supplied locally rather than downloaded during builds.
+
+Kernel self-tests cover library placement, collisions, exact alignment, rollback,
+heap preservation, physical-page sharing after file closure, private writable
+state, and nonresident EOF reservation cleanup/replacement/fork. The post-start
+`dynamic_interpreter` test executes the launcher through the actual execve syscall,
+then runs musl and verifies a shared-library constructor, initialized data, BSS,
+symbol relocation and a library function call before successful exit.
 
 
 
@@ -251,6 +292,7 @@ Flow:
 - [printf](https://github.com/mpaland/printf) - Small freestanding printf implementation used for kernel logging output.
 - [uACPI](https://github.com/uACPI/uACPI) - ACPI implementation used for table parsing and ACPI support.
 - [Flanterm](https://github.com/Mintsuki/Flanterm) - fast and reasonably complete terminal emulator
+- [musl](https://musl.libc.org/) - required userspace runtime for dynamic ELF self-tests; its license is bundled with initramfs.
 
 All third-party components retain their original licenses.
 

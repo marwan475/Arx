@@ -52,8 +52,14 @@ public:
 
     bool ReadElf(file_t* file, elf_metadata_t* metadata);
     bool LoadExecutable(process_t* process, file_t* file, elf_metadata_t* metadata);
+    // ReadElf supplies metadata. Zero bias selects a free range; explicit bias
+    // must fit exactly. Mappings retain backing independently of file/metadata.
+    // Maps ET_DYN only; does not link dependencies or change the process heap.
+    bool LoadLibrary(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias = 0);
 
 private:
+    bool LoadImage(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias, bool initializeHeap);
+
     struct elf64_header_t;
     struct elf64_program_header_t;
 

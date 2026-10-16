@@ -25,6 +25,8 @@ public:
     // Caller serializes file I/O; page-cache allocation is internally locked.
     virt_shared_page_t* GetBackingPage(virt_backing_object_t* object, uint64_t offset, bool create = true);
     int64_t             ResizeVolatileBacking(virt_backing_object_t* object, uint64_t size);
+    // Private file offsets beyond EOF reserve a page without resident backing.
+    // The reservation retains object ownership until replacement or unmap.
     bool                MapBackingPage(virt_addr_space_t* space, uint64_t address, virt_backing_object_t* object, uint64_t offset, uint32_t protection, bool shared, uint32_t maximumProtection);
     int64_t             ReleaseAnonymousPage(virt_addr_space_t* space, uint64_t address, bool force = false);
     void                ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection);

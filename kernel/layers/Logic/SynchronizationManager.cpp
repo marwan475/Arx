@@ -4,8 +4,58 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 #include <klib/klib.h>
+
+namespace
+{
+struct FutexKey
+{
+    void*                  identity = nullptr;
+    uint64_t               offset   = 0;
+    virt_backing_object_t* object   = nullptr;
+    ~FutexKey()
+    {
+        VirtualMemoryManager::ReleaseBacking(object);
+    }
+
+    uint64_t Resolve(VirtualMemoryManager* memory, virt_addr_space_t* space, uint64_t address, bool shared)
+    {
+        identity = space;
+        offset   = address;
+
+        if (!shared)
+        {
+            return 0;
+        }
+
+        if (memory == nullptr)
+        {
+            return LINUX_ENOSYS;
+        }
+
+        auto* region = memory->FindRegion(space, address);
+
+        if (region == nullptr || region->backing == nullptr || region->protection == 0)
+        {
+            return LINUX_EFAULT;
+        }
+
+        if (!region->shared_mapping || region->object == nullptr)
+        {
+            return LINUX_EOPNOTSUPP;
+        }
+
+        object = region->object;
+        VirtualMemoryManager::RetainBacking(object);
+        identity = object;
+        offset   = region->backing_offset + address - region->start;
+
+        return 0;
+    }
+};
+}
 
 SynchronizationManager::SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler) : Resources(resources), SchedulerManager(scheduler), Lock(0), Waiters{}, Head(NONE), Tail(NONE)
 {
@@ -38,7 +88,7 @@ void SynchronizationManager::Remove(size_t index)
     Waiters[index].queued = false;
 }
 
-uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline)
+uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline, bool shared)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
@@ -51,7 +101,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
     }
 
     ProcessManager* processes = Resources->processManager;
-    process_t*      process   = processes->AcquireCurrentMemoryProcess();
+    process_t*      process   = processes->AcquireCurrentMemoryProcess(!shared);
 
     if (process == nullptr)
     {
@@ -75,11 +125,17 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
 
         const size_t index  = (size_t) task->id;
         waiter_t&    waiter = Waiters[index];
+        FutexKey key;
+        const uint64_t keyStatus = key.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
         spinlock_acquire_preempt(&Lock);
         uint32_t actual;
         uint64_t status = 0;
 
-        if (waiter.used)
+        if (keyStatus != 0)
+        {
+            status = keyStatus;
+        }
+        else if (waiter.used)
         {
             status = LINUX_EINVAL;
         }
@@ -90,8 +146,10 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
 
         if (status == 0)
         {
-            waiter.space   = access.space;
-            waiter.address = address;
+            waiter.identity = key.identity;
+            waiter.offset   = key.offset;
+            waiter.object   = key.object;
+            VirtualMemoryManager::RetainBacking(waiter.object);
             waiter.bits    = bits;
             waiter.used = waiter.queued = true;
             waiter.woken                = false;
@@ -158,9 +216,12 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
                 Remove(index);
             }
 
-            waiter.used  = false;
-            waiter.space = nullptr;
+            waiter.used     = false;
+            waiter.identity = nullptr;
+            auto* object    = waiter.object;
+            waiter.object   = nullptr;
             spinlock_release_preempt(&Lock);
+            VirtualMemoryManager::ReleaseBacking(object);
             return status;
         }
     }();
@@ -168,7 +229,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
     return result;
 }
 
-uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t bits)
+uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t bits, bool shared)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
@@ -186,32 +247,64 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
     }
 
     ProcessManager* processes = Resources->processManager;
-    process_t*      process   = processes->AcquireCurrentMemoryProcess();
+    process_t*      process   = processes->AcquireCurrentMemoryProcess(!shared);
 
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
 
-    const uint64_t result = WakeKey(process->addressSpace, address, count, bits);
+    uint64_t result;
+
+    if (shared)
+    {
+        user_memory_access_t access;
+
+        if (!begin_user_memory(&access))
+        {
+            result = LINUX_ESRCH;
+        }
+        else
+        {
+            FutexKey key;
+            uint32_t value;
+            result = key.Resolve(Resources->virtualMemoryManager, access.space, address, true);
+
+            if (result == 0 && !safe_atomic_load_user32_locked(&access, address, &value))
+            {
+                result = LINUX_EFAULT;
+            }
+
+            if (result == 0)
+            {
+                result = WakeKey(key.identity, key.offset, count, bits);
+            }
+
+            end_user_memory(&access);
+        }
+    }
+    else
+    {
+        result = WakeKey(process->addressSpace, address, count, bits);
+    }
     processes->ReleaseMemoryProcess(process);
     return result;
 }
 
-uint64_t SynchronizationManager::WakeKey(virt_addr_space* space, uint64_t address, int32_t count, uint32_t bits)
+uint64_t SynchronizationManager::WakeKey(void* identity, uint64_t offset, int32_t count, uint32_t bits)
 {
     const uint64_t* notify[CAPACITY];
     // Legacy Linux FUTEX_WAKE/WAKE_BITSET wakes the first matching waiter even
     // for a nonpositive nr_wake (the limit is checked after removing it).
     const uint32_t limit = count > 0 ? (uint32_t) count : 1U;
     spinlock_acquire_preempt(&Lock);
-    const size_t woken = WakeKeyLocked(space, address, limit, bits, notify);
+    const size_t woken = WakeKeyLocked(identity, offset, limit, bits, notify);
     spinlock_release_preempt(&Lock);
     NotifyWaiters(notify, woken);
     return woken;
 }
 
-size_t SynchronizationManager::WakeKeyLocked(virt_addr_space* space, uint64_t address, uint32_t count, uint32_t bits, const uint64_t** notify)
+size_t SynchronizationManager::WakeKeyLocked(void* identity, uint64_t offset, uint32_t count, uint32_t bits, const uint64_t** notify)
 {
     size_t woken = 0;
     size_t index = Head;
@@ -221,7 +314,7 @@ size_t SynchronizationManager::WakeKeyLocked(virt_addr_space* space, uint64_t ad
         waiter_t&    waiter = Waiters[index];
         const size_t next   = waiter.next;
 
-        if (waiter.space == space && waiter.address == address && (waiter.bits & bits) != 0)
+        if (waiter.identity == identity && waiter.offset == offset && (waiter.bits & bits) != 0)
         {
             Remove(index);
             waiter.woken = true;
@@ -243,7 +336,18 @@ void SynchronizationManager::NotifyWaiters(const uint64_t** notify, size_t count
     }
 }
 
-uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected)
+void SynchronizationManager::WakeExitWord(virt_addr_space_t* space, uint64_t address)
+{
+    WakeKey(space, address, 1, UINT32_MAX);
+    FutexKey key;
+
+    if (key.Resolve(Resources->virtualMemoryManager, space, address, true) == 0)
+    {
+        WakeKey(key.identity, key.offset, 1, UINT32_MAX);
+    }
+}
+
+uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected, bool shared)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
@@ -271,6 +375,20 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
     size_t          woken = 0;
     size_t          moved = 0;
     uint64_t        result = 0;
+    FutexKey sourceKey, destinationKey;
+    result = sourceKey.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
+
+    if (result == 0)
+    {
+        result = destinationKey.Resolve(Resources->virtualMemoryManager, access.space, destination, shared);
+    }
+
+    if (result != 0)
+    {
+        end_user_memory(&access);
+
+        return result;
+    }
     spinlock_acquire_preempt(&Lock);
     uint32_t actual = 0;
 
@@ -284,7 +402,7 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
     }
     else
     {
-        woken = WakeKeyLocked(access.space, address, (uint32_t) wakeCount, UINT32_MAX, notify);
+        woken              = WakeKeyLocked(sourceKey.identity, sourceKey.offset, (uint32_t) wakeCount, UINT32_MAX, notify);
         size_t       index = Head;
         const size_t last  = Tail;
 
@@ -293,12 +411,16 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
             waiter_t&    waiter = Waiters[index];
             const size_t next   = waiter.next;
 
-            if (waiter.space == access.space && waiter.address == address)
+            if (waiter.identity == sourceKey.identity && waiter.offset == sourceKey.offset)
             {
                 Remove(index);
-                waiter.address = destination;
-                waiter.next    = NONE;
-                waiter.queued  = true;
+                VirtualMemoryManager::RetainBacking(destinationKey.object);
+                VirtualMemoryManager::ReleaseBacking(waiter.object); // sourceKey keeps the old backing alive.
+                waiter.object   = destinationKey.object;
+                waiter.identity = destinationKey.identity;
+                waiter.offset   = destinationKey.offset;
+                waiter.next     = NONE;
+                waiter.queued   = true;
 
                 if (Tail != NONE)
                 {
@@ -330,7 +452,7 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
     return result;
 }
 
-uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation)
+uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation, bool shared)
 {
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
@@ -368,6 +490,20 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
     const uint64_t* notify[CAPACITY];
     size_t          woken = 0;
     uint64_t        result = 0;
+    FutexKey sourceKey, destinationKey;
+    result = sourceKey.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
+
+    if (result == 0)
+    {
+        result = destinationKey.Resolve(Resources->virtualMemoryManager, access.space, destination, shared);
+    }
+
+    if (result != 0)
+    {
+        end_user_memory(&access);
+
+        return result;
+    }
     spinlock_acquire_preempt(&Lock);
     uint32_t actual = 0;
 
@@ -444,11 +580,11 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
             // WAKE_OP shares legacy WAKE's nonpositive-count behavior.
             const uint32_t firstLimit  = wakeCount > 0 ? (uint32_t) wakeCount : 1U;
             const uint32_t secondLimit = secondCount > 0 ? (uint32_t) secondCount : 1U;
-            woken = WakeKeyLocked(access.space, address, firstLimit, UINT32_MAX, notify);
+            woken                      = WakeKeyLocked(sourceKey.identity, sourceKey.offset, firstLimit, UINT32_MAX, notify);
 
             if (matches)
             {
-                woken += WakeKeyLocked(access.space, destination, secondLimit, UINT32_MAX, notify + woken);
+                woken += WakeKeyLocked(destinationKey.identity, destinationKey.offset, secondLimit, UINT32_MAX, notify + woken);
             }
 
             result = woken;
@@ -605,7 +741,7 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
 
     if (clearTid != 0 && safe_write_user_locked(&access, clearTid, &zero, sizeof(zero)))
     {
-        manager->WakeKey(owner->addressSpace, clearTid, 1, UINT32_MAX);
+        manager->WakeExitWord(owner->addressSpace, clearTid);
     }
     struct
     {
@@ -672,7 +808,7 @@ void SynchronizationManager::CleanupRobust(void* context, task_t* task)
                 {
                     if (previous & 0x80000000U)
                     {
-                        manager->WakeKey(owner->addressSpace, word, 1, UINT32_MAX);
+                        manager->WakeExitWord(owner->addressSpace, word);
                     }
 
                     return;

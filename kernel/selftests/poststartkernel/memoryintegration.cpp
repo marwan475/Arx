@@ -4,9 +4,81 @@
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/ProcessController.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
+#include "layers/Resource/InitRamFileSystemManager.hpp"
 
 void test_memory_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
 {
+    {
+        TestCase t("poststartkernel/memory/file_shared_io_writeback");
+
+        if (!l || !l->virtualFileSystem || !l->processController || !r || !r->initRamFileSystemManager)
+        {
+            t.Block("VFS, process memory or initramfs unavailable");
+            return;
+        }
+
+        TestFixture f(r);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        auto* vfs    = l->virtualFileSystem;
+        auto* file   = vfs->Open({}, "/test.txt", 2);
+        auto* second = vfs->Open({}, "/test.txt", 2);
+
+        if (!t.Check(file && second, "open same file twice"))
+        {
+            if (file)
+            {
+                vfs->Close(file);
+            }
+
+            if (second)
+            {
+                vfs->Close(second);
+            }
+
+            return;
+        }
+
+        const int64_t fd = r->processManager->AddFileDescriptor(f.Process, file, 0, VirtualFileSystem::ReleaseFileHandle);
+
+        if (!t.Check(fd >= 0, "install mapping descriptor"))
+        {
+            vfs->Close(file);
+            vfs->Close(second);
+            return;
+        }
+
+        uint8_t original = 0;
+        t.Equal(vfs->ReadAt(second, &original, 1, 0), 1, "capture original file byte");
+        const uint64_t address = l->processController->MapProcessMemory(0x50000000, PAGE_SIZE, 3, 1, fd, 0);
+
+        if (t.Equal(address, 0x50000000, "map shared file through VFS callback"))
+        {
+            uint8_t value = original ^ 0x5a, observed = 0;
+            t.Check(safe_write_user(address, &value, 1), "mapped store");
+            t.Check(vfs->ReadAt(second, &observed, 1, 0) == 1 && observed == value, "separate open reads mapped bytes");
+            value ^= 0x33;
+            t.Check(vfs->WriteAt(second, &value, 1, 0) == 1 && safe_read_user(address, &observed, 1) && observed == value, "separate open write reaches mapping");
+            t.Equal(vfs->TruncateFile(second, 0), LINUX_EOPNOTSUPP, "active mapped shrink rejected");
+            t.Check(f.Close(fd), "close mapping descriptor");
+            t.Check(safe_write_user(address, &original, 1), "restore original byte through surviving mapping");
+            t.Equal(l->processController->UnmapProcessMemory(address, PAGE_SIZE), 0, "unmap flushes shared file");
+            auto* archive = r->initRamFileSystemManager->find("test.txt");
+            t.Check(archive && archive->size && archive->data[0] == original, "writeback reaches resource file data");
+        }
+        else
+        {
+            f.Close(fd);
+        }
+
+        vfs->Close(second);
+    }
+
     {
         TestCase t("poststartkernel/memory/user_copy_and_protection");
 

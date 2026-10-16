@@ -10,20 +10,157 @@ virt_addr_t USER_VIRTUAL_END;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
+static spinlock_t             pending_writeback_lock;
+static virt_backing_object_t* pending_writeback;
+
+void vmm_retain_object(virt_backing_object_t* object)
+{
+    if (object != NULL)
+    {
+        __atomic_add_fetch(&object->references, 1U, __ATOMIC_ACQ_REL);
+    }
+}
+
+void vmm_put_page(virt_shared_page_t* page)
+{
+    if (page != NULL && __atomic_sub_fetch(&page->references, 1U, __ATOMIC_ACQ_REL) == 0)
+    {
+        pmm_free(page->pointer);
+        kfree(page);
+    }
+}
+
+int64_t vmm_flush_object(virt_backing_object_t* object)
+{
+    if (object == NULL || object->volatile_storage)
+    {
+        return 0;
+    }
+
+    spinlock_acquire_preempt(&object->lock);
+    int64_t result = 0;
+
+    for (virt_shared_page_t* page = object->pages; page != NULL; page = page->next)
+    {
+        if (!page->dirty || page->offset >= object->size)
+        {
+            continue;
+        }
+
+        if (object->write == NULL)
+        {
+            result = -95;
+            break;
+        }
+
+        uint64_t bytes = object->size - page->offset;
+
+        if (bytes > PAGE_SIZE)
+        {
+            bytes = PAGE_SIZE;
+        }
+
+        int64_t written = object->write(object->context, page->offset, page->pointer, bytes);
+
+        if (written != (int64_t) bytes)
+        {
+            result = written < 0 ? written : -5;
+            break;
+        }
+
+        // A writable alias may store again without faulting. Keep it dirty
+        // until all such aliases have gone; never infer cleanliness from a copy.
+        page->dirty = __atomic_load_n(&object->writable_mappings, __ATOMIC_ACQUIRE) != 0;
+    }
+
+    spinlock_release_preempt(&object->lock);
+
+    return result;
+}
+
+void vmm_put_object(virt_backing_object_t* object)
+{
+    if (object == NULL || __atomic_sub_fetch(&object->references, 1U, __ATOMIC_ACQ_REL) != 0)
+    {
+        return;
+    }
+
+    if (vmm_flush_object(object) != 0)
+    {
+        // Keep failed writeback reachable and retryable after the last mapping.
+        object->references = 1;
+        spinlock_acquire_preempt(&pending_writeback_lock);
+        object->pending_next = pending_writeback;
+        pending_writeback    = object;
+        spinlock_release_preempt(&pending_writeback_lock);
+        return;
+    }
+
+    virt_shared_page_t* page = object->pages;
+
+    while (page != NULL)
+    {
+        virt_shared_page_t* next = page->next;
+        vmm_put_page(page);
+        page = next;
+    }
+
+    if (object->release_context != NULL)
+    {
+        object->release_context(object->context);
+    }
+
+    kfree(object);
+}
+
+int64_t vmm_retry_writeback(void)
+{
+    spinlock_acquire_preempt(&pending_writeback_lock);
+    virt_backing_object_t* list = pending_writeback;
+    pending_writeback           = NULL;
+    spinlock_release_preempt(&pending_writeback_lock);
+    int64_t result = 0;
+
+    while (list != NULL)
+    {
+        virt_backing_object_t* next   = list->pending_next;
+        int64_t                status = vmm_flush_object(list);
+
+        if (status != 0)
+        {
+            result = status;
+        }
+
+        vmm_put_object(list);
+        list = next;
+    }
+
+    return result;
+}
+
 void vmm_release_backing(virt_region_t* region)
 {
     if (region->shared != NULL)
     {
-        if (__atomic_sub_fetch(&region->shared->references, 1U, __ATOMIC_ACQ_REL) == 0)
-        {
-            pmm_free(region->shared->pointer);
-            kfree(region->shared);
-        }
+        vmm_put_page(region->shared);
         region->shared = NULL;
     }
     else if (region->backing != NULL)
     {
         pmm_free(region->backing);
+    }
+
+    if (region->object != NULL)
+    {
+        __atomic_sub_fetch(&region->object->mappings, 1U, __ATOMIC_ACQ_REL);
+
+        if (region->shared_mapping && (region->maximum_protection & 2) != 0)
+        {
+            __atomic_sub_fetch(&region->object->writable_mappings, 1U, __ATOMIC_ACQ_REL);
+        }
+
+        vmm_put_object(region->object);
+        region->object = NULL;
     }
 }
 
@@ -34,6 +171,11 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
     if (region == NULL || region->shared == NULL || (region->protection & 2) == 0)
     {
         return false;
+    }
+
+    if (region->shared_mapping)
+    {
+        return true;
     }
 
     uint64_t flags = 0;
@@ -68,7 +210,8 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
         return false;
     }
 
-    vmm_release_backing(region);
+    vmm_put_page(region->shared);
+    region->shared  = NULL;
     region->backing = page;
     return true;
 }

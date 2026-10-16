@@ -15,8 +15,11 @@ extern "C"
 #include <klib/spinlock.h>
 
 struct ResourceLayerCaps;
-class EventManager;
-class VirtualFileSystem;
+class  EventManager;
+class  VirtualFileSystem;
+class  VirtualMemoryManager;
+struct virt_backing_object;
+struct virt_addr_space;
 struct filesystem_t;
 struct filesystem_type_t;
 struct file_operations_t;
@@ -129,6 +132,11 @@ struct file_operations_t
     int64_t (*Truncate)(file_t* file, uint64_t size);
     uint64_t (*Control)(file_t* file, uint32_t command, uint64_t argument);
     bool linuxErrors;
+    // Called under inode I/O lock. Returns a borrowed canonical backing and
+    // restricts future mprotect permissions (including memfd seal policy).
+    // Backend I/O must use these canonical pages while cached. External storage
+    // needs a nonblocking positioned writer with object-lifetime context.
+    int64_t (*GetBacking)(file_t*, VirtualMemoryManager*, uint32_t, bool, virt_backing_object**, uint32_t*);
 };
 
 struct inode_t
@@ -151,8 +159,9 @@ struct inode_t
 
     void* privateData;
 
-    spinlock_t ioLock;
-    uint64_t   namespaceGeneration;
+    spinlock_t           ioLock;
+    uint64_t             namespaceGeneration;
+    virt_backing_object* backing;
 };
 
 struct dentry_t
@@ -266,6 +275,8 @@ public:
     int64_t        ReadDirectory(file_t* file, directory_entry_t* entry);
     int64_t        Ioctl(file_t* file, uint64_t request, uint64_t argument);
     int64_t        Mmap(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset);
+    int64_t        AcquireMappingBacking(file_t* file, uint64_t offset, uint64_t length, uint32_t protection, bool shared, virt_backing_object** object, uint32_t* maximumProtection);
+    static void    ReleaseMappingBacking(virt_backing_object* object, bool shared, uint32_t maximumProtection);
     bool           Retain(file_t* file);
     uint64_t       CheckExecutable(file_t* file);
     uint32_t       Poll(file_t* file);

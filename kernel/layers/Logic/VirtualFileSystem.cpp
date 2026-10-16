@@ -3,6 +3,7 @@
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
 {
@@ -29,6 +30,61 @@ struct vfs_resource_inode_private_t
     ResourceLayerFileSystemCaps* caps;
 };
 
+class VfsInodeGuard
+{
+public:
+    explicit VfsInodeGuard(inode_t* inode) : Inode(inode)
+    {
+        spinlock_acquire_preempt(&Inode->ioLock);
+    }
+
+    ~VfsInodeGuard()
+    {
+        Release();
+    }
+
+    void Release()
+    {
+        if (Inode != nullptr)
+        {
+            spinlock_release_preempt(&Inode->ioLock);
+            Inode = nullptr;
+        }
+    }
+
+private:
+    inode_t* Inode;
+};
+
+// Caller owns inode->ioLock. With no mappings or retained futex identities, a
+// clean cache may be retired before the backend changes the file's extent.
+static int64_t vfs_prepare_resize(inode_t* inode, uint64_t size)
+{
+    auto* object = inode->backing;
+
+    if (object == nullptr || size == inode->size)
+    {
+        return 0;
+    }
+
+    if (__atomic_load_n(&object->mappings, __ATOMIC_ACQUIRE) != 0 || __atomic_load_n(&object->references, __ATOMIC_ACQUIRE) != 1)
+    {
+        return -95;
+    }
+
+    const int64_t status = VirtualMemoryManager::FlushBacking(object);
+
+    if (status != 0)
+    {
+        return status;
+    }
+
+    inode->backing = nullptr;
+    VirtualMemoryManager::ReleaseBacking(object);
+
+    return 0;
+}
+
 static bool     vfs_readonly(const vfs_path_t& path);
 static inode_t* vfs_resource_lookup(inode_t* directory, const char* name);
 static int64_t  vfs_resource_open(file_t* file);
@@ -37,6 +93,7 @@ static int64_t  vfs_resource_write(file_t* file, const void* buffer, uint64_t co
 static int64_t  vfs_resource_seek(file_t* file, int64_t offset, int whence);
 static int64_t  vfs_resource_readdir(file_t* file, directory_entry_t* entry);
 static void     vfs_resource_release(file_t* file);
+static int64_t  vfs_resource_backing(file_t*, VirtualMemoryManager*, uint32_t, bool, virt_backing_object_t**, uint32_t*);
 
 static int64_t vfs_symlink_read(file_t* file, void* buffer, uint64_t count);
 
@@ -46,6 +103,7 @@ static const inode_operations_t g_vfs_resource_inode_ops = {
 
 static const file_operations_t g_vfs_resource_file_ops = {
         vfs_resource_open, vfs_resource_read, vfs_resource_write, vfs_resource_seek, vfs_resource_readdir, nullptr, nullptr, vfs_resource_release,
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false, vfs_resource_backing,
 };
 
 static const file_operations_t g_vfs_symlink_file_ops = {
@@ -210,7 +268,40 @@ static int64_t vfs_resource_read(file_t* file, void* buffer, uint64_t count)
         return -1;
     }
 
-    int64_t readResult = inodePrivate->caps->Read(inodePrivate->caps, inodePrivate->backendNode, file->offset, buffer, count);
+    int64_t readResult = 0;
+
+    if (file->inode->backing != nullptr)
+    {
+        auto*          object = file->inode->backing;
+        const uint64_t bytes  = file->offset >= object->size ? 0 : (count < object->size - file->offset ? count : object->size - file->offset);
+        spinlock_acquire_preempt(&object->lock);
+
+        while (static_cast<uint64_t>(readResult) < bytes)
+        {
+            const uint64_t offset = file->offset + readResult;
+            auto*          page   = object->pages;
+
+            while (page != nullptr && page->offset != align_down(offset, PAGE_SIZE))
+            {
+                page = page->next;
+            }
+
+            if (page == nullptr)
+            {
+                break;
+            }
+
+            const uint64_t amount = bytes - readResult < PAGE_SIZE - offset % PAGE_SIZE ? bytes - readResult : PAGE_SIZE - offset % PAGE_SIZE;
+            memcpy(static_cast<uint8_t*>(buffer) + readResult, static_cast<uint8_t*>(page->pointer) + offset % PAGE_SIZE, amount);
+            readResult += amount;
+        }
+
+        spinlock_release_preempt(&object->lock);
+    }
+    else
+    {
+        readResult = inodePrivate->caps->Read(inodePrivate->caps, inodePrivate->backendNode, file->offset, buffer, count);
+    }
 
     if (readResult > 0)
     {
@@ -234,7 +325,44 @@ static int64_t vfs_resource_write(file_t* file, const void* buffer, uint64_t cou
         return -1;
     }
 
+    auto* cachedObject = file->inode->backing;
+
+    if (cachedObject != nullptr)
+    {
+        spinlock_acquire_preempt(&cachedObject->lock);
+    }
     int64_t writeResult = inodePrivate->caps->Write(inodePrivate->caps, inodePrivate->backendNode, file->offset, buffer, count);
+
+    if (writeResult > 0 && file->inode->backing != nullptr)
+    {
+        auto*    object = file->inode->backing;
+        uint64_t copied = 0;
+
+        while (copied < static_cast<uint64_t>(writeResult))
+        {
+            const uint64_t offset = file->offset + copied;
+            auto*          page   = object->pages;
+
+            while (page != nullptr && page->offset != align_down(offset, PAGE_SIZE))
+            {
+                page = page->next;
+            }
+
+            if (page == nullptr)
+            {
+                break;
+            }
+
+            const uint64_t amount = writeResult - copied < PAGE_SIZE - offset % PAGE_SIZE ? writeResult - copied : PAGE_SIZE - offset % PAGE_SIZE;
+            memcpy(static_cast<uint8_t*>(page->pointer) + offset % PAGE_SIZE, static_cast<const uint8_t*>(buffer) + copied, amount);
+            copied += amount;
+        }
+    }
+
+    if (cachedObject != nullptr)
+    {
+        spinlock_release_preempt(&cachedObject->lock);
+    }
 
     if (writeResult > 0)
     {
@@ -389,6 +517,70 @@ static void vfs_resource_release(file_t* file)
         kfree(file->privateData);
         file->privateData = nullptr;
     }
+}
+
+static int64_t vfs_resource_writeback(void* context, uint64_t offset, const void* bytes, uint64_t size)
+{
+    auto* backend = static_cast<vfs_resource_inode_private_t*>(context);
+
+    return backend->caps->Write(backend->caps, backend->backendNode, offset, bytes, size);
+}
+
+static void vfs_resource_backing_release(void* context)
+{
+    kfree(context);
+}
+
+static int64_t vfs_resource_backing(file_t* file, VirtualMemoryManager* memory, uint32_t, bool, virt_backing_object_t** result, uint32_t*)
+{
+    if (file->inode->backing != nullptr)
+    {
+        *result = file->inode->backing;
+
+        return 0;
+    }
+
+    auto* backend = static_cast<vfs_resource_inode_private_t*>(file->inode->privateData);
+
+    if (backend == nullptr || backend->caps->Read == nullptr || backend->caps->Write == nullptr)
+    {
+        return -95;
+    }
+
+    auto* object  = memory->CreateBacking(file->inode->size, true);
+    auto* context = static_cast<vfs_resource_inode_private_t*>(kmalloc(sizeof(*backend)));
+
+    if (object == nullptr || context == nullptr)
+    {
+        VirtualMemoryManager::ReleaseBacking(object);
+        kfree(context);
+
+        return -12;
+    }
+
+    *context                = *backend;
+    object->context         = context;
+    object->release_context = vfs_resource_backing_release;
+
+    for (uint64_t offset = 0; offset < object->size; offset += PAGE_SIZE)
+    {
+        auto*          page  = memory->GetBackingPage(object, offset);
+        const uint64_t bytes = object->size - offset < PAGE_SIZE ? object->size - offset : PAGE_SIZE;
+        const int64_t  read  = page != nullptr ? backend->caps->Read(backend->caps, backend->backendNode, offset, page->pointer, bytes) : -12;
+
+        if (read != static_cast<int64_t>(bytes))
+        {
+            VirtualMemoryManager::ReleaseBacking(object);
+
+            return read < 0 ? read : -5;
+        }
+    }
+
+    object->write = vfs_resource_writeback;
+    file->inode->backing = object; // Inode owns the cache independently of open files.
+    *result = object;
+
+    return 0;
 }
 
 static uint32_t vfs_hash_parent_and_name(const dentry_t* parent, const char* name)
@@ -654,6 +846,13 @@ VirtualFileSystem::~VirtualFileSystem()
             }
 
             dentry->name = nullptr;
+
+            if (dentry->inode != nullptr && dentry->inode->backing != nullptr)
+            {
+                auto* backing          = dentry->inode->backing;
+                dentry->inode->backing = nullptr;
+                VirtualMemoryManager::ReleaseBacking(backing);
+            }
 
             if (dentry->cacheOwnedAllocation)
             {
@@ -2400,13 +2599,21 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
         {
             return (int64_t) permission;
         }
-        spinlock_acquire_preempt(&inode->ioLock);
+
+        VfsInodeGuard guard(inode);
+        const int64_t preparation = vfs_prepare_resize(inode, size);
+
+        if (preparation != 0)
+        {
+            return preparation;
+        }
         const int64_t result = inode->inodeOps != nullptr && inode->inodeOps->Truncate != nullptr ? inode->inodeOps->Truncate(inode, size) : -95;
         if (result == 0)
         {
             inode->size = size;
         }
-        spinlock_release_preempt(&inode->ioLock);
+
+        guard.Release();
         if (result == 0 && EventObserver != nullptr)
         {
             EventObserver->NotifyVfs(inode, 2, pathResult.dentry->parent != nullptr ? pathResult.dentry->parent->inode : nullptr, pathResult.dentry->name);
@@ -2428,6 +2635,13 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
         return VFS_ERR_INVAL;
     }
 
+    VfsInodeGuard guard(inode);
+    const int64_t preparation = vfs_prepare_resize(inode, size);
+
+    if (preparation != 0)
+    {
+        return preparation;
+    }
     const int64_t result = caps->Truncate(caps, effectivePath, size);
 
     if (result == 0)
@@ -2455,7 +2669,9 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
         {
             return VFS_ERR_INVAL;
         }
-        const int64_t result = file->operations->Truncate(file, size);
+
+        const int64_t preparation = file->inode->backing != nullptr && !file->inode->backing->volatile_storage ? vfs_prepare_resize(file->inode, size) : 0;
+        const int64_t result      = preparation != 0 ? preparation : file->operations->Truncate(file, size);
         vfs_file_io_end(file);
         return result;
     }
@@ -2471,7 +2687,9 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
         {
             return -22;
         }
-        const int64_t result = file->inode->inodeOps != nullptr && file->inode->inodeOps->Truncate != nullptr ? file->inode->inodeOps->Truncate(file->inode, size) : -95;
+
+        const int64_t preparation = vfs_prepare_resize(file->inode, size);
+        const int64_t result      = preparation != 0 ? preparation : file->inode->inodeOps != nullptr && file->inode->inodeOps->Truncate != nullptr ? file->inode->inodeOps->Truncate(file->inode, size) : -95;
         if (result == 0)
         {
             file->inode->size = size;
@@ -2498,6 +2716,13 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
         return VFS_ERR_INVAL;
     }
 
+    VfsInodeGuard guard(file->inode);
+    const int64_t preparation = vfs_prepare_resize(file->inode, size);
+
+    if (preparation != 0)
+    {
+        return preparation;
+    }
     const int64_t result = caps->Truncate(caps, absolutePath, size);
 
     if (result == 0)
@@ -2765,6 +2990,101 @@ int64_t VirtualFileSystem::Mmap(file_t* file, void* address, uint64_t length, ui
     const int64_t result = file->operations->Mmap(file, address, length, prot, flags, offset);
     vfs_file_io_end(file);
     return result;
+}
+
+int64_t VirtualFileSystem::AcquireMappingBacking(file_t* file, uint64_t offset, uint64_t length, uint32_t protection, bool shared, virt_backing_object_t** object, uint32_t* maximumProtection)
+{
+    *object = nullptr;
+
+    if (file == nullptr || file->inode == nullptr)
+    {
+        return -9;
+    }
+
+    if (file->inode->type != INODE_REGULAR || file->operations == nullptr || file->operations->GetBacking == nullptr)
+    {
+        return -95;
+    }
+
+    const uint64_t mode = __atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 3;
+
+    if (mode == 1 || (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 010000000) != 0)
+    {
+        return -13;
+    }
+
+    uint32_t       maximum = shared && (mode == 0 || vfs_readonly(file->path)) ? 5 : 7;
+    const uint32_t allowed = maximum;
+
+    if ((protection & ~maximum) != 0)
+    {
+        return -13;
+    }
+
+    if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->virtualMemoryManager == nullptr)
+    {
+        return -38;
+    }
+
+    if (!vfs_file_io_begin(file))
+    {
+        return -9;
+    }
+
+    int64_t                status    = 0;
+    virt_backing_object_t* candidate = nullptr;
+    // Allow the zero-filled tail of the last file page, but no page wholly
+    // beyond EOF until mapping invalidation and SIGBUS are implemented.
+    if (file->inode->size == 0 || file->inode->size > UINT64_MAX - (PAGE_SIZE - 1) || offset >= align_up(file->inode->size, PAGE_SIZE) || length > align_up(file->inode->size, PAGE_SIZE) - offset)
+    {
+        status = -95;
+    }
+    else
+    {
+        status = file->operations->GetBacking(file, ResourceLayerImportCaps->virtualMemoryManager, protection, shared, &candidate, &maximum);
+    }
+
+    maximum &= allowed;
+
+    if (status == 0 && (protection & ~maximum) != 0)
+    {
+        status = -13;
+    }
+
+    if (status == 0 && (candidate == nullptr || !candidate->file || candidate->size != file->inode->size || (shared && (maximum & 2) != 0 && !candidate->volatile_storage && candidate->write == nullptr)))
+    {
+        status = -95;
+    }
+
+    if (status == 0)
+    {
+        *maximumProtection = maximum;
+        VirtualMemoryManager::RetainBacking(candidate);
+        *object = candidate;
+        // Reservation closes the prepare/publish race with truncate and seals.
+        __atomic_add_fetch(&(*object)->mappings, 1U, __ATOMIC_ACQ_REL);
+
+        if (shared && (maximum & 2) != 0)
+        {
+            __atomic_add_fetch(&(*object)->writable_mappings, 1U, __ATOMIC_ACQ_REL);
+        }
+    }
+
+    vfs_file_io_end(file);
+
+    return status;
+}
+
+void VirtualFileSystem::ReleaseMappingBacking(virt_backing_object_t* object, bool shared, uint32_t maximumProtection)
+{
+    __atomic_sub_fetch(&object->mappings, 1U, __ATOMIC_ACQ_REL);
+
+    if (shared && (maximumProtection & 2) != 0)
+    {
+        __atomic_sub_fetch(&object->writable_mappings, 1U, __ATOMIC_ACQ_REL);
+    }
+
+    VirtualMemoryManager::ReleaseBacking(object);
 }
 
 bool VirtualFileSystem::Retain(file_t* file)

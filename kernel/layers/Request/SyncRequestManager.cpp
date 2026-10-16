@@ -39,10 +39,7 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
         return LINUX_ENOSYS;
     }
 
-    if ((operation & 128) == 0)
-    {
-        return LINUX_EOPNOTSUPP; // Shared backing/key ownership is absent.
-    }
+    const bool shared = (operation & 128) == 0;
 
     if ((frame->arg0 & 3) != 0)
     {
@@ -51,12 +48,12 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
 
     if (command == 3 || command == 4)
     {
-        return Logic->synchronizationManager->Requeue(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, command == 4, (uint32_t) frame->arg5);
+        return Logic->synchronizationManager->Requeue(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, command == 4, (uint32_t) frame->arg5, shared);
     }
 
     if (command == 5)
     {
-        return Logic->synchronizationManager->WakeOperation(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, (uint32_t) frame->arg5);
+        return Logic->synchronizationManager->WakeOperation(frame->arg0, frame->arg4, (int32_t) frame->arg2, (int32_t) frame->arg3, (uint32_t) frame->arg5, shared);
     }
 
     const uint32_t bits = command == 9 || command == 10 ? (uint32_t) frame->arg5 : UINT32_MAX;
@@ -68,7 +65,7 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
 
     if (!wait)
     {
-        return Logic->synchronizationManager->Wake(frame->arg0, (int32_t) frame->arg2, bits);
+        return Logic->synchronizationManager->Wake(frame->arg0, (int32_t) frame->arg2, bits, shared);
     }
 
     uint64_t deadline = UINT64_MAX;
@@ -105,7 +102,7 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
         }
     }
 
-    return Logic->synchronizationManager->Wait(frame->arg0, (uint32_t) frame->arg2, bits, deadline);
+    return Logic->synchronizationManager->Wait(frame->arg0, (uint32_t) frame->arg2, bits, deadline, shared);
 }
 
 uint64_t SyncRequestManager::HandleSet_robust_listRequest(const arch_syscall_frame_t* frame)

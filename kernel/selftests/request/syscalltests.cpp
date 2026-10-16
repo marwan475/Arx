@@ -2774,7 +2774,13 @@ static bool test_memory_mmap(process_t* process)
     ok &= memory_expect(memory_map(1, fixed + 1, 0x32) == LINUX_EINVAL, "mmap fixed alignment");
     ok &= memory_expect(memory_call(SYSCALL_mmap, CANONICAL_KERNEL_BASE, PAGE_SIZE, 3, 0x32) == LINUX_EINVAL, "mmap rejects kernel address");
     ok &= memory_expect(memory_call(SYSCALL_mmap, 0, UINT64_MAX, 3, 0x22) == LINUX_EINVAL, "mmap length overflow");
-    ok &= memory_expect(memory_map(1, 0, 0x21) == static_cast<uint64_t>(-95), "mmap shared explicitly unsupported");
+    const uint64_t shared = memory_map(1, 0, 0x21);
+    ok &= memory_expect(static_cast<int64_t>(shared) >= 0 && memory_region(process, shared)->shared_mapping, "mmap shared anonymous backing");
+
+    if (static_cast<int64_t>(shared) >= 0)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_munmap, shared, PAGE_SIZE) == 0, "shared anonymous unmap");
+    }
     ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, UINT64_MAX) == LINUX_EBADF, "mmap invalid fd");
     memcpy(memory_bytes(process, a), "/test.txt", sizeof("/test.txt"));
     uint64_t fd = memory_call(SYSCALL_open, a, 0);
@@ -2782,8 +2788,23 @@ static bool test_memory_mmap(process_t* process)
 
     if (static_cast<int64_t>(fd) >= 0)
     {
-        ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, fd) == static_cast<uint64_t>(-95), "mmap file dependency reported");
+        const uint64_t mapped = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 2, fd);
+        ok &= memory_expect(static_cast<int64_t>(mapped) >= 0, "mmap file through VFS backing callback");
+        ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 1, fd) == static_cast<uint64_t>(-13), "shared writable mmap requires writable descriptor");
+        const uint64_t readonlyShared = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 1, fd);
+        ok &= memory_expect(static_cast<int64_t>(readonlyShared) >= 0 && memory_call(SYSCALL_mprotect, readonlyShared, PAGE_SIZE, 3) == static_cast<uint64_t>(-13), "read-only descriptor mapping cannot gain shared write access");
+
+        if (static_cast<int64_t>(readonlyShared) >= 0)
+        {
+            memory_call(SYSCALL_munmap, readonlyShared, PAGE_SIZE);
+        }
         ok &= memory_expect(memory_call(SYSCALL_close, fd) == 0, "mmap file fixture closes");
+
+        if (static_cast<int64_t>(mapped) >= 0)
+        {
+            ok &= memory_expect(memory_region(process, mapped)->object->file && memory_bytes(process, mapped) != nullptr, "file mapping survives descriptor closure");
+            ok &= memory_expect(memory_call(SYSCALL_munmap, mapped, PAGE_SIZE) == 0, "file mapping unmap");
+        }
     }
 
     // Constrain the free interval to exercise address-space exhaustion safely.
@@ -4400,6 +4421,89 @@ static bool test_ipc_memory_file(process_t* process, uint64_t base)
         memory_call(SYSCALL_close, fixed);
     }
     ok &= memory_expect(memory_call(SYSCALL_memfd_create, CANONICAL_KERNEL_BASE, 0) == LINUX_EFAULT && memory_call(SYSCALL_memfd_create, base + 128, 0x8000) == LINUX_EINVAL && memory_call(SYSCALL_memfd_create, base + 128, 4) == LINUX_EOPNOTSUPP, "memfd bad names/flags and hugepage prerequisite");
+    const uint64_t mappedFd = memory_call(SYSCALL_memfd_create, base + 128, 2);
+
+    if (!memory_expect(static_cast<int64_t>(mappedFd) >= 0, "mapped memfd fixture"))
+    {
+        return false;
+    }
+
+    ok &= memory_expect(memory_call(SYSCALL_ftruncate, mappedFd, 3 * PAGE_SIZE) == 0, "size mapped memfd");
+    const uint64_t first      = memory_call(SYSCALL_mmap, 0, 3 * PAGE_SIZE, 3, 1, mappedFd, 0);
+    const uint64_t alias      = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 1, mappedFd, PAGE_SIZE);
+    const uint64_t privateMap = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 2, mappedFd, PAGE_SIZE);
+
+    if (static_cast<int64_t>(first) < 0 || static_cast<int64_t>(alias) < 0 || static_cast<int64_t>(privateMap) < 0)
+    {
+        memory_call(SYSCALL_close, mappedFd);
+
+        return memory_expect(false, "map memfd shared, offset alias and private view");
+    }
+
+    uint32_t word = 71, observed = 0;
+    ok &= memory_expect(safe_write_user(first + PAGE_SIZE, &word, sizeof(word)) && safe_read_user(alias, &observed, sizeof(observed)) && observed == word, "memfd aliases share canonical offset pages");
+    ok &= memory_expect(memory_call(SYSCALL_pread64, mappedFd, base + 1024, sizeof(word), PAGE_SIZE) == sizeof(word), "memfd read sees mapped store");
+    time_fixture_load(process, base + 1024, &observed, sizeof(observed));
+    ok &= memory_expect(observed == word, "mapped store reaches file I/O");
+    word = 83;
+    time_fixture_store(process, base + 512, &word, sizeof(word));
+    ok &= memory_expect(memory_call(SYSCALL_pwrite64, mappedFd, base + 512, sizeof(word), PAGE_SIZE) == sizeof(word) && safe_read_user(alias, &observed, sizeof(observed)) && observed == word, "file write reaches mapped alias");
+    word = 97;
+    ok &= memory_expect(safe_write_user(privateMap, &word, sizeof(word)) && safe_read_user(alias, &observed, sizeof(observed)) && observed == 83, "private file store detaches from shared page");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, privateMap, PAGE_SIZE, 4) == 0 && safe_read_user(privateMap, &observed, sizeof(observed)) && observed == 83, "private file DONTNEED reloads canonical data");
+    ok &= memory_expect(memory_call(SYSCALL_ftruncate, mappedFd, PAGE_SIZE) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_fcntl, mappedFd, 1033, 8) == static_cast<uint64_t>(-16), "mapped truncate and conflicting write seal fail explicitly");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 1, mappedFd, 3 * PAGE_SIZE) == LINUX_EOPNOTSUPP, "memfd mapping beyond EOF rejected");
+    ok &= memory_expect(memory_call(SYSCALL_madvise, first, PAGE_SIZE, 8) == LINUX_EINVAL, "mapped MADV_FREE remains unsupported");
+    ok &= memory_expect(memory_call(SYSCALL_fcntl, mappedFd, 1033, 16) == 0, "future write seal permits existing shared writers");
+    ok &= memory_expect(memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 1, mappedFd, 0) == static_cast<uint64_t>(-1), "future write seal rejects new shared writable mapping");
+    const uint64_t sealedRead = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 1, 1, mappedFd, 0);
+    ok &= memory_expect(static_cast<int64_t>(sealedRead) >= 0 && memory_call(SYSCALL_mprotect, sealedRead, PAGE_SIZE, 3) == static_cast<uint64_t>(-13), "sealed read mapping cannot gain WRITE");
+
+    if (static_cast<int64_t>(sealedRead) >= 0)
+    {
+        memory_call(SYSCALL_munmap, sealedRead, PAGE_SIZE);
+    }
+
+    auto* object = memory_region(process, first)->object;
+    vmm_retain_object(object);
+    auto* clone = memory_vmm()->CloneUserAddressSpace(process->addressSpace);
+    ok &= memory_expect(clone != nullptr, "fork mapped memfd");
+    ok &= memory_expect(memory_call(SYSCALL_close, mappedFd) == 0 && memory_call(SYSCALL_munmap, first + PAGE_SIZE, PAGE_SIZE) == 0, "close fd and partially unmap parent");
+    ok &= memory_expect(safe_read_user(alias, &observed, sizeof(observed)) && observed == 83, "offset alias survives descriptor close and partial unmap");
+
+    if (clone != nullptr)
+    {
+        auto* childRegion = memory_vmm()->FindRegion(clone, first + PAGE_SIZE);
+        ok &= memory_expect(childRegion != nullptr && childRegion->object == object && *static_cast<uint32_t*>(childRegion->backing) == 83, "fork retains shared memfd page after parent unmap");
+        memory_vmm()->DestroyUserAddressSpace(clone);
+    }
+
+    ok &= memory_expect(memory_call(SYSCALL_munmap, first, 3 * PAGE_SIZE) == 0 && memory_call(SYSCALL_munmap, alias, PAGE_SIZE) == 0 && memory_call(SYSCALL_munmap, privateMap, PAGE_SIZE) == 0, "release all surviving memfd views");
+    ok &= memory_expect(object->mappings == 0 && object->references == 1, "backing owner references drain after close, fork teardown and unmap");
+    vmm_put_object(object);
+    const uint64_t tailFd = memory_call(SYSCALL_memfd_create, base + 128, 0);
+
+    if (static_cast<int64_t>(tailFd) < 0)
+    {
+        return memory_expect(false, "partial EOF memfd fixture");
+    }
+
+    ok &= memory_expect(memory_call(SYSCALL_ftruncate, tailFd, 17) == 0, "size partial EOF file");
+    const uint64_t tailMap = memory_call(SYSCALL_mmap, 0, PAGE_SIZE, 3, 1, tailFd, 0);
+
+    if (static_cast<int64_t>(tailMap) >= 0)
+    {
+        word = 123;
+        ok &= memory_expect(safe_write_user(tailMap + 128, &word, sizeof(word)) && memory_call(SYSCALL_ftruncate, tailFd, 256) == 0 && safe_read_user(tailMap + 128, &observed, sizeof(observed)) && observed == 0, "file extension does not expose mapped stores past old EOF");
+        ok &= memory_expect(safe_write_user(tailMap + 300, &word, sizeof(word)) && memory_call(SYSCALL_pwrite64, tailFd, base + 512, sizeof(word), 500) == sizeof(word) && safe_read_user(tailMap + 300, &observed, sizeof(observed)) && observed == 0, "sparse write extension clears the mapped EOF gap");
+        ok &= memory_expect(memory_call(SYSCALL_munmap, tailMap, PAGE_SIZE) == 0 && memory_call(SYSCALL_ftruncate, tailFd, 16) == 0, "memfd shrink works after final unmap");
+    }
+    else
+    {
+        ok &= memory_expect(false, "map partial EOF page");
+    }
+
+    memory_call(SYSCALL_close, tailFd);
     return ok;
 }
 

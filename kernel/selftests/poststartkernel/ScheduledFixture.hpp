@@ -135,9 +135,9 @@ public:
         return T.Check(dispatched && Completed, "scheduled scenario returned to BSP");
     }
 
-    bool PublishPeer()
+    bool PublishPeer(process_t* owner = nullptr)
     {
-        Published = L->scheduler->PublishTask(Process, Peer);
+        Published = L->scheduler->PublishTask(owner != nullptr ? owner : Process, Peer);
         return T.Check(Published, "publish runnable peer");
     }
 

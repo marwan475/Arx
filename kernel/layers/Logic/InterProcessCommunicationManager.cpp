@@ -4,6 +4,7 @@
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
 
 #include <klib/klib.h>
 
@@ -50,10 +51,29 @@ void set_pipe_packet(pipe_state_t* pipe, size_t index, uint8_t flags)
 
 struct memory_file_t
 {
-    inode_t  inode;
-    uint32_t seals;
-    uint8_t* pages[MEMORY_PAGES];
+    inode_t               inode;
+    uint32_t              seals;
+    virt_shared_page_t*   pages[MEMORY_PAGES];
+    VirtualMemoryManager* manager;
 };
+
+// A mapped store past a partial EOF belongs to the mapping's zero-filled tail,
+// not to a later file extension. Clear holes before exposing new file bytes.
+void memory_zero_range(memory_file_t* memory, uint64_t start, uint64_t end)
+{
+    while (start < end)
+    {
+        const uint64_t amount = end - start < PAGE_SIZE - start % PAGE_SIZE ? end - start : PAGE_SIZE - start % PAGE_SIZE;
+        auto*          page   = memory->pages[start / PAGE_SIZE];
+
+        if (page != nullptr)
+        {
+            memset(static_cast<uint8_t*>(page->pointer) + start % PAGE_SIZE, 0, amount);
+        }
+
+        start += amount;
+    }
+}
 
 uint64_t vector_length(const file_iovec_t* vectors, size_t count, size_t* length)
 {
@@ -96,7 +116,7 @@ const file_operations_t InterProcessCommunicationManager::PipeOperations = {
         nullptr, nullptr, nullptr, PipeSeek, nullptr, PipeIoctl, nullptr, PipeRelease, PipePoll, PipeRead, PipeWrite, PipeReadVector, PipeWriteVector, nullptr, PipeControl,
 };
 const file_operations_t InterProcessCommunicationManager::MemoryOperations = {
-        nullptr, MemoryRead, MemoryWrite, MemorySeek, nullptr, nullptr, nullptr, MemoryRelease, nullptr, nullptr, nullptr, nullptr, nullptr, MemoryTruncate, MemoryControl, true,
+    nullptr, MemoryRead, MemoryWrite, MemorySeek, nullptr, nullptr, nullptr, MemoryRelease, nullptr, nullptr, nullptr, nullptr, nullptr, MemoryTruncate, MemoryControl, true, MemoryBacking,
 };
 
 InterProcessCommunicationManager::InterProcessCommunicationManager(ResourceLayerCaps* resources, VirtualFileSystem* vfs, EventManager* events, SignalManager* signals) : Resources(resources), Vfs(vfs), Events(events), Signals(signals)
@@ -484,7 +504,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
 
 uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, uint32_t flags)
 {
-    if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
+    if (Resources == nullptr || Resources->processManager == nullptr || Resources->virtualMemoryManager == nullptr || Vfs == nullptr)
     {
         return LINUX_ENOSYS;
     }
@@ -520,12 +540,24 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
         return LINUX_ENOMEM;
     }
     Vfs->InitializeAnonymousInode(&memory->inode, INODE_REGULAR, 0777);
-    memory->seals     = flags & 2 ? 0 : 1;
-    file->inode       = &memory->inode;
-    file->operations  = &MemoryOperations;
-    file->privateData = memory;
-    file->refCount    = 1;
-    file->statusFlags = 2;
+    memory->manager       = Resources->virtualMemoryManager;
+    memory->inode.backing = memory->manager->CreateBacking(0, true);
+
+    if (memory->inode.backing == nullptr)
+    {
+        kfree(memory);
+        kfree(file);
+
+        return LINUX_ENOMEM;
+    }
+
+    memory->inode.backing->volatile_storage = true;
+    memory->seals                           = flags & 2 ? 0 : 1;
+    file->inode                             = &memory->inode;
+    file->operations                        = &MemoryOperations;
+    file->privateData                       = memory;
+    file->refCount                          = 1;
+    file->statusFlags                       = 2;
     FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
     process_t*          process = Resources->processManager->GetCurrentProcess();
     const int64_t       fd      = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & 1 ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
@@ -547,7 +579,7 @@ int64_t InterProcessCommunicationManager::MemoryRead(file_t* file, void* buffer,
     for (size_t i = 0; i < bytes; ++i)
     {
         const size_t address             = file->offset + i;
-        static_cast<uint8_t*>(buffer)[i] = memory->pages[address / PAGE_SIZE] != nullptr ? memory->pages[address / PAGE_SIZE][address % PAGE_SIZE] : 0;
+        static_cast<uint8_t*>(buffer)[i] = memory->pages[address / PAGE_SIZE] != nullptr ? static_cast<uint8_t*>(memory->pages[address / PAGE_SIZE]->pointer)[address % PAGE_SIZE] : 0;
     }
     file->offset += bytes;
     return bytes;
@@ -576,6 +608,11 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
     {
         return -1;
     }
+
+    if (file->offset > memory->inode.size)
+    {
+        memory_zero_range(memory, memory->inode.size, file->offset);
+    }
     size_t copied = 0;
     while (copied < count)
     {
@@ -583,20 +620,21 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
         const size_t page    = address / PAGE_SIZE;
         if (memory->pages[page] == nullptr)
         {
-            memory->pages[page] = static_cast<uint8_t*>(kzalloc(PAGE_SIZE));
+            memory->pages[page] = memory->manager->GetBackingPage(memory->inode.backing, page * PAGE_SIZE);
             if (memory->pages[page] == nullptr)
             {
                 break;
             }
         }
         const size_t bytes = count - copied < PAGE_SIZE - address % PAGE_SIZE ? count - copied : PAGE_SIZE - address % PAGE_SIZE;
-        memcpy(memory->pages[page] + address % PAGE_SIZE, static_cast<const uint8_t*>(buffer) + copied, bytes);
+        memcpy(static_cast<uint8_t*>(memory->pages[page]->pointer) + address % PAGE_SIZE, static_cast<const uint8_t*>(buffer) + copied, bytes);
         copied += bytes;
     }
     file->offset += copied;
     if (file->offset > memory->inode.size)
     {
         memory->inode.size = file->offset;
+        __atomic_store_n(&memory->inode.backing->size, file->offset, __ATOMIC_RELEASE);
     }
     return copied != 0 ? (int64_t) copied : (int64_t) LINUX_ENOMEM;
 }
@@ -623,17 +661,17 @@ int64_t InterProcessCommunicationManager::MemoryTruncate(file_t* file, uint64_t 
     {
         return -1;
     }
+
+    const int64_t status = memory->manager->ResizeVolatileBacking(memory->inode.backing, size);
+
+    if (status != 0)
+    {
+        return status;
+    }
     if (size < memory->inode.size)
     {
         for (size_t page = (size + PAGE_SIZE - 1) / PAGE_SIZE; page < MEMORY_PAGES; ++page)
-        {
-            kfree(memory->pages[page]);
             memory->pages[page] = nullptr;
-        }
-        if (size % PAGE_SIZE != 0 && memory->pages[size / PAGE_SIZE] != nullptr)
-        {
-            memset(memory->pages[size / PAGE_SIZE] + size % PAGE_SIZE, 0, PAGE_SIZE - size % PAGE_SIZE);
-        }
     }
     memory->inode.size = size;
     return 0;
@@ -651,6 +689,11 @@ uint64_t InterProcessCommunicationManager::MemoryControl(file_t* file, uint32_t 
     if (command == 1033)
     {
         result = (argument & ~31ULL) != 0 ? LINUX_EINVAL : (memory->seals & 1) ? (uint64_t) -1 : 0;
+
+        if (result == 0 && (argument & 8) != 0 && __atomic_load_n(&memory->inode.backing->writable_mappings, __ATOMIC_ACQUIRE) != 0)
+        {
+            result = static_cast<uint64_t>(-16);
+        }
         if (result == 0)
         {
             memory->seals |= argument;
@@ -663,9 +706,42 @@ uint64_t InterProcessCommunicationManager::MemoryControl(file_t* file, uint32_t 
 void InterProcessCommunicationManager::MemoryRelease(file_t* file)
 {
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
-    for (size_t i = 0; i < MEMORY_PAGES; ++i)
-    {
-        kfree(memory->pages[i]);
-    }
+    VirtualMemoryManager::ReleaseBacking(memory->inode.backing);
     kfree(memory);
+}
+
+int64_t InterProcessCommunicationManager::MemoryBacking(file_t* file, VirtualMemoryManager*, uint32_t protection, bool shared, virt_backing_object_t** object, uint32_t* maximum)
+{
+    auto* memory = static_cast<memory_file_t*>(file->privateData);
+
+    if (shared && (memory->seals & (8U | 16U)) != 0)
+    {
+        if ((protection & 2) != 0)
+        {
+            return -1;
+        }
+
+        *maximum &= ~2U;
+    }
+
+    // Populate holes in the same page array used by read/write. Mapping never
+    // creates detached copies of memfd storage.
+    for (uint64_t offset = 0; offset < memory->inode.size; offset += PAGE_SIZE)
+    {
+        const size_t index = offset / PAGE_SIZE;
+
+        if (memory->pages[index] == nullptr)
+        {
+            memory->pages[index] = memory->manager->GetBackingPage(memory->inode.backing, offset);
+        }
+
+        if (memory->pages[index] == nullptr)
+        {
+            return -12;
+        }
+    }
+
+    *object = memory->inode.backing;
+
+    return 0;
 }

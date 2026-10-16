@@ -31,6 +31,7 @@ private:
     static int64_t                 MemoryWrite(file_t* file, const void* buffer, uint64_t count);
     static int64_t                 MemorySeek(file_t* file, int64_t offset, int whence);
     static int64_t                 MemoryTruncate(file_t* file, uint64_t size);
+    static int64_t                 MemoryBacking(file_t*, VirtualMemoryManager*, uint32_t, bool, virt_backing_object**, uint32_t*);
     static uint64_t                MemoryControl(file_t* file, uint32_t command, uint64_t argument);
     static void                    MemoryRelease(file_t* file);
     ResourceLayerCaps*             Resources;

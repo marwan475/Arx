@@ -523,8 +523,23 @@ static bool test_time_timer(process_t* process, uint64_t number)
         ok &= expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds <= 1 && (value.value.seconds != 0 || value.value.microseconds != 0),
             "armed real timer reports remaining duration");
 
-        ok &= expect(syscall_call(SYSCALL_setitimer, 1, input) == LINUX_EOPNOTSUPP && syscall_call(SYSCALL_setitimer, 2, input) == LINUX_EOPNOTSUPP,
-            "CPU timers await process CPU accounting");
+        for (unsigned which = 1; which <= 2; ++which)
+        {
+            ok &= expect(syscall_call(SYSCALL_setitimer, which, input) == 0, "CPU timer arms against process accounting");
+
+            ok &= expect(syscall_call(SYSCALL_getitimer, which, output) == 0, "CPU timer query succeeds");
+
+            fixture_load(process, output, &value, sizeof(value));
+
+            ok &= expect(value.value.seconds <= 1 && (value.value.seconds != 0 || value.value.microseconds != 0) && value.interval.seconds == 2 && value.interval.microseconds == 123,
+                "CPU timer reports remaining duration and interval");
+
+            ok &= expect(syscall_call(SYSCALL_setitimer, which, 0) == 0 && syscall_call(SYSCALL_getitimer, which, output) == 0, "CPU timer cancellation and query");
+
+            fixture_load(process, output, &value, sizeof(value));
+
+            ok &= expect(value.value.seconds == 0 && value.value.microseconds == 0 && value.interval.seconds == 0 && value.interval.microseconds == 0, "cancelled CPU timer is disarmed");
+        }
 
         syscall_call(SYSCALL_setitimer, 0, 0);
 

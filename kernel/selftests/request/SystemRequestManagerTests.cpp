@@ -177,6 +177,92 @@ static bool test_system_limits(process_t* process, uint64_t number)
 
     ok &= expect(original.current == 1024 && original.maximum == ProcessManager::MAX_FILE_DESCRIPTORS, "getrlimit default limits");
 
+    ResourceLayerCaps* resources = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps();
+
+    virt_addr_space_t* peerSpace = resources->virtualMemoryManager->CreateUserAddressSpace();
+
+    process_t*        peer      = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
+
+    if (peer != nullptr)
+    {
+        peer->credentials = process->credentials;
+
+        ok &= expect(syscall_call(SYSCALL_prlimit64, peer->id, 7, 0, output) == 0, "prlimit64 permits matching cross-process credentials");
+
+        process_file_limit_t peerLimit = {3, original.maximum};
+
+        fixture_store(process, base, &peerLimit, sizeof(peerLimit));
+
+        ok &= expect(syscall_call(SYSCALL_prlimit64, peer->id, 7, base, CANONICAL_KERNEL_BASE) == LINUX_EFAULT && peer->fileLimit.current == 3 && process->fileLimit.current == original.current,
+            "cross-process limit change commits before copyout fault and only changes target");
+
+        const process_credentials_t matching = peer->credentials;
+
+        uint32_t* mismatches[] = {&peer->credentials.user.real, &peer->credentials.user.effective, &peer->credentials.user.saved,
+                                 &peer->credentials.group.real, &peer->credentials.group.effective, &peer->credentials.group.saved};
+
+        for (size_t index = 0; index < sizeof(mismatches) / sizeof(mismatches[0]); ++index)
+        {
+            peer->credentials = matching;
+
+            ++*mismatches[index];
+
+            ok &= expect(syscall_call(SYSCALL_prlimit64, peer->id, 7, base, output) == static_cast<uint64_t>(-1) && peer->fileLimit.current == 3,
+                "cross-process rlimit rejects each mismatched real/effective/saved UID and GID without mutation");
+        }
+
+        peer->credentials = matching;
+
+        peer->exited = true;
+
+        ProcessManager::ReleaseProcessResources(peer);
+
+        ok &= expect(syscall_call(SYSCALL_prlimit64, peer->id, 7, 0, output) == 0, "cross-process limit query survives exited target releasing descriptor tables");
+
+        ok &= expect(resources->processManager->FreeProcess(peer), "cross-process rlimit fixture cleanup");
+    }
+    else
+    {
+        ok &= expect(false, "cross-process rlimit fixture allocation");
+    }
+
+    resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
+
+    uint64_t   now;
+
+    const bool cpuClock = arch_time_read_monotonic(&now);
+
+    ok &= expect(syscall_call(SYSCALL_getrlimit, 0, output) == (cpuClock ? 0 : LINUX_ENOSYS), "CPU rlimit requires an accounting clock");
+
+    if (cpuClock)
+    {
+        fixture_load(process, output, &actual, sizeof(actual));
+
+        ok &= expect(actual.current == UINT64_MAX && actual.maximum == UINT64_MAX, "CPU limits default to infinity");
+
+        process_file_limit_t cpu = {1, 3};
+
+        fixture_store(process, base, &cpu, sizeof(cpu));
+
+        ok &= expect(syscall_call(SYSCALL_prlimit64, 0, 0, base, base) == 0, "CPU limit exchange permits aliased input and output");
+
+        fixture_load(process, base, &actual, sizeof(actual));
+
+        ok &= expect(actual.current == UINT64_MAX && process->cpuLimit.current == 1 && process->cpuLimit.maximum == 3, "CPU limit exchange returns old limit and commits enforcement state");
+
+        cpu = {4, 3};
+
+        fixture_store(process, base, &cpu, sizeof(cpu));
+
+        ok &= expect(syscall_call(SYSCALL_setrlimit, 0, base) == LINUX_EINVAL, "CPU soft limit cannot exceed hard limit");
+
+        cpu = {1, 4};
+
+        fixture_store(process, base, &cpu, sizeof(cpu));
+
+        ok &= expect(syscall_call(SYSCALL_setrlimit, 0, base) == static_cast<uint64_t>(-1) && process->cpuLimit.maximum == 3, "CPU hard-limit privilege override is explicitly denied");
+    }
+
     process_file_limit_t next = {2, original.maximum};
 
     fixture_store(process, base, &next, sizeof(next));
@@ -244,10 +330,10 @@ static bool test_system_limits(process_t* process, uint64_t number)
 
     ok &= expect(syscall_call(SYSCALL_setrlimit, 7, CANONICAL_KERNEL_BASE) == LINUX_EFAULT && syscall_call(SYSCALL_getrlimit, 7, 0) == LINUX_EFAULT, "rlimit invalid buffers");
 
-    ok &= expect(syscall_call(SYSCALL_prlimit64, 0, 16) == LINUX_EINVAL && syscall_call(SYSCALL_prlimit64, 0, 0) == LINUX_EOPNOTSUPP, "rlimit invalid and unsupported resources");
+    ok &= expect(syscall_call(SYSCALL_prlimit64, 0, 16) == LINUX_EINVAL && syscall_call(SYSCALL_prlimit64, 0, 1) == LINUX_EOPNOTSUPP, "rlimit invalid and unsupported resources");
 
-    ok &= expect(syscall_call(SYSCALL_prlimit64, UINT64_MAX, 7) == LINUX_ESRCH && syscall_call(SYSCALL_prlimit64, ProcessManager::MAX_PROCESSES, 7) == LINUX_EOPNOTSUPP,
-        "prlimit64 PID restrictions");
+    ok &= expect(syscall_call(SYSCALL_prlimit64, UINT64_MAX, 7) == LINUX_ESRCH && syscall_call(SYSCALL_prlimit64, ProcessManager::MAX_PROCESSES, 7) == LINUX_ESRCH,
+        "prlimit64 nonexistent PID restrictions");
 
     ok &= expect(syscall_call(SYSCALL_prlimit64, 0, 7, base, base) == 0, "prlimit64 aliased input and output");
 

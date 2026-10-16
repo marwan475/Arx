@@ -31,6 +31,7 @@ public:
     void              WakeEventWaiters(const uint64_t* sequence);
     void              WakeSignalWaiters(process_t* process);
     void              WakeSleepingTasks(uint8_t cpuId);
+    void              AccountCurrent(bool userMode);
     [[noreturn]] void ExitCurrentTask();
     void              ReapExitedProcesses();
     void              NotifyProcessExit(process_t* process);

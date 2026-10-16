@@ -107,6 +107,15 @@ struct process_group_list_t
 
 struct process_t
 {
+    // Nanoseconds consumed by all threads, retained after their task slots retire.
+    uint64_t               userCpuNanoseconds;
+    uint64_t               kernelCpuNanoseconds;
+    uint64_t               minorFaults;
+    uint64_t               childUsage[18];
+    process_file_limit_t   cpuLimit;
+    uint64_t               cpuLimitNotification;
+    uint64_t               cpuTimerDeadline[2];
+    uint64_t               cpuTimerInterval[2];
     bool                   allocated;
     bool                   hasParent;
     bool                   ownsAddressSpace;
@@ -160,6 +169,7 @@ struct process_t
     signal_sender_t        signalSenders[32];
 
     descriptor_table_t*    Files() const;
+    uint64_t               DescriptorLimit() const;
     filesystem_context_t*  Fs() const;
     signal_dispositions_t* Signals() const;
 };
@@ -214,6 +224,9 @@ private:
 class ProcessManager
 {
 public:
+    static void                  SnapshotUsage(const process_t* process, uint64_t usage[18], bool descendants = true);
+    static void                  ReapUsage(process_t* parent, const process_t* child);
+
     static constexpr size_t   MAX_PROCESSES                 = 64;
     static constexpr uint64_t DEFAULT_FILE_DESCRIPTOR_COUNT = 32;
     static constexpr uint64_t MAX_FILE_DESCRIPTORS          = 1024 * 1024;

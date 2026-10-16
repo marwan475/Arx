@@ -20,6 +20,7 @@
 
 extern uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled);
 extern uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame);
+extern void     dispatcher_account_mode(bool userMode);
 
 _Static_assert(sizeof(arch_syscall_frame_t) == 176, "syscall frame size must match entry assembly");
 _Static_assert(offsetof(arch_syscall_frame_t, rbx) == 96 && offsetof(arch_syscall_frame_t, fxstate) == 160, "signal register extension offsets");
@@ -135,5 +136,7 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
     }
 
     uint64_t result = dispatcher_dispatch_syscall(frame);
-    return dispatcher_signal_return((arch_syscall_frame_t*) frame, result);
+    result          = dispatcher_signal_return((arch_syscall_frame_t*) frame, result);
+    dispatcher_account_mode(true);
+    return result;
 }

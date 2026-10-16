@@ -7,6 +7,112 @@ void test_TaskManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->taskManager : nullptr;
     ManagerSuite suite("resource/TaskManager", m != nullptr);
+    suite.Run("resource/TaskManager/system_task_statistics", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        uint64_t now = 0;
+        uint64_t loads[3];
+        uint16_t initial = 0, count = 0;
+        (void) arch_time_read_monotonic(&now);
+        m->ReadSystemStatistics(now, loads, &initial);
+        task_t* peer = m->AllocateTask();
+
+        if (!t.Check(peer != nullptr, "allocate statistics fixture task"))
+        {
+            return;
+        }
+
+        m->ReadSystemStatistics(now, loads, &count);
+        t.Equal(count, initial, "unbound idle and reserved task slots are excluded from sysinfo procs");
+
+        if (t.Check(resources->processManager->AddTask(f.Process, peer), "attach live statistics peer"))
+        {
+            m->ReadSystemStatistics(now, loads, &count);
+            t.Equal(count, initial + 1, "sysinfo counts live threads rather than only process groups");
+            m->MarkDying(peer);
+            m->ReadSystemStatistics(now, loads, &count);
+            t.Equal(count, initial, "exiting thread is removed from live system statistics");
+            resources->processManager->RemoveTask(f.Process, peer);
+        }
+
+        t.Check(m->FreeTask(peer), "free statistics fixture task");
+    });
+
+    suite.Run("resource/TaskManager/thread_cpu_accounting", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        uint64_t now;
+
+        if (!arch_time_read_monotonic(&now))
+        {
+            t.Skip("CPU accounting clock unsupported");
+            return;
+        }
+
+        task_t* peer = m->AllocateTask();
+
+        if (!t.Check(peer != nullptr && resources->processManager->AddTask(f.Process, peer), "attach accounting peer thread"))
+        {
+            if (peer != nullptr)
+            {
+                m->FreeTask(peer);
+            }
+
+            return;
+        }
+
+        f.Task->isUserTask = true;
+        peer->isUserTask   = true;
+        m->AccountCurrent(true);
+
+        for (unsigned index = 0; index < 4096; ++index)
+        {
+            arch_pause();
+        }
+
+        m->AccountCurrent(false);
+        const uint64_t firstUser = f.Process->userCpuNanoseconds;
+        t.Check(firstUser > 0, "user execution consumes user CPU time");
+        resources->processManager->SetRunningProcess(arch_cpu_id(), nullptr);
+
+        for (unsigned index = 0; index < 4096; ++index)
+        {
+            arch_pause();
+        }
+
+        m->AccountCurrent(false);
+        t.Check(f.Process->kernelCpuNanoseconds > 0, "switch bookkeeping charges task owner even after current process mapping changes");
+        resources->processManager->SetRunningProcess(arch_cpu_id(), f.Process);
+        t.Check(m->SetRunningTask(arch_cpu_id(), peer), "switch synthetic identity to peer");
+        m->AccountCurrent(true);
+
+        for (unsigned index = 0; index < 4096; ++index)
+        {
+            arch_pause();
+        }
+
+        m->AccountCurrent(false);
+        t.Check(f.Process->userCpuNanoseconds > firstUser, "thread user CPU aggregates into the same process");
+        t.Check(!f.Task->accountingRunning, "suspended thread cannot accrue elapsed sleep time");
+        t.Check(m->SetRunningTask(arch_cpu_id(), f.Task), "restore fixture task");
+        f.Task->isUserTask = false;
+        resources->processManager->RemoveTask(f.Process, peer);
+        t.Check(m->FreeTask(peer), "retire thread without discarding process CPU totals");
+        t.Check(f.Process->userCpuNanoseconds > firstUser, "retired thread CPU remains visible");
+    });
+
     suite.Run("resource/TaskManager/allocation_lookup", [&](TestCase& t)
     {
         size_t before = m->CountTasks();

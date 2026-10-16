@@ -11,7 +11,8 @@ extern "C"
 class PhysicalMemoryManager
 {
 public:
-    void* Alloc(size_t size);
-    void  Free(void* addr);
-    void  GetMemoryInfo(uint64_t* totalBytes, uint64_t* freeBytes);
+    void*    Alloc(size_t size);
+    void     Free(void* addr);
+    void     GetMemoryInfo(uint64_t* totalBytes, uint64_t* freeBytes);
+    uint64_t GetSharedMemoryBytes() const;
 };

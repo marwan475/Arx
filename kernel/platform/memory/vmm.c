@@ -10,8 +10,23 @@ virt_addr_t USER_VIRTUAL_END;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
+extern void dispatcher_account_minor_fault(virt_addr_space_t* space);
+
 static spinlock_t             pending_writeback_lock;
 static virt_backing_object_t* pending_writeback;
+static uint64_t              shared_resident_bytes;
+
+void vmm_account_shared_page(virt_shared_page_t* page)
+{
+    // Called once before publication of an anonymous shared backing page.
+    page->shared_accounting = true;
+    __atomic_fetch_add(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
+}
+
+uint64_t vmm_shared_memory_bytes(void)
+{
+    return __atomic_load_n(&shared_resident_bytes, __ATOMIC_RELAXED);
+}
 
 void vmm_retain_object(virt_backing_object_t* object)
 {
@@ -25,6 +40,11 @@ void vmm_put_page(virt_shared_page_t* page)
 {
     if (page != NULL && __atomic_sub_fetch(&page->references, 1U, __ATOMIC_ACQ_REL) == 0)
     {
+        if (page->shared_accounting)
+        {
+            __atomic_fetch_sub(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
+        }
+
         pmm_free(page->pointer);
         kfree(page);
     }
@@ -190,7 +210,14 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
 
     if (__atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) == 1)
     {
+        const bool fault = !arch_user_page_accessible(region->start, space->pt, true);
         vmm_protect_page(region->start, flags, space);
+
+        if (fault)
+        {
+            dispatcher_account_minor_fault(space);
+        }
+
         return true;
     }
 
@@ -213,6 +240,7 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
     vmm_put_page(region->shared);
     region->shared  = NULL;
     region->backing = page;
+    dispatcher_account_minor_fault(space);
     return true;
 }
 

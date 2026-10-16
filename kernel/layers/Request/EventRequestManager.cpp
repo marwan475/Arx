@@ -134,7 +134,7 @@ uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame,
         {
             nfds = (uint32_t) frame->arg1;
 
-            if (nfds > process->fileLimit.current)
+            if (nfds > process->DescriptorLimit())
             {
                 return LINUX_EINVAL;
             }

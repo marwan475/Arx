@@ -6,6 +6,13 @@
 
 namespace
 {
+static uint64_t cpu_clock(const process_t* process, int which)
+{
+    const uint64_t user   = __atomic_load_n(&process->userCpuNanoseconds, __ATOMIC_RELAXED);
+    const uint64_t kernel = which == 1 ? 0 : __atomic_load_n(&process->kernelCpuNanoseconds, __ATOMIC_RELAXED);
+    return kernel > UINT64_MAX - user ? UINT64_MAX : user + kernel;
+}
+
 static bool timeval_nanoseconds(const time_timeval_t& value, uint64_t* result)
 {
     const uint64_t microseconds = (uint64_t) value.microseconds;
@@ -133,6 +140,13 @@ void TimeManager::SnapshotTimer(process_t* process, int which, uint64_t now, tim
         value->value.seconds      = (int64_t) (remaining / 1000000000);
         value->value.microseconds = (int64_t) ((remaining % 1000000000) / 1000);
     }
+    else if (which != 0 && process->cpuTimerDeadline[which - 1] != 0)
+    {
+        const uint64_t deadline   = process->cpuTimerDeadline[which - 1];
+        const uint64_t remaining  = deadline > now ? deadline - now : 1000;
+        value->value.seconds      = remaining / 1000000000;
+        value->value.microseconds = (remaining % 1000000000) / 1000;
+    }
 }
 
 uint64_t TimeManager::GetTimer(int which, uint64_t destination)
@@ -153,15 +167,16 @@ uint64_t TimeManager::GetTimer(int which, uint64_t destination)
     time_itimerval_t value   = {};
     uint64_t         now     = 0;
     uint64_t         result  = 0;
+    TaskManager::AccountActive(false);
     spinlock_acquire_preempt(&process->timerLock);
 
-    if (which == 0 && process->realTimerArmed && (!ClockAvailable || !arch_time_read_monotonic(&now)))
+    if (((which == 0 && process->realTimerArmed) || which != 0) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
     {
         result = LINUX_ENOSYS;
     }
     else
     {
-        SnapshotTimer(process, which, now, &value);
+        SnapshotTimer(process, which, which == 0 ? now : cpu_clock(process, which), &value);
         result = safe_write_user_locked(&access, destination, &value, sizeof(value)) ? 0 : LINUX_EFAULT;
     }
 
@@ -196,33 +211,31 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
     {
         result = LINUX_EINVAL;
     }
-    else if (which != 0 && (value.value.seconds != 0 || value.value.microseconds != 0))
-    {
-        result = LINUX_EOPNOTSUPP;
-    }
     else
     {
         uint64_t duration = 0;
         uint64_t interval = 0;
         uint64_t now      = 0;
+        TaskManager::AccountActive(false);
+        const uint64_t cpuNow = which == 0 ? 0 : cpu_clock(process, which);
         spinlock_acquire_preempt(&process->timerLock);
 
-        if (which == 0 && (!timeval_nanoseconds(value.value, &duration) || !timeval_nanoseconds(value.interval, &interval)))
+        if (!timeval_nanoseconds(value.value, &duration) || !timeval_nanoseconds(value.interval, &interval))
         {
             result = LINUX_EOVERFLOW;
         }
-        else if (which == 0 && (duration != 0 || (previous != 0 && process->realTimerArmed)) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
+        else if ((which != 0 || duration != 0 || (previous != 0 && process->realTimerArmed)) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
         {
             result = LINUX_ENOSYS;
         }
-        else if (duration > UINT64_MAX - now)
+        else if (duration > UINT64_MAX - (which == 0 ? now : cpuNow))
         {
             result = LINUX_EOVERFLOW;
         }
         else
         {
             time_itimerval_t old = {};
-            SnapshotTimer(process, which, now, &old);
+            SnapshotTimer(process, which, which == 0 ? now : cpuNow, &old);
 
             if (which == 0)
             {
@@ -230,6 +243,16 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
                 process->realTimerInterval = duration != 0 ? interval : 0;
                 process->realTimerArmed    = duration != 0;
                 process->realTimerExpired  = false;
+
+                if (duration == 0)
+                {
+                    value.interval = {0, 0};
+                }
+            }
+            else
+            {
+                process->cpuTimerDeadline[which - 1] = duration == 0 ? 0 : cpuNow + duration;
+                process->cpuTimerInterval[which - 1] = duration == 0 ? 0 : interval;
 
                 if (duration == 0)
                 {
@@ -248,6 +271,66 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
 
     end_user_memory(&access);
     return result;
+}
+
+bool TimeManager::ExpireCpuTimers(process_t* process)
+{
+    if (process == nullptr || __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE))
+    {
+        return false;
+    }
+
+    spinlock_acquire_preempt(&process->timerLock);
+    uint64_t signals = 0;
+
+    for (int index = 0; index < 2; ++index)
+    {
+        const uint64_t elapsed  = cpu_clock(process, index + 1);
+        const uint64_t deadline = process->cpuTimerDeadline[index];
+
+        if (deadline != 0 && elapsed >= deadline)
+        {
+            signals |= 1ULL << (index == 0 ? 25 : 26); // SIGVTALRM, SIGPROF
+            const uint64_t interval = process->cpuTimerInterval[index];
+            const uint64_t step     = interval == 0 ? 0 : interval - (elapsed - deadline) % interval;
+            process->cpuTimerDeadline[index] = step != 0 && step <= UINT64_MAX - elapsed ? elapsed + step : 0;
+        }
+    }
+
+    const uint64_t seconds = cpu_clock(process, 2) / 1000000000;
+
+    if (process->cpuLimit.maximum != UINT64_MAX && seconds >= (process->cpuLimit.maximum == 0 ? 1 : process->cpuLimit.maximum))
+    {
+        signals |= 1ULL << 8; // SIGKILL
+    }
+    else if (process->cpuLimit.current != UINT64_MAX && seconds >= (process->cpuLimit.current == 0 ? 1 : process->cpuLimit.current) && seconds >= process->cpuLimitNotification)
+    {
+        signals |= 1ULL << 23; // SIGXCPU, at most once per consumed CPU second.
+        process->cpuLimitNotification = seconds + 1;
+    }
+
+    bool published = false;
+
+    if (signals != 0)
+    {
+        SignalDispositionGuard guard(process);
+        // SIGKILL cannot be ignored, even if a malformed disposition is present.
+        signals &= ~(process->Signals()->ignored & ~(1ULL << 8));
+
+        for (unsigned index = 0; index < 32; ++index)
+        {
+            if ((signals & (1ULL << index)) != 0 && (process->signalPending & (1ULL << index)) == 0)
+            {
+                process->signalSenders[index] = {0, 0, 128}; // SI_KERNEL
+            }
+        }
+
+        __atomic_fetch_or(&process->signalPending, signals, __ATOMIC_RELEASE);
+        published = signals != 0;
+    }
+
+    spinlock_release_preempt(&process->timerLock);
+    return published;
 }
 
 uint64_t TimeManager::CancelAlarm()

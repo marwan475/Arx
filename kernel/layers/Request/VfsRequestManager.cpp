@@ -593,7 +593,7 @@ static uint64_t duplicate_to_fd(ProcessManager* processManager, VirtualFileSyste
         return newFd;
     }
 
-    if (newFd >= currentProcess->fileLimit.current)
+    if (newFd >= currentProcess->DescriptorLimit())
     {
         return LINUX_EBADF;
     }
@@ -1923,7 +1923,7 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
     {
         const uint64_t minFd = arg;
 
-        if ((int64_t) minFd < 0 || minFd >= currentProcess->fileLimit.current)
+        if ((int64_t) minFd < 0 || minFd >= currentProcess->DescriptorLimit())
         {
             return LINUX_EINVAL;
         }

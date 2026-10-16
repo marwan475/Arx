@@ -65,7 +65,33 @@ extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64
 
     const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write || frame->syscall_number == SYSCALL_readv || frame->syscall_number == SYSCALL_writev || frame->syscall_number == SYSCALL_accept
                              || frame->syscall_number == SYSCALL_accept4 || frame->syscall_number == SYSCALL_connect || frame->syscall_number == SYSCALL_recvfrom || frame->syscall_number == SYSCALL_recvmsg || frame->syscall_number == SYSCALL_sendto || frame->syscall_number == SYSCALL_sendmsg;
+    if (logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(false);
+    }
+
     return logic->signalManager->Deliver(frame, result, restartable);
+}
+
+extern "C" void dispatcher_account_mode(bool userMode)
+{
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(userMode);
+    }
+}
+
+extern "C" void dispatcher_account_minor_fault(virt_addr_space_t* space)
+{
+    task_t* task = TaskManager::GetActiveTask();
+
+    if (task != nullptr && task->process != nullptr && task->process->addressSpace == space)
+    {
+        __atomic_fetch_add(&task->process->minorFaults, 1ULL, __ATOMIC_RELAXED);
+    }
 }
 
 uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
@@ -453,6 +479,7 @@ extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* fram
         return (uint64_t) -38;
     }
 
+    dispatcher_account_mode(false);
     const uint64_t     result    = dispatcher->DispatchSyscall(frame);
     ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logic     = dispatcher->GetLogicLayerCaps();

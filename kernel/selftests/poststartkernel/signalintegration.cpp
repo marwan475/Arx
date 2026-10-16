@@ -4,6 +4,7 @@
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/SignalManager.hpp"
+#include "layers/Resource/TimeManager.hpp"
 
 void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
 {
@@ -56,5 +57,36 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
     t.Equal(frame.user_rip, TestFixture::Buffer + 128, "restore interrupted instruction pointer");
     t.Equal(frame.user_rsp, TestFixture::Buffer + PAGE_SIZE, "restore interrupted stack");
     t.Equal(f.Task->signalDepth, 0, "signal nesting restored");
+
+    const int cpuSignals[] = {26, 27, 24};
+
+    for (int signal : cpuSignals)
+    {
+        const uint64_t bit = 1ULL << (signal - 1);
+        t.Equal(l->signalManager->Action(signal, &action, nullptr), 0, "install CPU expiration handler");
+        f.Task->signalMask = bit;
+        f.Process->userCpuNanoseconds = signal == 26 ? 1000000 : 0;
+        f.Process->kernelCpuNanoseconds = signal == 27 ? 1000000 : signal == 24 ? 1000000000 : 0;
+
+        if (signal == 24)
+        {
+            f.Process->cpuLimit = {1, UINT64_MAX};
+        }
+        else
+        {
+            f.Process->cpuTimerDeadline[signal - 26] = 1000000;
+        }
+
+        t.Check(r->timeManager->ExpireCpuTimers(f.Process), "CPU accounting publishes expiration signal");
+        t.Equal(l->signalManager->Deliver(&frame, 77), 77, "blocked CPU signal preserves interrupted context");
+        t.Check((f.Process->signalPending & bit) != 0 && f.Task->signalDepth == 0, "blocked CPU signal stays pending");
+        f.Task->signalMask = 0;
+        t.Equal(l->signalManager->Deliver(&frame, 77), 0, "unblocked CPU signal prepares user handler");
+        t.Equal(frame.arg0, signal, "CPU handler receives SIGVTALRM, SIGPROF or SIGXCPU");
+        t.Equal(frame.user_rip, action.handler, "CPU expiration selects installed handler");
+        frame.user_rsp += 8;
+        t.Equal(l->signalManager->Restore(&frame), 77, "CPU handler restores interrupted result");
+        t.Equal(f.Task->signalDepth, 0, "CPU handler restores signal nesting");
+    }
 #endif
 }

@@ -418,6 +418,11 @@ virt_shared_page_t* VirtualMemoryManager::GetBackingPage(virt_backing_object_t* 
                 page->offset     = offset;
                 page->next       = object->pages;
                 object->pages    = page;
+
+                if (!object->file)
+                {
+                    vmm_account_shared_page(page);
+                }
             }
         }
     }

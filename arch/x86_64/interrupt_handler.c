@@ -5,6 +5,7 @@
 #include <platform.h>
 
 extern void dispatcher_handle_interrupt_request(uint64_t interrupt_number);
+extern void dispatcher_account_mode(bool userMode);
 
 static void blue_screen(void)
 {
@@ -234,6 +235,7 @@ static void handle_interrupt(registers_t* reg)
 extern void arch_signal_interrupt(registers_t* reg, void* floating);
 void        ISRHANDLER(registers_t* reg, void* floating)
 {
+    dispatcher_account_mode(false);
     handle_interrupt(reg);
 
     if ((reg->cs & 3) == 3)
@@ -246,4 +248,6 @@ void        ISRHANDLER(registers_t* reg, void* floating)
         arch_disable_interrupts();
         cpu_preemption_enable();
     }
+
+    dispatcher_account_mode((reg->cs & 3) == 3);
 }

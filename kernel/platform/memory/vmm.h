@@ -34,6 +34,7 @@ typedef struct virt_shared_page
     void*                    pointer;
     uint64_t                 offset;
     bool                     dirty;
+    bool                     shared_accounting;
     struct virt_shared_page* next;
 } virt_shared_page_t;
 
@@ -93,6 +94,8 @@ typedef struct virt_addr_space
 } virt_addr_space_t;
 
 virt_addr_space_t* vmm_kernel_space(void);
+void              vmm_account_shared_page(virt_shared_page_t* page);
+uint64_t          vmm_shared_memory_bytes(void);
 
 void vmm_init(struct boot_info* boot_info);
 

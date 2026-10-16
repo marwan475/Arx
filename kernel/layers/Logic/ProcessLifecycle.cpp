@@ -214,7 +214,10 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         memory->DestroyUserAddressSpace(empty);
         child->breakBase        = parent->breakBase;
         child->programBreak     = parent->programBreak;
-        child->fileLimit        = parent->fileLimit;
+        (void) processes->ChangeFileLimit(parent, nullptr, &child->fileLimit);
+        spinlock_acquire_preempt(&parent->timerLock);
+        child->cpuLimit = parent->cpuLimit;
+        spinlock_release_preempt(&parent->timerLock);
         child->exitSignal       = static_cast<uint32_t>(arguments.exitSignal);
         child->parentTaskId     = (flags & CLONE_PARENT) != 0 ? parent->parentTaskId : caller->id;
 
@@ -366,6 +369,100 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
     (void) arguments;
     return LINUX_ENOSYS;
 #endif
+}
+
+uint64_t ProcessController::ResourceLimit(ResourceLayerCaps* resources, int32_t pid, uint32_t resource, const process_file_limit_t* proposed, process_file_limit_t* previous)
+{
+    if (resource >= 16)
+    {
+        return LINUX_EINVAL;
+    }
+
+    if (resource != 0 && resource != 7)
+    {
+        return LINUX_EOPNOTSUPP;
+    }
+
+    if (resources == nullptr || resources->processManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+
+    ProcessManager* manager = resources->processManager;
+    process_t*      caller  = manager->AcquireCurrentCredentials();
+
+    if (caller == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    const process_credentials_t credentials = caller->credentials;
+    const uint64_t              callerId    = caller->id;
+    manager->ReleaseCredentials(caller);
+    process_t* target = pid < 0 ? nullptr : manager->AcquireProcess(pid == 0 ? callerId : static_cast<uint32_t>(pid));
+
+    if (target == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+
+    spinlock_acquire_preempt(&target->credentialLock);
+    const process_credentials_t& other = target->credentials;
+    const bool                   authorized = target->id == callerId ||
+                                              (credentials.user.real == other.user.real && credentials.user.real == other.user.effective && credentials.user.real == other.user.saved &&
+                                               credentials.group.real == other.group.real && credentials.group.real == other.group.effective && credentials.group.real == other.group.saved);
+    spinlock_release_preempt(&target->credentialLock);
+    uint64_t result = 0;
+
+    if (!authorized)
+    {
+        // CAP_SYS_RESOURCE overrides are deliberately unsupported.
+        result = static_cast<uint64_t>(-1);
+    }
+    else if (resource == 7)
+    {
+        result = manager->ChangeFileLimit(target, proposed, previous);
+    }
+    else
+    {
+        uint64_t now;
+
+        if (!arch_time_read_monotonic(&now))
+        {
+            result = LINUX_ENOSYS;
+        }
+        else
+        {
+            spinlock_acquire_preempt(&target->timerLock);
+
+            if (proposed != nullptr && proposed->current > proposed->maximum)
+            {
+                result = LINUX_EINVAL;
+            }
+            else if (proposed != nullptr && proposed->maximum > target->cpuLimit.maximum)
+            {
+                result = static_cast<uint64_t>(-1);
+            }
+            else
+            {
+                if (previous != nullptr)
+                {
+                    *previous = target->cpuLimit;
+                }
+
+                if (proposed != nullptr)
+                {
+                    target->cpuLimit = *proposed;
+                    target->cpuLimitNotification = 0;
+                }
+            }
+
+            spinlock_release_preempt(&target->timerLock);
+        }
+    }
+
+    manager->ReleaseProcess(target);
+    return result;
 }
 
 uint64_t ProcessController::SetTidAddress(uint64_t address)
@@ -536,6 +633,13 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
         return LINUX_ESRCH;
     }
 
+    uint64_t now;
+
+    if (usage != 0 && !arch_time_read_monotonic(&now))
+    {
+        return LINUX_ENOSYS;
+    }
+
     for (;;)
     {
         const uint64_t sequence = __atomic_load_n(&parent->childSequence, __ATOMIC_ACQUIRE);
@@ -566,7 +670,7 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
 
                 matching = true;
                 uint64_t unclaimed = 0;
-                const bool exited = __atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && (!waitid || (options & EXITED) != 0);
+                const bool exited = __atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && !Resources->taskManager->HasRunningTasks(child) && (!waitid || (options & EXITED) != 0);
                 const bool stopped = !child->exited && child->stopPending && (options & 2) != 0;
                 const bool continued = !child->exited && child->continuedPending && (options & 8) != 0;
 
@@ -617,7 +721,9 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
 
             if (copied && usage != 0)
             {
-                const uint64_t values[18] = {};
+                uint64_t values[18];
+                static_assert(sizeof(values) == 144, "Linux LP64 rusage ABI");
+                ProcessManager::SnapshotUsage(selected, values);
                 copied = safe_write_user(usage, values, sizeof(values));
             }
 
@@ -625,6 +731,7 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
             {
                 if (event == 1)
                 {
+                    ProcessManager::ReapUsage(parent, selected);
                     __atomic_store_n(&selected->waitConsumed, true, __ATOMIC_RELEASE);
                 }
                 else

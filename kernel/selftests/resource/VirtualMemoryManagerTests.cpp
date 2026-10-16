@@ -7,6 +7,34 @@ void test_VirtualMemoryManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->virtualMemoryManager : nullptr;
     ManagerSuite suite("resource/VirtualMemoryManager", m != nullptr);
+    suite.Run("resource/VirtualMemoryManager/shared_resident_accounting", [&](TestCase& t)
+    {
+        const uint64_t before = vmm_shared_memory_bytes();
+        auto* object = m->CreateBacking(PAGE_SIZE);
+
+        if (!t.Check(object != nullptr, "allocate anonymous shared object"))
+        {
+            return;
+        }
+
+        auto* page = m->GetBackingPage(object, 0);
+
+        if (!t.Check(page != nullptr, "allocate resident shared page"))
+        {
+            m->ReleaseBacking(object);
+            return;
+        }
+
+        t.Equal(vmm_shared_memory_bytes(), before + PAGE_SIZE, "resident shared memory counts actual pages");
+        t.Check(m->GetBackingPage(object, 0) == page, "reusing an alias returns the same backing");
+        t.Equal(vmm_shared_memory_bytes(), before + PAGE_SIZE, "aliases never double count physical memory");
+        __atomic_add_fetch(&page->references, 1U, __ATOMIC_RELAXED);
+        m->ReleaseBacking(object);
+        t.Equal(vmm_shared_memory_bytes(), before + PAGE_SIZE, "independent page owner keeps resident shared memory charged");
+        vmm_put_page(page);
+        t.Equal(vmm_shared_memory_bytes(), before, "last page owner releases shared memory accounting");
+    });
+
     suite.Run("resource/VirtualMemoryManager/address_space_lifecycle", [&](TestCase& t)
     {
         auto* space = m->CreateUserAddressSpace();

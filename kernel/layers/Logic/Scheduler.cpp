@@ -92,6 +92,13 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
     uint64_t now            = 0;
     bool     clockAvailable = arch_time_read_monotonic(&now);
 
+    if (clockAvailable)
+    {
+        uint64_t loads[3];
+        uint16_t live;
+        ResourceLayerImportCaps->taskManager->ReadSystemStatistics(now, loads, &live);
+    }
+
     if (clockAvailable && ResourceLayerImportCaps->timeManager != nullptr)
     {
         ProcessManager* processManager = ResourceLayerImportCaps->processManager;
@@ -138,6 +145,25 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
     }
 
     UnlockQueues();
+}
+
+void Scheduler::AccountCurrent(bool userMode)
+{
+    TaskManager* tasks = ResourceLayerImportCaps->taskManager;
+    tasks->AccountCurrent(false);
+    task_t* task = tasks->GetCurrentTask();
+
+    // Interrupts may sample time inside a guarded operation, but must not
+    // reacquire a timer/disposition lock interrupted on this CPU.
+    if (platform.cpus[arch_cpu_id()].preemption_depth == 0 && task != nullptr && task->isUserTask && ResourceLayerImportCaps->timeManager != nullptr)
+    {
+        if (ResourceLayerImportCaps->timeManager->ExpireCpuTimers(task->process))
+        {
+            WakeSignalWaiters(task->process);
+        }
+    }
+
+    tasks->AccountCurrent(userMode);
 }
 
 void Scheduler::WakeSignalWaiters(process_t* process)
@@ -396,6 +422,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     entry.waiting          = true;
     entry.dispatched       = false;
     entry.uninterruptible  = uninterruptible;
+    __atomic_store_n(&task->sleepUninterruptible, uninterruptible, __ATOMIC_RELEASE);
     size_t* link           = &SleepHeads[cpuId];
 
     while (*link != NO_SLEEPER && SleepQueue[*link].deadline <= monotonicDeadline)
@@ -1026,6 +1053,15 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     if (process->tasks == nullptr)
     {
         ProcessManager::ReleaseProcessResources(process);
+
+        process_t* parent = process->hasParent ? processManager->AcquireProcess(process->parentId) : nullptr;
+
+        if (parent != nullptr)
+        {
+            __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
+            WakeEventWaiters(&parent->childSequence);
+            processManager->ReleaseProcess(parent);
+        }
     }
 
     processManager->ReleaseProcess(process);

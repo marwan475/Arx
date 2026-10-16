@@ -37,6 +37,7 @@ public:
     // Caller retains the process. Expiration publishes SIGALRM before returning.
     bool     ExpireRealTimer(process_t* process, uint64_t now);
     void     RestartRealTimer(process_t* process);
+    bool     ExpireCpuTimers(process_t* process);
 
 private:
     // Caller holds the process timer lock.

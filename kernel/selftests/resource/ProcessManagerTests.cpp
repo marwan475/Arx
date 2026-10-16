@@ -38,6 +38,46 @@ void test_ProcessManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->processManager : nullptr;
     ManagerSuite suite("resource/ProcessManager", m != nullptr);
+    suite.Run("resource/ProcessManager/usage_aggregation", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        f.Process->userCpuNanoseconds   = 1999999500;
+        f.Process->kernelCpuNanoseconds = 2000001000;
+        f.Process->minorFaults          = 7;
+        f.Process->childUsage[0]        = 2;
+        f.Process->childUsage[1]        = 2;
+        f.Process->childUsage[8]        = 3;
+        uint64_t usage[18];
+        ProcessManager::SnapshotUsage(f.Process, usage);
+        t.Equal(usage[0], 4, "child CPU seconds carry from microseconds");
+        t.Equal(usage[1], 1, "sub-microsecond CPU precision truncates only at ABI boundary");
+        t.Equal(usage[2], 2, "kernel CPU seconds");
+        t.Equal(usage[3], 1, "kernel CPU microseconds");
+        t.Equal(usage[8], 10, "minor faults include reaped descendants");
+        t.Check(usage[9] == 0 && usage[11] == 0 && usage[12] == 0, "memory filesystem does not fabricate disk faults or block I/O");
+        ProcessManager::SnapshotUsage(f.Process, usage, false);
+        t.Equal(usage[0], 1, "own CPU snapshot excludes descendants");
+        t.Equal(usage[8], 7, "own fault snapshot excludes descendants");
+        process_t* ancestor = m->AllocateProcess();
+
+        if (t.Check(ancestor != nullptr, "allocate ancestor accounting record"))
+        {
+            ProcessManager::ReapUsage(ancestor, f.Process);
+            ProcessManager::SnapshotUsage(ancestor, usage);
+            t.Equal(usage[0], 4, "reaping includes CPU time already collected from grandchildren");
+            t.Equal(usage[1], 1, "ancestor preserves normalized CPU microseconds");
+            t.Equal(usage[8], 10, "reaping includes descendant faults");
+            t.Equal(ancestor->userCpuNanoseconds, 0, "child CPU never becomes parent's own CPU or timer budget");
+            t.Check(m->FreeProcess(ancestor), "free ancestor accounting record");
+        }
+    });
+
     suite.Run("resource/ProcessManager/private_task_retirement", [&](TestCase& t)
     {
         virt_addr_space_t* space   = resources->virtualMemoryManager->CreateUserAddressSpace();

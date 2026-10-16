@@ -8,6 +8,7 @@ struct ResourceLayerCaps;
 struct LogicLayerCaps;
 struct process_t;
 struct task_t;
+struct process_file_limit_t;
 
 struct process_clone_arguments_t
 {
@@ -42,6 +43,7 @@ public:
     uint64_t QueryProcessMemoryResidency(uint64_t address, uint64_t length, uint64_t vector);
     uint64_t AdviseProcessMemory(uint64_t address, uint64_t length, int advice);
     uint64_t ResizeProcessBreak(uint64_t address);
+    static uint64_t ResourceLimit(ResourceLayerCaps* resources, int32_t pid, uint32_t resource, const process_file_limit_t* proposed, process_file_limit_t* previous);
 
 private:
     process_t* BeginMemoryOperation();

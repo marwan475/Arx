@@ -136,6 +136,7 @@ static void user_task_bootstrap_entry(void* arg)
         panic();
     }
 
+    contextTaskManager->AccountCurrent(true);
     arch_enter_user_mode(launchContext->userRip, launchContext->userRsp, launchContext->arg0, launchContext->arg1);
 }
 
@@ -167,46 +168,52 @@ static uint64_t resolve_task_kernel_stack_top(const task_t* task, const cpu_info
 void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 {
     memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
-    task->allocated         = allocated;
-    task->state             = task_t::READY;
-    task->ownerCpu          = -1;
-    task->dispatchUsers     = 0;
-    task->dying             = false;
-    task->isUserTask        = false;
-    task->sleepPending      = false;
-    task->sleepBlocked      = false;
-    task->syscallActive     = 0;
-    task->preemptionDepth   = 0;
-    task->id                = id;
-    task->process           = nullptr;
-    task->signalMask        = 0;
-    task->signalPending     = 0;
-    task->signalSequence    = 0;
-    task->signalSavedMask   = 0;
-    task->signalRestoreMask = false;
-    task->signalStack       = {0, 2, 0, 0};
-    task->signalDepth       = 0;
-    task->signalSenders     = nullptr;
-    task->robustHead        = 0;
-    task->clearChildTid     = 0;
-    task->setChildTid       = 0;
-    task->robustOwner       = nullptr;
-    task->retirementContext = nullptr;
-    task->descriptorTable   = nullptr;
-    task->filesystemContext = nullptr;
-    task->retirementCleanup = nullptr;
+    task->allocated            = allocated;
+    task->state                = task_t::READY;
+    task->ownerCpu             = -1;
+    task->dispatchUsers        = 0;
+    task->dying                = false;
+    task->isUserTask           = false;
+    task->sleepPending         = false;
+    task->sleepBlocked         = false;
+    task->sleepUninterruptible = false;
+    task->syscallActive        = 0;
+    task->accountingStamp      = 0;
+    task->accountingRunning    = false;
+    task->accountingUser       = false;
+    task->preemptionDepth      = 0;
+    task->id                   = id;
+    task->process              = nullptr;
+    task->signalMask           = 0;
+    task->signalPending        = 0;
+    task->signalSequence       = 0;
+    task->signalSavedMask      = 0;
+    task->signalRestoreMask    = false;
+    task->signalStack          = {0, 2, 0, 0};
+    task->signalDepth          = 0;
+    task->signalSenders        = nullptr;
+    task->robustHead           = 0;
+    task->clearChildTid        = 0;
+    task->setChildTid          = 0;
+    task->robustOwner          = nullptr;
+    task->retirementContext    = nullptr;
+    task->descriptorTable      = nullptr;
+    task->filesystemContext    = nullptr;
+    task->retirementCleanup    = nullptr;
     memset(task->name, 0, sizeof(task->name));
     memcpy(task->name, "Arx", 3);
     memset(&task->taskContext, 0, sizeof(task->taskContext));
-    task->stack = nullptr;
-    task->next  = nullptr;
-    task->prev  = nullptr;
+    task->stack                = nullptr;
+    task->next                 = nullptr;
+    task->prev                 = nullptr;
 }
 
 TaskManager::TaskManager()
 {
     static_assert(sizeof(TaskManager) <= 131072, "TaskManager must fit the largest heap object");
     ManagerLock        = 0;
+    LoadEpoch          = 0;
+    memset(LoadAverages, 0, sizeof(LoadAverages));
     contextTaskManager = this;
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -322,6 +329,7 @@ static void cloned_user_entry(void* argument)
     }
 
     auto* frame = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(arch_syscall_frame_t));
+    contextTaskManager->AccountCurrent(true);
     arch_resume_user_frame(frame);
 }
 #endif
@@ -567,6 +575,9 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     }
 
     const uint64_t interruptState = task_save_and_disable_interrupts();
+    AccountCurrent(current->accountingUser);
+    current->accountingRunning    = false;
+    task->accountingRunning       = arch_time_read_monotonic(&task->accountingStamp);
     current->state                = task_t::SWITCHING;
     SwitchingTasks[cpuId]         = current;
     task->state                   = task_t::RUNNING;
@@ -735,6 +746,7 @@ void TaskManager::FinishSleeping(task_t* task)
     LockManager();
     __atomic_store_n(&task->sleepBlocked, false, __ATOMIC_RELEASE);
     __atomic_store_n(&task->sleepPending, false, __ATOMIC_RELEASE);
+    __atomic_store_n(&task->sleepUninterruptible, false, __ATOMIC_RELEASE);
     UnlockManager();
 }
 
@@ -751,6 +763,107 @@ task_t* TaskManager::GetRunningTask(uint8_t cpuId) const
 task_t* TaskManager::GetCurrentTask() const
 {
     return GetRunningTask(arch_cpu_id());
+}
+
+void TaskManager::AccountActive(bool userMode)
+{
+    if (contextTaskManager != nullptr)
+    {
+        contextTaskManager->AccountCurrent(userMode);
+    }
+}
+
+void TaskManager::AccountCurrent(bool userMode)
+{
+    const uint64_t flags = task_save_and_disable_interrupts();
+    task_t*        task  = GetCurrentTask();
+    uint64_t       now   = 0;
+
+    if (task != nullptr && arch_time_read_monotonic(&now))
+    {
+        if (task->accountingRunning && now >= task->accountingStamp && task->isUserTask && task->process != nullptr)
+        {
+            uint64_t* counter = task->accountingUser ? &task->process->userCpuNanoseconds : &task->process->kernelCpuNanoseconds;
+            __atomic_fetch_add(counter, now - task->accountingStamp, __ATOMIC_RELAXED);
+        }
+
+        task->accountingStamp   = now;
+        task->accountingRunning = true;
+        task->accountingUser    = userMode;
+    }
+
+    task_restore_interrupts(flags);
+}
+
+bool TaskManager::HasRunningTasks(const process_t* process) const
+{
+    LockManager();
+    bool running = false;
+
+    for (size_t cpu = 0; cpu < BOOT_SMP_MAX_CPUS; ++cpu)
+    {
+        running |= (RunningTasks[cpu] != nullptr && RunningTasks[cpu]->process == process) ||
+                   (SwitchingTasks[cpu] != nullptr && SwitchingTasks[cpu]->process == process);
+    }
+
+    UnlockManager();
+    return running;
+}
+
+void TaskManager::ReadSystemStatistics(uint64_t now, uint64_t loads[3], uint16_t* liveTasks)
+{
+    LockManager();
+    uint64_t active = 0;
+    uint16_t live   = 0;
+
+    for (size_t index = 0; index < MAX_TASKS; ++index)
+    {
+        const task_t& task    = Tasks[index];
+        process_t*    process = __atomic_load_n(&task.process, __ATOMIC_ACQUIRE);
+
+        if (task.allocated && !task.dying && process != nullptr && !__atomic_load_n(&process->exited, __ATOMIC_ACQUIRE))
+        {
+            ++live;
+
+            if (!__atomic_load_n(&process->stopped, __ATOMIC_ACQUIRE) &&
+                (!__atomic_load_n(&task.sleepBlocked, __ATOMIC_ACQUIRE) || __atomic_load_n(&task.sleepUninterruptible, __ATOMIC_ACQUIRE)))
+            {
+                ++active;
+            }
+        }
+    }
+
+    // Linux fixed-point exponential averages sampled every five seconds.
+    // Exponentiation handles a delayed sample without an unbounded catch-up loop.
+    if (now >= LoadEpoch && now - LoadEpoch >= 5000000000ULL)
+    {
+        const uint64_t samples = (now - LoadEpoch) / 5000000000ULL;
+        const uint64_t decay[3] = {1884, 2014, 2037};
+
+        for (size_t index = 0; index < 3; ++index)
+        {
+            uint64_t factor = 2048;
+            uint64_t base   = decay[index];
+
+            for (uint64_t count = samples; count != 0; count >>= 1)
+            {
+                if ((count & 1) != 0)
+                {
+                    factor = (factor * base + 1024) / 2048;
+                }
+
+                base = (base * base + 1024) / 2048;
+            }
+
+            LoadAverages[index] = (LoadAverages[index] * factor + active * 65536 * (2048 - factor) + 1024) / 2048;
+        }
+
+        LoadEpoch += samples * 5000000000ULL;
+    }
+
+    memcpy(loads, LoadAverages, sizeof(LoadAverages));
+    *liveTasks = live;
+    UnlockManager();
 }
 
 task_t* TaskManager::FindTask(uint64_t id) const
@@ -802,11 +915,22 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
 
     if (previous != nullptr && previous != task)
     {
+        if (cpuId == arch_cpu_id())
+        {
+            AccountCurrent(previous->accountingUser);
+            previous->accountingRunning = false;
+        }
+
         previous->state = task_t::SUSPENDED;
     }
 
     if (task != nullptr)
     {
+        if (task != previous)
+        {
+            task->accountingRunning = arch_time_read_monotonic(&task->accountingStamp);
+        }
+
         task->state    = task_t::RUNNING;
         task->ownerCpu = cpuId;
     }

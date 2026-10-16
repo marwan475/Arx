@@ -7,6 +7,61 @@ void test_TimeManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->timeManager : nullptr;
     ManagerSuite suite("resource/TimeManager", m != nullptr);
+    suite.Run("resource/TimeManager/cpu_expiration_and_limits", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        f.Process->cpuTimerDeadline[0] = 1000000;
+        f.Process->cpuTimerDeadline[1] = 2000000;
+        f.Process->cpuTimerInterval[0] = 1000000;
+        f.Process->kernelCpuNanoseconds = 1999999;
+        t.Check(!m->ExpireCpuTimers(f.Process), "virtual timer ignores kernel execution and prof does not expire early");
+        f.Process->kernelCpuNanoseconds = 2000000;
+        t.Check(m->ExpireCpuTimers(f.Process), "prof timer expires on kernel execution");
+        t.Check((f.Process->signalPending & (1ULL << 26)) != 0 && (f.Process->signalPending & (1ULL << 25)) == 0, "SIGPROF and SIGVTALRM use distinct CPU clocks");
+        t.Equal(f.Process->cpuTimerDeadline[1], 0, "one-shot profiling timer disarms");
+        f.Process->userCpuNanoseconds = 5500000;
+        t.Check(m->ExpireCpuTimers(f.Process), "virtual timer expires after user CPU execution");
+        t.Equal(f.Process->cpuTimerDeadline[0], 6000000, "periodic CPU timer skips missed intervals without drift");
+        t.Equal(f.Process->signalSenders[25].code, 128, "CPU timer publishes SI_KERNEL");
+        __atomic_store_n(&f.Process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        f.Process->Signals()->ignored |= 1ULL << 25;
+        f.Process->userCpuNanoseconds = 6000000;
+        t.Check(!m->ExpireCpuTimers(f.Process), "ignored CPU timer signal is discarded");
+        t.Equal(f.Process->cpuTimerDeadline[0], 7000000, "ignored periodic timer still rearms");
+        f.Process->cpuTimerDeadline[0] = 0;
+        f.Process->cpuLimit = {1, 3};
+        f.Process->userCpuNanoseconds = 999999999;
+        f.Process->kernelCpuNanoseconds = 0;
+        t.Check(!m->ExpireCpuTimers(f.Process), "CPU soft limit does not fire early");
+        f.Process->kernelCpuNanoseconds = 1;
+        t.Check(m->ExpireCpuTimers(f.Process), "CPU soft limit combines user and kernel time");
+        t.Check((f.Process->signalPending & (1ULL << 23)) != 0, "soft CPU limit publishes SIGXCPU");
+        __atomic_store_n(&f.Process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        t.Check(!m->ExpireCpuTimers(f.Process), "soft limit does not repeatedly signal in the same CPU second");
+        f.Process->userCpuNanoseconds = 2000000000;
+        t.Check(m->ExpireCpuTimers(f.Process), "soft limit signals again after another CPU second");
+        __atomic_store_n(&f.Process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        f.Process->userCpuNanoseconds = 3000000000;
+        t.Check(m->ExpireCpuTimers(f.Process), "hard limit expires");
+        t.Check((f.Process->signalPending & (1ULL << 8)) != 0, "hard CPU limit publishes unmaskable SIGKILL");
+        __atomic_store_n(&f.Process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        f.Process->cpuLimit = {0, 0};
+        f.Process->userCpuNanoseconds = 999999999;
+        f.Process->kernelCpuNanoseconds = 0;
+        t.Check(!m->ExpireCpuTimers(f.Process), "zero CPU limit retains Linux one-second minimum");
+        f.Process->userCpuNanoseconds = 1000000000;
+        t.Check(m->ExpireCpuTimers(f.Process), "zero hard CPU limit kills at one CPU second");
+        __atomic_store_n(&f.Process->signalPending, 0ULL, __ATOMIC_RELEASE);
+        f.Process->exited = true;
+        t.Check(!m->ExpireCpuTimers(f.Process), "exited process cannot receive timer signals");
+    });
+
     suite.Run("resource/TimeManager/invalid_clock_deadline", [&](TestCase& t)
     {
         time_timespec_t value    = {}, bad = { - 1, 0};

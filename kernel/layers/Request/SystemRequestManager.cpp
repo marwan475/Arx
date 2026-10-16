@@ -1,5 +1,6 @@
 #include "layers/Request/SystemRequestManager.hpp"
 
+#include "layers/Logic/ProcessController.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/PhysicalMemoryManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -149,7 +150,7 @@ uint64_t SystemRequestManager::HandlePrlimit64Request(const arch_syscall_frame_t
         return LINUX_EINVAL;
     }
 
-    return HandleFileLimitRequest((int32_t) frame->arg0, (uint32_t) frame->arg1, frame->arg2, frame->arg3);
+    return HandleResourceLimitRequest((int32_t) frame->arg0, (uint32_t) frame->arg1, frame->arg2, frame->arg3);
 }
 
 uint64_t SystemRequestManager::HandleGetrlimitRequest(const arch_syscall_frame_t* frame)
@@ -164,7 +165,7 @@ uint64_t SystemRequestManager::HandleGetrlimitRequest(const arch_syscall_frame_t
         return LINUX_EFAULT;
     }
 
-    return HandleFileLimitRequest(0, (uint32_t) frame->arg0, 0, frame->arg1);
+    return HandleResourceLimitRequest(0, (uint32_t) frame->arg0, 0, frame->arg1);
 }
 
 uint64_t SystemRequestManager::HandleSetrlimitRequest(const arch_syscall_frame_t* frame)
@@ -179,27 +180,28 @@ uint64_t SystemRequestManager::HandleSetrlimitRequest(const arch_syscall_frame_t
         return LINUX_EFAULT;
     }
 
-    return HandleFileLimitRequest(0, (uint32_t) frame->arg0, frame->arg1, 0);
+    return HandleResourceLimitRequest(0, (uint32_t) frame->arg0, frame->arg1, 0);
 }
 
-uint64_t SystemRequestManager::HandleFileLimitRequest(int32_t pid, uint32_t resource, uint64_t proposed, uint64_t previous)
+uint64_t SystemRequestManager::HandleResourceLimitRequest(int32_t pid, uint32_t resource, uint64_t proposed, uint64_t previous)
 {
     if (resource >= 16)
     {
         return LINUX_EINVAL;
     }
 
-    if (resource != 7) // RLIMIT_NOFILE is the only enforced resource.
+    if (resource != 0 && resource != 7) // Only CPU and descriptor limits are enforced.
+    {
         return LINUX_EOPNOTSUPP;
+    }
 
     if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
 
-    ProcessManager*     manager = ResourceCaps->processManager;
-    FileDescriptorGuard guard(manager->GetCurrentProcess());
-    process_t*          process = manager->GetCurrentProcess();
+    ProcessManager* manager = ResourceCaps->processManager;
+    process_t*      process = manager->GetCurrentProcess();
 
     if (process == nullptr)
     {
@@ -211,11 +213,6 @@ uint64_t SystemRequestManager::HandleFileLimitRequest(int32_t pid, uint32_t reso
         return LINUX_ESRCH;
     }
 
-    if (pid != 0 && (uint64_t) pid != process->id)
-    {
-        return LINUX_EOPNOTSUPP;
-    }
-
     process_file_limit_t next = {}, old = {};
 
     if (proposed != 0 && !safe_read_user(proposed, &next, sizeof(next)))
@@ -225,7 +222,7 @@ uint64_t SystemRequestManager::HandleFileLimitRequest(int32_t pid, uint32_t reso
 
     // Linux commits the new limit before copying the previous limit out.
     // Snapshot input first so new/old pointers may alias.
-    const uint64_t result = manager->ChangeFileLimit(process, proposed != 0 ? &next : nullptr, &old);
+    const uint64_t result = ProcessController::ResourceLimit(ResourceCaps, pid, resource, proposed != 0 ? &next : nullptr, &old);
 
     if (result != 0)
     {
@@ -379,11 +376,11 @@ uint64_t SystemRequestManager::HandleSysinfoRequest(const arch_syscall_frame_t* 
     sysinfoData.uptime    = elapsed.seconds + (elapsed.nanoseconds != 0);
     sysinfoData.totalram  = totalMemoryBytes;
     sysinfoData.freeram   = freeMemoryBytes;
-    sysinfoData.sharedram = 0;
+    sysinfoData.sharedram = ResourceCaps->physicalMemoryManager->GetSharedMemoryBytes();
     sysinfoData.bufferram = 0;
     sysinfoData.totalswap = 0;
     sysinfoData.freeswap  = 0;
-    sysinfoData.procs     = (uint16_t) ResourceCaps->taskManager->CountTasks();
+    ResourceCaps->taskManager->ReadSystemStatistics(static_cast<uint64_t>(elapsed.seconds) * 1000000000 + elapsed.nanoseconds, sysinfoData.loads, &sysinfoData.procs);
     sysinfoData.totalhigh = 0;
     sysinfoData.freehigh  = 0;
     sysinfoData.mem_unit  = 1;

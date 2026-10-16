@@ -46,7 +46,11 @@ struct task_t
     bool                  isUserTask;
     bool                  sleepPending;
     bool                  sleepBlocked;
+    bool                  sleepUninterruptible;
     uint64_t              syscallActive;
+    uint64_t              accountingStamp;
+    bool                  accountingRunning;
+    bool                  accountingUser;
     uint32_t              preemptionDepth;
     uint64_t              id;
     char                  name[16];
@@ -102,6 +106,10 @@ public:
     bool           SetRunningTask(uint8_t cpuId, task_t* task);
     task_t*        GetCurrentTask() const;
     static task_t* GetActiveTask();
+    void           AccountCurrent(bool userMode);
+    static void    AccountActive(bool userMode);
+    bool           HasRunningTasks(const process_t* process) const;
+    void           ReadSystemStatistics(uint64_t now, uint64_t loads[3], uint16_t* liveTasks);
     task_t*        FindTask(uint64_t id) const;
     void           SetCurrentIdentity(uint64_t id);
 
@@ -123,6 +131,8 @@ private:
     void        UnlockManager() const;
 
     mutable spinlock_t ManagerLock;
+    uint64_t           LoadEpoch;
+    uint64_t           LoadAverages[3];
     task_t             Tasks[MAX_TASKS];
     task_t*            RunningTasks[BOOT_SMP_MAX_CPUS];
     task_t*            SwitchingTasks[BOOT_SMP_MAX_CPUS];

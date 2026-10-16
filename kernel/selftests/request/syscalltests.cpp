@@ -3700,6 +3700,10 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
 
     if (number == SYSCALL_fork)
     {
+        fixture.process->cpuLimit = {123, 456};
+        fixture.process->cpuTimerDeadline[0] = 1000000000000000ULL;
+        fixture.process->userCpuNanoseconds = 1000000;
+        fixture.process->minorFaults = 3;
         const uint64_t first = fixture.Spawn();
         uint32_t unchanged = 0;
 
@@ -3724,8 +3728,14 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
 
         const phys_addr_t before = vmm_virt_to_phys(lifecycle_fixture_t::DATA, fixture.process->addressSpace);
         bool passed = before == vmm_virt_to_phys(lifecycle_fixture_t::DATA, child->addressSpace);
+        passed = passed && child->userCpuNanoseconds == 0 && child->kernelCpuNanoseconds == 0 && child->minorFaults == 0;
+        passed = passed && child->cpuTimerDeadline[0] == 0 && child->cpuTimerDeadline[1] == 0;
+        passed = passed && child->cpuLimit.current == fixture.process->cpuLimit.current && child->cpuLimit.maximum == fixture.process->cpuLimit.maximum;
+        const uint64_t faultsBefore = fixture.process->minorFaults;
         const uint32_t value = 0xabcd;
         passed = passed && safe_write_user(lifecycle_fixture_t::DATA, &value, sizeof(value));
+        passed = passed && fixture.process->minorFaults == faultsBefore + 1;
+        passed = passed && safe_write_user(lifecycle_fixture_t::DATA, &value, sizeof(value)) && fixture.process->minorFaults == faultsBefore + 1;
         passed = passed && before != vmm_virt_to_phys(lifecycle_fixture_t::DATA, fixture.process->addressSpace);
         fixture.resources->processManager->ReleaseProcess(child);
         passed = fixture.Reap(pid) && passed;
@@ -3754,6 +3764,7 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
         arguments.parentTid = lifecycle_fixture_t::DATA + 16;
         arguments.childTid  = lifecycle_fixture_t::DATA + 20;
         arguments.tls       = lifecycle_fixture_t::DATA + 128;
+        const uint64_t cpuBefore = fixture.process->userCpuNanoseconds + fixture.process->kernelCpuNanoseconds;
 
         if (number == SYSCALL_clone)
         {
@@ -3791,11 +3802,23 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
         passed = waited == 0 && passed && safe_read_user(arguments.childTid, &written, sizeof(written)) && written == 0;
         passed = passed && safe_read_user(lifecycle_fixture_t::DATA, &marker, sizeof(marker)) && marker == 0x5678;
         fixture.logic->scheduler->ReapExitedProcesses();
+        uint64_t clockNow;
+
+        if (arch_time_read_monotonic(&clockNow))
+        {
+            passed = memory_expect(fixture.process->userCpuNanoseconds + fixture.process->kernelCpuNanoseconds > cpuBefore, "exited thread CPU remains in process accounting") && passed;
+        }
+
         return passed;
     }
 
     if (number == SYSCALL_wait4 || number == SYSCALL_waitid)
     {
+        uint64_t now;
+        const bool accounting = arch_time_read_monotonic(&now);
+        const uint64_t usageAddress = lifecycle_fixture_t::DATA + 512;
+        uint64_t childrenBefore[18];
+        memcpy(childrenBefore, fixture.process->childUsage, sizeof(childrenBefore));
         const uint64_t pid = fixture.Spawn();
 
         if (static_cast<int64_t>(pid) <= 0)
@@ -3823,16 +3846,74 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
             frame.arg1 = CANONICAL_KERNEL_BASE;
             frame.arg2 = 0;
             passed = passed && dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT;
-            return fixture.Reap(pid) && passed;
+            passed = passed && memcmp(childrenBefore, fixture.process->childUsage, sizeof(childrenBefore)) == 0;
+            frame.arg1 = lifecycle_fixture_t::DATA + 64;
+
+            if (accounting)
+            {
+                frame.arg3 = CANONICAL_KERNEL_BASE;
+                passed = dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT && passed;
+                passed = passed && memcmp(childrenBefore, fixture.process->childUsage, sizeof(childrenBefore)) == 0;
+            }
+
+            frame.arg3 = accounting ? usageAddress : 0;
+            passed = dispatcher_dispatch_syscall(&frame) == pid && passed;
+
+            if (accounting)
+            {
+                uint64_t usage[18];
+                passed = safe_read_user(usageAddress, usage, sizeof(usage)) && passed;
+                passed = passed && usage[0] + usage[1] + usage[2] + usage[3] > 0 && usage[8] > 0;
+                passed = passed && usage[9] == 0 && usage[11] == 0 && usage[12] == 0;
+
+                for (size_t index = 0; index < 18; ++index)
+                {
+                    passed = passed && fixture.process->childUsage[index] == childrenBefore[index] + usage[index];
+                }
+            }
+
+            return memory_expect(passed, "wait4 returns real child CPU and faults; failed copy does not aggregate");
         }
 
         frame.arg3 = 4 | 0x1000000;
+        frame.arg4 = accounting ? usageAddress : 0;
         passed = passed && dispatcher_dispatch_syscall(&frame) == 0;
         int32_t info[8] = {};
         passed = passed && safe_read_user(lifecycle_fixture_t::DATA + 64, info, sizeof(info)) && info[0] == 17 && info[2] == 1 && info[4] == static_cast<int32_t>(pid) && info[6] == 37;
+        passed = passed && memcmp(childrenBefore, fixture.process->childUsage, sizeof(childrenBefore)) == 0;
+        uint64_t usage[18] = {};
+
+        if (accounting)
+        {
+            passed = safe_read_user(usageAddress, usage, sizeof(usage)) && passed;
+            passed = passed && usage[0] + usage[1] + usage[2] + usage[3] > 0 && usage[8] > 0;
+            passed = dispatcher_dispatch_syscall(&frame) == 0 && passed;
+            uint64_t repeated[18];
+            passed = safe_read_user(usageAddress, repeated, sizeof(repeated)) && passed;
+            passed = passed && memcmp(usage, repeated, sizeof(usage)) == 0;
+        }
+
         frame.arg3 = 4;
+
+        if (accounting)
+        {
+            frame.arg4 = CANONICAL_KERNEL_BASE;
+            passed = dispatcher_dispatch_syscall(&frame) == LINUX_EFAULT && passed;
+            passed = passed && memcmp(childrenBefore, fixture.process->childUsage, sizeof(childrenBefore)) == 0;
+            frame.arg4 = usageAddress;
+        }
+
         passed = passed && dispatcher_dispatch_syscall(&frame) == 0;
-        return passed && dispatcher_dispatch_syscall(&frame) == static_cast<uint64_t>(-10);
+
+        if (accounting)
+        {
+            for (size_t index = 0; index < 18; ++index)
+            {
+                passed = passed && fixture.process->childUsage[index] == childrenBefore[index] + usage[index];
+            }
+        }
+
+        return memory_expect(passed && dispatcher_dispatch_syscall(&frame) == static_cast<uint64_t>(-10), "waitid WNOWAIT snapshots are stable and aggregate only once on reap");
     }
 
     if (number == SYSCALL_set_tid_address)
@@ -3928,8 +4009,21 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
             return false;
         }
 
+        fixture.process->cpuLimit = {123, 456};
+        fixture.process->cpuTimerDeadline[0] = 1000000000000000ULL;
+        fixture.process->cpuTimerInterval[0] = 1000000000;
+        fixture.process->userCpuNanoseconds = 1234567;
+        fixture.process->minorFaults = 3;
+        fixture.process->childUsage[8] = 2;
         const uint64_t result = dispatcher_dispatch_syscall(&frame);
         fixture.caller->isUserTask = false;
+
+        if (!memory_expect(fixture.process->userCpuNanoseconds >= 1234567 && fixture.process->minorFaults >= 3 && fixture.process->childUsage[8] == 2 &&
+                           fixture.process->cpuLimit.current == 123 && fixture.process->cpuLimit.maximum == 456 && fixture.process->cpuTimerDeadline[0] == 1000000000000000ULL && fixture.process->cpuTimerInterval[0] == 1000000000,
+                           "exec preserves process usage, child usage, CPU limits and timers"))
+        {
+            return false;
+        }
 
         if (!memory_expect(result == 0, "exec succeeds") || !memory_expect(fixture.process->addressSpace->pt != oldRoot, "exec replaces address space") || !memory_expect((frame.user_rsp & 15) == 0 && frame.user_rip != lifecycle_fixture_t::CODE, "exec entry and stack layout"))
         {
@@ -4405,10 +4499,14 @@ static bool test_time_timer(process_t* process, uint64_t number)
     uint64_t         output  = base + 64;
     bool             ok      = true;
     time_itimerval_t request = {{2, 123}, {0, 0}}, value = {};
+    TimeManager*    clock     = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->timeManager;
+    time_timespec_t now       = {};
+    const bool      available = clock != nullptr && clock->ReadClock(1, &now) == 0;
 
     for (unsigned which = 0; which < 3; ++which)
     {
-        ok &= memory_expect(memory_call(SYSCALL_getitimer, which, output) == 0, "new process timer query");
+        const uint64_t expected = which != 0 && !available ? LINUX_ENOSYS : 0;
+        ok &= memory_expect(memory_call(SYSCALL_getitimer, which, output) == expected, "new process timer query reports unavailable CPU clock");
         time_fixture_load(process, output, &value, sizeof(value));
         ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0 && value.value.seconds == 0 && value.value.microseconds == 0, "new process timers disarmed");
     }
@@ -4417,9 +4515,6 @@ static bool test_time_timer(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_setitimer, 0, input, output) == 0 && memory_call(SYSCALL_getitimer, 0, output) == 0, "disarmed real timer clears interval");
     time_fixture_load(process, output, &value, sizeof(value));
     ok &= memory_expect(value.interval.seconds == 0 && value.interval.microseconds == 0 && value.value.seconds == 0, "disarmed real timer interval roundtrip");
-    TimeManager*    clock     = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps()->timeManager;
-    time_timespec_t now       = {};
-    const bool      available = clock != nullptr && clock->ReadClock(1, &now) == 0;
     ok &= test_time_real_expiration(process, base);
 
     if (number == SYSCALL_alarm)
@@ -4450,7 +4545,12 @@ static bool test_time_timer(process_t* process, uint64_t number)
     if (available)
     {
         ok &= memory_expect(value.interval.seconds == 2 && value.interval.microseconds == 123 && value.value.seconds <= 1 && (value.value.seconds != 0 || value.value.microseconds != 0), "armed real timer reports remaining duration");
-        ok &= memory_expect(memory_call(SYSCALL_setitimer, 1, input) == LINUX_EOPNOTSUPP && memory_call(SYSCALL_setitimer, 2, input) == LINUX_EOPNOTSUPP, "CPU timers await process CPU accounting");
+        ok &= memory_expect(memory_call(SYSCALL_setitimer, 1, input) == 0 && memory_call(SYSCALL_setitimer, 2, input) == 0, "CPU timers arm against process accounting");
+        memory_call(SYSCALL_getitimer, 1, output);
+        time_fixture_load(process, output, &value, sizeof(value));
+        ok &= memory_expect(value.value.seconds <= 1 && (value.value.seconds != 0 || value.value.microseconds != 0) && value.interval.seconds == 2, "virtual timer reports CPU time remaining");
+        memory_call(SYSCALL_setitimer, 1, 0);
+        memory_call(SYSCALL_setitimer, 2, 0);
         memory_call(SYSCALL_setitimer, 0, 0);
         request = {{7, 99}, {5, 0}};
         time_fixture_store(process, input, &request, sizeof(request));
@@ -4459,6 +4559,12 @@ static bool test_time_timer(process_t* process, uint64_t number)
         time_fixture_load(process, output, &value, sizeof(value));
         ok &= memory_expect(value.interval.seconds == 7 && value.interval.microseconds == 99 && (value.value.seconds != 0 || value.value.microseconds != 0), "timer output fault preserves committed new timer");
         memory_call(SYSCALL_setitimer, 0, 0);
+    }
+
+    if (!available)
+    {
+        ok &= memory_expect(memory_call(SYSCALL_setitimer, 1, input) == LINUX_ENOSYS && memory_call(SYSCALL_setitimer, 2, input) == LINUX_ENOSYS,
+                            "CPU timer requests explicitly reject a missing accounting backend");
     }
 
     request = {{0, 0}, {INT64_MAX, 0}};
@@ -7828,6 +7934,63 @@ static bool test_system_limits(process_t* process, uint64_t number)
     bool                 ok = memory_expect(memory_call(SYSCALL_getrlimit, 7, output) == 0, "getrlimit cross-page snapshot");
     time_fixture_load(process, output, &original, sizeof(original));
     ok &= memory_expect(original.current == 1024 && original.maximum == ProcessManager::MAX_FILE_DESCRIPTORS, "getrlimit default limits");
+    ResourceLayerCaps* resources = static_cast<Dispatcher*>(platform.dispacher)->GetResourceLayerCaps();
+    virt_addr_space_t* peerSpace = resources->virtualMemoryManager->CreateUserAddressSpace();
+    process_t* peer = peerSpace != nullptr ? resources->processManager->CreateProcess(peerSpace) : nullptr;
+
+    if (peer != nullptr)
+    {
+        peer->credentials = process->credentials;
+        ok &= memory_expect(memory_call(SYSCALL_prlimit64, peer->id, 7, 0, output) == 0, "prlimit64 permits matching cross-process credentials");
+        process_file_limit_t peerLimit = {3, original.maximum};
+        time_fixture_store(process, base, &peerLimit, sizeof(peerLimit));
+        ok &= memory_expect(memory_call(SYSCALL_prlimit64, peer->id, 7, base, CANONICAL_KERNEL_BASE) == LINUX_EFAULT && peer->fileLimit.current == 3 && process->fileLimit.current == original.current,
+                            "cross-process limit change commits before copyout fault and only changes target");
+        const process_credentials_t matching = peer->credentials;
+        uint32_t* mismatches[] = {&peer->credentials.user.real, &peer->credentials.user.effective, &peer->credentials.user.saved,
+                                 &peer->credentials.group.real, &peer->credentials.group.effective, &peer->credentials.group.saved};
+
+        for (size_t index = 0; index < sizeof(mismatches) / sizeof(mismatches[0]); ++index)
+        {
+            peer->credentials = matching;
+            ++*mismatches[index];
+            ok &= memory_expect(memory_call(SYSCALL_prlimit64, peer->id, 7, base, output) == static_cast<uint64_t>(-1) && peer->fileLimit.current == 3,
+                                "cross-process rlimit rejects each mismatched real/effective/saved UID and GID without mutation");
+        }
+
+        peer->credentials = matching;
+        peer->exited = true;
+        ProcessManager::ReleaseProcessResources(peer);
+        ok &= memory_expect(memory_call(SYSCALL_prlimit64, peer->id, 7, 0, output) == 0, "cross-process limit query survives exited target releasing descriptor tables");
+        ok &= memory_expect(resources->processManager->FreeProcess(peer), "cross-process rlimit fixture cleanup");
+    }
+    else
+    {
+        ok &= memory_expect(false, "cross-process rlimit fixture allocation");
+    }
+
+    resources->virtualMemoryManager->DestroyUserAddressSpace(peerSpace);
+    uint64_t now;
+    const bool cpuClock = arch_time_read_monotonic(&now);
+    ok &= memory_expect(memory_call(SYSCALL_getrlimit, 0, output) == (cpuClock ? 0 : LINUX_ENOSYS), "CPU rlimit requires an accounting clock");
+
+    if (cpuClock)
+    {
+        time_fixture_load(process, output, &actual, sizeof(actual));
+        ok &= memory_expect(actual.current == UINT64_MAX && actual.maximum == UINT64_MAX, "CPU limits default to infinity");
+        process_file_limit_t cpu = {1, 3};
+        time_fixture_store(process, base, &cpu, sizeof(cpu));
+        ok &= memory_expect(memory_call(SYSCALL_prlimit64, 0, 0, base, base) == 0, "CPU limit exchange permits aliased input and output");
+        time_fixture_load(process, base, &actual, sizeof(actual));
+        ok &= memory_expect(actual.current == UINT64_MAX && process->cpuLimit.current == 1 && process->cpuLimit.maximum == 3, "CPU limit exchange returns old limit and commits enforcement state");
+        cpu = {4, 3};
+        time_fixture_store(process, base, &cpu, sizeof(cpu));
+        ok &= memory_expect(memory_call(SYSCALL_setrlimit, 0, base) == LINUX_EINVAL, "CPU soft limit cannot exceed hard limit");
+        cpu = {1, 4};
+        time_fixture_store(process, base, &cpu, sizeof(cpu));
+        ok &= memory_expect(memory_call(SYSCALL_setrlimit, 0, base) == static_cast<uint64_t>(-1) && process->cpuLimit.maximum == 3, "CPU hard-limit privilege override is explicitly denied");
+    }
+
     process_file_limit_t next = {2, original.maximum};
     time_fixture_store(process, base, &next, sizeof(next));
 
@@ -7864,8 +8027,8 @@ static bool test_system_limits(process_t* process, uint64_t number)
     ok &= memory_expect(memory_call(SYSCALL_prlimit64, 0, 7, base, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "prlimit64 invalid previous output");
     ok &= memory_expect(process->fileLimit.current == 4, "Linux prlimit64 commits before previous-output EFAULT");
     ok &= memory_expect(memory_call(SYSCALL_setrlimit, 7, CANONICAL_KERNEL_BASE) == LINUX_EFAULT && memory_call(SYSCALL_getrlimit, 7, 0) == LINUX_EFAULT, "rlimit invalid buffers");
-    ok &= memory_expect(memory_call(SYSCALL_prlimit64, 0, 16) == LINUX_EINVAL && memory_call(SYSCALL_prlimit64, 0, 0) == LINUX_EOPNOTSUPP, "rlimit invalid and unsupported resources");
-    ok &= memory_expect(memory_call(SYSCALL_prlimit64, UINT64_MAX, 7) == LINUX_ESRCH && memory_call(SYSCALL_prlimit64, ProcessManager::MAX_PROCESSES, 7) == LINUX_EOPNOTSUPP, "prlimit64 PID restrictions");
+    ok &= memory_expect(memory_call(SYSCALL_prlimit64, 0, 16) == LINUX_EINVAL && memory_call(SYSCALL_prlimit64, 0, 1) == LINUX_EOPNOTSUPP, "rlimit invalid and unsupported resources");
+    ok &= memory_expect(memory_call(SYSCALL_prlimit64, UINT64_MAX, 7) == LINUX_ESRCH && memory_call(SYSCALL_prlimit64, ProcessManager::MAX_PROCESSES, 7) == LINUX_ESRCH, "prlimit64 nonexistent PID restrictions");
     ok &= memory_expect(memory_call(SYSCALL_prlimit64, 0, 7, base, base) == 0, "prlimit64 aliased input and output");
     time_fixture_load(process, base, &actual, sizeof(actual));
     ok &= memory_expect(actual.current == 4 && process->fileLimit.current == 4, "prlimit64 alias snapshots input before output");
@@ -7936,8 +8099,31 @@ static bool test_system_info(process_t* process, uint64_t number)
         time_timespec_t now         = {};
         uint64_t        clockResult = dispatcher->GetResourceLayerCaps()->timeManager->ReadClock(1, &now);
         ok &= memory_expect(clockResult == 0 && uptime >= 0 && uptime <= now.seconds + 1 && total >= free && unit == 1, "sysinfo uptime and memory units");
-        ok &= memory_expect(tasks > 0 && tasks <= TaskManager::MAX_TASKS, "sysinfo counts allocated tasks");
+        ok &= memory_expect(tasks > 0 && tasks <= TaskManager::MAX_TASKS, "sysinfo counts live bound tasks");
         ok &= memory_expect(data[82] == 0 && data[83] == 0 && data[84] == 0 && data[108] == 0 && data[111] == 0, "sysinfo zeroes ABI padding");
+        uint64_t sharedBefore = 0;
+        memcpy(&sharedBefore, data + 48, sizeof(sharedBefore));
+        const uint64_t shared = memory_map(1, 0, 0x21);
+
+        if (static_cast<int64_t>(shared) >= 0)
+        {
+            ok &= memory_expect(memory_call(number, output) == 0, "sysinfo snapshot with shared resident memory");
+            uint64_t sharedAfter = 0;
+            time_fixture_load(process, output + 48, &sharedAfter, sizeof(sharedAfter));
+            ok &= memory_expect(sharedAfter == sharedBefore + PAGE_SIZE, "sysinfo sharedram counts resident anonymous shared pages");
+            ok &= memory_expect(memory_call(SYSCALL_munmap, shared, PAGE_SIZE) == 0 && memory_call(number, output) == 0, "sysinfo shared mapping cleanup");
+            time_fixture_load(process, output + 48, &sharedAfter, sizeof(sharedAfter));
+            ok &= memory_expect(sharedAfter == sharedBefore, "sysinfo sharedram returns to its original value after unmap");
+        }
+        else
+        {
+            ok &= memory_expect(false, "sysinfo shared memory fixture mapping");
+        }
+
+        uint64_t loads[3];
+        memcpy(loads, data + 8, sizeof(loads));
+        ok &= memory_expect(loads[0] <= TaskManager::MAX_TASKS * 65536 && loads[1] <= TaskManager::MAX_TASKS * 65536 && loads[2] <= TaskManager::MAX_TASKS * 65536,
+                            "sysinfo load averages use Linux 16-bit fixed-point units");
     }
 
     ok &= memory_expect(memory_call(number, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "system info rejects kernel output");

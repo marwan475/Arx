@@ -2,6 +2,7 @@
 
 extern "C"
 {
+#include <memory/vmm.h>
 #include <platform.h>
 }
 
@@ -18,6 +19,11 @@ void PhysicalMemoryManager::GetMemoryInfo(uint64_t* totalBytes, uint64_t* freeBy
         *freeBytes += (uint64_t) zone->free_pages * PAGE_SIZE;
         spinlock_release_preempt(&zone->lock);
     }
+}
+
+uint64_t PhysicalMemoryManager::GetSharedMemoryBytes() const
+{
+    return vmm_shared_memory_bytes();
 }
 
 void* PhysicalMemoryManager::Alloc(size_t size)

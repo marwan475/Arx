@@ -43,6 +43,11 @@ descriptor_table_t* process_t::Files() const
     return task != nullptr && task->process == this && task->descriptorTable != nullptr ? task->descriptorTable : descriptorTable;
 }
 
+uint64_t process_t::DescriptorLimit() const
+{
+    return __atomic_load_n(&fileLimit.current, __ATOMIC_ACQUIRE);
+}
+
 filesystem_context_t* process_t::Fs() const
 {
     task_t* task = TaskManager::GetActiveTask();
@@ -350,57 +355,65 @@ FileDescriptorGuard::~FileDescriptorGuard()
 
 void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
 {
-    process->allocated        = allocated;
-    process->id               = id;
-    process->hasParent        = false;
-    process->parentId         = 0;
-    process->parentTaskId     = 0;
-    process->groupId          = id;
-    process->sessionId        = id;
-    process->childSequence    = 0;
-    process->execSequence     = 0;
-    process->waitOwner        = 0;
-    process->exitSignal       = 17;
-    process->terminationSignal = 0;
-    process->waitable         = false;
-    process->waitConsumed     = false;
-    process->exitNotified     = false;
-    process->stopped          = false;
-    process->stopPending      = false;
-    process->continuedPending = false;
-    process->stopSignal       = 0;
-    process->stopSequence     = 0;
-    process->ownsAddressSpace = false;
-    process->taskCursor       = 0;
-    process->exited           = false;
-    process->reclaiming       = false;
-    process->retirementActive = false;
-    process->signalPending    = 0;
+    process->allocated            = allocated;
+    process->id                   = id;
+    process->hasParent            = false;
+    process->parentId             = 0;
+    process->parentTaskId         = 0;
+    process->groupId              = id;
+    process->sessionId            = id;
+    process->childSequence        = 0;
+    process->execSequence         = 0;
+    process->waitOwner            = 0;
+    process->exitSignal           = 17;
+    process->terminationSignal    = 0;
+    process->waitable             = false;
+    process->waitConsumed         = false;
+    process->exitNotified         = false;
+    process->stopped              = false;
+    process->stopPending          = false;
+    process->continuedPending     = false;
+    process->stopSignal           = 0;
+    process->stopSequence         = 0;
+    process->ownsAddressSpace     = false;
+    process->taskCursor           = 0;
+    process->exited               = false;
+    process->reclaiming           = false;
+    process->retirementActive     = false;
+    process->signalPending        = 0;
     memset(process->signalSenders, 0, sizeof(process->signalSenders));
-    process->ownerCpu          = -1;
-    process->exitStatus        = 0;
-    process->addressSpace      = nullptr;
-    process->elfMetadata       = nullptr;
-    process->breakBase         = 0;
-    process->programBreak      = 0;
-    process->memoryUsers       = 0;
-    process->lifetimeUsers     = 0;
-    process->timerLock         = 0;
-    process->realTimerDeadline = 0;
-    process->realTimerInterval = 0;
-    process->realTimerArmed    = false;
-    process->realTimerExpired  = false;
+    process->ownerCpu             = -1;
+    process->exitStatus           = 0;
+    process->addressSpace         = nullptr;
+    process->elfMetadata          = nullptr;
+    process->breakBase            = 0;
+    process->programBreak         = 0;
+    process->memoryUsers          = 0;
+    process->lifetimeUsers        = 0;
+    process->userCpuNanoseconds   = 0;
+    process->kernelCpuNanoseconds = 0;
+    process->minorFaults          = 0;
+    memset(process->childUsage, 0, sizeof(process->childUsage));
+    process->cpuLimit             = {UINT64_MAX, UINT64_MAX};
+    process->cpuLimitNotification = 0;
+    memset(process->cpuTimerDeadline, 0, sizeof(process->cpuTimerDeadline));
+    memset(process->cpuTimerInterval, 0, sizeof(process->cpuTimerInterval));
+    process->timerLock            = 0;
+    process->realTimerDeadline    = 0;
+    process->realTimerInterval    = 0;
+    process->realTimerArmed       = false;
+    process->realTimerExpired     = false;
     memset(process->timerIntervalSeconds, 0, sizeof(process->timerIntervalSeconds));
     memset(process->timerIntervalMicroseconds, 0, sizeof(process->timerIntervalMicroseconds));
-    process->tasks               = nullptr;
-    process->descriptorTable     = nullptr;
-    process->filesystemContext   = nullptr;
-    process->signalDispositions  = nullptr;
-    process->resourceLock        = 0;
-    process->fileLimit           = {1024, MAX_FILE_DESCRIPTORS};
-    process->credentialLock      = 0;
-    process->credentials         = {};
-    process->supplementaryGroups = nullptr;
+    process->tasks                = nullptr;
+    process->descriptorTable      = nullptr;
+    process->filesystemContext    = nullptr;
+    process->signalDispositions   = nullptr;
+    process->resourceLock         = 0;
+    process->fileLimit            = {1024, MAX_FILE_DESCRIPTORS};
+    process->credentialLock       = 0;
+    process->credentials          = {};
+    process->supplementaryGroups  = nullptr;
 }
 
 ProcessManager::ProcessManager()
@@ -791,7 +804,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
 {
     FileDescriptorGuard descriptors(process);
 
-    if (process == nullptr || process->Files() == nullptr || requiredIndex >= process->fileLimit.current)
+    if (process == nullptr || process->Files() == nullptr || requiredIndex >= process->DescriptorLimit())
     {
         return false;
     }
@@ -866,10 +879,10 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
 
     if (!EnsureFileDescriptorCapacity(process, minFd))
     {
-        return minFd >= process->fileLimit.current ? (int64_t) LINUX_EMFILE : (int64_t) LINUX_ENOMEM;
+        return minFd >= process->DescriptorLimit() ? (int64_t) LINUX_EMFILE : (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->Files()->count && i < process->fileLimit.current; i++)
+    for (uint64_t i = minFd; i < process->Files()->count && i < process->DescriptorLimit(); i++)
     {
         if (process->Files()->entries[i].file == nullptr)
         {
@@ -882,7 +895,7 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
 
     const uint64_t growFrom = process->Files()->count;
 
-    if (growFrom >= process->fileLimit.current)
+    if (growFrom >= process->DescriptorLimit())
     {
         return (int64_t) LINUX_EMFILE;
     }
@@ -892,7 +905,7 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
         return (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->Files()->count && i < process->fileLimit.current; i++)
+    for (uint64_t i = minFd; i < process->Files()->count && i < process->DescriptorLimit(); i++)
     {
         if (process->Files()->entries[i].file == nullptr)
         {
@@ -962,39 +975,79 @@ void ProcessManager::ReleaseGroupList(process_group_list_t* groups)
     }
 }
 
+void ProcessManager::SnapshotUsage(const process_t* process, uint64_t usage[18], bool descendants)
+{
+    memset(usage, 0, 18 * sizeof(uint64_t));
+    const uint64_t user   = __atomic_load_n(&process->userCpuNanoseconds, __ATOMIC_RELAXED) / 1000;
+    const uint64_t kernel = __atomic_load_n(&process->kernelCpuNanoseconds, __ATOMIC_RELAXED) / 1000;
+    usage[0]             = user / 1000000;
+    usage[1]             = user % 1000000;
+    usage[2]             = kernel / 1000000;
+    usage[3]             = kernel % 1000000;
+    usage[8]             = __atomic_load_n(&process->minorFaults, __ATOMIC_RELAXED);
+    // No swap or block-device backend exists. Memory-file I/O is not block I/O.
+
+    if (descendants)
+    {
+        for (size_t index = 0; index < 18; ++index)
+        {
+            usage[index] += __atomic_load_n(&process->childUsage[index], __ATOMIC_RELAXED);
+        }
+
+        usage[0] += usage[1] / 1000000;
+        usage[1] %= 1000000;
+        usage[2] += usage[3] / 1000000;
+        usage[3] %= 1000000;
+    }
+}
+
+void ProcessManager::ReapUsage(process_t* parent, const process_t* child)
+{
+    uint64_t usage[18];
+    SnapshotUsage(child, usage);
+
+    for (size_t index = 0; index < 18; ++index)
+    {
+        __atomic_fetch_add(&parent->childUsage[index], usage[index], __ATOMIC_RELAXED);
+    }
+}
+
 uint64_t ProcessManager::ChangeFileLimit(process_t* process, const process_file_limit_t* proposed, process_file_limit_t* previous)
 {
-    FileDescriptorGuard descriptors(process);
-
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
 
-    if (proposed != nullptr)
+    // Limits belong to the process, independently of its descriptor tables.
+    // Cross-process callers retain this record even after exit releases tables.
+    spinlock_acquire_preempt(&process->resourceLock);
+    uint64_t result = 0;
+
+    if (proposed != nullptr && proposed->current > proposed->maximum)
     {
-        if (proposed->current > proposed->maximum)
+        result = LINUX_EINVAL;
+    }
+    else if (proposed != nullptr && proposed->maximum > process->fileLimit.maximum)
+    {
+        result = static_cast<uint64_t>(-1); // CAP_SYS_RESOURCE is not implemented.
+    }
+    else
+    {
+        if (previous != nullptr)
         {
-            return LINUX_EINVAL;
+            *previous = process->fileLimit;
         }
 
-        // Capability authorization for hard-limit increases is not implemented.
-
-        if (proposed->maximum > process->fileLimit.maximum)
-            return (uint64_t) -1; // EPERM
+        if (proposed != nullptr)
+        {
+            process->fileLimit.maximum = proposed->maximum;
+            __atomic_store_n(&process->fileLimit.current, proposed->current, __ATOMIC_RELEASE);
+        }
     }
 
-    if (previous != nullptr)
-    {
-        *previous = process->fileLimit;
-    }
-
-    if (proposed != nullptr)
-    {
-        process->fileLimit = *proposed;
-    }
-
-    return 0;
+    spinlock_release_preempt(&process->resourceLock);
+    return result;
 }
 
 bool ProcessManager::BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp)

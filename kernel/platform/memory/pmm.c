@@ -56,6 +56,89 @@ static inline uint64_t find_buddy_pfn(uint64_t pfn, size_t order)
     return pfn ^ order_size(order);
 }
 
+static void buddy_allocator_init(zone_t* zone);
+
+static bool zone_contains(const zone_t* zone, uint64_t pfn, size_t pages)
+{
+    for (size_t i = 0; i < zone->region_count; i++)
+    {
+        if (pfn >= zone->regions[i].start_pfn && pfn < zone->regions[i].end_pfn && pages <= zone->regions[i].end_pfn - pfn)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void split_dma_zone(numa_node_t* node)
+{
+    zone_t*  normal   = &node->zone;
+    zone_t*  dma      = &node->dma_zone;
+    size_t   lowPages = 0;
+    uint64_t limit    = UINT64_C(0x100000000) / PAGE_SIZE;
+
+    for (size_t i = 0; i < normal->region_count; i++)
+    {
+        uint64_t end = normal->regions[i].end_pfn < limit ? normal->regions[i].end_pfn : limit;
+
+        if (end > normal->regions[i].start_pfn)
+        {
+            lowPages += end - normal->regions[i].start_pfn;
+        }
+    }
+
+    size_t pages = lowPages / 16;
+    size_t cap   = (64UL * 1024 * 1024) / PAGE_SIZE;
+    pages        = pages < cap ? pages : cap;
+    pages        = (pages / (1UL << MAX_ORDER)) * (1UL << MAX_ORDER);
+
+    dma->hhdm_present   = normal->hhdm_present;
+    dma->hhdm_offset    = normal->hhdm_offset;
+    dma->buddy_metadata = normal->buddy_metadata;
+
+    // Both zones share the node's PFN metadata, but own disjoint regions/lists.
+    for (size_t i = 0; i < normal->region_count && pages != 0; i++)
+    {
+        pmm_region_t* region = &normal->regions[i];
+        uint64_t      end    = region->end_pfn < limit ? region->end_pfn : limit;
+
+        if (end <= region->start_pfn)
+        {
+            continue;
+        }
+
+        size_t count           = end - region->start_pfn;
+        count                  = count < pages ? count : pages;
+        pmm_region_t* reserved = &dma->regions[dma->region_count++];
+        reserved->start_pfn    = region->start_pfn;
+        reserved->end_pfn      = region->start_pfn + count;
+        reserved->page_count   = count;
+        if (dma->region_count == 1 || reserved->start_pfn < dma->min_pfn)
+        {
+            dma->min_pfn = reserved->start_pfn;
+        }
+
+        if (reserved->end_pfn > dma->max_pfn)
+        {
+            dma->max_pfn = reserved->end_pfn;
+        }
+
+        dma->total_pages += count;
+        region->start_pfn += count;
+        region->page_count -= count;
+        normal->total_pages -= count;
+        pages -= count;
+    }
+
+    dma->free_pages      = dma->total_pages;
+    dma->total_memory    = dma->total_pages * PAGE_SIZE;
+    normal->free_pages   = normal->total_pages;
+    normal->total_memory = normal->total_pages * PAGE_SIZE;
+    buddy_allocator_init(dma);
+    kprintf("Arx kernel: DMA zone reserved %llu bytes below 4 GiB\n", (unsigned long long) dma->total_memory);
+}
+
 static void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
 {
     page_t* block = &zone->buddy_metadata[pfn];
@@ -196,6 +279,9 @@ void pmm_init(struct boot_info* boot_info)
     memset((void*) buddy_metadata_va, 0, buddy_metadata_size);
     zone->buddy_metadata = (page_t*) buddy_metadata_va;
 
+    zone->total_pages -= buddy_metadata_pages;
+    split_dma_zone(&platform.numa_nodes[0]);
+
     zone->free_pages = zone->total_pages;
     zone->used_pages = 0;
     zone->lock       = 0;
@@ -288,8 +374,15 @@ static page_t* merge_block(zone_t* zone, page_t* block)
         return NULL;
     }
 
-    uint64_t buddy_pfn = find_buddy_pfn(block->pfn, block->order);
-    page_t*  buddy     = &zone->buddy_metadata[buddy_pfn];
+    uint64_t buddy_pfn  = find_buddy_pfn(block->pfn, block->order);
+    uint64_t merged_pfn = buddy_pfn < block->pfn ? buddy_pfn : block->pfn;
+
+    if (!zone_contains(zone, buddy_pfn, order_size(block->order)) || !zone_contains(zone, merged_pfn, order_size(block->order + 1)))
+    {
+        return NULL;
+    }
+
+    page_t* buddy = &zone->buddy_metadata[buddy_pfn];
 
     if (buddy->flags != PMM_PAGE_FREE || buddy->order != block->order)
     {
@@ -385,39 +478,103 @@ void* pmm_alloc(size_t size)
     return (void*) hhdm_va;
 }
 
+void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
+{
+    if (size == 0 || platform.cpus[arch_cpu_id()].numa_node == NULL)
+    {
+        return NULL;
+    }
+
+    zone_t* zone  = &platform.cpus[arch_cpu_id()].numa_node->dma_zone;
+    size_t  order = 0;
+
+    while (order <= MAX_ORDER && order_size(order) * PAGE_SIZE < size)
+    {
+        order++;
+    }
+
+    if (order > MAX_ORDER)
+    {
+        return NULL;
+    }
+
+    spinlock_acquire_preempt(&zone->lock);
+    page_t*  selected  = NULL;
+    size_t   fromOrder = order;
+    uint64_t bytes     = order_size(order) * PAGE_SIZE;
+
+    for (; fromOrder <= MAX_ORDER && selected == NULL; fromOrder++)
+    {
+        for (page_t* block = zone->buddy_free_lists[fromOrder].head; block != NULL; block = block->next)
+        {
+            phys_addr_t address = pfn_to_pa(block->pfn);
+
+            if (address <= maximum_address && bytes - 1 <= maximum_address - address)
+            {
+                selected = block;
+                break;
+            }
+        }
+    }
+
+    if (selected == NULL)
+    {
+        spinlock_release_preempt(&zone->lock);
+        return NULL;
+    }
+
+    fromOrder--;
+    ILIST_REMOVE(zone->buddy_free_lists[fromOrder].head, selected);
+    selected        = split_block(zone, selected, fromOrder, order);
+    selected->flags = PMM_PAGE_USED;
+    zone->free_pages -= order_size(order);
+    zone->used_pages += order_size(order);
+    phys_addr_t physical = pfn_to_pa(selected->pfn);
+
+    if (physical_address != NULL)
+    {
+        *physical_address = physical;
+    }
+
+    spinlock_release_preempt(&zone->lock);
+    return (void*) (uintptr_t) pa_to_hhdm(physical, zone->hhdm_present, zone->hhdm_offset);
+}
+
 void pmm_free(void* addr)
 {
-    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
-
-    if (cpu->numa_node == NULL)
-    {
-        return;
-    }
-
-    zone_t* zone = &cpu->numa_node->zone;
-
-    if (zone == NULL)
-    {
-        return;
-    }
-
     if (addr == NULL)
     {
         return;
     }
 
-    virt_addr_t hhdm_va = (virt_addr_t) (uintptr_t) addr;
-    phys_addr_t pa      = hhdm_to_pa(hhdm_va, zone->hhdm_present, zone->hhdm_offset);
-    uint64_t    pfn     = pa_to_pfn(pa);
+    for (size_t node = 0; node < platform.numa_node_count; node++)
+    {
+        zone_t* zones[] = { &platform.numa_nodes[node].zone, &platform.numa_nodes[node].dma_zone };
 
-    spinlock_acquire_preempt(&zone->lock);
+        for (size_t i = 0; i < 2; i++)
+        {
+            zone_t*     zone = zones[i];
+            phys_addr_t pa   = hhdm_to_pa((uintptr_t) addr, zone->hhdm_present, zone->hhdm_offset);
+            uint64_t    pfn  = pa_to_pfn(pa);
 
-    size_t allocated_order = zone->buddy_metadata[pfn].order;
+            if ((pa & (PAGE_SIZE - 1)) != 0 || !zone_contains(zone, pfn, 1))
+            {
+                continue;
+            }
 
-    buddy_free(zone, pfn);
+            spinlock_acquire_preempt(&zone->lock);
+            page_t* block = &zone->buddy_metadata[pfn];
+            size_t  order = block->order;
 
-    zone->free_pages += order_size(allocated_order);
-    zone->used_pages -= order_size(allocated_order);
+            if (block->flags == PMM_PAGE_USED && order <= MAX_ORDER && is_aligned_to_order(pfn, order) && zone_contains(zone, pfn, order_size(order)))
+            {
+                buddy_free(zone, pfn);
+                zone->free_pages += order_size(order);
+                zone->used_pages -= order_size(order);
+            }
 
-    spinlock_release_preempt(&zone->lock);
+            spinlock_release_preempt(&zone->lock);
+            return;
+        }
+    }
 }

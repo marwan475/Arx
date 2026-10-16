@@ -75,6 +75,10 @@ extern "C"
 
     uint8_t arch_cpu_id(void);
 
+    bool arch_dma_coherent_memory_supported(void);
+    void arch_dma_write_barrier(void);
+    void arch_dma_read_barrier(void);
+
     // Page table should be raw physical address
     bool arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table);
     void arch_unmap_page(virt_addr_t va, phys_addr_t page_table);

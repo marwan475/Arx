@@ -151,6 +151,10 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_pci_devices();
 
+#if defined(__x86_64__)
+    platform_dma_init();
+#endif
+
     __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
 
     arch_smp_init(boot_info);

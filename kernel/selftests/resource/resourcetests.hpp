@@ -9,3 +9,4 @@ void test_TaskManager(ResourceLayerCaps* resources);
 void test_TimeManager(ResourceLayerCaps* resources);
 void test_InitRamFileSystemManager(ResourceLayerCaps* resources);
 void test_ResourceFileSystem(ResourceLayerCaps* resources);
+void test_DmaManager(ResourceLayerCaps* resources);

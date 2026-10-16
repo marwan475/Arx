@@ -46,9 +46,9 @@ private:
 
     static SelfTestManager instance;
 
-    static constexpr unsigned long long MaxCases       = 128;
+    static constexpr unsigned long long MaxCases       = 256;
     static constexpr unsigned long long DetailMax      = 256;
-    static constexpr unsigned long long MaxFailedCases = 64;
+    static constexpr unsigned long long MaxFailedCases = 256;
     static constexpr unsigned long long GroupStackMax  = 16;
 
     struct CaseResult

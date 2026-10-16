@@ -64,6 +64,7 @@ typedef struct zone
 typedef struct numa_node
 {
     zone_t        zone;
+    zone_t        dma_zone;
     size_t        cpu_count;
     kernel_heap_t heap;
 } numa_node_t;
@@ -77,6 +78,7 @@ extern "C"
 
     // returns hhdm address of allocated block
     void* pmm_alloc(size_t size);
+    void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address);
     void  pmm_free(void* addr);
 
 #ifdef __cplusplus

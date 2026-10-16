@@ -13,11 +13,16 @@ void PhysicalMemoryManager::GetMemoryInfo(uint64_t* totalBytes, uint64_t* freeBy
 
     for (size_t node = 0; node < platform.numa_node_count; ++node)
     {
-        zone_t* zone = &platform.numa_nodes[node].zone;
-        spinlock_acquire_preempt(&zone->lock);
-        *totalBytes += (uint64_t) zone->total_memory;
-        *freeBytes += (uint64_t) zone->free_pages * PAGE_SIZE;
-        spinlock_release_preempt(&zone->lock);
+        zone_t* zones[] = { &platform.numa_nodes[node].zone, &platform.numa_nodes[node].dma_zone };
+
+        for (size_t i = 0; i < 2; i++)
+        {
+            zone_t* zone = zones[i];
+            spinlock_acquire_preempt(&zone->lock);
+            *totalBytes += (uint64_t) zone->total_memory;
+            *freeBytes += (uint64_t) zone->free_pages * PAGE_SIZE;
+            spinlock_release_preempt(&zone->lock);
+        }
     }
 }
 
@@ -34,4 +39,9 @@ void* PhysicalMemoryManager::Alloc(size_t size)
 void PhysicalMemoryManager::Free(void* addr)
 {
     pmm_free(addr);
+}
+
+void* PhysicalMemoryManager::AllocDma(size_t size, phys_addr_t maximumAddress, phys_addr_t* physicalAddress)
+{
+    return pmm_alloc_dma(size, maximumAddress, physicalAddress);
 }

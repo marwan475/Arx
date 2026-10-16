@@ -2,6 +2,7 @@
 
 #include "layers/Resource/ResourceFileSystem.hpp"
 
+class DmaManager;
 class PhysicalMemoryManager;
 class ProcessManager;
 class TimeManager;
@@ -11,6 +12,7 @@ class InitRamFileSystemManager;
 
 struct ResourceLayerCaps
 {
+    DmaManager*                  dmaManager;
     PhysicalMemoryManager*       physicalMemoryManager;
     ProcessManager*              processManager;
     VirtualMemoryManager*        virtualMemoryManager;

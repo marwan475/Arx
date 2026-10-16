@@ -3,6 +3,7 @@
 
 #include <arch/arch.h>
 #include <device/device.h>
+#include <dma/dma.h>
 #include <klib/spinlock.h>
 #include <memory/pmm.h>
 #include <stddef.h>
@@ -38,6 +39,7 @@ typedef struct platform
     pci_device_t*            pci_devices;
     size_t                   pci_device_count;
     arch_platform_info_t     arch_info;
+    platform_dma_ops_t       dma_ops;
 } platform_t;
 
 extern platform_t platform;

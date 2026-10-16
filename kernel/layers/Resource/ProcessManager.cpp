@@ -15,6 +15,10 @@ extern "C"
 namespace
 {
 
+// Reaped tasks leave a waitable process record. It no longer owns user signal
+// dispositions, but state-only transactions may still inspect the record.
+static signal_dispositions_t retiredDispositions = {1, 0, SIGNAL_DEFAULT_IGNORED, {}};
+
 static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t* writeCursor, uint64_t value)
 {
     if (addressSpace == nullptr || writeCursor == nullptr)
@@ -33,36 +37,312 @@ static bool push_word_to_process_stack(virt_addr_space_t* addressSpace, uint64_t
 
 } // namespace
 
-process_t* FileDescriptorGuard::Active[BOOT_SMP_MAX_CPUS] = {};
+descriptor_table_t* process_t::Files() const
+{
+    task_t* task = TaskManager::GetActiveTask();
+    return task != nullptr && task->process == this && task->descriptorTable != nullptr ? task->descriptorTable : descriptorTable;
+}
 
-FileDescriptorGuard::FileDescriptorGuard(process_t* process) : Process(process), Previous(nullptr), Owner(false)
+filesystem_context_t* process_t::Fs() const
+{
+    task_t* task = TaskManager::GetActiveTask();
+    return task != nullptr && task->process == this && task->filesystemContext != nullptr ? task->filesystemContext : filesystemContext;
+}
+
+signal_dispositions_t* process_t::Signals() const
+{
+    return SignalDispositionGuard::Current(this);
+}
+
+SignalDispositionGuard* SignalDispositionGuard::Active[BOOT_SMP_MAX_CPUS] = {};
+
+SignalDispositionGuard::SignalDispositionGuard(const process_t* process)
+    : Process(process), Dispositions(nullptr), Previous(nullptr), Owner(true), Held(true)
+{
+    cpu_preemption_disable();
+    Previous = Active[arch_cpu_id()];
+    spinlock_acquire(&process->resourceLock);
+    Dispositions = process->signalDispositions != nullptr ? process->signalDispositions : &retiredDispositions;
+    __atomic_add_fetch(&Dispositions->references, 1U, __ATOMIC_RELAXED);
+    spinlock_release(&process->resourceLock);
+
+    for (SignalDispositionGuard* guard = Previous; guard != nullptr; guard = guard->Previous)
+    {
+        if (guard->Dispositions == Dispositions)
+        {
+            Owner = false;
+            break;
+        }
+    }
+
+    if (Owner)
+    {
+        spinlock_acquire(&Dispositions->lock);
+    }
+
+    Active[arch_cpu_id()] = this;
+}
+
+SignalDispositionGuard::~SignalDispositionGuard()
+{
+    Release();
+}
+
+void SignalDispositionGuard::Release()
+{
+    if (!Held)
+    {
+        return;
+    }
+
+    Active[arch_cpu_id()] = Previous;
+
+    if (Owner)
+    {
+        spinlock_release(&Dispositions->lock);
+    }
+
+    Held = false;
+    ProcessManager::ReleaseSignalDispositions(Dispositions);
+    cpu_preemption_enable();
+}
+
+signal_dispositions_t* SignalDispositionGuard::Current(const process_t* process)
+{
+    for (SignalDispositionGuard* guard = Active[arch_cpu_id()]; guard != nullptr; guard = guard->Previous)
+    {
+        if (guard->Process == process)
+        {
+            return guard->Dispositions;
+        }
+    }
+
+    return process->signalDispositions != nullptr ? process->signalDispositions : &retiredDispositions;
+}
+
+uint64_t pending_signals(const process_t* process, const task_t* task)
+{
+    if (process == nullptr || task == nullptr)
+    {
+        return 0;
+    }
+
+    SignalDispositionGuard guard(process);
+    return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE)) & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE) & ~__atomic_load_n(&process->Signals()->ignored, __ATOMIC_ACQUIRE);
+}
+
+WorkingDirectorySnapshot::WorkingDirectorySnapshot(const process_t* process)
+{
+    if (process == nullptr)
+    {
+        memset(path, 0, sizeof(path));
+        path[0] = '/';
+        return;
+    }
+
+    filesystem_context_t* context = process->Fs();
+    spinlock_acquire_preempt(&context->lock);
+    memcpy(path, context->cwdPath, sizeof(path));
+    spinlock_release_preempt(&context->lock);
+}
+
+descriptor_table_t* ProcessManager::CreateDescriptorTable()
+{
+    descriptor_table_t* table = static_cast<descriptor_table_t*>(kzalloc(sizeof(descriptor_table_t)));
+
+    if (table == nullptr)
+    {
+        return nullptr;
+    }
+
+    table->entries = static_cast<file_descriptor_t*>(kzalloc(sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT));
+
+    if (table->entries == nullptr)
+    {
+        kfree(table);
+        return nullptr;
+    }
+
+    table->references = 1;
+    table->count      = DEFAULT_FILE_DESCRIPTOR_COUNT;
+    return table;
+}
+
+descriptor_table_t* ProcessManager::CopyDescriptorTable(descriptor_table_t* source, void* context, bool (*retain)(void*, file_handle_t))
+{
+    if (source == nullptr || retain == nullptr)
+    {
+        return nullptr;
+    }
+
+    descriptor_table_t* table = static_cast<descriptor_table_t*>(kzalloc(sizeof(descriptor_table_t)));
+
+    if (table == nullptr)
+    {
+        return nullptr;
+    }
+
+    table->references = 1;
+    spinlock_acquire_preempt(&source->lock);
+    table->count   = source->count;
+    table->entries = static_cast<file_descriptor_t*>(kzalloc(sizeof(file_descriptor_t) * table->count));
+    bool copied    = table->entries != nullptr;
+
+    for (uint64_t fd = 0; copied && fd < table->count; ++fd)
+    {
+        const file_descriptor_t& entry = source->entries[fd];
+
+        if (entry.file != nullptr)
+        {
+            copied = entry.release != nullptr && retain(context, entry.file);
+
+            if (copied)
+            {
+                table->entries[fd] = entry;
+            }
+        }
+    }
+
+    spinlock_release_preempt(&source->lock);
+
+    if (!copied)
+    {
+        ReleaseDescriptorTable(table);
+        return nullptr;
+    }
+
+    return table;
+}
+
+void ProcessManager::ReleaseDescriptorTable(descriptor_table_t* table)
+{
+    if (table == nullptr || __atomic_sub_fetch(&table->references, 1U, __ATOMIC_ACQ_REL) != 0)
+    {
+        return;
+    }
+
+    for (uint64_t fd = 0; table->entries != nullptr && fd < table->count; ++fd)
+    {
+        const file_descriptor_t& entry = table->entries[fd];
+
+        if (entry.file != nullptr && entry.release != nullptr)
+        {
+            entry.release(entry.file);
+        }
+    }
+
+    kfree(table->entries);
+    kfree(table);
+}
+
+filesystem_context_t* ProcessManager::CopyFilesystemContext(filesystem_context_t* source)
+{
+    filesystem_context_t* context = static_cast<filesystem_context_t*>(kzalloc(sizeof(filesystem_context_t)));
+
+    if (context == nullptr)
+    {
+        return nullptr;
+    }
+
+    context->references = 1;
+    context->umask      = 0022U;
+    context->cwdPath[0] = '/';
+
+    if (source != nullptr)
+    {
+        spinlock_acquire_preempt(&source->lock);
+        context->umask = __atomic_load_n(&source->umask, __ATOMIC_RELAXED);
+        memcpy(context->cwdPath, source->cwdPath, sizeof(context->cwdPath));
+        spinlock_release_preempt(&source->lock);
+    }
+
+    return context;
+}
+
+void ProcessManager::ReleaseFilesystemContext(filesystem_context_t* context)
+{
+    if (context != nullptr && __atomic_sub_fetch(&context->references, 1U, __ATOMIC_ACQ_REL) == 0)
+    {
+        kfree(context);
+    }
+}
+
+signal_dispositions_t* ProcessManager::CopySignalDispositions(signal_dispositions_t* source)
+{
+    signal_dispositions_t* dispositions = static_cast<signal_dispositions_t*>(kzalloc(sizeof(signal_dispositions_t)));
+
+    if (dispositions == nullptr)
+    {
+        return nullptr;
+    }
+
+    dispositions->references = 1;
+    dispositions->ignored    = SIGNAL_DEFAULT_IGNORED;
+
+    if (source != nullptr)
+    {
+        spinlock_acquire_preempt(&source->lock);
+        dispositions->ignored = source->ignored;
+        memcpy(dispositions->actions, source->actions, sizeof(dispositions->actions));
+        spinlock_release_preempt(&source->lock);
+    }
+
+    return dispositions;
+}
+
+void ProcessManager::ReleaseSignalDispositions(signal_dispositions_t* dispositions)
+{
+    if (dispositions != nullptr && __atomic_sub_fetch(&dispositions->references, 1U, __ATOMIC_ACQ_REL) == 0)
+    {
+        kfree(dispositions);
+    }
+}
+
+void ProcessManager::ReleaseProcessResources(process_t* process)
+{
+    spinlock_acquire_preempt(&process->resourceLock);
+    descriptor_table_t*    table        = process->descriptorTable;
+    filesystem_context_t*  filesystem   = process->filesystemContext;
+    signal_dispositions_t* dispositions = process->signalDispositions;
+    process->descriptorTable            = nullptr;
+    process->filesystemContext          = nullptr;
+    process->signalDispositions         = nullptr;
+    spinlock_release_preempt(&process->resourceLock);
+    ReleaseDescriptorTable(table);
+    ReleaseFilesystemContext(filesystem);
+    ReleaseSignalDispositions(dispositions);
+}
+
+descriptor_table_t* FileDescriptorGuard::Active[BOOT_SMP_MAX_CPUS] = {};
+
+FileDescriptorGuard::FileDescriptorGuard(process_t* process) : Table(process != nullptr ? process->Files() : nullptr), Previous(nullptr), Owner(false)
 {
     cpu_preemption_disable();
     const uint8_t cpu = arch_cpu_id();
     Previous          = Active[cpu];
-    Owner             = process != nullptr && Previous != process;
+    Owner             = Table != nullptr && Previous != Table;
 
     if (Owner)
     {
-        spinlock_acquire(&process->fileDescriptorLock);
+        spinlock_acquire(&Table->lock);
     }
 
-    if (process != nullptr)
+    if (Table != nullptr)
     {
-        Active[cpu] = process;
+        Active[cpu] = Table;
     }
 }
 
 FileDescriptorGuard::~FileDescriptorGuard()
 {
-    if (Process != nullptr)
+    if (Table != nullptr)
     {
         Active[arch_cpu_id()] = Previous;
     }
 
     if (Owner)
     {
-        spinlock_release(&Process->fileDescriptorLock);
+        spinlock_release(&Table->lock);
     }
 
     cpu_preemption_enable();
@@ -95,10 +375,7 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->exited           = false;
     process->reclaiming       = false;
     process->retirementActive = false;
-    process->signalLock       = 0;
     process->signalPending    = 0;
-    process->signalIgnored    = SIGNAL_DEFAULT_IGNORED;
-    memset(process->signalActions, 0, sizeof(process->signalActions));
     memset(process->signalSenders, 0, sizeof(process->signalSenders));
     process->ownerCpu          = -1;
     process->exitStatus        = 0;
@@ -116,16 +393,14 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     memset(process->timerIntervalSeconds, 0, sizeof(process->timerIntervalSeconds));
     memset(process->timerIntervalMicroseconds, 0, sizeof(process->timerIntervalMicroseconds));
     process->tasks               = nullptr;
-    process->fileDescriptors     = nullptr;
-    process->fileDescriptorLock  = 0;
-    process->fileDescriptorCount = 0;
-    process->umask               = 0022U;
+    process->descriptorTable     = nullptr;
+    process->filesystemContext   = nullptr;
+    process->signalDispositions  = nullptr;
+    process->resourceLock        = 0;
     process->fileLimit           = {1024, MAX_FILE_DESCRIPTORS};
     process->credentialLock      = 0;
     process->credentials         = {};
     process->supplementaryGroups = nullptr;
-    memset(process->cwdPath, 0, sizeof(process->cwdPath));
-    process->cwdPath[0] = '/';
 }
 
 ProcessManager::ProcessManager()
@@ -172,9 +447,37 @@ process_t* ProcessManager::AllocateProcessUnlocked()
 
 process_t* ProcessManager::AllocateProcess()
 {
+    descriptor_table_t*    table        = CreateDescriptorTable();
+    filesystem_context_t*  filesystem   = CopyFilesystemContext(nullptr);
+    signal_dispositions_t* dispositions = CopySignalDispositions(nullptr);
+
+    if (table == nullptr || filesystem == nullptr || dispositions == nullptr)
+    {
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+        ReleaseSignalDispositions(dispositions);
+        return nullptr;
+    }
+
     LockManager();
     process_t* process = AllocateProcessUnlocked();
+
+    if (process != nullptr)
+    {
+        process->descriptorTable    = table;
+        process->filesystemContext  = filesystem;
+        process->signalDispositions = dispositions;
+    }
+
     UnlockManager();
+
+    if (process == nullptr)
+    {
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+        ReleaseSignalDispositions(dispositions);
+    }
+
     return process;
 }
 
@@ -185,14 +488,17 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
         return nullptr;
     }
 
-    file_descriptor_t* fileDescriptorTable = (file_descriptor_t*) kmalloc(sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
+    descriptor_table_t*    table        = CreateDescriptorTable();
+    filesystem_context_t*  filesystem   = CopyFilesystemContext(nullptr);
+    signal_dispositions_t* dispositions = CopySignalDispositions(nullptr);
 
-    if (fileDescriptorTable == nullptr)
+    if (table == nullptr || filesystem == nullptr || dispositions == nullptr)
     {
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+        ReleaseSignalDispositions(dispositions);
         return nullptr;
     }
-
-    memset(fileDescriptorTable, 0, sizeof(file_descriptor_t) * DEFAULT_FILE_DESCRIPTOR_COUNT);
 
     // operation_lock can be held across synchronous TLB shootdown. Never wait
     // for it with ManagerLock held: a target CPU's timer handler can be waiting
@@ -209,7 +515,9 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
         {
             UnlockManager();
             spinlock_release_preempt(&addressSpace->operation_lock);
-            kfree(fileDescriptorTable);
+            ReleaseDescriptorTable(table);
+            ReleaseFilesystemContext(filesystem);
+            ReleaseSignalDispositions(dispositions);
             return nullptr;
         }
     }
@@ -229,7 +537,9 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
     if (hasAnonymousPages)
     {
         UnlockManager();
-        kfree(fileDescriptorTable);
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+        ReleaseSignalDispositions(dispositions);
         return nullptr;
     }
 
@@ -251,18 +561,19 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
     if (process == nullptr)
     {
         UnlockManager();
-        kfree(fileDescriptorTable);
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+        ReleaseSignalDispositions(dispositions);
         return nullptr;
     }
 
-    process->fileDescriptors     = fileDescriptorTable;
-    process->fileDescriptorCount = DEFAULT_FILE_DESCRIPTOR_COUNT;
-    process->addressSpace        = addressSpace;
-    process->elfMetadata         = nullptr;
-    process->exited              = false;
-    process->exitStatus          = 0;
-    memset(process->cwdPath, 0, sizeof(process->cwdPath));
-    process->cwdPath[0] = '/';
+    process->descriptorTable    = table;
+    process->filesystemContext  = filesystem;
+    process->signalDispositions = dispositions;
+    process->addressSpace       = addressSpace;
+    process->elfMetadata        = nullptr;
+    process->exited             = false;
+    process->exitStatus         = 0;
 
     const uint8_t currentCpu = arch_cpu_id();
 
@@ -296,9 +607,10 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
 
 bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 {
-    file_descriptor_t*    descriptorsToFree     = nullptr;
-    uint64_t              descriptorCountToFree = 0;
-    process_group_list_t* groupsToFree          = nullptr;
+    descriptor_table_t*    tableToFree        = nullptr;
+    filesystem_context_t*  filesystemToFree   = nullptr;
+    signal_dispositions_t* dispositionsToFree = nullptr;
+    process_group_list_t*  groupsToFree       = nullptr;
 
     LockManager();
 
@@ -350,12 +662,9 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     process->memoryUsers = 0;
     process->exited      = wasExited;
 
-    if (process->fileDescriptors != nullptr)
-    {
-        descriptorsToFree        = process->fileDescriptors;
-        descriptorCountToFree    = process->fileDescriptorCount;
-        process->fileDescriptors = nullptr;
-    }
+    tableToFree        = process->descriptorTable;
+    filesystemToFree   = process->filesystemContext;
+    dispositionsToFree = process->signalDispositions;
 
     groupsToFree = process->supplementaryGroups;
     ResetProcessSlot(process, (uint64_t) (process - &Processes[0]), false);
@@ -370,17 +679,9 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 
     UnlockManager();
 
-    if (descriptorsToFree != nullptr)
-    {
-        for (uint64_t fd = 0; fd < descriptorCountToFree; ++fd)
-
-            if (descriptorsToFree[fd].file != nullptr && descriptorsToFree[fd].release != nullptr)
-            {
-                descriptorsToFree[fd].release(descriptorsToFree[fd].file);
-            }
-
-        kfree(descriptorsToFree);
-    }
+    ReleaseDescriptorTable(tableToFree);
+    ReleaseFilesystemContext(filesystemToFree);
+    ReleaseSignalDispositions(dispositionsToFree);
 
     ReleaseGroupList(groupsToFree);
 
@@ -415,6 +716,31 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
     if (task->next != nullptr || task->prev != nullptr)
     {
         return false;
+    }
+
+    // Explicit task migration (also used by disposable syscall fixtures) joins
+    // the destination process's default contexts. Clone tasks arrive unattached
+    // with their flag-selected references already prepared.
+    if (task->process != nullptr && task->process != process)
+    {
+        descriptor_table_t*   table      = task->descriptorTable;
+        filesystem_context_t* filesystem = task->filesystemContext;
+        task->descriptorTable            = nullptr;
+        task->filesystemContext          = nullptr;
+        ReleaseDescriptorTable(table);
+        ReleaseFilesystemContext(filesystem);
+    }
+
+    if (task->descriptorTable == nullptr && process->descriptorTable != nullptr)
+    {
+        task->descriptorTable = process->descriptorTable;
+        __atomic_add_fetch(&task->descriptorTable->references, 1U, __ATOMIC_RELAXED);
+    }
+
+    if (task->filesystemContext == nullptr && process->filesystemContext != nullptr)
+    {
+        task->filesystemContext = process->filesystemContext;
+        __atomic_add_fetch(&task->filesystemContext->references, 1U, __ATOMIC_RELAXED);
     }
 
     ILIST_APPEND(process->tasks, task);
@@ -452,12 +778,12 @@ int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file
 
 file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
 {
-    if (process == nullptr || process->fileDescriptors == nullptr || fd >= process->fileDescriptorCount)
+    if (process == nullptr || process->Files() == nullptr || process->Files()->entries == nullptr || fd >= process->Files()->count)
     {
         return nullptr;
     }
 
-    file_descriptor_t* descriptor = &process->fileDescriptors[fd];
+    file_descriptor_t* descriptor = &process->Files()->entries[fd];
     return descriptor->file != nullptr ? descriptor : nullptr;
 }
 
@@ -465,7 +791,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
 {
     FileDescriptorGuard descriptors(process);
 
-    if (process == nullptr || requiredIndex >= process->fileLimit.current)
+    if (process == nullptr || process->Files() == nullptr || requiredIndex >= process->fileLimit.current)
     {
         return false;
     }
@@ -480,12 +806,12 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
         return false;
     }
 
-    if (requiredIndex < process->fileDescriptorCount && process->fileDescriptors != nullptr)
+    if (requiredIndex < process->Files()->count && process->Files()->entries != nullptr)
     {
         return true;
     }
 
-    uint64_t oldCount = process->fileDescriptorCount;
+    uint64_t oldCount = process->Files()->count;
     uint64_t newCount = oldCount;
 
     if (newCount == 0)
@@ -518,14 +844,14 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
 
     memset(newTable, 0, sizeof(file_descriptor_t) * newCount);
 
-    if (process->fileDescriptors != nullptr && process->fileDescriptorCount > 0)
+    if (process->Files()->entries != nullptr && process->Files()->count > 0)
     {
-        memcpy(newTable, process->fileDescriptors, sizeof(file_descriptor_t) * process->fileDescriptorCount);
-        kfree(process->fileDescriptors);
+        memcpy(newTable, process->Files()->entries, sizeof(file_descriptor_t) * process->Files()->count);
+        kfree(process->Files()->entries);
     }
 
-    process->fileDescriptors     = newTable;
-    process->fileDescriptorCount = newCount;
+    process->Files()->entries = newTable;
+    process->Files()->count   = newCount;
     return true;
 }
 
@@ -543,18 +869,18 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
         return minFd >= process->fileLimit.current ? (int64_t) LINUX_EMFILE : (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->fileDescriptorCount && i < process->fileLimit.current; i++)
+    for (uint64_t i = minFd; i < process->Files()->count && i < process->fileLimit.current; i++)
     {
-        if (process->fileDescriptors[i].file == nullptr)
+        if (process->Files()->entries[i].file == nullptr)
         {
-            process->fileDescriptors[i].file    = file;
-            process->fileDescriptors[i].flags   = flags;
-            process->fileDescriptors[i].release = release;
+            process->Files()->entries[i].file    = file;
+            process->Files()->entries[i].flags   = flags;
+            process->Files()->entries[i].release = release;
             return (int64_t) i;
         }
     }
 
-    const uint64_t growFrom = process->fileDescriptorCount;
+    const uint64_t growFrom = process->Files()->count;
 
     if (growFrom >= process->fileLimit.current)
     {
@@ -566,13 +892,13 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
         return (int64_t) LINUX_ENOMEM;
     }
 
-    for (uint64_t i = minFd; i < process->fileDescriptorCount && i < process->fileLimit.current; i++)
+    for (uint64_t i = minFd; i < process->Files()->count && i < process->fileLimit.current; i++)
     {
-        if (process->fileDescriptors[i].file == nullptr)
+        if (process->Files()->entries[i].file == nullptr)
         {
-            process->fileDescriptors[i].file    = file;
-            process->fileDescriptors[i].flags   = flags;
-            process->fileDescriptors[i].release = release;
+            process->Files()->entries[i].file    = file;
+            process->Files()->entries[i].flags   = flags;
+            process->Files()->entries[i].release = release;
             return (int64_t) i;
         }
     }
@@ -582,7 +908,7 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
 
 uint32_t ProcessManager::ExchangeUmask(process_t* process, uint32_t mask)
 {
-    return __atomic_exchange_n(&process->umask, mask & 0777U, __ATOMIC_RELAXED);
+    return __atomic_exchange_n(&process->Fs()->umask, mask & 0777U, __ATOMIC_RELAXED);
 }
 
 process_t* ProcessManager::AcquireCurrentCredentials()

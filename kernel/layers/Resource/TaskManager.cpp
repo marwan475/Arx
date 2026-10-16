@@ -1,4 +1,5 @@
 #include "layers/Resource/TaskManager.hpp"
+#include "layers/Resource/ProcessManager.hpp"
 
 extern "C"
 {
@@ -166,18 +167,18 @@ static uint64_t resolve_task_kernel_stack_top(const task_t* task, const cpu_info
 void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 {
     memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
-    task->allocated       = allocated;
-    task->state           = task_t::READY;
-    task->ownerCpu        = -1;
-    task->dispatchUsers   = 0;
-    task->dying           = false;
-    task->isUserTask      = false;
-    task->sleepPending    = false;
-    task->sleepBlocked    = false;
-    task->syscallActive   = 0;
-    task->preemptionDepth = 0;
-    task->id              = id;
-    task->process         = nullptr;
+    task->allocated         = allocated;
+    task->state             = task_t::READY;
+    task->ownerCpu          = -1;
+    task->dispatchUsers     = 0;
+    task->dying             = false;
+    task->isUserTask        = false;
+    task->sleepPending      = false;
+    task->sleepBlocked      = false;
+    task->syscallActive     = 0;
+    task->preemptionDepth   = 0;
+    task->id                = id;
+    task->process           = nullptr;
     task->signalMask        = 0;
     task->signalPending     = 0;
     task->signalSequence    = 0;
@@ -191,6 +192,8 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->setChildTid       = 0;
     task->robustOwner       = nullptr;
     task->retirementContext = nullptr;
+    task->descriptorTable   = nullptr;
+    task->filesystemContext = nullptr;
     task->retirementCleanup = nullptr;
     memset(task->name, 0, sizeof(task->name));
     memcpy(task->name, "Arx", 3);
@@ -380,7 +383,7 @@ task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint
 #endif
 }
 
-bool TaskManager::FreeTask(task_t* task, void** retiredStack)
+bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resources_t* retiredResources)
 {
     void*            stackToFree   = nullptr;
     signal_sender_t* sendersToFree = nullptr;
@@ -425,6 +428,50 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack)
         task->stack = nullptr;
     }
 
+    retired_task_resources_t resources = {task->descriptorTable, task->filesystemContext, nullptr, nullptr};
+    process_t*               process   = task->process;
+
+    if (process != nullptr)
+    {
+        task_t* survivor       = nullptr;
+        bool    tableUsed      = false;
+        bool    filesystemUsed = false;
+
+        for (task_t* sibling = process->tasks; sibling != nullptr; sibling = sibling->next)
+        {
+            if (sibling != task && sibling->allocated)
+            {
+                survivor       = sibling;
+                tableUsed      = tableUsed || sibling->descriptorTable == process->descriptorTable;
+                filesystemUsed = filesystemUsed || sibling->filesystemContext == process->filesystemContext;
+            }
+        }
+
+        // The process defaults are fallback references, not extra users that
+        // keep a departed thread's private descriptors open indefinitely.
+        if (!tableUsed && process->descriptorTable == resources.table)
+        {
+            resources.defaultTable   = process->descriptorTable;
+            process->descriptorTable = survivor != nullptr ? survivor->descriptorTable : nullptr;
+
+            if (process->descriptorTable != nullptr)
+            {
+                __atomic_add_fetch(&process->descriptorTable->references, 1U, __ATOMIC_RELAXED);
+            }
+        }
+
+        if (!filesystemUsed && process->filesystemContext == resources.filesystem)
+        {
+            resources.defaultFilesystem = process->filesystemContext;
+            process->filesystemContext  = survivor != nullptr ? survivor->filesystemContext : nullptr;
+
+            if (process->filesystemContext != nullptr)
+            {
+                __atomic_add_fetch(&process->filesystemContext->references, 1U, __ATOMIC_RELAXED);
+            }
+        }
+    }
+
     sendersToFree = task->signalSenders;
     ResetTaskSlot(task, (uint64_t) (task - &Tasks[0]), false);
 
@@ -437,6 +484,14 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack)
     }
 
     UnlockManager();
+    if (retiredResources != nullptr)
+    {
+        *retiredResources = resources;
+    }
+    else
+    {
+        ReleaseTaskResources(resources);
+    }
     kfree(sendersToFree);
 
     if (retiredStack != nullptr)
@@ -447,6 +502,14 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack)
         ReleaseTaskStack(stackToFree);
 
     return true;
+}
+
+void TaskManager::ReleaseTaskResources(const retired_task_resources_t& resources)
+{
+    ProcessManager::ReleaseDescriptorTable(resources.table);
+    ProcessManager::ReleaseFilesystemContext(resources.filesystem);
+    ProcessManager::ReleaseDescriptorTable(resources.defaultTable);
+    ProcessManager::ReleaseFilesystemContext(resources.defaultFilesystem);
 }
 
 void TaskManager::ReleaseTaskStack(void* stack)
@@ -766,4 +829,9 @@ const task_t* TaskManager::GetTasks() const
 size_t TaskManager::GetCapacity() const
 {
     return MAX_TASKS;
+}
+
+task_t* TaskManager::GetActiveTask()
+{
+    return contextTaskManager != nullptr ? contextTaskManager->GetCurrentTask() : nullptr;
 }

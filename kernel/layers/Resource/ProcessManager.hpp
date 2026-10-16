@@ -31,6 +31,30 @@ struct file_descriptor_t
     void (*release)(file_handle_t);
 };
 
+struct descriptor_table_t
+{
+    uint32_t           references;
+    spinlock_t         lock;
+    file_descriptor_t* entries;
+    uint64_t           count;
+};
+
+struct filesystem_context_t
+{
+    uint32_t   references;
+    spinlock_t lock;
+    uint32_t   umask;
+    char       cwdPath[256];
+};
+
+struct signal_dispositions_t
+{
+    uint32_t        references;
+    spinlock_t      lock;
+    uint64_t        ignored;
+    signal_action_t actions[32];
+};
+
 struct process_user_auxv_entry_t
 {
     uint64_t type;
@@ -83,72 +107,92 @@ struct process_group_list_t
 
 struct process_t
 {
-    bool                  allocated;
-    bool                  hasParent;
-    bool                  ownsAddressSpace;
-    uint64_t              id;
-    uint64_t              parentId;
-    uint64_t              parentTaskId;
-    uint64_t              groupId;
-    uint64_t              sessionId;
-    uint64_t              childSequence;
-    uint64_t              execSequence;
-    uint64_t              waitOwner;
-    uint32_t              exitSignal;
-    int32_t               terminationSignal;
-    bool                  waitable;
-    bool                  waitConsumed;
-    bool                  exitNotified;
-    bool                  stopped;
-    bool                  stopPending;
-    bool                  continuedPending;
-    int32_t               stopSignal;
-    uint64_t              stopSequence;
-    uint64_t              taskCursor;
-    bool                  exited;
-    bool                  reclaiming;
-    bool                  retirementActive;
-    int16_t               ownerCpu;
-    int32_t               exitStatus;
-    virt_addr_space_t*    addressSpace;
-    void*                 elfMetadata;
-    uint64_t              breakBase;
-    uint64_t              programBreak;
-    uint32_t              memoryUsers;   // Also prevents attaching shared address-space roots.
-    uint32_t              lifetimeUsers; // Retains the process without claiming its mappings.
-    spinlock_t            timerLock;
-    uint64_t              realTimerDeadline;
-    uint64_t              realTimerInterval;
-    bool                  realTimerArmed;
-    bool                  realTimerExpired;
-    int64_t               timerIntervalSeconds[3];
-    int64_t               timerIntervalMicroseconds[3];
-    task_t*               tasks;
-    file_descriptor_t*    fileDescriptors;
-    spinlock_t            fileDescriptorLock;
-    uint64_t              fileDescriptorCount;
-    uint32_t              umask;
-    process_file_limit_t  fileLimit;
-    spinlock_t            credentialLock;
-    process_credentials_t credentials;
-    process_group_list_t* supplementaryGroups;
-    char                  cwdPath[256];
-    spinlock_t            signalLock;
-    uint64_t              signalPending;
-    uint64_t              signalIgnored;
-    signal_action_t       signalActions[32];
-    signal_sender_t       signalSenders[32];
+    bool                   allocated;
+    bool                   hasParent;
+    bool                   ownsAddressSpace;
+    uint64_t               id;
+    uint64_t               parentId;
+    uint64_t               parentTaskId;
+    uint64_t               groupId;
+    uint64_t               sessionId;
+    uint64_t               childSequence;
+    uint64_t               execSequence;
+    uint64_t               waitOwner;
+    uint32_t               exitSignal;
+    int32_t                terminationSignal;
+    bool                   waitable;
+    bool                   waitConsumed;
+    bool                   exitNotified;
+    bool                   stopped;
+    bool                   stopPending;
+    bool                   continuedPending;
+    int32_t                stopSignal;
+    uint64_t               stopSequence;
+    uint64_t               taskCursor;
+    bool                   exited;
+    bool                   reclaiming;
+    bool                   retirementActive;
+    int16_t                ownerCpu;
+    int32_t                exitStatus;
+    virt_addr_space_t*     addressSpace;
+    void*                  elfMetadata;
+    uint64_t               breakBase;
+    uint64_t               programBreak;
+    uint32_t               memoryUsers;   // Also prevents attaching shared address-space roots.
+    uint32_t               lifetimeUsers; // Retains the process without claiming its mappings.
+    spinlock_t             timerLock;
+    uint64_t               realTimerDeadline;
+    uint64_t               realTimerInterval;
+    bool                   realTimerArmed;
+    bool                   realTimerExpired;
+    int64_t                timerIntervalSeconds[3];
+    int64_t                timerIntervalMicroseconds[3];
+    task_t*                tasks;
+    descriptor_table_t*    descriptorTable;
+    filesystem_context_t*  filesystemContext;
+    process_file_limit_t   fileLimit;
+    spinlock_t             credentialLock;
+    process_credentials_t  credentials;
+    process_group_list_t*  supplementaryGroups;
+    signal_dispositions_t* signalDispositions;
+    mutable spinlock_t     resourceLock;
+    uint64_t               signalPending;
+    signal_sender_t        signalSenders[32];
+
+    descriptor_table_t*    Files() const;
+    filesystem_context_t*  Fs() const;
+    signal_dispositions_t* Signals() const;
 };
 
-inline uint64_t pending_signals(const process_t* process, const task_t* task)
+// Path resolution uses a coherent snapshot; publishing chdir never exposes a
+// partially written path to another owner of a shared filesystem context.
+struct WorkingDirectorySnapshot
 {
-    if (process == nullptr || task == nullptr)
-    {
-        return 0;
-    }
+    char path[256];
 
-    return (__atomic_load_n(&process->signalPending, __ATOMIC_ACQUIRE) | __atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE)) & ~(__atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE) & ~SIGNAL_UNBLOCKABLE) & ~__atomic_load_n(&process->signalIgnored, __ATOMIC_ACQUIRE);
-}
+    explicit WorkingDirectorySnapshot(const process_t* process);
+};
+
+uint64_t pending_signals(const process_t* process, const task_t* task);
+
+class SignalDispositionGuard
+{
+public:
+    explicit SignalDispositionGuard(const process_t* process);
+    ~SignalDispositionGuard();
+    void                          Release();
+    static signal_dispositions_t* Current(const process_t* process);
+    SignalDispositionGuard(const SignalDispositionGuard&) = delete;
+    SignalDispositionGuard& operator=(const SignalDispositionGuard&) = delete;
+
+private:
+    const process_t*               Process;
+    signal_dispositions_t*         Dispositions;
+    SignalDispositionGuard*        Previous;
+    bool                           Owner;
+    bool                           Held;
+    static SignalDispositionGuard* Active[BOOT_SMP_MAX_CPUS];
+};
 
 // A descriptor pointer is borrowed only inside this transaction. Holding the
 // table lock keeps its file reference alive and prevents table relocation.
@@ -161,10 +205,10 @@ public:
     FileDescriptorGuard& operator=(const FileDescriptorGuard&) = delete;
 
 private:
-    process_t*        Process;
-    process_t*        Previous;
-    bool              Owner;
-    static process_t* Active[BOOT_SMP_MAX_CPUS];
+    descriptor_table_t*        Table;
+    descriptor_table_t*        Previous;
+    bool                       Owner;
+    static descriptor_table_t* Active[BOOT_SMP_MAX_CPUS];
 };
 
 class ProcessManager
@@ -177,6 +221,15 @@ public:
     static constexpr size_t   MAX_CWD_PATH_LENGTH           = 256;
 
     ProcessManager();
+
+    static descriptor_table_t*    CreateDescriptorTable();
+    static descriptor_table_t*    CopyDescriptorTable(descriptor_table_t* source, void* context, bool (*retain)(void*, file_handle_t));
+    static void                   ReleaseDescriptorTable(descriptor_table_t* table);
+    static filesystem_context_t*  CopyFilesystemContext(filesystem_context_t* source);
+    static void                   ReleaseFilesystemContext(filesystem_context_t* context);
+    static signal_dispositions_t* CopySignalDispositions(signal_dispositions_t* source);
+    static void                   ReleaseSignalDispositions(signal_dispositions_t* dispositions);
+    static void                   ReleaseProcessResources(process_t* process);
 
     process_t*                AllocateProcess();
     process_t*                CreateProcess(virt_addr_space_t* addressSpace, uint64_t preferredId = UINT64_MAX);

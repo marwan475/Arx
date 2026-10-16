@@ -463,8 +463,8 @@ static bool custom_case_validate_vfs_rw(const custom_case_ctx_t* ctx)
         }
     }
 
-    currentProcess->fileDescriptors[fd].file  = nullptr;
-    currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+    currentProcess->Files()->entries[fd].file  = nullptr;
+    currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
     (void) logicCaps->virtualFileSystem->Close(file);
 
     return validationPass;
@@ -3427,6 +3427,246 @@ struct lifecycle_fixture_t
     }
 };
 
+#if defined(__x86_64__)
+static uint64_t lifecycle_clone(lifecycle_fixture_t& fixture, uint64_t number, uint64_t flags, uint64_t childTid = 0)
+{
+    process_clone_arguments_t arguments = {};
+    arguments.flags                     = flags;
+    arguments.exitSignal                = (flags & 0x10000) != 0 ? 0 : 17;
+    arguments.stack                     = lifecycle_fixture_t::STACK;
+    arguments.stackSize                 = PAGE_SIZE;
+    arguments.childTid                  = childTid;
+    arch_syscall_frame_t frame          = fixture.Frame(number);
+
+    if (number == SYSCALL_clone)
+    {
+        frame.arg0 = flags | arguments.exitSignal;
+        frame.arg1 = arguments.stack + arguments.stackSize;
+        frame.arg3 = arguments.childTid;
+    }
+    else
+    {
+        if (!safe_write_user(lifecycle_fixture_t::DATA + 256, &arguments, sizeof(arguments)))
+        {
+            return LINUX_EFAULT;
+        }
+
+        frame.arg0 = lifecycle_fixture_t::DATA + 256;
+        frame.arg1 = sizeof(arguments);
+    }
+
+    return dispatcher_dispatch_syscall(&frame);
+}
+
+static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t number)
+{
+    auto call = [&](uint64_t syscall, uint64_t first = 0, uint64_t second = 0, uint64_t third = 0, uint64_t fourth = 0)
+    {
+        arch_syscall_frame_t frame = fixture.Frame(syscall);
+        frame.arg0                 = first;
+        frame.arg1                 = second;
+        frame.arg2                 = third;
+        frame.arg3                 = fourth;
+        return dispatcher_dispatch_syscall(&frame);
+    };
+
+    const char         directory[]      = "/clone-resource-sharing";
+    VirtualFileSystem* files            = fixture.logic->virtualFileSystem;
+    ProcessManager*    processes        = fixture.resources->processManager;
+    bool               passed           = files->Mkdir({}, directory, 0755) == 0;
+    uint8_t            originalCode[64] = {};
+    passed &= safe_read_user(lifecycle_fixture_t::CODE, originalCode, sizeof(originalCode));
+
+    for (unsigned variant = 0; passed && variant < 16; ++variant)
+    {
+        const bool      thread       = variant >= 12;
+        const bool      sharedVm     = variant < 8 || thread;
+        const uint64_t  selection    = (thread ? variant - 12 : variant >= 8 ? variant - 8 : variant) ^ 1U;
+        const bool      shareFiles   = (selection & 1) != 0;
+        const bool      shareFs      = (selection & 2) != 0;
+        const bool      shareSignals = thread || (sharedVm && (selection & 4) != 0);
+        const uint64_t  flags        = (sharedVm ? 0x100 : 0) | (shareFiles ? 0x400 : 0) | (shareFs ? 0x200 : 0) | (shareSignals ? 0x800 : 0) | (thread ? 0x10000 : 0);
+        signal_action_t action       = {};
+        passed &= safe_write_user(lifecycle_fixture_t::DATA + 512, &action, sizeof(action));
+        passed &= call(SYSCALL_rt_sigaction, 10, lifecycle_fixture_t::DATA + 512, 0, 8) == 0;
+        (void) call(SYSCALL_umask, 0022);
+        file_t* file = files->Open({}, "/test.txt", 0);
+
+        if (!memory_expect(file != nullptr, "clone matrix opens a real file description"))
+        {
+            passed = false;
+            break;
+        }
+
+        const int64_t fd = processes->AddFileDescriptor(fixture.process, file, FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
+
+        if (fd < 0)
+        {
+            files->Close(file);
+            passed = false;
+            break;
+        }
+
+        const int64_t keptFd = static_cast<int64_t>(call(SYSCALL_fcntl, fd, 0, 0));
+
+        if (keptFd < 0)
+        {
+            (void) call(SYSCALL_close, fd);
+            passed = false;
+            break;
+        }
+
+        const bool observed = files->Retain(file);
+        // Run real child syscalls so private thread accessors are exercised,
+        // rather than merely inspecting the resource pointers from the parent.
+        uint8_t resourceCode[] = {
+            0xb8, 0x5f, 0, 0, 0, 0xbf, 2, 0, 0, 0, 0x0f, 0x05,
+            0x48, 0xbb, 0x28, 0, 0x41, 0, 0, 0, 0, 0, 0x48, 0x89, 0x03,
+            0xb8, 3, 0, 0, 0, 0xbf, 0, 0, 0, 0, 0x0f, 0x05,
+            0x48, 0xbb, 0x20, 0, 0x41, 0, 0, 0, 0, 0, 0x48, 0x89, 0x03,
+            0xb8, 0x3c, 0, 0, 0, 0xbf, 0x25, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b,
+        };
+        const uint32_t childFd = static_cast<uint32_t>(fd);
+        memcpy(resourceCode + 31, &childFd, sizeof(childFd));
+        passed &= copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE, resourceCode, sizeof(resourceCode));
+        const uint64_t id    = lifecycle_clone(fixture, number, flags);
+        task_t*        child = static_cast<int64_t>(id) > 0 ? fixture.resources->taskManager->FindTask(id) : nullptr;
+
+        if (!memory_expect(observed && child != nullptr, "clone accepts each supported resource-sharing combination"))
+        {
+            (void) call(SYSCALL_close, fd);
+            (void) call(SYSCALL_close, keptFd);
+
+            if (observed)
+            {
+                files->Close(file);
+            }
+
+            passed = false;
+            break;
+        }
+
+        passed &= memory_expect((child->descriptorTable == fixture.process->Files()) == shareFiles, "CLONE_FILES selects shared table independently of thread group");
+        passed &= memory_expect((child->filesystemContext == fixture.process->Fs()) == shareFs, "CLONE_FS selects shared context independently of thread group");
+        passed &= memory_expect((child->process->signalDispositions == fixture.process->signalDispositions) == shareSignals, "CLONE_SIGHAND selects shared dispositions independently of process identity");
+        passed &= call(SYSCALL_fcntl, fd, 2, 1) == 0;
+        passed &= memory_expect(child->descriptorTable->entries[fd].flags == (shareFiles ? FD_FLAG_CLOEXEC : FD_FLAG_NONE), "shared descriptor flag changes propagate; private flags stay isolated");
+        passed &= processes->EnsureFileDescriptorCapacity(fixture.process, 63);
+        passed &= memory_expect(!shareFiles || child->descriptorTable->count == fixture.process->Files()->count, "shared descriptor table growth publishes relocated entries");
+        (void) call(SYSCALL_umask, 0077);
+        passed &= memory_expect(child->filesystemContext->umask == (shareFs ? 0077U : 0022U), "shared umask propagates; private umask stays isolated");
+        passed &= safe_write_user(lifecycle_fixture_t::DATA + 640, directory, sizeof(directory));
+        passed &= call(SYSCALL_chdir, lifecycle_fixture_t::DATA + 640) == 0;
+        passed &= memory_expect(strcmp(child->filesystemContext->cwdPath, shareFs ? directory : "/") == 0, "shared chdir propagates; private cwd stays isolated");
+        __atomic_fetch_or(&child->process->signalPending, 1ULL << 9, __ATOMIC_RELEASE);
+        __atomic_fetch_or(&child->signalPending, 1ULL << 9, __ATOMIC_RELEASE);
+        action.handler = 1;
+        passed &= safe_write_user(lifecycle_fixture_t::DATA + 512, &action, sizeof(action));
+        passed &= call(SYSCALL_rt_sigaction, 10, lifecycle_fixture_t::DATA + 512, 0, 8) == 0;
+        passed &= memory_expect(child->process->Signals()->actions[9].handler == (shareSignals ? 1U : 0U), "shared sigaction propagates; private dispositions stay isolated");
+        passed &= memory_expect(((child->process->signalPending & (1ULL << 9)) == 0) == shareSignals && ((child->signalPending & (1ULL << 9)) == 0) == shareSignals,
+                                "ignoring a shared disposition discards pending signals in every sharing owner");
+        __atomic_fetch_and(&child->process->signalPending, ~(1ULL << 9), __ATOMIC_RELEASE);
+        __atomic_fetch_and(&child->signalPending, ~(1ULL << 9), __ATOMIC_RELEASE);
+        passed &= call(SYSCALL_close, fd) == 0;
+        passed &= memory_expect((child->descriptorTable->entries[fd].file == nullptr) == shareFiles, "shared close propagates; private descriptors remain open");
+        passed &= memory_expect(file->refCount == (shareFiles ? 2U : 4U), "private child retains the file after its parent closes one descriptor");
+
+        if (thread)
+        {
+            const uint64_t sequence = __atomic_load_n(&fixture.process->childSequence, __ATOMIC_ACQUIRE);
+            passed &= fixture.logic->scheduler->WaitForEvent(&fixture.process->childSequence, sequence, UINT64_MAX, true) == 0;
+            fixture.logic->scheduler->ReapExitedProcesses();
+        }
+        else
+        {
+            passed &= fixture.Reap(id);
+        }
+
+        passed &= memory_expect(file->refCount == 2, "child exit releases only its owned open file references");
+        passed &= memory_expect(processes->GetFileDescriptor(fixture.process, keptFd) != nullptr, "child exit preserves the surviving owner's shared descriptors");
+        uint64_t closeResult = UINT64_MAX;
+        uint64_t priorUmask  = UINT64_MAX;
+
+        if (sharedVm)
+        {
+            passed &= safe_read_user(lifecycle_fixture_t::DATA + 32, &closeResult, sizeof(closeResult));
+            passed &= safe_read_user(lifecycle_fixture_t::DATA + 40, &priorUmask, sizeof(priorUmask));
+            passed &= memory_expect(closeResult == (shareFiles ? LINUX_EBADF : 0), "child close resolves the calling task's shared or private table");
+            passed &= memory_expect(priorUmask == (shareFs ? 0077U : 0022U), "child umask resolves the calling task's filesystem context");
+        }
+        passed &= call(SYSCALL_close, keptFd) == 0;
+        passed &= memory_expect(file->refCount == 1, "last descriptor owner closes after the child exits");
+        files->Close(file);
+        passed &= memory_expect(fixture.process->Files()->entries[fd].file == nullptr && fixture.process->Fs()->umask == (shareFs ? 0002U : 0077U), "child filesystem changes propagate only to shared owners");
+        const char root[] = "/";
+        passed &= safe_write_user(lifecycle_fixture_t::DATA + 640, root, sizeof(root));
+        passed &= call(SYSCALL_chdir, lifecycle_fixture_t::DATA + 640) == 0;
+    }
+
+    (void) call(SYSCALL_umask, 0022);
+    passed &= copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE, originalCode, sizeof(originalCode));
+    (void) files->Unlink({}, directory, true);
+    // Existing validation remains authoritative for malformed and excluded flags.
+    passed &= memory_expect(lifecycle_clone(fixture, number, 0x800) == LINUX_EINVAL, "SIGHAND without VM is invalid");
+    passed &= memory_expect(lifecycle_clone(fixture, number, 0x10100) == LINUX_EINVAL, "THREAD without SIGHAND is invalid");
+    passed &= memory_expect(lifecycle_clone(fixture, number, 0x100 | 0x20000000) == LINUX_EOPNOTSUPP, "namespace clone flags remain explicitly unsupported");
+    passed &= memory_expect(lifecycle_clone(fixture, number, 0x100 | 0x1000) == LINUX_EOPNOTSUPP, "pidfd clone flag remains explicitly unsupported");
+
+    // The fixture pins this CPU. Refuse publication through the scheduler's
+    // existing ownership check, after all clone resources have been prepared.
+    const uint32_t marker = 0x55aa1234;
+    passed &= safe_write_user(lifecycle_fixture_t::DATA + 768, &marker, sizeof(marker));
+    const uint32_t tableReferences      = fixture.process->Files()->references;
+    const uint32_t filesystemReferences = fixture.process->Fs()->references;
+    const uint32_t signalReferences     = fixture.process->signalDispositions->references;
+    const uint32_t memoryUsers          = fixture.process->memoryUsers;
+    const size_t   taskCount            = fixture.resources->taskManager->CountTasks();
+    const int16_t  ownerCpu             = fixture.process->ownerCpu;
+    fixture.process->ownerCpu           = static_cast<int16_t>(BOOT_SMP_MAX_CPUS);
+    const uint64_t rejected = lifecycle_clone(fixture, number, 0x10f00 | 0x200000, lifecycle_fixture_t::DATA + 768);
+    fixture.process->ownerCpu = ownerCpu;
+    uint32_t afterFailure = 0;
+    passed &= memory_expect(rejected == LINUX_EAGAIN, "failed publication reports clone failure");
+    passed &= safe_read_user(lifecycle_fixture_t::DATA + 768, &afterFailure, sizeof(afterFailure));
+    passed &= memory_expect(afterFailure == marker, "failed clone cancels clear-child-tid without modifying user memory");
+    passed &= memory_expect(fixture.process->Files()->references == tableReferences && fixture.process->Fs()->references == filesystemReferences
+                            && fixture.process->signalDispositions->references == signalReferences && fixture.process->memoryUsers == memoryUsers,
+                            "failed publication rolls back resource and robust-owner references");
+    passed &= memory_expect(fixture.resources->taskManager->CountTasks() == taskCount && fixture.process->tasks == fixture.caller && fixture.caller->next == nullptr,
+                            "failed publication removes its task and thread-group membership");
+    return passed;
+}
+
+struct lifecycle_shared_observer_t
+{
+    lifecycle_fixture_t& fixture;
+    process_t*           process;
+
+    explicit lifecycle_shared_observer_t(lifecycle_fixture_t& owner) : fixture(owner), process(nullptr)
+    {
+        const uint64_t id = lifecycle_clone(fixture, SYSCALL_clone, 0xf00);
+
+        if (static_cast<int64_t>(id) > 0)
+        {
+            process = fixture.resources->processManager->AcquireProcess(id);
+        }
+    }
+
+    ~lifecycle_shared_observer_t()
+    {
+        if (process != nullptr)
+        {
+            const uint64_t id     = process->id;
+            process->waitConsumed = true;
+            (void) fixture.logic->scheduler->KillProcess(id, 0);
+            fixture.resources->processManager->ReleaseProcess(process);
+            fixture.logic->scheduler->ReapExitedProcesses();
+        }
+    }
+};
+#endif
+
 static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* context)
 {
 #if defined(__x86_64__)
@@ -3499,6 +3739,11 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
 
     if (number == SYSCALL_clone || number == SYSCALL_clone3)
     {
+        if (!lifecycle_resource_matrix(fixture, number))
+        {
+            return false;
+        }
+
         process_clone_arguments_t arguments = {};
         arguments.flags     = 0x10f00 | 0x80000 | 0x100000 | 0x200000 | 0x1000000;
         arguments.stack     = lifecycle_fixture_t::STACK;
@@ -3607,12 +3852,52 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
         (void) safe_write_user(lifecycle_fixture_t::DATA, path, sizeof(path));
         (void) safe_write_user(lifecycle_fixture_t::DATA + 128, argument, sizeof(argument));
         (void) safe_write_user(lifecycle_fixture_t::DATA + 256, pointers, sizeof(pointers));
-        frame.arg0 = lifecycle_fixture_t::DATA;
-        frame.arg1 = lifecycle_fixture_t::DATA + 256;
+        frame.arg0                 = lifecycle_fixture_t::DATA;
+        frame.arg1                 = lifecycle_fixture_t::DATA + 256;
         fixture.caller->isUserTask = true;
-        const uint64_t oldRoot = fixture.process->addressSpace->pt;
-        arch_syscall_frame_t invalid = frame;
-        invalid.arg0 = CANONICAL_KERNEL_BASE;
+        file_t* sharedFile         = fixture.logic->virtualFileSystem->Open({}, "/test.txt", 0);
+
+        if (!memory_expect(sharedFile != nullptr, "exec sharing opens a real descriptor"))
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
+        const int64_t sharedFd = fixture.resources->processManager->AddFileDescriptor(fixture.process, sharedFile, FD_FLAG_CLOEXEC, VirtualFileSystem::ReleaseFileHandle);
+
+        if (sharedFd < 0)
+        {
+            fixture.logic->virtualFileSystem->Close(sharedFile);
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
+        signal_action_t caught  = {lifecycle_fixture_t::CODE, 0x04000000, lifecycle_fixture_t::CODE, 0};
+        signal_action_t ignored = {1, 0, 0, 0};
+
+        if (fixture.logic->signalManager->Action(10, &caught, nullptr) != 0 || fixture.logic->signalManager->Action(12, &ignored, nullptr) != 0)
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
+        lifecycle_shared_observer_t observer(fixture);
+
+        if (!memory_expect(observer.process != nullptr, "clone creates an external exec resource sharer"))
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
+        descriptor_table_t*    oldTable                = fixture.process->Files();
+        filesystem_context_t*  oldFilesystem           = fixture.process->Fs();
+        signal_dispositions_t* oldSignals              = fixture.process->signalDispositions;
+        const uint32_t         oldTableReferences      = oldTable->references;
+        const uint32_t         oldFilesystemReferences = oldFilesystem->references;
+        const uint32_t         oldSignalReferences     = oldSignals->references;
+        const uint64_t         oldRoot                 = fixture.process->addressSpace->pt;
+        arch_syscall_frame_t   invalid                 = frame;
+        invalid.arg0                                   = CANONICAL_KERNEL_BASE;
 
         if (dispatcher_dispatch_syscall(&invalid) != LINUX_EFAULT || fixture.process->addressSpace->pt != oldRoot)
         {
@@ -3629,10 +3914,43 @@ static bool custom_case_validate_process_lifecycle(const custom_case_ctx_t* cont
             return false;
         }
 
+        if (!memory_expect(fixture.process->Files() == oldTable && fixture.process->Fs() == oldFilesystem && fixture.process->signalDispositions == oldSignals,
+                           "failed exec preserves shared resource identities")
+            || !memory_expect(oldTable->references == oldTableReferences && oldFilesystem->references == oldFilesystemReferences && oldSignals->references == oldSignalReferences,
+                              "failed exec preserves ownership counts")
+            || !memory_expect(oldTable->entries[sharedFd].file == sharedFile && oldSignals->actions[9].handler == caught.handler,
+                              "failed exec preserves CLOEXEC descriptors and caught handlers"))
+        {
+            fixture.caller->isUserTask = false;
+            return false;
+        }
+
         const uint64_t result = dispatcher_dispatch_syscall(&frame);
         fixture.caller->isUserTask = false;
 
         if (!memory_expect(result == 0, "exec succeeds") || !memory_expect(fixture.process->addressSpace->pt != oldRoot, "exec replaces address space") || !memory_expect((frame.user_rsp & 15) == 0 && frame.user_rip != lifecycle_fixture_t::CODE, "exec entry and stack layout"))
+        {
+            return false;
+        }
+
+        if (!memory_expect(fixture.process->Files() != oldTable && fixture.process->Fs() != oldFilesystem && fixture.process->signalDispositions != oldSignals,
+                           "successful exec unshares descriptor, filesystem and signal contexts")
+            || !memory_expect(observer.process->descriptorTable->entries[sharedFd].file == sharedFile && observer.process->descriptorTable->entries[sharedFd].flags == FD_FLAG_CLOEXEC,
+                              "exec CLOEXEC preserves an external sharer's descriptor")
+            || !memory_expect(fixture.resources->processManager->GetFileDescriptor(fixture.process, sharedFd) == nullptr,
+                              "exec closes CLOEXEC only in its private table")
+            || !memory_expect(fixture.process->Signals()->actions[9].handler == 0 && observer.process->Signals()->actions[9].handler == caught.handler,
+                              "exec resets caught dispositions without changing external sharers")
+            || !memory_expect(fixture.process->Signals()->actions[11].handler == 1,
+                              "exec preserves ignored dispositions"))
+        {
+            return false;
+        }
+
+        const uint32_t oldUmask = observer.process->filesystemContext->umask;
+        (void) fixture.resources->processManager->ExchangeUmask(fixture.process, oldUmask ^ 0077U);
+
+        if (!memory_expect(observer.process->filesystemContext->umask == oldUmask, "filesystem mutation after exec stays private"))
         {
             return false;
         }
@@ -4271,9 +4589,9 @@ template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_
 static size_t ipc_descriptor_count(process_t* process)
 {
     size_t count = 0;
-    for (size_t i = 0; i < process->fileDescriptorCount; ++i)
+    for (size_t i = 0; i < process->Files()->count; ++i)
     {
-        count += process->fileDescriptors[i].file != nullptr;
+        count += process->Files()->entries[i].file != nullptr;
     }
     return count;
 }
@@ -4884,8 +5202,8 @@ static bool test_vfs_backend_syscalls(process_t* process, uint64_t base)
         ok &= memory_expect(removed[0] == inodeWatch && removed[1] == 0x8000, "inode removal queues IN_IGNORED even when DELETE_SELF was not requested");
 
         char savedCwd[ProcessManager::MAX_CWD_PATH_LENGTH];
-        memcpy(savedCwd, process->cwdPath, sizeof(savedCwd));
-        ok &= memory_expect(call(&VfsRequestManager::HandleChdirRequest, store(256, "/one")) == 0 && strcmp(process->cwdPath, "/one") == 0, "chdir retains mountpoint in working directory path");
+        memcpy(savedCwd, process->Fs()->cwdPath, sizeof(savedCwd));
+        ok &= memory_expect(call(&VfsRequestManager::HandleChdirRequest, store(256, "/one")) == 0 && strcmp(process->Fs()->cwdPath, "/one") == 0, "chdir retains mountpoint in working directory path");
         const uint64_t created = call(&VfsRequestManager::HandleOpenRequest, store(256, "via-open"), 2 | 0100 | 0200 | 02000000, 0640);
         ok &= memory_expect((int64_t) created >= 0 && call(&VfsRequestManager::HandleOpenRequest, store(256, "via-open"), 2 | 0100 | 0200, 0640) == (uint64_t) -17, "native open creates relative file and honors O_EXCL");
         if ((int64_t) created >= 0)
@@ -4904,10 +5222,10 @@ static bool test_vfs_backend_syscalls(process_t* process, uint64_t base)
         ok &= memory_expect(local.ChangeMetadata(mountedRoot.dentry->inode, false, 02777, 0, mountedRoot.mount, mountedRoot.dentry) == 0 && local.ChangeMetadata(mountedRoot.dentry->inode, true, UINT32_MAX, 42, mountedRoot.mount, mountedRoot.dentry) == 0,
                             "prepare setgid parent for backend creation attributes");
         const auto     savedCredentials       = process->credentials;
-        const uint32_t savedUmask             = process->umask;
+        const uint32_t savedUmask             = process->Fs()->umask;
         process->credentials.user.filesystem  = 99;
         process->credentials.group.filesystem = 77;
-        process->umask                        = 0077;
+        process->Fs()->umask                  = 0077;
         const uint64_t ownedFile              = call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/owned"), 2 | 0100 | 0200, 0);
         ok &= memory_expect((int64_t) ownedFile >= 0 && local.ResolvePath({}, "/one/owned", &resolved) && resolved.dentry->inode->uid == 99 && resolved.dentry->inode->gid == 42 && resolved.dentry->inode->mode == 0, "backend receives creator uid and inherited gid; creator may open mode-zero file");
         if ((int64_t) ownedFile >= 0)
@@ -4917,13 +5235,13 @@ static bool test_vfs_backend_syscalls(process_t* process, uint64_t base)
         ok &= memory_expect(call(&VfsRequestManager::HandleMkdirRequest, store(256, "/one/owned-dir"), 0777) == 0 && local.ResolvePath({}, "/one/owned-dir", &resolved) && resolved.dentry->inode->uid == 99 && resolved.dentry->inode->gid == 42 && resolved.dentry->inode->mode == 02700,
                             "backend directory attributes include umask and inherited setgid");
         process->credentials = savedCredentials;
-        process->umask       = savedUmask;
+        process->Fs()->umask = savedUmask;
         local.ChangeMetadata(mountedRoot.dentry->inode, false, 0755, 0, mountedRoot.mount, mountedRoot.dentry);
         local.ChangeMetadata(mountedRoot.dentry->inode, true, UINT32_MAX, 0, mountedRoot.mount, mountedRoot.dentry);
         process->credentials.user.filesystem = 99;
         ok &= memory_expect(call(&VfsRequestManager::HandleOpenRequest, store(256, "/one/via-open"), 2) == LINUX_EACCES && call(&VfsRequestManager::HandleMkdirRequest, store(256, "/one/denied"), 0755) == LINUX_EACCES, "native open and directory mutations enforce filesystem credentials");
         process->credentials = savedCredentials;
-        memcpy(process->cwdPath, savedCwd, sizeof(savedCwd));
+        memcpy(process->Fs()->cwdPath, savedCwd, sizeof(savedCwd));
 
         if ((int64_t) notify >= 0)
         {
@@ -5516,7 +5834,7 @@ static bool test_event_wait(process_t* process, uint64_t number)
         pollfd.fd = -1;
         prepare();
         ok &= memory_expect(call() == 0, "poll ignores negative descriptor");
-        pollfd.fd = (int32_t) process->fileDescriptorCount - 1;
+        pollfd.fd = (int32_t) process->Files()->count - 1;
         prepare();
         ok &= memory_expect(call() == 1, "poll invalid descriptor is reported as ready");
         time_fixture_load(process, input, &actual, sizeof(actual));
@@ -5525,9 +5843,9 @@ static bool test_event_wait(process_t* process, uint64_t number)
     }
     else
     {
-        uint64_t invalid = 1ULL << (process->fileDescriptorCount - 1);
+        uint64_t invalid = 1ULL << (process->Files()->count - 1);
         time_fixture_store(process, input, &invalid, sizeof(invalid));
-        ok &= memory_expect(memory_call(number, process->fileDescriptorCount, input, 0, 0, timeout) == LINUX_EBADF, "select invalid descriptor is EBADF");
+        ok &= memory_expect(memory_call(number, process->Files()->count, input, 0, 0, timeout) == LINUX_EBADF, "select invalid descriptor is EBADF");
     }
 
     uint64_t value = 9;
@@ -7751,9 +8069,9 @@ static size_t socket_descriptor_count(process_t* process)
 {
     size_t count = 0;
 
-    for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
+    for (uint64_t fd = 0; fd < process->Files()->count; ++fd)
     {
-        count += process->fileDescriptors[fd].file != nullptr;
+        count += process->Files()->entries[fd].file != nullptr;
     }
 
     return count;

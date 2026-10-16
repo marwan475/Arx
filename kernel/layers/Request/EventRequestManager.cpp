@@ -128,7 +128,7 @@ uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame,
                 return LINUX_EINVAL;
             }
 
-            nfds = (uint32_t) ((uint64_t) requested < process->fileDescriptorCount ? (uint64_t) requested : process->fileDescriptorCount);
+            nfds = (uint32_t) ((uint64_t) requested < process->Files()->count ? (uint64_t) requested : process->Files()->count);
         }
         else
         {

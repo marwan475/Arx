@@ -51,9 +51,9 @@ static void close_descriptors(process_t* process, VirtualFileSystem* files, bool
 {
     FileDescriptorGuard guard(process);
 
-    for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
+    for (uint64_t fd = 0; fd < process->Files()->count; ++fd)
     {
-        file_descriptor_t& descriptor = process->fileDescriptors[fd];
+        file_descriptor_t& descriptor = process->Files()->entries[fd];
 
         if (descriptor.file != nullptr && (!closeOnExec || (descriptor.flags & FD_FLAG_CLOEXEC) != 0))
         {
@@ -63,6 +63,25 @@ static void close_descriptors(process_t* process, VirtualFileSystem* files, bool
         }
     }
 }
+
+static bool retain_clone_file(void* context, file_handle_t handle)
+{
+    return static_cast<VirtualFileSystem*>(context)->Retain(static_cast<file_t*>(handle));
+}
+
+struct ExecResources
+{
+    descriptor_table_t*    table        = nullptr;
+    filesystem_context_t*  filesystem   = nullptr;
+    signal_dispositions_t* dispositions = nullptr;
+
+    ~ExecResources()
+    {
+        ProcessManager::ReleaseDescriptorTable(table);
+        ProcessManager::ReleaseFilesystemContext(filesystem);
+        ProcessManager::ReleaseSignalDispositions(dispositions);
+    }
+};
 
 static bool writable_word(uint64_t address)
 {
@@ -97,13 +116,6 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
     if (arguments.exitSignal > 64 || ((flags & CLONE_SIGHAND) != 0 && (flags & CLONE_VM) == 0) || (thread && ((flags & CLONE_SIGHAND) == 0 || arguments.exitSignal != 0)) || ((flags & CLONE_VFORK) != 0 && thread))
     {
         return LINUX_EINVAL;
-    }
-
-    // Per-thread private descriptor/FS contexts and cross-process shared signal
-    // handlers need separate ownership objects; reject rather than mis-share.
-    if ((thread && (flags & (CLONE_FS | CLONE_FILES)) != (CLONE_FS | CLONE_FILES)) || (!thread && (flags & (CLONE_FS | CLONE_FILES | CLONE_SIGHAND)) != 0))
-    {
-        return LINUX_EOPNOTSUPP;
     }
 
     if ((frame->user_cs & 3) != 3 || frame->user_rip > CANONICAL_USER_END || frame->user_rsp > CANONICAL_USER_END || arguments.stack > CANONICAL_USER_END || ((flags & CLONE_SETTLS) != 0 && arguments.tls > CANONICAL_USER_END) || (thread && arguments.stack == 0))
@@ -202,11 +214,9 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         memory->DestroyUserAddressSpace(empty);
         child->breakBase        = parent->breakBase;
         child->programBreak     = parent->programBreak;
-        child->umask            = parent->umask;
         child->fileLimit        = parent->fileLimit;
         child->exitSignal       = static_cast<uint32_t>(arguments.exitSignal);
         child->parentTaskId     = (flags & CLONE_PARENT) != 0 ? parent->parentTaskId : caller->id;
-        memcpy(child->cwdPath, parent->cwdPath, sizeof(child->cwdPath));
 
         if ((flags & CLONE_PARENT) != 0)
         {
@@ -214,43 +224,74 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
             child->parentId  = parent->parentId;
         }
 
+    }
+
+    // Prepare every resource before publishing the child. Until publication,
+    // FreeTask/FreeProcess own all rollback, including retained open files.
+    descriptor_table_t*    table        = parent->Files();
+    filesystem_context_t*  filesystem   = parent->Fs();
+    signal_dispositions_t* dispositions = nullptr;
+
+    if ((flags & CLONE_FILES) != 0)
+    {
+        __atomic_add_fetch(&table->references, 1U, __ATOMIC_RELAXED);
+    }
+    else
+    {
+        table = processes->CopyDescriptorTable(table, Logic->virtualFileSystem, retain_clone_file);
+    }
+
+    if ((flags & CLONE_FS) != 0)
+    {
+        __atomic_add_fetch(&filesystem->references, 1U, __ATOMIC_RELAXED);
+    }
+    else
+    {
+        filesystem = processes->CopyFilesystemContext(filesystem);
+    }
+
+    if (!thread)
+    {
+        dispositions = parent->signalDispositions;
+
+        if ((flags & CLONE_SIGHAND) != 0)
         {
-            LifecycleGuard guard(&parent->signalLock);
-            memcpy(child->signalActions, parent->signalActions, sizeof(child->signalActions));
-            child->signalIgnored = parent->signalIgnored;
+            __atomic_add_fetch(&dispositions->references, 1U, __ATOMIC_RELAXED);
         }
-
-        bool copied = true;
-
+        else
         {
-            FileDescriptorGuard guard(parent);
-
-            for (uint64_t fd = 0; fd < parent->fileDescriptorCount; ++fd)
-            {
-                const file_descriptor_t& descriptor = parent->fileDescriptors[fd];
-
-                if (descriptor.file == nullptr)
-                {
-                    continue;
-                }
-
-                if (!processes->EnsureFileDescriptorCapacity(child, fd) || !Logic->virtualFileSystem->Retain(static_cast<file_t*>(descriptor.file)))
-                {
-                    copied = false;
-                    break;
-                }
-
-                child->fileDescriptors[fd] = descriptor;
-            }
+            dispositions = processes->CopySignalDispositions(dispositions);
         }
+    }
 
-        if (!copied)
+    if (table == nullptr || filesystem == nullptr || (!thread && dispositions == nullptr))
+    {
+        processes->ReleaseDescriptorTable(table);
+        processes->ReleaseFilesystemContext(filesystem);
+        processes->ReleaseSignalDispositions(dispositions);
+        tasks->FreeTask(task);
+
+        if (!thread)
         {
-            tasks->FreeTask(task);
-            close_descriptors(child, Logic->virtualFileSystem, false);
             processes->FreeProcess(child);
-            return LINUX_ENOMEM;
         }
+
+        return LINUX_ENOMEM;
+    }
+
+    task->descriptorTable   = table;
+    task->filesystemContext = filesystem;
+
+    if (!thread)
+    {
+        processes->ReleaseDescriptorTable(child->descriptorTable);
+        processes->ReleaseFilesystemContext(child->filesystemContext);
+        processes->ReleaseSignalDispositions(child->signalDispositions);
+        child->descriptorTable    = table;
+        child->filesystemContext  = filesystem;
+        child->signalDispositions = dispositions;
+        __atomic_add_fetch(&table->references, 1U, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&filesystem->references, 1U, __ATOMIC_RELAXED);
     }
 
     task->signalMask  = caller->signalMask;
@@ -268,41 +309,52 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
 
     if ((flags & CLONE_PARENT_SETTID) != 0 && !safe_write_user(arguments.parentTid, &id, sizeof(id)))
     {
+        Logic->synchronizationManager->ConfigureChildTid(task, child, 0);
         tasks->FreeTask(task);
 
         if (!thread)
         {
-            close_descriptors(child, Logic->virtualFileSystem, false);
             processes->FreeProcess(child);
         }
 
         return LINUX_EFAULT;
     }
 
-    child->waitable = !thread || child->waitable;
+    child->waitable             = !thread || child->waitable;
+    const bool     vfork        = (flags & CLONE_VFORK) != 0;
+    const uint64_t execSequence = __atomic_load_n(&child->execSequence, __ATOMIC_ACQUIRE);
+
+    if (vfork)
+    {
+        // Claim before publication: another CPU may run and reap the child as
+        // soon as PublishTask returns, including an immediate exec or exit.
+        processes->AcquireProcess(child->id);
+    }
 
     if (!Logic->scheduler->PublishTask(child, task))
     {
+        if (vfork)
+        {
+            processes->ReleaseProcess(child);
+        }
+
+        Logic->synchronizationManager->ConfigureChildTid(task, child, 0);
         tasks->FreeTask(task);
 
         if (!thread)
         {
-            close_descriptors(child, Logic->virtualFileSystem, false);
             processes->FreeProcess(child);
         }
 
         return LINUX_EAGAIN;
     }
 
-    if ((flags & CLONE_VFORK) != 0)
+    if (vfork)
     {
         // Retain the record while the child replaces or releases its shared VM.
-        processes->AcquireProcess(child->id);
-        const uint64_t sequence = __atomic_load_n(&child->execSequence, __ATOMIC_ACQUIRE);
-
-        while (!__atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && __atomic_load_n(&child->execSequence, __ATOMIC_ACQUIRE) == sequence)
+        while (!__atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && __atomic_load_n(&child->execSequence, __ATOMIC_ACQUIRE) == execSequence)
         {
-            (void) Logic->scheduler->WaitForEvent(&child->execSequence, sequence, UINT64_MAX, true);
+            (void) Logic->scheduler->WaitForEvent(&child->execSequence, execSequence, UINT64_MAX, true);
         }
 
         processes->ReleaseProcess(child);
@@ -428,6 +480,10 @@ uint64_t ProcessController::Exit(int32_t status, bool group)
         return 0;
     }
 
+    // A process runs on one CPU at a time. Keep the last-owner decision and
+    // dying transition together so two preempted exit calls cannot both leave
+    // the group believing another live thread will perform process cleanup.
+    cpu_preemption_disable();
     bool last = true;
 
     for (task_t* sibling = process->tasks; sibling != nullptr; sibling = sibling->next)
@@ -442,7 +498,6 @@ uint64_t ProcessController::Exit(int32_t status, bool group)
 
     if (last || group)
     {
-        close_descriptors(process, Logic->virtualFileSystem, false);
         (void) Logic->scheduler->KillProcess(process->id, status & 255);
     }
     else
@@ -450,6 +505,7 @@ uint64_t ProcessController::Exit(int32_t status, bool group)
         tasks->MarkDying(task);
     }
 
+    cpu_preemption_enable();
     Logic->scheduler->ExitCurrentTask();
 }
 
@@ -573,7 +629,7 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
                 }
                 else
                 {
-                    LifecycleGuard guard(&selected->signalLock);
+                    SignalDispositionGuard guard(selected);
 
                     if (selected->stopSequence == stopSequence)
                     {
@@ -809,7 +865,9 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     VirtualFileSystem* files = Logic->virtualFileSystem;
     char path[256];
 
-    if (!files->JoinPath(current->cwdPath, requested, path, sizeof(path)))
+    WorkingDirectorySnapshot cwd(current);
+
+    if (!files->JoinPath(cwd.path, requested, path, sizeof(path)))
     {
         return static_cast<uint64_t>(-36);
     }
@@ -943,7 +1001,7 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
 
             arguments.argc = tail + prefix;
 
-            if (!files->JoinPath(current->cwdPath, savedInterpreter, path, sizeof(path)))
+            if (!files->JoinPath(cwd.path, savedInterpreter, path, sizeof(path)))
             {
                 return static_cast<uint64_t>(-36);
             }
@@ -1075,6 +1133,16 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
         return static_cast<uint64_t>(-7);
     }
 
+    ExecResources replacement;
+    replacement.table        = processes->CopyDescriptorTable(current->Files(), files, retain_clone_file);
+    replacement.filesystem   = processes->CopyFilesystemContext(current->Fs());
+    replacement.dispositions = processes->CopySignalDispositions(current->signalDispositions);
+
+    if (replacement.table == nullptr || replacement.filesystem == nullptr || replacement.dispositions == nullptr)
+    {
+        return LINUX_ENOMEM;
+    }
+
     // Everything that can reject the executable has completed. Retire sibling
     // contexts on their old VM before publishing the replacement address space.
     for (task_t* sibling = current->tasks; sibling != nullptr; sibling = sibling->next)
@@ -1106,6 +1174,30 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     }
 
     tasks->CleanupCurrentTask();
+    // Siblings have retired. Publish private contexts before CLOEXEC and
+    // disposition reset so surviving external sharers keep their old state.
+    descriptor_table_t*   oldTaskTable         = caller->descriptorTable;
+    descriptor_table_t*   oldProcessTable      = current->descriptorTable;
+    filesystem_context_t* oldTaskFilesystem    = caller->filesystemContext;
+    filesystem_context_t* oldProcessFilesystem = current->filesystemContext;
+    current->descriptorTable                   = replacement.table;
+    current->filesystemContext                 = replacement.filesystem;
+    caller->descriptorTable                    = replacement.table;
+    caller->filesystemContext                  = replacement.filesystem;
+    __atomic_add_fetch(&replacement.table->references, 1U, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&replacement.filesystem->references, 1U, __ATOMIC_RELAXED);
+    spinlock_acquire_preempt(&current->resourceLock);
+    signal_dispositions_t* oldDispositions = current->signalDispositions;
+    current->signalDispositions            = replacement.dispositions;
+    spinlock_release_preempt(&current->resourceLock);
+    processes->ReleaseSignalDispositions(oldDispositions);
+    replacement.table        = nullptr;
+    replacement.filesystem   = nullptr;
+    replacement.dispositions = nullptr;
+    processes->ReleaseDescriptorTable(oldTaskTable);
+    processes->ReleaseDescriptorTable(oldProcessTable);
+    processes->ReleaseFilesystemContext(oldTaskFilesystem);
+    processes->ReleaseFilesystemContext(oldProcessFilesystem);
     close_descriptors(current, files, true);
     virt_addr_space_t* oldSpace = current->addressSpace;
     const bool oldOwned        = current->ownsAddressSpace;
@@ -1120,24 +1212,24 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     current->exitSignal            = 17;
 
     {
-        LifecycleGuard guard(&current->signalLock);
+        SignalDispositionGuard guard(current);
 
         for (size_t index = 0; index < 32; ++index)
         {
-            if (current->signalActions[index].handler != 1)
+            if (current->Signals()->actions[index].handler != 1)
             {
-                current->signalActions[index] = {};
+                current->Signals()->actions[index] = {};
             }
 
             const uint64_t bit = 1ULL << index;
 
-            if (current->signalActions[index].handler == 1 || (current->signalActions[index].handler == 0 && (SIGNAL_DEFAULT_IGNORED & bit) != 0))
+            if (current->Signals()->actions[index].handler == 1 || (current->Signals()->actions[index].handler == 0 && (SIGNAL_DEFAULT_IGNORED & bit) != 0))
             {
-                current->signalIgnored |= bit;
+                current->Signals()->ignored |= bit;
             }
             else
             {
-                current->signalIgnored &= ~bit;
+                current->Signals()->ignored &= ~bit;
             }
         }
     }

@@ -9,6 +9,16 @@
 #include <stdint.h>
 
 struct process_t;
+struct descriptor_table_t;
+struct filesystem_context_t;
+
+struct retired_task_resources_t
+{
+    descriptor_table_t*   table;
+    filesystem_context_t* filesystem;
+    descriptor_table_t*   defaultTable;
+    filesystem_context_t* defaultFilesystem;
+};
 
 struct task_t
 {
@@ -32,16 +42,18 @@ struct task_t
         uint64_t arg1;
     } userLaunchContext;
 
-    bool             allocated;
-    bool             isUserTask;
-    bool             sleepPending;
-    bool             sleepBlocked;
-    uint64_t         syscallActive;
-    uint32_t         preemptionDepth;
-    uint64_t         id;
-    char             name[16];
-    process_t*       process;
-    uint64_t         signalMask;
+    bool                  allocated;
+    bool                  isUserTask;
+    bool                  sleepPending;
+    bool                  sleepBlocked;
+    uint64_t              syscallActive;
+    uint32_t              preemptionDepth;
+    uint64_t              id;
+    char                  name[16];
+    process_t*            process;
+    descriptor_table_t*   descriptorTable;
+    filesystem_context_t* filesystemContext;
+    uint64_t              signalMask;
     // Interrupted masked waits restore this through the handler's signal frame.
     uint64_t         signalSavedMask;
     bool             signalRestoreMask;
@@ -73,7 +85,8 @@ public:
     task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);
     task_t*     CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
     task_t*     CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id);
-    bool        FreeTask(task_t* task, void** retiredStack = nullptr);
+    bool        FreeTask(task_t* task, void** retiredStack = nullptr, retired_task_resources_t* retiredResources = nullptr);
+    static void ReleaseTaskResources(const retired_task_resources_t& resources);
     void        CleanupCurrentTask();
     bool        CleanupRetiredTask(task_t* task);
     static void ReleaseTaskStack(void* stack);
@@ -85,11 +98,12 @@ public:
     bool        MarkSleeping(task_t* task);
     void        FinishSleeping(task_t* task);
 
-    task_t* GetRunningTask(uint8_t cpuId) const;
-    bool    SetRunningTask(uint8_t cpuId, task_t* task);
-    task_t* GetCurrentTask() const;
-    task_t* FindTask(uint64_t id) const;
-    void    SetCurrentIdentity(uint64_t id);
+    task_t*        GetRunningTask(uint8_t cpuId) const;
+    bool           SetRunningTask(uint8_t cpuId, task_t* task);
+    task_t*        GetCurrentTask() const;
+    static task_t* GetActiveTask();
+    task_t*        FindTask(uint64_t id) const;
+    void           SetCurrentIdentity(uint64_t id);
 
     task_t*       GetTasks();
     const task_t* GetTasks() const;

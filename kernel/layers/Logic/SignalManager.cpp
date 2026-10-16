@@ -78,23 +78,23 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
         return LINUX_ESRCH;
     }
 
-    const uint64_t bit = 1ULL << (signal - 1);
-    spinlock_acquire_preempt(&process->signalLock);
+    const uint64_t         bit = 1ULL << (signal - 1);
+    SignalDispositionGuard signalGuard(process);
 
     if (previous != nullptr)
     {
-        *previous = process->signalActions[signal - 1];
+        *previous = process->Signals()->actions[signal - 1];
     }
 
     if (action != nullptr)
     {
-        process->signalActions[signal - 1] = *action;
-        process->signalActions[signal - 1].mask &= ~SIGNAL_UNBLOCKABLE;
+        process->Signals()->actions[signal - 1] = *action;
+        process->Signals()->actions[signal - 1].mask &= ~SIGNAL_UNBLOCKABLE;
         const bool ignored = action->handler == 1 || (action->handler == 0 && (SIGNAL_DEFAULT_IGNORED & bit));
 
         if (ignored)
         {
-            __atomic_fetch_or(&process->signalIgnored, bit, __ATOMIC_RELEASE);
+            __atomic_fetch_or(&process->Signals()->ignored, bit, __ATOMIC_RELEASE);
             __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
 
             for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
@@ -103,9 +103,14 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
 
                 if (Resources->taskManager->RetainForDispatch(task))
                 {
-                    if (task->process == process || task == Resources->taskManager->GetCurrentTask())
+                    if ((task->process != nullptr && task->process->signalDispositions == process->Signals()) || task == Resources->taskManager->GetCurrentTask())
                     {
                         __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE);
+
+                        if (task->process != nullptr)
+                        {
+                            __atomic_fetch_and(&task->process->signalPending, ~bit, __ATOMIC_RELEASE);
+                        }
                     }
 
                     Resources->taskManager->ReleaseDispatchClaim(task);
@@ -114,11 +119,11 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
         }
         else
         {
-            __atomic_fetch_and(&process->signalIgnored, ~bit, __ATOMIC_RELEASE);
+            __atomic_fetch_and(&process->Signals()->ignored, ~bit, __ATOMIC_RELEASE);
         }
     }
 
-    spinlock_release_preempt(&process->signalLock);
+    signalGuard.Release();
     Resources->processManager->ReleaseMemoryProcess(process);
     return 0;
 }
@@ -175,11 +180,11 @@ uint64_t SignalManager::BeginTemporaryMask(uint64_t mask)
         return LINUX_ESRCH;
     }
 
-    spinlock_acquire_preempt(&process->signalLock);
+    SignalDispositionGuard signalGuard(process);
     task->signalSavedMask   = __atomic_load_n(&task->signalMask, __ATOMIC_RELAXED);
     task->signalRestoreMask = true;
     __atomic_store_n(&task->signalMask, mask & ~SIGNAL_UNBLOCKABLE, __ATOMIC_RELEASE);
-    spinlock_release_preempt(&process->signalLock);
+    signalGuard.Release();
     return 0;
 }
 
@@ -198,7 +203,7 @@ void SignalManager::FinishTemporaryMask(bool deferRestore)
         return;
     }
 
-    spinlock_acquire_preempt(&process->signalLock);
+    SignalDispositionGuard signalGuard(process);
 
     if (task->signalRestoreMask)
     {
@@ -206,7 +211,7 @@ void SignalManager::FinishTemporaryMask(bool deferRestore)
         task->signalRestoreMask = false;
     }
 
-    spinlock_release_preempt(&process->signalLock);
+    signalGuard.Release();
 }
 
 uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previous, uint64_t rsp)
@@ -394,9 +399,9 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
         }
         else if (signal != 0)
         {
-            const uint64_t bit = 1ULL << (signal - 1);
-            spinlock_acquire_preempt(&target->signalLock);
-            const bool ignored = (__atomic_load_n(&target->signalIgnored, __ATOMIC_RELAXED) & bit) != 0;
+            const uint64_t         bit = 1ULL << (signal - 1);
+            SignalDispositionGuard signalGuard(target);
+            const bool             ignored = (__atomic_load_n(&target->Signals()->ignored, __ATOMIC_RELAXED) & bit) != 0;
 
             if (!ignored && task != nullptr && task->signalSenders == nullptr)
             {
@@ -432,7 +437,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
                 }
             }
 
-            spinlock_release_preempt(&target->signalLock);
+            signalGuard.Release();
             SchedulerManager->WakeSignalWaiters(target);
         }
 
@@ -524,18 +529,18 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
         SchedulerManager->ExitCurrentTask();
     }
 
-    spinlock_acquire_preempt(&process->signalLock);
-    const uint64_t pending = pending_signals(process, task);
+    SignalDispositionGuard signalGuard(process);
+    const uint64_t         pending = pending_signals(process, task);
 
     if (pending == 0)
     {
-        spinlock_release_preempt(&process->signalLock);
+        signalGuard.Release();
         FinishTemporaryMask(false);
         return result;
     }
     const int       signal = (pending & (1ULL << 8)) ? 9 : __builtin_ctzll(pending) + 1;
     const uint64_t  bit    = 1ULL << (signal - 1);
-    signal_action_t action = process->signalActions[signal - 1];
+    signal_action_t action = process->Signals()->actions[signal - 1];
     signal_sender_t sender;
 
     if (__atomic_load_n(&task->signalPending, __ATOMIC_RELAXED) & bit)
@@ -551,15 +556,15 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
 
     if (action.flags & RESETHAND)
     {
-        process->signalActions[signal - 1] = {};
+        process->Signals()->actions[signal - 1] = {};
 
         if (SIGNAL_DEFAULT_IGNORED & bit)
         {
-            __atomic_fetch_or(&process->signalIgnored, bit, __ATOMIC_RELEASE);
+            __atomic_fetch_or(&process->Signals()->ignored, bit, __ATOMIC_RELEASE);
         }
     }
 
-    spinlock_release_preempt(&process->signalLock);
+    signalGuard.Release();
 
     if (signal == 14 && Resources->timeManager != nullptr)
     {

@@ -223,8 +223,9 @@ uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
     }
     else
     {
-        char       absolute[512];
-        process_t* process = Resources->processManager->GetCurrentProcess();
+        char                     absolute[512];
+        process_t*               process = Resources->processManager->GetCurrentProcess();
+        WorkingDirectorySnapshot cwd(process);
         if (process == nullptr)
         {
             result = LINUX_ESRCH;
@@ -233,7 +234,7 @@ uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
         {
             result = LINUX_ENOENT;
         }
-        else if (!Vfs->JoinPath(process->cwdPath, path, absolute, sizeof(absolute)))
+        else if (!Vfs->JoinPath(cwd.path, path, absolute, sizeof(absolute)))
         {
             result = LINUX_ENAMETOOLONG;
         }
@@ -619,8 +620,8 @@ uint64_t EventManager::NotificationReadVector(file_t* file, const file_iovec_t* 
             }
             else
             {
-                const uint64_t mask = __atomic_load_n(&reinterpret_cast<signal_descriptor_t*>(notification)->mask, __ATOMIC_ACQUIRE);
-                spinlock_acquire_preempt(&process->signalLock);
+                const uint64_t         mask = __atomic_load_n(&reinterpret_cast<signal_descriptor_t*>(notification)->mask, __ATOMIC_ACQUIRE);
+                SignalDispositionGuard signalGuard(process);
                 while (capacity - copied >= sizeof(signal_record_t))
                 {
                     const uint64_t available = pending(process, task) & mask;
@@ -653,7 +654,7 @@ uint64_t EventManager::NotificationReadVector(file_t* file, const file_iovec_t* 
                     copied += sizeof(record);
                     alarm |= index == 13;
                 }
-                spinlock_release_preempt(&process->signalLock);
+                signalGuard.Release();
                 if (alarm && manager->Resources->timeManager != nullptr)
                 {
                     manager->Resources->timeManager->RestartRealTimer(process);

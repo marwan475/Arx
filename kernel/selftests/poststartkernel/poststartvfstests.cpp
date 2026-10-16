@@ -127,8 +127,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (originalBytes <= 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -144,8 +144,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if ((uint64_t) originalBytes < replacementLen)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -158,8 +158,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (ctx->vfs->Seek(opened, 0, 0) < 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -174,8 +174,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (writeBytes != (int64_t) replacementLen)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -188,8 +188,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (ctx->vfs->Seek(opened, 0, 0) < 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -205,8 +205,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (verifyBytes != (int64_t) replacementLen || memcmp(verify, replacement, replacementLen) != 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -219,8 +219,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (ctx->vfs->Seek(opened, 0, 0) < 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -235,8 +235,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (restoreBytes != originalBytes)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -249,8 +249,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (ctx->vfs->Seek(opened, 0, 0) < 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -266,8 +266,8 @@ static void poststart_vfs_process_file_task(void* arg)
 
     if (restoredBytes != originalBytes || memcmp(restored, original, (size_t) originalBytes) != 0)
     {
-        currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-        currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[assignedFd].file  = nullptr;
+        currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
         (void) ctx->vfs->Close(opened);
         ctx->taskFailed = 1;
         ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -278,8 +278,8 @@ static void poststart_vfs_process_file_task(void* arg)
         }
     }
 
-    currentProcess->fileDescriptors[assignedFd].file  = nullptr;
-    currentProcess->fileDescriptors[assignedFd].flags = FD_FLAG_NONE;
+    currentProcess->Files()->entries[assignedFd].file  = nullptr;
+    currentProcess->Files()->entries[assignedFd].flags = FD_FLAG_NONE;
 
     if (ctx->vfs->Close(opened) != 0)
     {
@@ -366,8 +366,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
     {
         if (ctx->vfs->Seek(opened, 0, 0) < 0)
         {
-            currentProcess->fileDescriptors[fd].file  = nullptr;
-            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            currentProcess->Files()->entries[fd].file  = nullptr;
+            currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -382,8 +382,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
         if (writeBytes != (int64_t) ctx->payloadLen)
         {
-            currentProcess->fileDescriptors[fd].file  = nullptr;
-            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            currentProcess->Files()->entries[fd].file  = nullptr;
+            currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -396,8 +396,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
         if (ctx->vfs->Seek(opened, 0, 0) < 0)
         {
-            currentProcess->fileDescriptors[fd].file  = nullptr;
-            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            currentProcess->Files()->entries[fd].file  = nullptr;
+            currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -413,8 +413,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
         if (verifyBytes != (int64_t) ctx->payloadLen || memcmp(verify, ctx->payload, ctx->payloadLen) != 0)
         {
-            currentProcess->fileDescriptors[fd].file  = nullptr;
-            currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+            currentProcess->Files()->entries[fd].file  = nullptr;
+            currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
             (void) ctx->vfs->Close(opened);
             ctx->failed = 1;
             ctx->taskManager->ExecuteTask(ctx->bspTask);
@@ -429,8 +429,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
         ctx->taskManager->ExecuteTask(ctx->bspTask);
     }
 
-    currentProcess->fileDescriptors[fd].file  = nullptr;
-    currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+    currentProcess->Files()->entries[fd].file  = nullptr;
+    currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
 
     if (ctx->vfs->Close(opened) != 0)
     {

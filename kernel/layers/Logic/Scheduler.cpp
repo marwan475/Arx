@@ -197,10 +197,11 @@ void Scheduler::ReapExitedProcesses()
                 if (tasks->CleanupRetiredTask(task))
                 {
                     LockQueues();
-                    task_t* previous = task->prev;
-                    void* retired    = nullptr;
+                    task_t*                  previous         = task->prev;
+                    void*                    retired          = nullptr;
+                    retired_task_resources_t retiredResources = {};
 
-                    if (tasks->FreeTask(task, &retired))
+                    if (tasks->FreeTask(task, &retired, &retiredResources))
                     {
                         if (previous != nullptr)
                         {
@@ -218,6 +219,7 @@ void Scheduler::ReapExitedProcesses()
                     }
 
                     UnlockQueues();
+                    TaskManager::ReleaseTaskResources(retiredResources);
                     TaskManager::ReleaseTaskStack(retired);
                 }
 
@@ -965,26 +967,6 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
 
     UnlockQueues();
     NotifyProcessExit(process);
-    {
-        FileDescriptorGuard descriptors(process);
-
-        for (uint64_t fd = 0; fd < process->fileDescriptorCount; ++fd)
-        {
-            file_descriptor_t& descriptor = process->fileDescriptors[fd];
-
-            if (descriptor.file != nullptr)
-            {
-                const file_descriptor_t retired = descriptor;
-                descriptor = {};
-
-                if (retired.release != nullptr)
-                {
-                    retired.release(retired.file);
-                }
-            }
-        }
-    }
-
     void*   retiredStacks[TaskManager::MAX_TASKS];
     size_t  retiredCount = 0;
     task_t* iter         = process->tasks;
@@ -993,14 +975,15 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     {
         task_t* next = iter->next;
 
-        task_t* previous = iter->prev;
-        void*   retired  = nullptr;
+        task_t*                  previous         = iter->prev;
+        void*                    retired          = nullptr;
+        retired_task_resources_t retiredResources = {};
         // Run callbacks before taking QueueLock, then retire and unlink under
         // the same lock used when attaching a newly allocated task slot.
         const bool cleaned = taskManager->CleanupRetiredTask(iter);
         LockQueues();
 
-        if (cleaned && taskManager->FreeTask(iter, &retired))
+        if (cleaned && taskManager->FreeTask(iter, &retired, &retiredResources))
         {
             if (retired != nullptr)
             {
@@ -1023,6 +1006,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         }
 
         UnlockQueues();
+        TaskManager::ReleaseTaskResources(retiredResources);
 
         iter = next;
     }
@@ -1037,6 +1021,11 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     for (size_t i = 0; i < retiredCount; ++i)
     {
         TaskManager::ReleaseTaskStack(retiredStacks[i]);
+    }
+
+    if (process->tasks == nullptr)
+    {
+        ProcessManager::ReleaseProcessResources(process);
     }
 
     processManager->ReleaseProcess(process);
@@ -1063,21 +1052,21 @@ void Scheduler::NotifyProcessExit(process_t* process)
 
     if (parent != nullptr && !parent->exited)
     {
-        spinlock_acquire_preempt(&parent->signalLock);
-        const signal_action_t action = parent->signalActions[16];
+        SignalDispositionGuard signalGuard(parent);
+        const signal_action_t  action = parent->Signals()->actions[16];
 
         if (process->exitSignal == 17 && (action.handler == 1 || (action.flags & 2) != 0))
         {
             process->waitConsumed = true;
         }
 
-        if (process->exitSignal > 0 && process->exitSignal < 32 && (parent->signalIgnored & (1ULL << (process->exitSignal - 1))) == 0)
+        if (process->exitSignal > 0 && process->exitSignal < 32 && (parent->Signals()->ignored & (1ULL << (process->exitSignal - 1))) == 0)
         {
             parent->signalSenders[process->exitSignal - 1] = {static_cast<int32_t>(process->id), process->credentials.user.real, 1};
             __atomic_fetch_or(&parent->signalPending, 1ULL << (process->exitSignal - 1), __ATOMIC_RELEASE);
         }
 
-        spinlock_release_preempt(&parent->signalLock);
+        signalGuard.Release();
         __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
         WakeEventWaiters(&parent->childSequence);
         WakeSignalWaiters(parent);
@@ -1139,9 +1128,9 @@ void Scheduler::NotifyProcessExit(process_t* process)
 
 void Scheduler::ChangeStoppedState(process_t* process, int signal, bool stopped)
 {
-    spinlock_acquire_preempt(&process->signalLock);
-    const bool changed = process->stopped != stopped;
-    process->stopped   = stopped;
+    SignalDispositionGuard signalGuard(process);
+    const bool             changed = process->stopped != stopped;
+    process->stopped               = stopped;
 
     if (changed)
     {
@@ -1150,7 +1139,7 @@ void Scheduler::ChangeStoppedState(process_t* process, int signal, bool stopped)
         process->continuedPending = !stopped;
     }
 
-    spinlock_release_preempt(&process->signalLock);
+    signalGuard.Release();
     __atomic_add_fetch(&process->stopSequence, 1ULL, __ATOMIC_RELEASE);
     WakeEventWaiters(&process->stopSequence);
 
@@ -1165,15 +1154,15 @@ void Scheduler::ChangeStoppedState(process_t* process, int signal, bool stopped)
 
     if (parent != nullptr)
     {
-        spinlock_acquire_preempt(&parent->signalLock);
+        SignalDispositionGuard signalGuard(parent);
 
-        if ((parent->signalActions[16].flags & 1) == 0 && (parent->signalIgnored & (1ULL << 16)) == 0)
+        if ((parent->Signals()->actions[16].flags & 1) == 0 && (parent->Signals()->ignored & (1ULL << 16)) == 0)
         {
             parent->signalSenders[16] = {static_cast<int32_t>(process->id), process->credentials.user.real, stopped ? 5 : 6};
             __atomic_fetch_or(&parent->signalPending, 1ULL << 16, __ATOMIC_RELEASE);
         }
 
-        spinlock_release_preempt(&parent->signalLock);
+        signalGuard.Release();
         __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
         WakeEventWaiters(&parent->childSequence);
         WakeSignalWaiters(parent);

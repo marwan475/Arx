@@ -245,10 +245,10 @@ static void smp_pid_vfs_task(void* arg)
         }
     }
 
-    if (fd >= 0 && currentProcess != nullptr && currentProcess->fileDescriptors != nullptr && (uint64_t) fd < currentProcess->fileDescriptorCount)
+    if (fd >= 0 && currentProcess != nullptr && currentProcess->Files()->entries != nullptr && (uint64_t) fd < currentProcess->Files()->count)
     {
-        currentProcess->fileDescriptors[fd].file  = nullptr;
-        currentProcess->fileDescriptors[fd].flags = FD_FLAG_NONE;
+        currentProcess->Files()->entries[fd].file  = nullptr;
+        currentProcess->Files()->entries[fd].flags = FD_FLAG_NONE;
     }
 
     if (opened != nullptr)

@@ -2071,7 +2071,7 @@ uint64_t VirtualFileSystem::GetCreationAttributes(inode_t* parent, uint32_t mode
     spinlock_acquire_preempt(&parent->ioLock);
     attributes->uid  = process->credentials.user.filesystem;
     attributes->gid  = (parent->mode & 02000) ? parent->gid : process->credentials.group.filesystem;
-    attributes->mode = symlink ? 0777 : (mode & ~0777U) | (mode & 0777U & ~__atomic_load_n(&process->umask, __ATOMIC_RELAXED));
+    attributes->mode = symlink ? 0777 : (mode & ~0777U) | (mode & 0777U & ~__atomic_load_n(&process->Fs()->umask, __ATOMIC_RELAXED));
     if (directory && (parent->mode & 02000))
     {
         attributes->mode |= 02000;

@@ -317,10 +317,10 @@ bool TimeManager::ExpireRealTimer(process_t* process, uint64_t now)
     {
         process->realTimerArmed   = false;
         process->realTimerExpired = true;
-        spinlock_acquire_preempt(&process->signalLock);
-        const uint64_t bit = 1ULL << 13; // SIGALRM
+        SignalDispositionGuard signalGuard(process);
+        const uint64_t         bit = 1ULL << 13; // SIGALRM
 
-        if (!__atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && (__atomic_load_n(&process->signalIgnored, __ATOMIC_RELAXED) & bit) == 0)
+        if (!__atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && (__atomic_load_n(&process->Signals()->ignored, __ATOMIC_RELAXED) & bit) == 0)
         {
             if ((__atomic_load_n(&process->signalPending, __ATOMIC_RELAXED) & bit) == 0)
             {
@@ -331,7 +331,7 @@ bool TimeManager::ExpireRealTimer(process_t* process, uint64_t now)
             expired = true;
         }
 
-        spinlock_release_preempt(&process->signalLock);
+        signalGuard.Release();
     }
 
     spinlock_release_preempt(&process->timerLock);

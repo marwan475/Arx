@@ -2,11 +2,198 @@
 #include <selftests/TestFixture.hpp>
 
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/VirtualMemoryManager.hpp"
+
+namespace
+{
+struct CountedDescriptor
+{
+    uint32_t references;
+    uint32_t releases;
+    bool     rejectRetain;
+};
+
+static bool retain_descriptor(void*, file_handle_t handle)
+{
+    CountedDescriptor* descriptor = static_cast<CountedDescriptor*>(handle);
+
+    if (descriptor->rejectRetain)
+    {
+        return false;
+    }
+
+    ++descriptor->references;
+    return true;
+}
+
+static void release_descriptor(file_handle_t handle)
+{
+    CountedDescriptor* descriptor = static_cast<CountedDescriptor*>(handle);
+    --descriptor->references;
+    ++descriptor->releases;
+}
+} // namespace
 
 void test_ProcessManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->processManager : nullptr;
     ManagerSuite suite("resource/ProcessManager", m != nullptr);
+    suite.Run("resource/ProcessManager/private_task_retirement", [&](TestCase& t)
+    {
+        virt_addr_space_t* space   = resources->virtualMemoryManager->CreateUserAddressSpace();
+        process_t*         process = space != nullptr ? m->CreateProcess(space) : nullptr;
+
+        if (!t.Check(process != nullptr, "allocate disposable thread group"))
+        {
+            resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+            return;
+        }
+
+        process->ownsAddressSpace = true;
+        task_t*           first   = resources->taskManager->AllocateTask();
+        task_t*           second  = resources->taskManager->AllocateTask();
+        CountedDescriptor file    = {1, 0, false};
+        const int64_t     fd      = m->AddFileDescriptor(process, &file, FD_FLAG_NONE, release_descriptor);
+        bool              ready   = first != nullptr && second != nullptr && fd >= 0;
+
+        if (ready)
+        {
+            ready                     = m->AddTask(process, first);
+            second->descriptorTable   = m->CopyDescriptorTable(process->descriptorTable, nullptr, retain_descriptor);
+            second->filesystemContext = m->CopyFilesystemContext(process->filesystemContext);
+            ready                     = ready && second->descriptorTable != nullptr && second->filesystemContext != nullptr && m->AddTask(process, second);
+        }
+
+        t.Check(ready, "attach threads with private descriptor and filesystem contexts");
+
+        if (first != nullptr)
+        {
+            if (first->process == process)
+            {
+                m->RemoveTask(process, first);
+            }
+
+            t.Check(resources->taskManager->FreeTask(first), "retire original resource owner first");
+        }
+
+        if (ready)
+        {
+            t.Equal(file.references, 1, "private original table closes when its owning task exits");
+            t.Equal(file.releases, 1, "surviving private thread does not pin departed owner's table");
+            t.Check(second->descriptorTable->entries[fd].file == &file, "private survivor keeps its descriptor usable");
+        }
+
+        if (second != nullptr)
+        {
+            if (second->process == process)
+            {
+                m->RemoveTask(process, second);
+            }
+
+            t.Check(resources->taskManager->FreeTask(second), "retire final resource owner");
+        }
+
+        t.Check(m->FreeProcess(process), "reclaim thread group after task retirement");
+        t.Equal(file.references, 0, "all file references drain after the last owner exits");
+    });
+    suite.Run("resource/ProcessManager/resource_reference_ownership", [&](TestCase& t)
+    {
+        descriptor_table_t* table = m->CreateDescriptorTable();
+
+        if (!t.Check(table != nullptr, "allocate descriptor ownership object"))
+        {
+            return;
+        }
+
+        CountedDescriptor file     = {1, 0, false};
+        table->entries[0]          = {&file, FD_FLAG_CLOEXEC, release_descriptor};
+        descriptor_table_t* copied = m->CopyDescriptorTable(table, nullptr, retain_descriptor);
+
+        if (!t.Check(copied != nullptr, "copy retains open file descriptions"))
+        {
+            m->ReleaseDescriptorTable(table);
+            return;
+        }
+
+        t.Equal(file.references, 2, "private tables own independent open file references");
+        copied->entries[0].flags = FD_FLAG_NONE;
+        t.Equal(table->entries[0].flags, FD_FLAG_CLOEXEC, "private descriptor flags stay isolated");
+        __atomic_add_fetch(&table->references, 1U, __ATOMIC_RELAXED);
+        m->ReleaseDescriptorTable(table);
+        t.Equal(file.releases, 0, "shared table survives its first owner exiting");
+        m->ReleaseDescriptorTable(copied);
+        t.Equal(file.references, 1, "private owner exit preserves the shared table's file");
+        m->ReleaseDescriptorTable(table);
+        t.Equal(file.references, 0, "last table owner releases open file");
+        t.Equal(file.releases, 2, "each table releases exactly one open file reference");
+    });
+
+    suite.Run("resource/ProcessManager/resource_copy_rollback", [&](TestCase& t)
+    {
+        descriptor_table_t* table = m->CreateDescriptorTable();
+
+        if (!t.Check(table != nullptr, "allocate rollback source"))
+        {
+            return;
+        }
+
+        CountedDescriptor first    = {1, 0, false};
+        CountedDescriptor second   = {1, 0, true};
+        table->entries[0]          = {&first, FD_FLAG_NONE, release_descriptor};
+        table->entries[1]          = {&second, FD_FLAG_NONE, release_descriptor};
+        descriptor_table_t* copied = m->CopyDescriptorTable(table, nullptr, retain_descriptor);
+        t.Check(copied == nullptr, "failed retain rejects the entire table copy");
+        t.Equal(first.references, 1, "partial copy rolls back earlier retain");
+        t.Equal(second.references, 1, "failed retain never releases unowned reference");
+        t.Check(table->entries[0].file == &first && table->entries[1].file == &second, "failed copy preserves source entries");
+        m->ReleaseDescriptorTable(copied);
+        m->ReleaseDescriptorTable(table);
+        t.Equal(first.references, 0, "source cleanup drains first file");
+        t.Equal(second.references, 0, "source cleanup drains rejected file");
+    });
+
+    suite.Run("resource/ProcessManager/context_copy_isolation", [&](TestCase& t)
+    {
+        filesystem_context_t*  filesystem = m->CopyFilesystemContext(nullptr);
+        signal_dispositions_t* signals    = m->CopySignalDispositions(nullptr);
+
+        if (!t.Check(filesystem != nullptr && signals != nullptr, "allocate filesystem and signal contexts"))
+        {
+            m->ReleaseFilesystemContext(filesystem);
+            m->ReleaseSignalDispositions(signals);
+            return;
+        }
+
+        filesystem->umask = 0077;
+        memcpy(filesystem->cwdPath, "/private", sizeof("/private"));
+        signals->actions[9].handler = 1;
+        signals->ignored |= 1ULL << 9;
+        filesystem_context_t*  filesystemCopy = m->CopyFilesystemContext(filesystem);
+        signal_dispositions_t* signalsCopy    = m->CopySignalDispositions(signals);
+
+        if (t.Check(filesystemCopy != nullptr && signalsCopy != nullptr, "copy independent filesystem and signal contexts"))
+        {
+            filesystem->umask           = 0002;
+            filesystem->cwdPath[1]      = 's';
+            signals->actions[9].handler = 0;
+            signals->ignored &= ~(1ULL << 9);
+            t.Equal(filesystemCopy->umask, 0077, "copied umask stays private");
+            t.Check(strcmp(filesystemCopy->cwdPath, "/private") == 0, "copied cwd stays private");
+            t.Equal(signalsCopy->actions[9].handler, 1, "copied disposition stays private");
+            t.Check((signalsCopy->ignored & (1ULL << 9)) != 0, "copied ignored mask agrees with disposition");
+            __atomic_add_fetch(&filesystem->references, 1U, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&signals->references, 1U, __ATOMIC_RELAXED);
+            m->ReleaseFilesystemContext(filesystem);
+            m->ReleaseSignalDispositions(signals);
+            t.Equal(filesystem->umask, 0002, "filesystem survives first owner release");
+            t.Equal(signals->actions[9].handler, 0, "dispositions survive first owner release");
+        }
+
+        m->ReleaseFilesystemContext(filesystemCopy);
+        m->ReleaseSignalDispositions(signalsCopy);
+        m->ReleaseFilesystemContext(filesystem);
+        m->ReleaseSignalDispositions(signals);
+    });
     suite.Run("resource/ProcessManager/lifecycle_identity", [&](TestCase& t)
     {
         TestFixture f(resources);
@@ -44,6 +231,15 @@ void test_ProcessManager(ResourceLayerCaps* resources)
             FileDescriptorGuard guard(f.Process);
             auto* entry = m->GetFileDescriptor(f.Process, fd);
             t.Check(entry && entry->file == &marker && entry->flags == FD_FLAG_CLOEXEC, "descriptor lookup and flags");
+        }
+
+        {
+            process_t alias       = {};
+            alias.descriptorTable = f.Process->Files();
+            FileDescriptorGuard firstOwner(f.Process);
+            FileDescriptorGuard secondOwner(&alias);
+            file_descriptor_t* entry = m->GetFileDescriptor(&alias, fd);
+            t.Check(entry != nullptr && entry->file == &marker, "nested descriptor transactions recognize a table shared across process identities");
         }
 
         t.Check(f.Close(fd), "remove descriptor");

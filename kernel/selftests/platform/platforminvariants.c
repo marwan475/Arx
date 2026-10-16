@@ -1,6 +1,7 @@
 #include <selftests/selftests.h>
 #include <klib/klib.h>
 #include <platform.h>
+#include <memory/vmm.h>
 
 void run_platform_invariants(void)
 {

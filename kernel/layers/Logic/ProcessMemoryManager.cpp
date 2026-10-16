@@ -235,6 +235,11 @@ uint64_t ProcessController::UnmapProcessMemory(uint64_t address, uint64_t length
 
 uint64_t ProcessController::ProtectProcessMemory(uint64_t address, uint64_t length, uint32_t protection)
 {
+    if ((address & (PAGE_SIZE - 1)) != 0)
+    {
+        return LINUX_EINVAL;
+    }
+
     process_t* process = BeginMemoryOperation();
 
     if (process == nullptr)

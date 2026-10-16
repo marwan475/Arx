@@ -39,10 +39,12 @@ void test_ProcessController(ResourceLayerCaps* resources, LogicLayerCaps* logic)
         }
 
         t.Check(resources->virtualMemoryManager->VirtToPhys(address, f.Space) != 0, "mapped memory translates");
+        t.Equal(m->ProtectProcessMemory(address + 1, PAGE_SIZE, 1), LINUX_EINVAL, "unaligned mapped protection rejected");
         t.Equal(m->ProtectProcessMemory(address, PAGE_SIZE, 1), 0, "protect owned range");
         t.Equal(m->UnmapProcessMemory(address, PAGE_SIZE), 0, "unmap owned range");
         t.Equal(resources->virtualMemoryManager->VirtToPhys(address, f.Space), 0, "unmap removes mapping");
-        t.Equal(m->ProtectProcessMemory(address + 1, PAGE_SIZE, 1), LINUX_EINVAL, "unaligned protection rejected");
+        t.Equal(m->ProtectProcessMemory(address, PAGE_SIZE, 1), LINUX_ENOMEM, "aligned unmapped protection rejected");
+        t.Equal(m->ProtectProcessMemory(address + 1, PAGE_SIZE, 1), LINUX_EINVAL, "unaligned unmapped protection rejected");
     });
 
     suite.Run("logic/ProcessController/child_tid", [&](TestCase& t)

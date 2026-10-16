@@ -50,7 +50,7 @@ void test_ProcessManager(ResourceLayerCaps* resources)
         {
             FileDescriptorGuard guard(f.Process);
             auto* entry = m->GetFileDescriptor(f.Process, fd);
-            t.Check(entry && !entry->file, "removed descriptor is empty");
+            t.Check(entry == nullptr, "removed descriptor lookup returns null");
         }
 
         t.Check(!m->EnsureFileDescriptorCapacity(f.Process, ProcessManager::MAX_FILE_DESCRIPTORS), "capacity bound rejected");

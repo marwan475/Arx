@@ -3473,7 +3473,11 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
     const char         directory[]      = "/clone-resource-sharing";
     VirtualFileSystem* files            = fixture.logic->virtualFileSystem;
     ProcessManager*    processes        = fixture.resources->processManager;
-    bool               passed           = files->Mkdir({}, directory, 0755) == 0;
+    // The boot cpio filesystem is read-only. Use a directory shipped in the
+    // initramfs so cwd sharing is exercised without requiring a writable mount.
+    vfs_path_t         directoryPath     = {};
+    bool               passed           = memory_expect(files->ResolvePath({}, directory, &directoryPath) && directoryPath.dentry != nullptr && directoryPath.dentry->inode != nullptr
+                                                        && directoryPath.dentry->inode->type == INODE_DIRECTORY, "clone matrix directory exists in initramfs");
     uint8_t            originalCode[64] = {};
     passed &= safe_read_user(lifecycle_fixture_t::CODE, originalCode, sizeof(originalCode));
 
@@ -3606,7 +3610,6 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
 
     (void) call(SYSCALL_umask, 0022);
     passed &= copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE, originalCode, sizeof(originalCode));
-    (void) files->Unlink({}, directory, true);
     // Existing validation remains authoritative for malformed and excluded flags.
     passed &= memory_expect(lifecycle_clone(fixture, number, 0x800) == LINUX_EINVAL, "SIGHAND without VM is invalid");
     passed &= memory_expect(lifecycle_clone(fixture, number, 0x10100) == LINUX_EINVAL, "THREAD without SIGHAND is invalid");
@@ -4543,13 +4546,26 @@ static void ipc_peer_entry(void* argument)
     context->scheduler->ExitCurrentTask();
 }
 
+static void detach_memory_case_peer(ResourceLayerCaps* resources, process_t* process, task_t* peer)
+{
+    resources->processManager->RemoveTask(process, peer);
+    // run_memory_case switches the running process without moving the
+    // caller into its task list. The fixture still owns its default contexts
+    // after its last peer exits. FreeTask must release only the peer's refs.
+    peer->process = nullptr;
+}
+
 template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_context_t* context, Wait wait)
 {
-    auto dispatcher    = static_cast<Dispatcher*>(platform.dispacher);
-    auto resources     = dispatcher->GetResourceLayerCaps();
-    context->scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
-    context->result    = UINT64_MAX;
-    task_t* peer = resources->taskManager->CreateKernelTask(ipc_peer_entry, context);
+    auto           dispatcher           = static_cast<Dispatcher*>(platform.dispacher);
+    auto           resources            = dispatcher->GetResourceLayerCaps();
+    auto           table                = process->descriptorTable;
+    auto           filesystem           = process->filesystemContext;
+    const uint32_t tableReferences      = table->references;
+    const uint32_t filesystemReferences = filesystem->references;
+    context->scheduler                  = dispatcher->GetLogicLayerCaps()->scheduler;
+    context->result                     = UINT64_MAX;
+    task_t* peer                        = resources->taskManager->CreateKernelTask(ipc_peer_entry, context);
     // The fixture owns cleanup; keep the idle reaper from recycling this slot.
     const bool retained = resources->taskManager->RetainForDispatch(peer);
     const bool added    = retained && resources->processManager->AddTask(process, peer);
@@ -4561,19 +4577,7 @@ template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_
     }
     if (added)
     {
-        if (peer->prev != nullptr)
-        {
-            peer->prev->next = peer->next;
-        }
-        else
-        {
-            process->tasks = peer->next;
-        }
-        if (peer->next != nullptr)
-        {
-            peer->next->prev = peer->prev;
-        }
-        peer->next = peer->prev = nullptr;
+        detach_memory_case_peer(resources, process, peer);
     }
     if (peer != nullptr)
     {
@@ -4583,6 +4587,7 @@ template <typename Wait> static bool ipc_with_peer(process_t* process, ipc_peer_
         }
         ok &= memory_expect(resources->taskManager->FreeTask(peer), "IPC peer cleanup");
     }
+    ok &= memory_expect(process->descriptorTable == table && process->filesystemContext == filesystem && table->references == tableReferences && filesystem->references == filesystemReferences, "IPC peer cleanup preserves fixture contexts and releases peer references");
     return ok;
 }
 
@@ -8019,12 +8024,16 @@ static void socket_peer_entry(void* argument)
 
 template <typename Wait> static bool socket_with_peer(process_t* process, socket_peer_context_t* context, Wait wait)
 {
-    auto dispatcher    = static_cast<Dispatcher*>(platform.dispacher);
-    auto resources     = dispatcher->GetResourceLayerCaps();
-    context->scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
-    context->result    = UINT64_MAX;
-    task_t*    peer    = resources->taskManager->CreateKernelTask(socket_peer_entry, context);
-    const bool retained = resources->taskManager->RetainForDispatch(peer);
+    auto           dispatcher           = static_cast<Dispatcher*>(platform.dispacher);
+    auto           resources            = dispatcher->GetResourceLayerCaps();
+    auto           table                = process->descriptorTable;
+    auto           filesystem           = process->filesystemContext;
+    const uint32_t tableReferences      = table->references;
+    const uint32_t filesystemReferences = filesystem->references;
+    context->scheduler                  = dispatcher->GetLogicLayerCaps()->scheduler;
+    context->result                     = UINT64_MAX;
+    task_t*    peer                     = resources->taskManager->CreateKernelTask(socket_peer_entry, context);
+    const bool retained                 = resources->taskManager->RetainForDispatch(peer);
     const bool added   = retained && resources->processManager->AddTask(process, peer);
     const bool ready   = added && context->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
     bool       ok      = memory_expect(ready, "socket runnable peer fixture");
@@ -8036,21 +8045,7 @@ template <typename Wait> static bool socket_with_peer(process_t* process, socket
 
     if (added)
     {
-        if (peer->prev != nullptr)
-        {
-            peer->prev->next = peer->next;
-        }
-        else
-        {
-            process->tasks = peer->next;
-        }
-
-        if (peer->next != nullptr)
-        {
-            peer->next->prev = peer->prev;
-        }
-
-        peer->next = peer->prev = nullptr;
+        detach_memory_case_peer(resources, process, peer);
     }
 
     if (peer != nullptr)
@@ -8061,7 +8056,7 @@ template <typename Wait> static bool socket_with_peer(process_t* process, socket
         }
         ok &= memory_expect(resources->taskManager->FreeTask(peer), "socket peer cleanup");
     }
-
+    ok &= memory_expect(process->descriptorTable == table && process->filesystemContext == filesystem && table->references == tableReferences && filesystem->references == filesystemReferences, "socket peer cleanup preserves fixture contexts and releases peer references");
     return ok;
 }
 

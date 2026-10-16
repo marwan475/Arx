@@ -374,7 +374,8 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
 
     if (file != nullptr)
     {
-        resource_node_t* node = make_node(directory->fs, fullPath, false, file->size);
+        const bool isDirectory = (file->mode & 0170000) == 0040000;
+        resource_node_t* node = make_node(directory->fs, fullPath, isDirectory, file->size);
         kfree(fullPath);
         return node;
     }
@@ -498,6 +499,11 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
             memcpy(entry->name, path, nameLen);
             entry->name[nameLen] = '\0';
             entry->type          = separator != nullptr ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
+
+            if (separator == nullptr && (archive->mode & 0170000) == 0040000)
+            {
+                entry->type = RESOURCE_NODE_DIRECTORY;
+            }
 
             char fullPath[512] = {};
 

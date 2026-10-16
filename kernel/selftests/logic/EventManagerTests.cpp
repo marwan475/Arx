@@ -1,0 +1,79 @@
+#include <selftests/TestFile.hpp>
+#include <selftests/ManagerSuite.hpp>
+#include <selftests/TestFixture.hpp>
+
+#include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
+
+void test_EventManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
+{
+    auto* m = logic ? logic->eventManager : nullptr;
+    ManagerSuite suite("logic/EventManager", m != nullptr);
+    suite.Run("logic/EventManager/notification_sequence", [&](TestCase& t)
+    {
+        uint64_t sequence = m->Sequence();
+        m->Notify();
+        t.Check(m->Sequence() != sequence, "notification publishes generation");
+    });
+
+    suite.Run("logic/EventManager/counter_nonblocking", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t) || !t.Check(f.Map(), "map user counter buffer"))
+        {
+            return;
+        }
+
+        int64_t fd = m->CreateCounter(7, 04000);
+
+        if (!t.Check(fd >= 0, "create nonblocking counter"))
+        {
+            return;
+        }
+
+        TestFile retained(t, resources, logic->virtualFileSystem, f.Process, fd);
+        auto* file = retained.Get();
+
+        if (!file)
+        {
+            return;
+        }
+        t.Equal(file->operations->ReadUser(file, TestFixture::Buffer, 8), 8, "counter read size");
+        uint64_t value = 0;
+        t.Check(safe_read_user(TestFixture::Buffer, &value, 8), "copy counter result");
+        t.Equal(value, 7, "counter read drains initial value");
+        t.Equal(file->operations->ReadUser(file, TestFixture::Buffer, 8), LINUX_EAGAIN, "empty nonblocking counter");
+        t.Check(f.Close(fd), "close counter");
+    });
+
+    suite.Run("logic/EventManager/epoll_membership", [&](TestCase& t)
+    {
+        TestFixture f(resources);
+
+        if (!f.Valid(t))
+        {
+            return;
+        }
+
+        int64_t epoll = m->CreateEpoll(0), counter = m->CreateCounter(0, 04000);
+
+        if (!t.Check(epoll >= 0 && counter >= 0, "create epoll and source"))
+        {
+            return;
+        }
+
+        event_epoll_event_t event = {EVENT_POLL_IN, 0x1234};
+        t.Equal(m->ControlEpoll(epoll, 1, counter, &event), 0, "add watch");
+        t.Equal(m->ControlEpoll(epoll, 1, counter, &event), (uint64_t) -17, "duplicate watch rejected");
+        t.Equal(m->ControlEpoll(epoll, 2, counter, nullptr), 0, "delete watch");
+        t.Equal(m->ControlEpoll(epoll, 2, counter, nullptr), LINUX_ENOENT, "missing watch rejected");
+    });
+
+    suite.Run("logic/EventManager/flags_validation", [&](TestCase& t)
+    {
+        t.Equal(m->CreateCounter(0, 0x80000000), LINUX_EINVAL, "unknown counter flags");
+        t.Equal(m->CreateEpoll(0x80000000), LINUX_EINVAL, "unknown epoll flags");
+    });
+}

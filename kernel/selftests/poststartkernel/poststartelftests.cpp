@@ -1,3 +1,5 @@
+#include <selftests/SelfTestManager.hpp>
+
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
@@ -58,7 +60,7 @@ struct mapped_user_page_t
 static void poststart_elf_test_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
-    selftest_record_failure_detail(message);
+    SelfTestManager::Get().RecordFailureDetail(message);
     kprintf("Arx kernel: poststart_elf_selftest FAIL: %s\n", message);
 }
 
@@ -256,12 +258,11 @@ extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logic
     constexpr uint64_t stackPageCount             = USER_STACK_SIZE / PAGE_SIZE;
     mapped_user_page_t stackPages[stackPageCount] = {};
 
-    selftest_case_begin("poststart_elf_selftest");
+    SelfTestManager::Get().CaseBegin("poststartkernel/executable/user_entry_return");
 
 #if !defined(__x86_64__)
     kprintf("Arx kernel: poststart_elf_selftest SKIP: currently x86_64-only syscall fixture\n");
-    passes++;
-    selftest_case_end("poststart_elf_selftest", passes, fails);
+    SelfTestManager::Get().CaseFinish("poststartkernel/executable/user_entry_return", 0, 0, SELFTEST_SKIP);
     return;
 #else
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
@@ -483,7 +484,10 @@ cleanup:
 
     if (userTask != nullptr && resourceCaps != nullptr && resourceCaps->taskManager != nullptr)
     {
-        resourceCaps->taskManager->FreeTask(userTask);
+        if (!resourceCaps->taskManager->FreeTask(userTask))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
         userTask = nullptr;
     }
 
@@ -510,10 +514,13 @@ cleanup:
 
     if (process != nullptr && resourceCaps != nullptr && resourceCaps->processManager != nullptr)
     {
-        resourceCaps->processManager->FreeProcess(process);
+        if (!resourceCaps->processManager->FreeProcess(process))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
         process = nullptr;
     }
 
-    selftest_case_end("poststart_elf_selftest", passes, fails);
+    SelfTestManager::Get().CaseEnd("poststartkernel/executable/user_entry_return", passes, fails);
 #endif
 }

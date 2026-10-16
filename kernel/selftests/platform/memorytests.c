@@ -112,14 +112,14 @@ static void vmm_test(void)
     const size_t kernel_used_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_used_regions);
     const size_t kernel_free_before = vmm_test_count_regions(platform.cpus[arch_cpu_id()].address_space->kernel_free_regions);
 
-    selftest_case_begin("vmm_test");
+    selftest_case_begin("platform/memory/mapping_regions");
 
     void* range_block_va = pmm_alloc(PAGE_SIZE * 2ULL);
 
     if (range_block_va == NULL)
     {
         vmm_test_log_fail("failed to allocate PMM pages for VMM test", &failures);
-        selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_end("platform/memory/mapping_regions", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
@@ -135,7 +135,7 @@ static void vmm_test(void)
     {
         vmm_test_log_fail("could not find an unmapped virtual window for test", &failures);
         pmm_free(range_block_va);
-        selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_end("platform/memory/mapping_regions", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
@@ -334,7 +334,7 @@ static void vmm_test(void)
 
     pmm_free(range_block_va);
 
-    selftest_case_end("vmm_test", (unsigned long long) passes, (unsigned long long) failures);
+    selftest_case_end("platform/memory/mapping_regions", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void pmm_test(void)
@@ -352,12 +352,12 @@ static void pmm_test(void)
     size_t baseline_used_pages     = 0;
     size_t scenario_expected_pages = 0;
 
-    selftest_case_begin("pmm_test");
+    selftest_case_begin("platform/memory/physical_allocation");
 
     if (platform.cpus[arch_cpu_id()].numa_node->zone.buddy_metadata == NULL)
     {
         pmm_test_log_fail("zone metadata is null (did pmm_init run?)", &failures);
-        selftest_case_end("pmm_test", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_end("platform/memory/physical_allocation", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
@@ -590,7 +590,7 @@ static void pmm_test(void)
 
     passes++;
 
-    selftest_case_end("pmm_test", (unsigned long long) passes, (unsigned long long) failures);
+    selftest_case_end("platform/memory/physical_allocation", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 static void heap_test_log_fail(const char* message, size_t* failures)
@@ -609,15 +609,15 @@ static void heap_test(void)
 
     if (cpu->numa_node == NULL)
     {
-        selftest_case_begin("heap_test");
+        selftest_case_begin("platform/memory/heap_cache");
         heap_test_log_fail("cpu numa_node is NULL", &failures);
-        selftest_case_end("heap_test", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_end("platform/memory/heap_cache", (unsigned long long) passes, (unsigned long long) failures);
         return;
     }
 
     kernel_heap_t* heap = &cpu->numa_node->heap;
 
-    selftest_case_begin("heap_test");
+    selftest_case_begin("platform/memory/heap_cache");
 
     if (heap_alloc(heap, 0) != NULL)
     {
@@ -770,14 +770,14 @@ static void heap_test(void)
 
     passes++;
 
-    selftest_case_end("heap_test", (unsigned long long) passes, (unsigned long long) failures);
+    selftest_case_end("platform/memory/heap_cache", (unsigned long long) passes, (unsigned long long) failures);
 }
 
 void run_memory_selftests(void)
 {
-    selftest_group_begin("memory");
+    selftest_group_begin("platform/memory");
     pmm_test();
     vmm_test();
     heap_test();
-    selftest_group_end("memory");
+    selftest_group_end("platform/memory");
 }

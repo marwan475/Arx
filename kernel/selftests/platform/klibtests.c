@@ -382,17 +382,26 @@ static void error_logger_test(size_t* passes, size_t* failures)
 
 void run_klib_selftests(void)
 {
-    size_t failures = 0;
-    size_t passes   = 0;
+    static const struct
+    {
+        const char* name;
+        void (*run)(size_t* passes, size_t* failures);
+    } cases[] = {
+        {"platform/klib/vmalloc", vmalloc_test},
+        {"platform/klib/kmalloc", kmalloc_test},
+        {"platform/klib/kzalloc", kzalloc_test},
+        {"platform/klib/sort", sort_u32_test},
+        {"platform/klib/wrapping_counter", counter32_test},
+        {"platform/klib/error_logger", error_logger_test},
+    };
 
-    selftest_case_begin("klib_test");
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        size_t passes   = 0;
+        size_t failures = 0;
 
-    vmalloc_test(&passes, &failures);
-    kmalloc_test(&passes, &failures);
-    kzalloc_test(&passes, &failures);
-    sort_u32_test(&passes, &failures);
-    counter32_test(&passes, &failures);
-    error_logger_test(&passes, &failures);
-
-    selftest_case_end("klib_test", (unsigned long long) passes, (unsigned long long) failures);
+        selftest_case_begin(cases[i].name);
+        cases[i].run(&passes, &failures);
+        selftest_case_end(cases[i].name, passes, failures);
+    }
 }

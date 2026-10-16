@@ -1,3 +1,5 @@
+#include "SelfTestManager.hpp"
+
 #include "layers/Dispatcher.hpp"
 #include "layers/Logic/CredentialManager.hpp"
 #include "layers/Logic/EventManager.hpp"
@@ -252,7 +254,7 @@ static void test_user_copy_fixture(requestlayer_stats_t* stats)
     {
         stats->implementedFail++;
         stats->customCaseFail++;
-        selftest_record_failure_detail("safe_user_copy_fixture");
+        SelfTestManager::Get().RecordFailureDetail("safe_user_copy_fixture");
     }
 }
 
@@ -2716,7 +2718,7 @@ static bool memory_expect(bool condition, const char* detail)
 {
     if (!condition)
     {
-        selftest_record_failure_detail(detail);
+        SelfTestManager::Get().RecordFailureDetail(detail);
     }
 
     return condition;
@@ -3172,7 +3174,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
     if (manager == nullptr)
     {
         stats->implementedFail++;
-        selftest_record_failure_detail("missing request manager");
+        SelfTestManager::Get().RecordFailureDetail("missing request manager");
         return;
     }
 
@@ -3254,7 +3256,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
             {
                 stats->customCaseFail++;
                 stats->implementedFail++;
-                selftest_record_failure_detail(tests[index].name);
+                SelfTestManager::Get().RecordFailureDetail(tests[index].name);
                 kprintf("Arx kernel: requestlayer_selftest custom FAIL %s::%s got=%lld\n", managerName, tests[index].name, (long long) result);
             }
 
@@ -3268,7 +3270,7 @@ template <typename ManagerT, size_t N> static void run_manager_tests(const char*
         }
 
         stats->implementedFail++;
-        selftest_record_failure_detail(tests[index].name);
+        SelfTestManager::Get().RecordFailureDetail(tests[index].name);
         kprintf("Arx kernel: requestlayer_selftest FAIL %s::%s got=%lld\n", managerName, tests[index].name, (long long) result);
     }
 }
@@ -4954,7 +4956,7 @@ static void test_vfs_manager(RequestLayerCaps* caps, requestlayer_stats_t* stats
         if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->vfsRequestManager != nullptr && (caps->vfsRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("VFS missing dependency/null-frame validation");
+            SelfTestManager::Get().RecordFailureDetail("VFS missing dependency/null-frame validation");
         }
     }
 
@@ -6114,7 +6116,7 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
             if ((caps->eventRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
-                selftest_record_failure_detail("event handler null-frame validation");
+                SelfTestManager::Get().RecordFailureDetail("event handler null-frame validation");
             }
 
     EventRequestManager unavailable(nullptr, nullptr);
@@ -6127,7 +6129,7 @@ static void test_event_manager(RequestLayerCaps* caps, requestlayer_stats_t* sta
         if ((unavailable.*(test.method))(&frame) != LINUX_ENOSYS)
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("event missing dependency handling");
+            SelfTestManager::Get().RecordFailureDetail("event missing dependency handling");
         }
     }
 
@@ -6646,7 +6648,7 @@ static void test_sync_manager(RequestLayerCaps* caps, requestlayer_stats_t* stat
         if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->syncRequestManager != nullptr && (caps->syncRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("sync missing dependency/null-frame validation");
+            SelfTestManager::Get().RecordFailureDetail("sync missing dependency/null-frame validation");
         }
     }
 
@@ -6953,7 +6955,7 @@ static void test_signal_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
         if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->signalRequestManager != nullptr && (caps->signalRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("signal null-frame/missing-dependency validation");
+            SelfTestManager::Get().RecordFailureDetail("signal null-frame/missing-dependency validation");
         }
     }
 
@@ -7238,7 +7240,7 @@ static void test_credential_manager(RequestLayerCaps* caps, requestlayer_stats_t
     if (process == nullptr)
     {
         stats->implementedFail++;
-        selftest_record_failure_detail("credential selftests require harness process");
+        SelfTestManager::Get().RecordFailureDetail("credential selftests require harness process");
         return;
     }
 
@@ -7259,7 +7261,7 @@ static void test_credential_manager(RequestLayerCaps* caps, requestlayer_stats_t
             if ((caps->credentialRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
-                selftest_record_failure_detail("credential handler null-frame validation");
+                SelfTestManager::Get().RecordFailureDetail("credential handler null-frame validation");
             }
 
     CredentialRequestManager unavailable(nullptr, nullptr);
@@ -7272,7 +7274,7 @@ static void test_credential_manager(RequestLayerCaps* caps, requestlayer_stats_t
         if ((unavailable.*(test.method))(&frame) != LINUX_ENOSYS)
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("credential missing dependency handling");
+            SelfTestManager::Get().RecordFailureDetail("credential missing dependency handling");
         }
     }
 
@@ -7291,7 +7293,7 @@ static void test_credential_manager(RequestLayerCaps* caps, requestlayer_stats_t
     {
         processes->ReleaseGroupList(originalGroups);
         stats->implementedFail++;
-        selftest_record_failure_detail("credential harness state restoration");
+        SelfTestManager::Get().RecordFailureDetail("credential harness state restoration");
     }
 }
 
@@ -7571,7 +7573,7 @@ static void test_system_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
             if ((caps->systemRequestManager->*(test.method))(nullptr) != LINUX_EINVAL)
             {
                 stats->implementedFail++;
-                selftest_record_failure_detail("system handler null-frame validation");
+                SelfTestManager::Get().RecordFailureDetail("system handler null-frame validation");
             }
 
     run_manager_tests("system", caps->systemRequestManager, tests, stats, true);
@@ -8200,7 +8202,7 @@ static void test_socket_manager(RequestLayerCaps* caps, requestlayer_stats_t* st
         if ((unavailable.*test.method)(&frame) != LINUX_ENOSYS || (caps->socketRequestManager != nullptr && (caps->socketRequestManager->*test.method)(nullptr) != LINUX_EINVAL))
         {
             stats->implementedFail++;
-            selftest_record_failure_detail("socket missing dependency/null-frame validation");
+            SelfTestManager::Get().RecordFailureDetail("socket missing dependency/null-frame validation");
         }
     }
 
@@ -8213,15 +8215,15 @@ extern "C" void launch_syscall_selftests(void* requestLayerCaps)
 {
     requestlayer_stats_t stats = {};
 
-    selftest_case_begin("requestlayer_selftest");
+    SelfTestManager::Get().CaseBegin("requestlayer_selftest");
 
     RequestLayerCaps* caps = static_cast<RequestLayerCaps*>(requestLayerCaps);
 
     if (caps == nullptr)
     {
         stats.implementedFail++;
-        selftest_record_failure_detail("request layer caps missing");
-        selftest_case_end("requestlayer_selftest", stats.implemented, stats.implementedFail);
+        SelfTestManager::Get().RecordFailureDetail("request layer caps missing");
+        SelfTestManager::Get().CaseEnd("requestlayer_selftest", stats.implemented, stats.implementedFail, SELFTEST_COUNT_IMPLEMENTED);
         return;
     }
 
@@ -8241,5 +8243,5 @@ extern "C" void launch_syscall_selftests(void* requestLayerCaps)
     kprintf("Arx kernel: requestlayer_selftest total=%llu implemented=%llu unimplemented=%llu implemented_pass=%llu implemented_fail=%llu custom_used=%llu custom_pass=%llu custom_fail=%llu\n", stats.total, stats.implemented, stats.unimplemented, stats.implementedPass, stats.implementedFail,
             stats.customCaseUsed, stats.customCasePass, stats.customCaseFail);
 
-    selftest_case_end("requestlayer_selftest", stats.implemented, stats.implementedFail);
+    SelfTestManager::Get().CaseEnd("requestlayer_selftest", stats.implemented, stats.implementedFail, SELFTEST_COUNT_IMPLEMENTED);
 }

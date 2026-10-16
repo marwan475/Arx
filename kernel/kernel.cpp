@@ -8,10 +8,7 @@
 #include <klib/klib.h>
 #include <platform.h>
 
-extern "C"
-{
-#include <selftests/selftests.h>
-}
+#include <selftests/SelfTestManager.hpp>
 
 static void KernelPostInit(void);
 static void KernelPostInitTask(void* arg);
@@ -30,10 +27,11 @@ extern "C" void kmain(void)
 
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+    bool               mounted          = false;
 
     if (resourceLayerCaps != nullptr && logicLayerCaps != nullptr && logicLayerCaps->virtualFileSystem != nullptr)
     {
-        const bool mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
+        mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
 
         if (mounted)
         {
@@ -43,11 +41,14 @@ extern "C" void kmain(void)
         {
             error_logger("Arx kernel: root initramfs mount failed\n");
         }
-
-        poststartkerneltests((void*) resourceLayerCaps, (void*) logicLayerCaps);
     }
 
-    BootstrapPostInitTasks(dispatcher);
+    SelfTestManager::Get().SetRootFileSystemMounted(mounted);
+
+    if (!BootstrapPostInitTasks(dispatcher))
+    {
+        SelfTestManager::Get().AbortUnsafe("post-init task creation or enqueue failed");
+    }
 
     __atomic_store_n(&platform.bsp_kmain_exited, 1, __ATOMIC_RELEASE);
 
@@ -67,44 +68,7 @@ static void KernelPostInit(void)
 #if defined(__x86_64__)
     (void) lapic_timer_calibrate();
 #endif
-    smp_selftests();
-
-    if (arch_cpu_id() == platform.bsp_id)
-    {
-        // AP tests attach processes to the shared kernel address space. Syscall
-        // fixtures create user mappings and acquire memoryUsers in that space;
-        // do not overlap the two fixture lifetimes.
-        smp_selftests_wait_for_all_cpus();
-        Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
-
-        if (dispatcher != nullptr)
-        {
-            launch_syscall_selftests((void*) dispatcher->GetRequestLayerCaps());
-        }
-
-        unsigned long long smpPasses   = 0;
-        unsigned long long smpFails    = 0;
-        unsigned long long smpFinished = 0;
-
-        smp_selftests_get_totals(&smpPasses, &smpFails, &smpFinished);
-
-        KDEBUG("smp summary: finished_cpus=%llu pass=%llu fail=%llu\n", smpFinished, smpPasses, smpFails);
-        smp_selftests_kdebug_summary_details();
-
-        selftest_group_begin("smp");
-        selftest_case_begin("smp_selftests");
-
-        if (smpFails > 0)
-        {
-            smp_selftests_record_failure_details();
-        }
-
-        selftest_case_end("smp_selftests", smpPasses, smpFails);
-        selftest_group_end("smp");
-
-        selftest_print_summary();
-        error_logger_print();
-    }
+    SelfTestManager::Get().RunPostInitTests();
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());

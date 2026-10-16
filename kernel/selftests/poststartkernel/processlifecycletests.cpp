@@ -1,3 +1,5 @@
+#include <selftests/SelfTestManager.hpp>
+
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -33,6 +35,9 @@ static process_test_context_t g_process_test_ctx;
 
 static void process_task_a(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     process_test_context_t* ctx            = static_cast<process_test_context_t*>(arg);
     process_t*              currentProcess = ctx->processManager->GetCurrentProcess();
     ctx->processCheckA                     = (currentProcess == ctx->processA) ? 1 : 0;
@@ -52,6 +57,9 @@ static void process_task_a(void* arg)
 
 static void process_task_b(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     process_test_context_t* ctx            = static_cast<process_test_context_t*>(arg);
     process_t*              currentProcess = ctx->processManager->GetCurrentProcess();
     ctx->processCheckB                     = (currentProcess == ctx->processB) ? 1 : 0;
@@ -71,6 +79,8 @@ static void process_task_b(void* arg)
 
 extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 {
+    cpu_preemption_disable();
+
     unsigned long long passes         = 0;
     unsigned long long fails          = 0;
     Scheduler*         scheduler      = nullptr;
@@ -82,14 +92,14 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     task_t*            taskB          = nullptr;
     virt_addr_space_t* currentSpace   = nullptr;
 
-    selftest_case_begin("process_selftest");
+    SelfTestManager::Get().CaseBegin("poststartkernel/process/scheduled_identity");
 
     ResourceLayerCaps* caps      = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps = static_cast<LogicLayerCaps*>(logicLayerCaps);
     if (caps == nullptr || caps->processManager == nullptr || caps->taskManager == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("missing managers");
+        SelfTestManager::Get().RecordFailureDetail("missing managers");
         kprintf("Arx kernel: process_selftest FAIL: missing managers\n");
         goto done;
     }
@@ -97,7 +107,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (logicCaps == nullptr || logicCaps->scheduler == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("missing logic scheduler");
+        SelfTestManager::Get().RecordFailureDetail("missing logic scheduler");
         kprintf("Arx kernel: process_selftest FAIL: missing logic scheduler\n");
         goto done;
     }
@@ -122,7 +132,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.bspTask == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("missing BSP task");
+        SelfTestManager::Get().RecordFailureDetail("missing BSP task");
         kprintf("Arx kernel: process_selftest FAIL: missing BSP task\n");
         goto done;
     }
@@ -133,7 +143,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (currentSpace == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("missing current address space");
+        SelfTestManager::Get().RecordFailureDetail("missing current address space");
         kprintf("Arx kernel: process_selftest FAIL: missing current address space\n");
         goto done;
     }
@@ -144,7 +154,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (processA == nullptr || processB == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("failed to create processes");
+        SelfTestManager::Get().RecordFailureDetail("failed to create processes");
         kprintf("Arx kernel: process_selftest FAIL: failed to create processes\n");
         goto cleanup;
     }
@@ -159,7 +169,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (taskA == nullptr || taskB == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("failed to create tasks");
+        SelfTestManager::Get().RecordFailureDetail("failed to create tasks");
         kprintf("Arx kernel: process_selftest FAIL: failed to create tasks\n");
         goto cleanup;
     }
@@ -167,7 +177,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!processManager->AddTask(processA, taskA) || !processManager->AddTask(processB, taskB))
     {
         fails++;
-        selftest_record_failure_detail("failed to attach tasks to processes");
+        SelfTestManager::Get().RecordFailureDetail("failed to attach tasks to processes");
         kprintf("Arx kernel: process_selftest FAIL: failed to attach tasks to processes\n");
         goto cleanup;
     }
@@ -175,7 +185,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!scheduler->ScheduleProcess(processA->id))
     {
         fails++;
-        selftest_record_failure_detail("ScheduleProcess(processA) failed");
+        SelfTestManager::Get().RecordFailureDetail("ScheduleProcess(processA) failed");
         kprintf("Arx kernel: process_selftest FAIL: ScheduleProcess(processA) failed\n");
         goto cleanup;
     }
@@ -183,7 +193,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (!scheduler->ScheduleProcess(processB->id))
     {
         fails++;
-        selftest_record_failure_detail("ScheduleProcess(processB) failed");
+        SelfTestManager::Get().RecordFailureDetail("ScheduleProcess(processB) failed");
         kprintf("Arx kernel: process_selftest FAIL: ScheduleProcess(processB) failed\n");
         goto cleanup;
     }
@@ -191,7 +201,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.markerA != 1 || g_process_test_ctx.markerB != 1)
     {
         fails++;
-        selftest_record_failure_detail("expected markers A=1 and B=1");
+        SelfTestManager::Get().RecordFailureDetail("expected markers A=1 and B=1");
         kprintf("Arx kernel: process_selftest FAIL: expected markers A=1 B=1, got A=%d B=%d\n", g_process_test_ctx.markerA, g_process_test_ctx.markerB);
         goto cleanup;
     }
@@ -199,7 +209,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.processCheckA != 1 || g_process_test_ctx.processCheckB != 1)
     {
         fails++;
-        selftest_record_failure_detail("process identity checks failed");
+        SelfTestManager::Get().RecordFailureDetail("process identity checks failed");
         kprintf("Arx kernel: process_selftest FAIL: process checks A=%d B=%d\n", g_process_test_ctx.processCheckA, g_process_test_ctx.processCheckB);
         goto cleanup;
     }
@@ -207,7 +217,7 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
     if (g_process_test_ctx.addressSpaceCheckA != 1 || g_process_test_ctx.addressSpaceCheckB != 1)
     {
         fails++;
-        selftest_record_failure_detail("address-space checks failed");
+        SelfTestManager::Get().RecordFailureDetail("address-space checks failed");
         kprintf("Arx kernel: process_selftest FAIL: address-space checks A=%d B=%d\n", g_process_test_ctx.addressSpaceCheckA, g_process_test_ctx.addressSpaceCheckB);
         goto cleanup;
     }
@@ -218,24 +228,37 @@ extern "C" void run_process_selftests(void* resourceLayerCaps, void* logicLayerC
 cleanup:
     if (taskA != nullptr)
     {
-        taskManager->FreeTask(taskA);
+        if (!taskManager->FreeTask(taskA))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
     if (taskB != nullptr)
     {
-        taskManager->FreeTask(taskB);
+        if (!taskManager->FreeTask(taskB))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
     if (processA != nullptr)
     {
-        processManager->FreeProcess(processA);
+        if (!processManager->FreeProcess(processA))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
     if (processB != nullptr)
     {
-        processManager->FreeProcess(processB);
+        if (!processManager->FreeProcess(processB))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
 done:
-    selftest_case_end("process_selftest", passes, fails);
+    SelfTestManager::Get().CaseEnd("poststartkernel/process/scheduled_identity", passes, fails);
+    cpu_preemption_enable();
 }

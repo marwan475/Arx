@@ -30,7 +30,7 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_CXX ?= g++
 AARCH64_CXX ?= aarch64-linux-gnu-g++
 X86_64_AS ?= nasm
-INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
+INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/selftests -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
 
 UACPI_DIR ?= kernel/platform/acpi/uACPI
@@ -77,7 +77,49 @@ USER_TEST_ELF ?= $(INITRAMFS_DIR)/test_syscall_exit.elf
 
 .PHONY: all x86_64 aarch64 initramfs prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/CredentialManager.cpp kernel/layers/Logic/EventManager.cpp kernel/layers/Logic/EventNotifications.cpp kernel/layers/Logic/SynchronizationManager.cpp kernel/layers/Logic/SignalManager.cpp kernel/layers/Logic/SocketManager.cpp kernel/layers/Logic/InterProcessCommunicationManager.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Logic/ProcessLifecycle.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Logic/ProcessMemoryManager.cpp kernel/layers/Resource/TimeManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c kernel/selftests/selftest.c kernel/selftests/syscalltests.cpp kernel/selftests/smpselftests.cpp kernel/selftests/schedulertests.cpp kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/vfstests.cpp kernel/selftests/poststartvfstests.cpp kernel/selftests/poststartelftests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
+SELFTEST_SRCS := \
+    kernel/selftests/SelfTestManager.cpp \
+    kernel/selftests/platform/datastructurestests.c \
+    kernel/selftests/platform/klibtests.c \
+    kernel/selftests/platform/memorytests.c \
+    kernel/selftests/platform/platforminvariants.c \
+    kernel/selftests/platform/platformtests.c \
+    kernel/selftests/resource/InitRamFileSystemManagerTests.cpp \
+    kernel/selftests/resource/PhysicalMemoryManagerTests.cpp \
+    kernel/selftests/resource/ProcessManagerTests.cpp \
+    kernel/selftests/resource/ResourceFileSystemTests.cpp \
+    kernel/selftests/resource/resourcetests.cpp \
+    kernel/selftests/resource/TaskManagerTests.cpp \
+    kernel/selftests/resource/TimeManagerTests.cpp \
+    kernel/selftests/resource/VirtualMemoryManagerTests.cpp \
+    kernel/selftests/logic/CredentialManagerTests.cpp \
+    kernel/selftests/logic/ElfMapperTests.cpp \
+    kernel/selftests/logic/EventManagerTests.cpp \
+    kernel/selftests/logic/InterProcessCommunicationManagerTests.cpp \
+    kernel/selftests/logic/logictests.cpp \
+    kernel/selftests/logic/ProcessControllerTests.cpp \
+    kernel/selftests/logic/SchedulerTests.cpp \
+    kernel/selftests/logic/SignalManagerTests.cpp \
+    kernel/selftests/logic/SocketManagerTests.cpp \
+    kernel/selftests/logic/SynchronizationManagerTests.cpp \
+    kernel/selftests/logic/VirtualFileSystemTests.cpp \
+    kernel/selftests/poststartkernel/communicationintegration.cpp \
+    kernel/selftests/poststartkernel/eventintegration.cpp \
+    kernel/selftests/poststartkernel/memoryintegration.cpp \
+    kernel/selftests/poststartkernel/poststartelftests.cpp \
+    kernel/selftests/poststartkernel/poststartkerneltests.cpp \
+    kernel/selftests/poststartkernel/poststartvfstests.cpp \
+    kernel/selftests/poststartkernel/processlifecycletests.cpp \
+    kernel/selftests/poststartkernel/schedulertests.cpp \
+    kernel/selftests/poststartkernel/signalintegration.cpp \
+    kernel/selftests/poststartkernel/smpselftests.cpp \
+    kernel/selftests/poststartkernel/taskcontexttests.cpp \
+    kernel/selftests/poststartkernel/tlbintegration.cpp \
+    kernel/selftests/poststartkernel/waitintegration.cpp \
+    kernel/selftests/request/requesttests.cpp \
+    kernel/selftests/request/syscalltests.cpp
+
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/CredentialManager.cpp kernel/layers/Logic/EventManager.cpp kernel/layers/Logic/EventNotifications.cpp kernel/layers/Logic/SynchronizationManager.cpp kernel/layers/Logic/SignalManager.cpp kernel/layers/Logic/SocketManager.cpp kernel/layers/Logic/InterProcessCommunicationManager.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Logic/ProcessLifecycle.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Logic/ProcessMemoryManager.cpp kernel/layers/Resource/TimeManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c $(SELFTEST_SRCS) kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm $(ARCH_DIR)/x86_64/arch_syscall_entry.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)

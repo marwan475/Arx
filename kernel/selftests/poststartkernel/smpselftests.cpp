@@ -1,3 +1,7 @@
+#include <selftests/SelfTestManager.hpp>
+#include <selftests/PollBudget.hpp>
+#include "poststartkerneltests.hpp"
+
 #include "layers/Dispatcher.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -32,6 +36,8 @@ static volatile unsigned long long g_smp_selftests_total_passes  = 0;
 static volatile unsigned long long g_smp_selftests_total_fails   = 0;
 static volatile unsigned long long g_smp_selftests_finished_cpus = 0;
 static volatile unsigned long long g_smp_selftests_fail_mask     = 0;
+
+static bool g_smp_unsafe_cleanup;
 
 enum smp_fail_mask_bits
 {
@@ -440,12 +446,18 @@ extern "C" void smp_selftests(void)
                 // Unlink before the task slot can be reused on another CPU.
                 if (process != nullptr && task->process == process)
                     processManager->RemoveTask(process, task);
-                (void) taskManager->FreeTask(task);
+                if (!taskManager->FreeTask(task))
+                {
+                    __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
+                }
             }
 
             if (process != nullptr)
             {
-                (void) processManager->FreeProcess(process);
+                if (!processManager->FreeProcess(process))
+                {
+                    __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
+                }
             }
 
             if (processManager->GetRunningProcess((uint8_t) cpuId) != originalRun)
@@ -516,6 +528,10 @@ extern "C" void smp_selftests(void)
                 localFailMask |= SMP_FAIL_SCHED_PROCESS_MISMATCH;
             }
 
+            if (schedulerFailMask & (1ULL << 63))
+            {
+                __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
+            }
             totals.passes += schedulerPasses;
             totals.fails += schedulerFails;
         }
@@ -528,14 +544,20 @@ extern "C" void smp_selftests(void)
     cpu_preemption_enable();
 }
 
-extern "C" void smp_selftests_wait_for_all_cpus(void)
+extern "C" bool smp_selftests_wait_for_all_cpus(void)
 {
     const unsigned long long expected = (unsigned long long) platform.cpu_count;
 
+    PollBudget budget;
     while (__atomic_load_n(&g_smp_selftests_finished_cpus, __ATOMIC_ACQUIRE) < expected)
     {
+        if (budget.Expired())
+        {
+            return false;
+        }
         arch_pause();
     }
+    return true;
 }
 
 extern "C" void smp_selftests_get_totals(unsigned long long* out_passes, unsigned long long* out_fails, unsigned long long* out_finished_cpus)
@@ -695,116 +717,121 @@ extern "C" void smp_selftests_record_failure_details(void)
 
     if (mask & SMP_FAIL_DISPATCHER_NULL)
     {
-        selftest_record_failure_detail("dispatcher null");
+        SelfTestManager::Get().RecordFailureDetail("dispatcher null");
     }
 
     if (mask & SMP_FAIL_MANAGERS_MISSING)
     {
-        selftest_record_failure_detail("managers missing");
+        SelfTestManager::Get().RecordFailureDetail("managers missing");
     }
 
     if (mask & SMP_FAIL_PIDVFS_MISSING_RUNNING)
     {
-        selftest_record_failure_detail("pid-vfs missing running task");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs missing running task");
     }
 
     if (mask & SMP_FAIL_PIDVFS_MISSING_ADDR_SPACE)
     {
-        selftest_record_failure_detail("pid-vfs missing address space");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs missing address space");
     }
 
     if (mask & SMP_FAIL_PIDVFS_CREATE_PROCESS)
     {
-        selftest_record_failure_detail("pid-vfs create process failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs create process failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_CREATE_TASK)
     {
-        selftest_record_failure_detail("pid-vfs create task failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs create task failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_ADD_TASK)
     {
-        selftest_record_failure_detail("pid-vfs add task failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs add task failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_SET_RUNNING)
     {
-        selftest_record_failure_detail("pid-vfs set running process failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs set running process failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_EXECUTE)
     {
-        selftest_record_failure_detail("pid-vfs execute task failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs execute task failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_RESTORE_RUNNING)
     {
-        selftest_record_failure_detail("pid-vfs restore running process failed");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs restore running process failed");
     }
 
     if (mask & SMP_FAIL_PIDVFS_TASK_BODY)
     {
-        selftest_record_failure_detail("pid-vfs task body reported failure");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs task body reported failure");
     }
 
     if (mask & SMP_FAIL_PIDVFS_SLOT_LAYOUT)
     {
-        selftest_record_failure_detail("pid-vfs slot layout/file size insufficient for cpu count");
+        SelfTestManager::Get().RecordFailureDetail("pid-vfs slot layout/file size insufficient for cpu count");
     }
 
     if (mask & SMP_FAIL_SCHED_MISSING_MANAGERS)
     {
-        selftest_record_failure_detail("scheduler managers missing");
+        SelfTestManager::Get().RecordFailureDetail("scheduler managers missing");
     }
 
     if (mask & SMP_FAIL_SCHED_MISSING_RUNNING)
     {
-        selftest_record_failure_detail("scheduler missing running task");
+        SelfTestManager::Get().RecordFailureDetail("scheduler missing running task");
     }
 
     if (mask & SMP_FAIL_SCHED_MISSING_ADDR_SPACE)
     {
-        selftest_record_failure_detail("scheduler missing address space");
+        SelfTestManager::Get().RecordFailureDetail("scheduler missing address space");
     }
 
     if (mask & SMP_FAIL_SCHED_CREATE_PROCESS)
     {
-        selftest_record_failure_detail("scheduler create process failed");
+        SelfTestManager::Get().RecordFailureDetail("scheduler create process failed");
     }
 
     if (mask & SMP_FAIL_SCHED_CREATE_TASK)
     {
-        selftest_record_failure_detail("scheduler create task failed");
+        SelfTestManager::Get().RecordFailureDetail("scheduler create task failed");
     }
 
     if (mask & SMP_FAIL_SCHED_ADD_TASK)
     {
-        selftest_record_failure_detail("scheduler add task failed");
+        SelfTestManager::Get().RecordFailureDetail("scheduler add task failed");
     }
 
     if (mask & SMP_FAIL_SCHED_ENQUEUE)
     {
-        selftest_record_failure_detail("scheduler enqueue failed");
+        SelfTestManager::Get().RecordFailureDetail("scheduler enqueue failed");
     }
 
     if (mask & SMP_FAIL_SCHED_ATTEMPTS_EXHAUSTED)
     {
-        selftest_record_failure_detail("scheduler dispatch attempts exhausted");
+        SelfTestManager::Get().RecordFailureDetail("scheduler dispatch attempts exhausted");
     }
 
     if (mask & SMP_FAIL_SCHED_RUN_NEXT)
     {
-        selftest_record_failure_detail("scheduler RunNextReadyProcess failed");
+        SelfTestManager::Get().RecordFailureDetail("scheduler RunNextReadyProcess failed");
     }
 
     if (mask & SMP_FAIL_SCHED_TASK_NOT_ENTERED)
     {
-        selftest_record_failure_detail("scheduler test task not entered");
+        SelfTestManager::Get().RecordFailureDetail("scheduler test task not entered");
     }
 
     if (mask & SMP_FAIL_SCHED_PROCESS_MISMATCH)
     {
-        selftest_record_failure_detail("scheduler process mismatch");
+        SelfTestManager::Get().RecordFailureDetail("scheduler process mismatch");
     }
+}
+
+extern "C" bool smp_selftests_cleanup_safe(void)
+{
+    return !__atomic_load_n(&g_smp_unsafe_cleanup, __ATOMIC_ACQUIRE);
 }

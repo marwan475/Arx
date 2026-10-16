@@ -7,10 +7,7 @@
 
 #include <platform.h>
 
-extern "C"
-{
-#include <selftests/selftests.h>
-}
+#include <selftests/SelfTestManager.hpp>
 
 Dispatcher::Dispatcher()
 {
@@ -30,11 +27,11 @@ void Dispatcher::StartKernel()
 {
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
 
-    resourcelayer_selftests((void*) ResourceLayerImportCaps);
+    SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
 
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
-    logiclayer_selftests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
+    SelfTestManager::Get().RunLogicLayerTests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
 
     RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create(ResourceLayerImportCaps, LogicLayerImportCaps);
 

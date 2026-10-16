@@ -13,6 +13,22 @@ extern "C"
         unsigned long long tests_failed;
     } selftest_context_t;
 
+    typedef enum selftest_count_kind
+    {
+        SELFTEST_COUNT_PASSES,
+        SELFTEST_COUNT_IMPLEMENTED
+    } selftest_count_kind_t;
+
+    typedef enum selftest_status
+    {
+        SELFTEST_PASS,
+        SELFTEST_FAIL,
+        SELFTEST_SKIP,
+        SELFTEST_BLOCKED
+    } selftest_status_t;
+
+    void selftest_case_finish(const char* name, unsigned long long passes, unsigned long long failures, selftest_status_t status);
+
     void                      selftest_reset_context(void);
     const selftest_context_t* selftest_get_context(void);
 
@@ -21,27 +37,11 @@ extern "C"
 
     void selftest_case_begin(const char* test_name);
     void selftest_case_end(const char* test_name, unsigned long long passes, unsigned long long failures);
+    void selftest_case_end_with_count_kind(const char* test_name, unsigned long long passes, unsigned long long failures, selftest_count_kind_t count_kind);
     void selftest_record_failure_detail(const char* detail);
     void selftest_print_summary(void);
 
     void platform_selftests(void);
-
-    void run_datastructures_selftests(void);
-    void run_memory_selftests(void);
-    void run_klib_selftests(void);
-    void run_task_selftests(void* resourceLayerCaps);
-    void run_process_selftests(void* resourceLayerCaps, void* logicLayerCaps);
-    void run_vfs_selftests(void* logicLayerCaps);
-    void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps);
-    void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps);
-    void launch_syscall_selftests(void* requestLayerCaps);
-    void run_smp_scheduler_selftest(void* logicLayerCaps, void* resourceLayerCaps, unsigned long long cpuId, unsigned long long* outPasses, unsigned long long* outFails, unsigned long long* outFailMask);
-
-    void smp_selftests(void);
-    void smp_selftests_wait_for_all_cpus(void);
-    void smp_selftests_get_totals(unsigned long long* out_passes, unsigned long long* out_fails, unsigned long long* out_finished_cpus);
-    void smp_selftests_kdebug_summary_details(void);
-    void smp_selftests_record_failure_details(void);
 
     void resourcelayer_selftests(void* resourceLayerCaps);
     void logiclayer_selftests(void* resourceLayerCaps, void* logicLayerCaps);

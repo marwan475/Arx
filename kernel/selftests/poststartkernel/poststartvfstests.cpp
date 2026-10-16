@@ -1,3 +1,5 @@
+#include <selftests/SelfTestManager.hpp>
+
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
@@ -51,12 +53,15 @@ static poststart_vfs_two_process_sync_context_t g_poststart_vfs_sync_ctx_b;
 static void poststart_vfs_test_fail(const char* message, unsigned long long* failures)
 {
     (*failures)++;
-    selftest_record_failure_detail(message);
+    SelfTestManager::Get().RecordFailureDetail(message);
     kprintf("Arx kernel: poststart_vfs_selftest FAIL: %s\n", message);
 }
 
 static void poststart_vfs_process_file_task(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     poststart_vfs_process_test_context_t* ctx = static_cast<poststart_vfs_process_test_context_t*>(arg);
 
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->bspTask == nullptr)
@@ -295,6 +300,9 @@ static void poststart_vfs_process_file_task(void* arg)
 
 static void poststart_vfs_two_process_sync_task(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     poststart_vfs_two_process_sync_context_t* ctx = static_cast<poststart_vfs_two_process_sync_context_t*>(arg);
 
     if (ctx == nullptr || ctx->vfs == nullptr || ctx->processManager == nullptr || ctx->taskManager == nullptr || ctx->bspTask == nullptr || ctx->payload == nullptr || ctx->payloadLen == 0)
@@ -443,6 +451,8 @@ static void poststart_vfs_two_process_sync_task(void* arg)
 
 extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logicLayerCaps)
 {
+    cpu_preemption_disable();
+
     unsigned long long passes         = 0;
     unsigned long long fails          = 0;
     VirtualFileSystem* vfs            = nullptr;
@@ -453,7 +463,7 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
     task_t*            task           = nullptr;
     virt_addr_space_t* currentSpace   = nullptr;
 
-    selftest_case_begin("poststart_vfs_selftest");
+    SelfTestManager::Get().CaseBegin("poststartkernel/filesystem/mounted_io_and_lifecycle");
 
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps    = static_cast<LogicLayerCaps*>(logicLayerCaps);
@@ -750,12 +760,18 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
         if (task != nullptr)
         {
-            taskManager->FreeTask(task);
+            if (!taskManager->FreeTask(task))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
 
         if (process != nullptr)
         {
-            processManager->FreeProcess(process);
+            if (!processManager->FreeProcess(process))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
     }
 
@@ -959,25 +975,38 @@ extern "C" void run_poststart_vfs_selftests(void* resourceLayerCaps, void* logic
 
         if (taskA != nullptr)
         {
-            taskManager->FreeTask(taskA);
+            if (!taskManager->FreeTask(taskA))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
 
         if (taskB != nullptr)
         {
-            taskManager->FreeTask(taskB);
+            if (!taskManager->FreeTask(taskB))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
 
         if (processA != nullptr)
         {
-            processManager->FreeProcess(processA);
+            if (!processManager->FreeProcess(processA))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
 
         if (processB != nullptr)
         {
-            processManager->FreeProcess(processB);
+            if (!processManager->FreeProcess(processB))
+            {
+                SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+            }
         }
     }
 
 done:
-    selftest_case_end("poststart_vfs_selftest", passes, fails);
+    SelfTestManager::Get().CaseEnd("poststartkernel/filesystem/mounted_io_and_lifecycle", passes, fails);
+    cpu_preemption_enable();
 }

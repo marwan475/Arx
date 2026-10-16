@@ -1,3 +1,5 @@
+#include <selftests/SelfTestManager.hpp>
+
 // Basic task context-switch selftest between two task entry functions.
 
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -51,6 +53,9 @@ static void task_test_set_tls(TaskManager* manager, uint64_t fs, uint64_t gs)
 
 static void task_entry_a(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
 
     kprintf("Arx kernel: task_selftest task A entered\n");
@@ -75,6 +80,9 @@ static void task_entry_a(void* arg)
 
 static void task_entry_b(void* arg)
 {
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
     task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
 
     kprintf("Arx kernel: task_selftest task B entered\n");
@@ -92,6 +100,8 @@ static void task_entry_b(void* arg)
 
 extern "C" void run_task_selftests(void* resourceLayerCaps)
 {
+    cpu_preemption_disable();
+
     unsigned long long passes              = 0;
     unsigned long long fails               = 0;
     TaskManager*       manager             = nullptr;
@@ -102,14 +112,14 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     task_t*            surrogateTask       = nullptr;
     auto               cpuId               = arch_cpu_id();
 
-    selftest_case_begin("task_selftest");
+    SelfTestManager::Get().CaseBegin("poststartkernel/process/task_context_tls");
 
     ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
 
     if (caps == nullptr || caps->taskManager == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("missing resource layer task manager");
+        SelfTestManager::Get().RecordFailureDetail("missing resource layer task manager");
         kprintf("Arx kernel: task_selftest FAIL: missing resource layer task manager\n");
         goto done;
     }
@@ -126,7 +136,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         if (surrogateTask == nullptr)
         {
             fails++;
-            selftest_record_failure_detail("failed to allocate surrogate running task");
+            SelfTestManager::Get().RecordFailureDetail("failed to allocate surrogate running task");
             kprintf("Arx kernel: task_selftest FAIL: failed to allocate surrogate running task\n");
             goto done;
         }
@@ -134,7 +144,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         if (!manager->SetRunningTask(cpuId, surrogateTask))
         {
             fails++;
-            selftest_record_failure_detail("failed to set surrogate running task");
+            SelfTestManager::Get().RecordFailureDetail("failed to set surrogate running task");
             kprintf("Arx kernel: task_selftest FAIL: failed to set surrogate running task\n");
             goto cleanup;
         }
@@ -148,7 +158,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (manager->FreeTask(bspTask))
     {
         fails++;
-        selftest_record_failure_detail("FreeTask reclaimed the running task");
+        SelfTestManager::Get().RecordFailureDetail("FreeTask reclaimed the running task");
         goto cleanup;
     }
 
@@ -170,7 +180,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (taskA == nullptr || taskB == nullptr)
     {
         fails++;
-        selftest_record_failure_detail("failed to create task pair");
+        SelfTestManager::Get().RecordFailureDetail("failed to create task pair");
         kprintf("Arx kernel: task_selftest FAIL: failed to create task pair\n");
         goto cleanup;
     }
@@ -180,7 +190,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (!manager->ExecuteTask(taskA))
     {
         fails++;
-        selftest_record_failure_detail("ExecuteTask(taskA) failed");
+        SelfTestManager::Get().RecordFailureDetail("ExecuteTask(taskA) failed");
         kprintf("Arx kernel: task_selftest FAIL: ExecuteTask(taskA) failed\n");
         goto cleanup;
     }
@@ -190,7 +200,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (!g_task_test_ctx.tlsCorrect || !task_test_tls_matches(manager, g_task_test_ctx.originalFs, g_task_test_ctx.originalGs))
     {
         fails++;
-        selftest_record_failure_detail("task TLS bases were not isolated/restored across A -> B -> A");
+        SelfTestManager::Get().RecordFailureDetail("task TLS bases were not isolated/restored across A -> B -> A");
     }
     else
         passes++;
@@ -198,7 +208,7 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     if (g_task_test_ctx.step != 3)
     {
         fails++;
-        selftest_record_failure_detail("expected step=3 after task chain");
+        SelfTestManager::Get().RecordFailureDetail("expected step=3 after task chain");
         kprintf("Arx kernel: task_selftest FAIL: expected step=3, got %d\n", g_task_test_ctx.step);
     }
     else
@@ -215,19 +225,29 @@ cleanup:
 
     if (taskA != nullptr)
     {
-        manager->FreeTask(taskA);
+        if (!manager->FreeTask(taskA))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
     if (taskB != nullptr)
     {
-        manager->FreeTask(taskB);
+        if (!manager->FreeTask(taskB))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
     if (surrogateTask != nullptr)
     {
-        manager->FreeTask(surrogateTask);
+        if (!manager->FreeTask(surrogateTask))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
     }
 
 done:
-    selftest_case_end("task_selftest", passes, fails);
+    SelfTestManager::Get().CaseEnd("poststartkernel/process/task_context_tls", passes, fails);
+    cpu_preemption_enable();
 }

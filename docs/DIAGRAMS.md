@@ -1,7 +1,7 @@
 # Diagrams
 
 Editable Mermaid sources for SVGs embedded in the kernel, platform, and
-architecture guides.
+architecture and layer guides.
 The rendered SVG files remain in `docs/imgs/`. Render each block with Mermaid CLI,
 using `platform-mermaid-config.json` and its listed SVG filename. Keep the guides
 using the rendered SVGs rather than inline Mermaid blocks.
@@ -405,4 +405,45 @@ flowchart TB
     E --> F[arch_init returns false]
     F --> G[Bootstrap reports architecture failure and panics]
     G -. normal runtime not reached .-> X[Layer construction, scheduling and user execution unavailable]
+```
+
+## Dispatcher construction
+
+SVG: `dispatcher-construction.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Dispatcher construction and layer startup
+    accDescr: kmain constructs Dispatcher and its factories, publishes the pointer, then creates and tests lower layers before building Request.
+    A[kmain creates Dispatcher and three factories] --> B[Publish platform.dispacher]
+    B --> C[Call StartKernel]
+    C --> R[Resource factory creates managers and exports capabilities]
+    R --> RT[Run Resource self-tests]
+    RT --> L[Logic factory creates managers using Resource capabilities]
+    L --> LT[Run Logic self-tests]
+    LT --> Q[Request factory creates handlers using Resource and Logic]
+    Q --> K[Return to kmain]
+    K --> S[Mount root, queue post-init work and activate scheduling]
+```
+
+## Dispatcher runtime routing
+
+SVG: `dispatcher-runtime.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Dispatcher runtime routes and service bridges
+    accDescr: Syscalls select a Request manager; common interrupt requests select InterruptRequestManager. Other C bridges access Logic or Resource services directly.
+    A[Arch syscall entry] --> B[C syscall bridge]
+    B --> C[DispatchSyscall: number switch]
+    C --> D[Selected Request manager]
+    C -. unknown syscall .-> E[Return -ENOSYS]
+    F[Arch common interrupt request] --> G[C interrupt bridge]
+    G --> H[DispatchInterruptRequest]
+    H --> I[InterruptRequestManager]
+    J[Other kernel service callers] --> K[C bridges: signals, accounting, rescheduling and memory access]
+    D --> L[Logic and Resource services]
+    I --> L
+    K --> L
+    L --> M[Return to entry caller]
 ```

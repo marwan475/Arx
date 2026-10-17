@@ -14,6 +14,9 @@ Targets:
 - [Platform services](docs/architecture/platform/Platform.md)
 - [x86_64 support](docs/architecture/arch/x86_64.md)
 - [AArch64 support and stubs](docs/architecture/arch/aarch64.md)
+- [Dispatcher](docs/architecture/layers/Dispatcher.md)
+- [Documentation writing skill](docs/skills/write-kernel-docs/SKILL.md)
+- [Documentation update skill](docs/skills/update-kernel-docs/SKILL.md)
 
 ## Third Party
 

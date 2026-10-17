@@ -489,3 +489,77 @@ flowchart TB
     L -. as needed .-> U
     O -. as needed .-> U
 ```
+
+## Resource layer initialization
+
+SVG: `resource-initialization.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Resource layer initialization
+    accDescr: After platform bootstrap, Dispatcher constructs seven resource managers, the filesystem adapter, and runs Resource tests before Logic creation.
+    A[Platform bootstrap ready] --> B[Dispatcher creates Resource]
+    B --> C[PhysicalMemoryManager, ProcessManager, TaskManager]
+    C --> D[VirtualMemoryManager then DmaManager]
+    D --> E[TimeManager then InitRamFileSystemManager]
+    E --> F[ResourceFileSystem exports filesystem callbacks]
+    F --> G[Return ResourceLayerCaps]
+    G --> H[Run Resource tests before Logic creation]
+```
+
+## Resource layer interactions
+
+SVG: `resource-interactions.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Resource layer service boundaries
+    accDescr: Logic and Request use Resource capabilities. Memory, DMA, task and time services use platform mechanisms and architecture hooks; the filesystem adapter uses the boot archive.
+    L[Logic callers] --> C[ResourceLayerCaps]
+    Q[Request callers] --> C
+    C --> M[Physical and virtual memory; DMA]
+    C --> T[Process, task and time managers]
+    C --> F[Filesystem callbacks]
+    M --> P[Platform mechanisms and architecture hooks]
+    T --> P
+    F --> I[InitRamFileSystemManager]
+    I --> B[Boot archive data]
+```
+
+## Logic layer initialization
+
+SVG: `logic-initialization.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Logic layer construction and wiring
+    accDescr: Resource capabilities precede Logic creation. The factory constructs ten components, connects events and priority handling, then Dispatcher runs Logic tests.
+    A[Resource capabilities ready] --> B[Scheduler, VFS, ElfMapper, CredentialManager]
+    B --> C[EventManager; connect Scheduler and VFS]
+    C --> D[SynchronizationManager; connect priority and task cleanup]
+    D --> E[SignalManager then ProcessController]
+    E --> F[SocketManager then IPC manager]
+    F --> G[Return LogicLayerCaps]
+    G --> H[Run Logic tests before Request creation]
+```
+
+## Selected Logic layer interactions
+
+SVG: `logic-interactions.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Selected Logic layer collaboration paths
+    accDescr: Process control coordinates scheduling, ELF and filesystem services. VFS and communication publish events that wake Scheduler. Components use Resource services; the diagram is not an exhaustive call graph.
+    P[ProcessController] --> S[Scheduler]
+    P --> V[VirtualFileSystem]
+    P --> M[ElfMapper]
+    C[SocketManager and IPC] --> V
+    C --> E[EventManager]
+    V --> E
+    E --> S
+    Y[SynchronizationManager] -- priorities --> S
+    V --> R[Resource services]
+    S --> R
+    M --> R
+```

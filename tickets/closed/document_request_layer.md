@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P2
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -131,3 +131,10 @@ no kernel build or runtime self-tests were run for this documentation-only work.
 All agreed acceptance criteria are met. Status remains in progress; awaiting the
 owner's explicit authorization to close and move to
 `tickets/closed/document_request_layer.md`. Closure logs have not been changed.
+
+### 2026-10-17 — Completion
+
+The owner authorized closure in response to the proposed move to
+`tickets/closed/document_request_layer.md`. Completed the Request guide, two
+verified SVG diagrams with retained Mermaid sources, and README navigation.
+Concrete examples remain deferred as agreed.

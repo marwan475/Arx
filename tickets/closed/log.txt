@@ -1,3 +1,6 @@
 document_platform_layer.md
 document_project_structure.md
 document_architecture_layer.md
+document_request_layer.md
+document_resource_layer.md
+document_logic_layer.md

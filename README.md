@@ -15,6 +15,8 @@ Targets:
 - [x86_64 support](docs/architecture/arch/x86_64.md)
 - [Dispatcher](docs/architecture/layers/Dispatcher.md)
 - [Request layer](docs/architecture/layers/Request.md)
+- [Resource layer](docs/architecture/layers/Resource.md)
+- [Logic layer](docs/architecture/layers/Logic.md)
 
 ## Third Party
 

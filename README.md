@@ -6,7 +6,7 @@ Targets:
 - x86_64 (currently supported)
 - aarch64 (experimental)
 
-![Kernel architecture](docs/imgs/kernel-architecture.svg)
+![Arx](docs/imgs/Arx_Arch.png)
 
 ## Documentation
 

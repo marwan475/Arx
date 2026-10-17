@@ -19,8 +19,8 @@ initramfs location. Its Dispatcher pointer is filled later by `kmain`.
 
 ![Platform CPU state](../../imgs/dispatcher-2026-04-15-070216.svg)
 
-The diagram's “Dispatcher” label means platform state. The actual Dispatcher
-connects platform events to the layer stack; it does not own this CPU registry.
+The current CPU record is selected by `arch_cpu_id`. Dispatcher connects platform
+events to the layer stack; it does not own this CPU registry.
 
 ## 2. Terminal: make boot output visible
 
@@ -45,8 +45,8 @@ Normal zone first, then other nodes. DMA allocations use the dedicated DMA zones
 
 ![NUMA allocation structure](../../imgs/NUMA%20Node%20Allocation%20Flow-2026-04-15-064600.svg)
 
-This diagram shows one node and zone for simplicity. Current code supports
-multiple nodes and separate DMA zones; “Dispatcher” again means platform state.
+Each CPU refers to its assigned node. If its Normal zone cannot satisfy an
+ordinary allocation, PMM tries the other nodes.
 
 `pmm_alloc` returns a contiguous physical block through the higher-half direct map
 (HHDM), a kernel mapping that allows RAM to be accessed as pointers. The buddy
@@ -57,9 +57,8 @@ block to its owning zone and merges free buddies where possible.
 
 ![Physical memory release](../../imgs/pmmfree-2026-04-15-065114.svg)
 
-These flows describe allocation within a selected zone. Zone locks protect the
-allocator and usage counters. PhysicalMemoryManager exposes these services to
-higher layers.
+Zone locks protect the allocator and usage counters. PhysicalMemoryManager exposes
+these services to higher layers.
 
 ## 5. Virtual memory: reserve addresses and map pages
 

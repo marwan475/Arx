@@ -447,3 +447,45 @@ flowchart TB
     K --> L
     L --> M[Return to entry caller]
 ```
+
+## Request layer initialization
+
+SVG: `request-initialization.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Request layer initialization
+    accDescr: Dispatcher creates Resource and Logic before constructing Request managers. Request tests run later during post-init.
+    A[Dispatcher StartKernel] --> B[Create Resource and run its tests]
+    B --> C[Create Logic using Resource and run its tests]
+    C --> D[Create Request using Resource and Logic]
+    D --> E[Allocate RequestLayerCaps]
+    E --> F[Construct twelve managers]
+    F --> G[Return borrowed capabilities to Dispatcher]
+    G --> H[Later: post-init Request self-tests]
+```
+
+## General Request layer flow
+
+SVG: `request-flow.svg`
+
+```mermaid
+flowchart TB
+    accTitle: General Request layer syscall flow
+    accDescr: Dispatcher selects a Request manager. Validation and copying are shared with lower-layer services. Results return through Dispatcher to architecture code.
+    A[Architecture syscall entry] --> B[Dispatcher selects Request manager]
+    B --> C[Decode and validate arguments]
+    C -- rejected --> R[Return result or error]
+    C -- accepted --> D[Delegate operation]
+    D --> L[Logic services]
+    D --> S[Resource services]
+    L --> S
+    L --> O[Collect result and prepare outputs]
+    S --> O
+    O --> R
+    R --> X[Dispatcher and architecture return path]
+    U[Klib user-memory checks and copies]
+    C -. as needed .-> U
+    L -. as needed .-> U
+    O -. as needed .-> U
+```

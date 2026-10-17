@@ -305,6 +305,7 @@ void ProcessManager::ReleaseSignalDispositions(signal_dispositions_t* dispositio
 
 void ProcessManager::ReleaseProcessResources(process_t* process)
 {
+    SignalDispositionGuard signalGuard(process);
     spinlock_acquire_preempt(&process->resourceLock);
     descriptor_table_t*    table        = process->descriptorTable;
     filesystem_context_t*  filesystem   = process->filesystemContext;
@@ -312,7 +313,12 @@ void ProcessManager::ReleaseProcessResources(process_t* process)
     process->descriptorTable            = nullptr;
     process->filesystemContext          = nullptr;
     process->signalDispositions         = nullptr;
+    signal_queue_t* queue               = process->signalQueue;
+    process->signalQueue                = nullptr;
+    __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
     spinlock_release_preempt(&process->resourceLock);
+    signalGuard.Release();
+    kfree(queue);
     ReleaseDescriptorTable(table);
     ReleaseFilesystemContext(filesystem);
     ReleaseSignalDispositions(dispositions);
@@ -381,6 +387,8 @@ void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allo
     process->reclaiming           = false;
     process->retirementActive     = false;
     process->signalPending        = 0;
+    process->signalQueue          = nullptr;
+    process->exitRecipient        = nullptr;
     memset(process->signalSenders, 0, sizeof(process->signalSenders));
     process->ownerCpu             = -1;
     process->exitStatus           = 0;
@@ -661,7 +669,19 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     const bool wasExited            = process->exited;
     process->exited                 = true;
     virt_addr_space_t* addressSpace = process->addressSpace;
+    process_t* exitRecipient = process->exitRecipient;
+    process->exitRecipient = nullptr;
     UnlockManager();
+    if (exitRecipient != nullptr)
+    {
+        SignalDispositionGuard guard(exitRecipient);
+        if (exitRecipient->signalQueue != nullptr && exitRecipient->signalQueue->reserved != 0)
+        {
+            --exitRecipient->signalQueue->reserved;
+        }
+        guard.Release();
+        ReleaseProcess(exitRecipient);
+    }
     VirtualMemoryManager memory;
     if (process->ownsAddressSpace)
     {
@@ -679,6 +699,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     filesystemToFree   = process->filesystemContext;
     dispositionsToFree = process->signalDispositions;
 
+    signal_queue_t* queueToFree = process->signalQueue;
     groupsToFree = process->supplementaryGroups;
     ResetProcessSlot(process, (uint64_t) (process - &Processes[0]), false);
 
@@ -697,6 +718,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     ReleaseSignalDispositions(dispositionsToFree);
 
     ReleaseGroupList(groupsToFree);
+    kfree(queueToFree);
 
     return true;
 }
@@ -1340,7 +1362,7 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
             return false;
         }
 
-        if (process->reclaiming || (process->ownerCpu >= 0 && process->ownerCpu != cpuId))
+        if (process->reclaiming)
         {
             UnlockManager();
             return false;
@@ -1349,16 +1371,9 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
         process->ownerCpu = cpuId;
     }
 
-    // Claim execution under the same manager lock used by teardown.
-
-    for (size_t other = 0; process != nullptr && other < BOOT_SMP_MAX_CPUS; ++other)
-    {
-        if (other != cpuId && RunningProcesses[other] == process)
-        {
-            UnlockManager();
-            return false;
-        }
-    }
+    // A process may execute distinct tasks on several CPUs. TaskManager owns
+    // the exclusive claim on each saved task context; the process manager owns
+    // per-CPU address-space activation and teardown lifetime checks.
 
     __atomic_store_n(&RunningProcesses[cpuId], process, __ATOMIC_RELEASE);
 

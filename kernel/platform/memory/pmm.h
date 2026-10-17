@@ -66,6 +66,7 @@ typedef struct numa_node
     zone_t        zone;
     zone_t        dma_zone;
     size_t        cpu_count;
+    uint32_t      proximity_domain;
     kernel_heap_t heap;
 } numa_node_t;
 

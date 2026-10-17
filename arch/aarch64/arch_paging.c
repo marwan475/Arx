@@ -1067,3 +1067,11 @@ bool arch_time_read_monotonic(uint64_t* nanoseconds)
     (void) nanoseconds;
     return false;
 }
+
+bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t length)
+{
+    (void) boot;
+    (void) physical;
+    (void) length;
+    return false;
+}

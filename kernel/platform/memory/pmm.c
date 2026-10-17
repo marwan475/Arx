@@ -1,5 +1,6 @@
 #include <klib/intrusive_list.h>
 #include <memory/pmm.h>
+#include <memory/numa.h>
 #include <memory/vmm.h>
 #include <platform.h>
 
@@ -205,97 +206,128 @@ static void buddy_allocator_init(zone_t* zone)
     }
 }
 
-void pmm_init(struct boot_info* boot_info)
+static void add_usable_region(zone_t* zone, uint64_t start, uint64_t end)
 {
-    // single numa node for now
-    memset(&platform.numa_nodes, 0, sizeof(platform.numa_nodes));
-    platform.numa_node_count = 1;
-    zone_t* zone             = &platform.numa_nodes[0].zone;
-
-    struct boot_memmap_entry* memmap             = (struct boot_memmap_entry*) (uintptr_t) boot_info->memmap_entries;
-    size_t                    memmap_entry_count = boot_info->memmap_entry_count;
-
-    for (size_t i = 0; i < memmap_entry_count; i++)
+    if (zone->region_count == PMM_MAX_REGIONS)
     {
-        if (memmap[i].type == BOOT_MEMMAP_USABLE)
-        {
-            uint64_t aligned_base = align_up(memmap[i].base, PAGE_SIZE);
-            uint64_t aligned_end  = align_down(memmap[i].base + memmap[i].length, PAGE_SIZE);
-
-            if (aligned_end <= aligned_base)
-            {
-                continue;
-            }
-
-            if (zone->region_count < PMM_MAX_REGIONS)
-            {
-                zone->total_memory += aligned_end - aligned_base;
-
-                // Store usable page frame numbers for buddy allocator
-                const uint64_t start_pfn                     = pa_to_pfn(aligned_base);
-                const uint64_t end_pfn                       = pa_to_pfn(aligned_end);
-                zone->regions[zone->region_count].start_pfn  = start_pfn;
-                zone->regions[zone->region_count].end_pfn    = end_pfn;
-                zone->regions[zone->region_count].page_count = end_pfn - start_pfn;
-                zone->total_pages += end_pfn - start_pfn;
-                zone->region_count++;
-
-                if (zone->min_pfn == 0 || start_pfn < zone->min_pfn)
-                {
-                    zone->min_pfn = start_pfn;
-                }
-
-                if (end_pfn > zone->max_pfn)
-                {
-                    zone->max_pfn = end_pfn;
-                }
-            }
-            else
-            {
-                kprintf("Arx kernel: too many usable memory regions (max %u)\n", PMM_MAX_REGIONS);
-                panic();
-            }
-        }
-    }
-
-    kprintf("Arx kernel: total usable memory: %llu bytes (%llu KB, %llu MB)\n", (unsigned long long) zone->total_memory, (unsigned long long) bytes_to_kb(zone->total_memory), (unsigned long long) bytes_to_mb(zone->total_memory));
-    kprintf("Arx kernel: total usable Page Frames: %llu (min: %llu, max: %llu)\n", (unsigned long long) zone->total_pages, (unsigned long long) zone->min_pfn, (unsigned long long) zone->max_pfn);
-
-    size_t buddy_metadata_size  = align_up((zone->max_pfn * sizeof(page_t)), PAGE_SIZE);
-    size_t buddy_metadata_pages = buddy_metadata_size / PAGE_SIZE;
-
-    uint64_t buddy_metadata_pfn = pmm_alloc_from_region(zone, buddy_metadata_pages);
-
-    if (buddy_metadata_pfn == PMM_INVALID_PFN)
-    {
-        error_logger("Arx kernel: failed to allocate memory for buddy allocator metadata\n");
+        error_logger("Arx kernel: too many memory regions for NUMA zone\n");
         panic();
     }
-
-    zone->hhdm_present = boot_info->hhdm_present;
-    zone->hhdm_offset  = boot_info->hhdm_offset;
-
-    virt_addr_t buddy_metadata_va = pa_to_hhdm(pfn_to_pa(buddy_metadata_pfn), zone->hhdm_present, zone->hhdm_offset);
-    memset((void*) buddy_metadata_va, 0, buddy_metadata_size);
-    zone->buddy_metadata = (page_t*) buddy_metadata_va;
-
-    zone->total_pages -= buddy_metadata_pages;
-    split_dma_zone(&platform.numa_nodes[0]);
-
-    zone->free_pages = zone->total_pages;
-    zone->used_pages = 0;
-    zone->lock       = 0;
-
-    buddy_allocator_init(zone);
-    kprintf("Arx kernel: buddy allocator initialized\n");
-
-    uint8_t num_cpus                 = platform.cpu_count;
-    platform.numa_nodes[0].cpu_count = num_cpus;
-
-    for (uint8_t i = 0; i < num_cpus; i++)
+    const uint64_t first = pa_to_pfn(start), last = pa_to_pfn(end);
+    zone->regions[zone->region_count++] = (pmm_region_t) {first, last, last - first};
+    zone->total_pages += last - first;
+    zone->total_memory += end - start;
+    if (zone->region_count == 1 || first < zone->min_pfn)
     {
-        platform.cpus[i].numa_node = &platform.numa_nodes[0];
+        zone->min_pfn = first;
     }
+    if (last > zone->max_pfn)
+    {
+        zone->max_pfn = last;
+    }
+}
+
+static const numa_memory_range_t* memory_range(const numa_topology_t* topology, uint64_t address)
+{
+    for (size_t i = 0; i < topology->range_count; ++i)
+    {
+        if (address >= topology->ranges[i].start && address < topology->ranges[i].end)
+        {
+            return &topology->ranges[i];
+        }
+    }
+    return NULL;
+}
+
+void pmm_init(struct boot_info* boot_info)
+{
+    numa_topology_t topology;
+    bool topology_valid = numa_boot_topology(boot_info, &topology);
+    const struct boot_memmap_entry* memmap = (const void*) boot_info->memmap_entries;
+    // Reject incomplete firmware topology as a whole. Every usable byte must
+    // have exactly one owner before any allocator state is published.
+    for (size_t i = 0; topology_valid && i < boot_info->memmap_entry_count; ++i)
+    {
+        if (memmap[i].type != BOOT_MEMMAP_USABLE)
+        {
+            continue;
+        }
+        uint64_t start = align_up(memmap[i].base, PAGE_SIZE);
+        const uint64_t end = align_down(memmap[i].base + memmap[i].length, PAGE_SIZE);
+        while (start < end)
+        {
+            const numa_memory_range_t* range = memory_range(&topology, start);
+            if (range == NULL)
+            {
+                topology_valid = false;
+                break;
+            }
+            start = range->end < end ? range->end : end;
+        }
+    }
+    memset(platform.numa_nodes, 0, sizeof(platform.numa_nodes));
+    platform.numa_node_count = topology_valid ? topology.node_count : 1;
+    size_t maximum_pfn = 0;
+    for (size_t i = 0; i < boot_info->memmap_entry_count; ++i)
+    {
+        if (memmap[i].type != BOOT_MEMMAP_USABLE)
+        {
+            continue;
+        }
+        uint64_t start = align_up(memmap[i].base, PAGE_SIZE);
+        const uint64_t end = align_down(memmap[i].base + memmap[i].length, PAGE_SIZE);
+        while (start < end)
+        {
+            const numa_memory_range_t* range = topology_valid ? memory_range(&topology, start) : NULL;
+            const uint64_t last = range != NULL && range->end < end ? range->end : end;
+            zone_t* zone = &platform.numa_nodes[range != NULL ? range->node : 0].zone;
+            add_usable_region(zone, start, last);
+            if (zone->max_pfn > maximum_pfn)
+            {
+                maximum_pfn = zone->max_pfn;
+            }
+            start = last;
+        }
+    }
+    const size_t metadata_size = align_up(maximum_pfn * sizeof(page_t), PAGE_SIZE);
+    const size_t metadata_pages = metadata_size / PAGE_SIZE;
+    uint64_t metadata_pfn = PMM_INVALID_PFN;
+    for (size_t i = 0; i < platform.numa_node_count; ++i)
+    {
+        zone_t* zone = &platform.numa_nodes[i].zone;
+        metadata_pfn = pmm_alloc_from_region(zone, metadata_pages);
+        if (metadata_pfn != PMM_INVALID_PFN)
+        {
+            zone->total_pages -= metadata_pages;
+            break;
+        }
+    }
+    if (metadata_pfn == PMM_INVALID_PFN)
+    {
+        error_logger("Arx kernel: cannot allocate NUMA page metadata\n");
+        panic();
+    }
+    page_t* metadata = (void*) (uintptr_t) pa_to_hhdm(pfn_to_pa(metadata_pfn), boot_info->hhdm_present, boot_info->hhdm_offset);
+    memset(metadata, 0, metadata_size);
+    for (size_t i = 0; i < platform.numa_node_count; ++i)
+    {
+        numa_node_t* node = &platform.numa_nodes[i];
+        zone_t* zone = &node->zone;
+        node->proximity_domain = topology_valid ? topology.domains[i] : 0;
+        zone->hhdm_present = boot_info->hhdm_present;
+        zone->hhdm_offset = boot_info->hhdm_offset;
+        zone->buddy_metadata = metadata;
+        split_dma_zone(node);
+        buddy_allocator_init(zone);
+        kprintf("Arx kernel: NUMA node %u domain %u Normal=%llu DMA=%llu bytes\n", (unsigned) i, node->proximity_domain, (unsigned long long) zone->total_memory, (unsigned long long) node->dma_zone.total_memory);
+    }
+    for (size_t i = 0; i < platform.cpu_count; ++i)
+    {
+        const size_t node = topology_valid ? topology.cpu_nodes[i] : 0;
+        platform.cpus[i].numa_node = &platform.numa_nodes[node];
+        ++platform.numa_nodes[node].cpu_count;
+    }
+    kprintf("Arx kernel: NUMA topology %s, %u nodes\n", topology_valid ? "validated" : "unavailable (uniform fallback)", (unsigned) platform.numa_node_count);
 }
 
 // removes head of free list
@@ -427,22 +459,8 @@ static void buddy_free(zone_t* zone, uint64_t pfn)
     add_block_to_free_list(zone, block->order, block->pfn);
 }
 
-void* pmm_alloc(size_t size)
+static void* pmm_alloc_zone(zone_t* zone, size_t size)
 {
-    cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
-
-    if (cpu->numa_node == NULL)
-    {
-        return NULL;
-    }
-
-    zone_t* zone = &cpu->numa_node->zone;
-
-    if (zone == NULL)
-    {
-        return NULL;
-    }
-
     if (size == 0)
     {
         return NULL;
@@ -478,14 +496,31 @@ void* pmm_alloc(size_t size)
     return (void*) hhdm_va;
 }
 
-void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
+void* pmm_alloc(size_t size)
+{
+    numa_node_t* local = platform.cpus[arch_cpu_id()].numa_node;
+    if (local == NULL)
+    {
+        return NULL;
+    }
+    void* pointer = pmm_alloc_zone(&local->zone, size);
+    for (size_t i = 0; pointer == NULL && i < platform.numa_node_count; ++i)
+    {
+        if (&platform.numa_nodes[i] != local)
+        {
+            pointer = pmm_alloc_zone(&platform.numa_nodes[i].zone, size);
+        }
+    }
+    return pointer;
+}
+
+static void* pmm_alloc_dma_zone(zone_t* zone, size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
 {
     if (size == 0 || platform.cpus[arch_cpu_id()].numa_node == NULL)
     {
         return NULL;
     }
 
-    zone_t* zone  = &platform.cpus[arch_cpu_id()].numa_node->dma_zone;
     size_t  order = 0;
 
     while (order <= MAX_ORDER && order_size(order) * PAGE_SIZE < size)
@@ -538,6 +573,24 @@ void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physi
 
     spinlock_release_preempt(&zone->lock);
     return (void*) (uintptr_t) pa_to_hhdm(physical, zone->hhdm_present, zone->hhdm_offset);
+}
+
+void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
+{
+    numa_node_t* local = platform.cpus[arch_cpu_id()].numa_node;
+    if (local == NULL)
+    {
+        return NULL;
+    }
+    void* pointer = pmm_alloc_dma_zone(&local->dma_zone, size, maximum_address, physical_address);
+    for (size_t i = 0; pointer == NULL && i < platform.numa_node_count; ++i)
+    {
+        if (&platform.numa_nodes[i] != local)
+        {
+            pointer = pmm_alloc_dma_zone(&platform.numa_nodes[i].dma_zone, size, maximum_address, physical_address);
+        }
+    }
+    return pointer;
 }
 
 void pmm_free(void* addr)

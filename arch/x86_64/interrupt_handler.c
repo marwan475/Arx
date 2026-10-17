@@ -157,9 +157,21 @@ static void handle_ipi(registers_t* reg)
         panic();
     }
 
-    cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
-    memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
-    spinlock_release(&cpu_info->ipi_lock);
+    if (request_type != IPI_REQUEST_NONE)
+    {
+        cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
+        memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
+        spinlock_release(&cpu_info->ipi_lock);
+    }
+    if (request_type == IPI_REQUEST_RESCHEDULE)
+    {
+        __atomic_store_n(&cpu_info->reschedule_pending, true, __ATOMIC_RELEASE);
+    }
+    if (__atomic_load_n(&cpu_info->reschedule_pending, __ATOMIC_ACQUIRE) && cpu_info->preemption_depth == 0 && cpu_info->arch_info.syscall_ctx.active == 0)
+    {
+        dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+    }
+
 }
 
 static void handle_interrupt(registers_t* reg)
@@ -178,6 +190,7 @@ static void handle_interrupt(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
+        (void) arch_program_scheduler_timer(10000000ULL);
         // Maintain the 32-bit HPET epoch even without sleepers or clock syscalls.
         // This uses no scheduler locks and must run even while dispatch is deferred.
 
@@ -189,7 +202,8 @@ static void handle_interrupt(registers_t* reg)
 
         // Bootstrap/kernel tasks still require timer dispatch. Defer only
         // active syscalls and explicitly guarded critical sections.
-        const cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+        cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+        __atomic_store_n(&cpu->reschedule_pending, true, __ATOMIC_RELEASE);
 
         if (cpu->arch_info.syscall_ctx.active == 0 && __atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) == 0)
         {

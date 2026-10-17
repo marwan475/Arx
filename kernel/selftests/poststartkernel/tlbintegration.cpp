@@ -18,6 +18,7 @@ struct coherence_control_t
     uint32_t acknowledged[BOOT_SMP_MAX_CPUS];
     uint64_t observed[BOOT_SMP_MAX_CPUS];
     uint64_t address;
+    virt_addr_space_t* sharedRoot;
     bool     unsafe;
 };
 coherence_control_t control;
@@ -82,6 +83,7 @@ void test_tlb_integration(ResourceLayerCaps* r)
 
     if (cpu != platform.bsp_id)
     {
+        auto* originalRoot = platform.cpus[cpu].address_space;
         __atomic_store_n(&control.ready[cpu], 1U, __ATOMIC_RELEASE);
         uint32_t   previous = 0;
         PollBudget budget;
@@ -92,7 +94,15 @@ void test_tlb_integration(ResourceLayerCaps* r)
 
             if (command != previous && command != 0)
             {
-                if (command != 3)
+                if (command == 4)
+                {
+                    r->virtualMemoryManager->SwitchAddressSpace(control.sharedRoot);
+                }
+                else if (command == 3)
+                {
+                    r->virtualMemoryManager->SwitchAddressSpace(originalRoot);
+                }
+                else
                 {
                     control.observed[cpu] = *reinterpret_cast<volatile uint64_t*>(control.address);
                 }
@@ -140,14 +150,11 @@ void test_tlb_integration(ResourceLayerCaps* r)
 
     auto* space = platform.cpus[cpu].address_space;
 
-    for (size_t other = 0; other < platform.cpu_count; ++other)
+    control.sharedRoot = space;
+    __atomic_store_n(&control.command, 4U, __ATOMIC_RELEASE);
+    if (!wait_for(4, false))
     {
-        if (platform.cpus[other].address_space != space)
-        {
-            t.Block("post-init CPUs do not share the kernel root");
-            stop_peers();
-            return;
-        }
+        SelfTestManager::Get().AbortUnsafe("TLB peers could not enter shared fixture root");
     }
 
     auto*       vm      = r->virtualMemoryManager;

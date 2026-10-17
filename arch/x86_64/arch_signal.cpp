@@ -134,6 +134,7 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result, const
     memcpy(saved.info, info, sizeof(info));
     memcpy(saved.info + 16, &sender.pid, 4);
     memcpy(saved.info + 20, &sender.uid, 4);
+    memcpy(saved.info + 24, &sender.value, 8);
     uint8_t floating[512] = {};
     memcpy(floating, (const void*) frame->fxstate, 416);
 

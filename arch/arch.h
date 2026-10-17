@@ -1,3 +1,4 @@
+struct boot_info;
 #ifndef ARCH_H
 #define ARCH_H
 
@@ -36,6 +37,12 @@ typedef uint64_t virt_addr_t;
 extern "C"
 {
 #endif
+
+    bool arch_task_context_supported(void);
+    void arch_request_reschedule(uint8_t cpu);
+    bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t length);
+    bool arch_scheduler_timer_ready(uint8_t cpu);
+    bool arch_program_scheduler_timer(uint64_t nanoseconds);
 
 #if defined(__x86_64__)
 #define ARCH_PAGE_FLAGS_INIT(flags) ((flags) = (1ULL << 63))

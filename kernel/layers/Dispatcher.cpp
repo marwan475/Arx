@@ -68,6 +68,7 @@ extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64
     if (logic->scheduler != nullptr)
     {
         logic->scheduler->AccountCurrent(false);
+        logic->scheduler->ServicePendingReschedule(true);
     }
 
     return logic->signalManager->Deliver(frame, result, restartable);
@@ -147,8 +148,24 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
         case SYSCALL_setsid:
             return caps->processRequestManager->HandleSetsidRequest(frame);
 
+        case SYSCALL_sched_setparam:
+        case SYSCALL_sched_getparam:
+        case SYSCALL_sched_setscheduler:
+        case SYSCALL_sched_getscheduler:
+        case SYSCALL_sched_get_priority_max:
+        case SYSCALL_sched_get_priority_min:
+        case SYSCALL_sched_rr_get_interval:
+        case SYSCALL_sched_setattr:
+        case SYSCALL_sched_getattr:
+            return caps->schedulerRequestManager->HandleSchedulingPolicyRequest(frame);
         case SYSCALL_sched_yield:
             return caps->schedulerRequestManager->HandleSched_yieldRequest(frame);
+        case SYSCALL_sched_setaffinity:
+            return caps->schedulerRequestManager->HandleSched_setaffinityRequest(frame);
+        case SYSCALL_getpriority:
+            return caps->schedulerRequestManager->HandleGetpriorityRequest(frame);
+        case SYSCALL_setpriority:
+            return caps->schedulerRequestManager->HandleSetpriorityRequest(frame);
         case SYSCALL_sched_getaffinity:
             return caps->schedulerRequestManager->HandleSched_getaffinityRequest(frame);
         case SYSCALL_getcpu:
@@ -353,6 +370,9 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
         case SYSCALL_get_robust_list:
             return caps->syncRequestManager->HandleGet_robust_listRequest(frame);
 
+        case SYSCALL_rt_sigqueueinfo:
+        case SYSCALL_rt_tgsigqueueinfo:
+            return caps->signalRequestManager->HandleQueuedSignalRequest(frame);
         case SYSCALL_rt_sigreturn:
             return caps->signalRequestManager->HandleRt_sigreturnRequest(frame);
         case SYSCALL_rt_sigprocmask:
@@ -545,4 +565,24 @@ extern "C" void end_user_memory(user_memory_access_t* access)
     static_cast<ProcessManager*>(access->process_manager)->ReleaseMemoryProcess(access->process);
     *access = {};
     cpu_preemption_enable();
+}
+
+extern "C" void dispatcher_service_pending_reschedule(void)
+{
+    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->ServicePendingReschedule();
+    }
+}
+
+extern "C" void dispatcher_account_scheduling(bool beginExecution)
+{
+    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountSchedulingCurrent(beginExecution);
+    }
 }

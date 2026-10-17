@@ -4,6 +4,8 @@
 #include <memory/vmm.h>
 #include <platform.h>
 
+static uint64_t scheduler_timer_ticks[BOOT_SMP_MAX_CPUS];
+
 static volatile uint8_t* lapic_get_base(const cpu_info_t* cpu)
 {
     const zone_t* zone = &cpu->numa_node->zone;
@@ -111,6 +113,7 @@ bool lapic_timer_calibrate(void)
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = 0;
     REG(uint32_t, registers + LAPIC_REG_LVT_TIMER)     = measured ? LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR : previous_lvt;
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = measured ? (uint32_t) initial : previous_initial;
+    __atomic_store_n(&scheduler_timer_ticks[arch_cpu_id()], measured ? initial : 0, __ATOMIC_RELEASE);
     cpu_preemption_enable();
 
     if (measured)
@@ -194,4 +197,56 @@ void send_ipi(uint8_t target_cpu_id, uint8_t request_type, const void* request_d
     REG(uint32_t, lapic_base + LAPIC_REG_ICR_LOW)  = LAPIC_IPI_VECTOR;
 
     lapic_wait_for_delivery(lapic_base);
+}
+
+void arch_request_reschedule(uint8_t target)
+{
+    const cpu_info_t* source = &platform.cpus[arch_cpu_id()];
+    if (target >= platform.cpu_count || !source->arch_info.acpi_has_lapic || !platform.cpus[target].arch_info.acpi_has_lapic)
+    {
+        return;
+    }
+    // Scheduling IPIs carry no mailbox payload and never wait for a target
+    // software lock. Serialize the local ICR pair against interrupt handlers.
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    volatile uint8_t* registers = lapic_get_base(source);
+    lapic_wait_for_delivery(registers);
+    REG(uint32_t, registers + LAPIC_REG_ICR_HIGH) = platform.cpus[target].arch_info.acpi_lapic_id << 24;
+    REG(uint32_t, registers + LAPIC_REG_ICR_LOW) = LAPIC_IPI_VECTOR;
+    lapic_wait_for_delivery(registers);
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+bool arch_scheduler_timer_ready(uint8_t cpu)
+{
+    return cpu < platform.cpu_count && __atomic_load_n(&scheduler_timer_ticks[cpu], __ATOMIC_ACQUIRE) != 0;
+}
+
+bool arch_program_scheduler_timer(uint64_t nanoseconds)
+{
+    const uint8_t cpu = arch_cpu_id();
+    const uint64_t ticks = __atomic_load_n(&scheduler_timer_ticks[cpu], __ATOMIC_ACQUIRE);
+    if (ticks == 0 || nanoseconds == 0)
+    {
+        return false;
+    }
+    // Scheduling keeps a 10ms heartbeat for sleepers and accounting, and can
+    // arm an earlier event for a quantum, reservation or replenishment boundary.
+    if (nanoseconds > 10000000ULL)
+    {
+        nanoseconds = 10000000ULL;
+    }
+    uint64_t count = (ticks * nanoseconds + 9999999ULL) / 10000000ULL;
+    if (count == 0)
+    {
+        count = 1;
+    }
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    volatile uint8_t* registers = lapic_get_base(&platform.cpus[cpu]);
+    REG(uint32_t, registers + LAPIC_REG_LVT_TIMER) = LAPIC_TIMER_VECTOR;
+    REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = (uint32_t) count;
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+    return true;
 }

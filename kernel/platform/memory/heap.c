@@ -265,8 +265,10 @@ static void cache_init(cache_t* cache, size_t object_size)
 
 void heap_init(void)
 {
+    numa_node_t* original = platform.cpus[arch_cpu_id()].numa_node;
     for (size_t i = 0; i < platform.numa_node_count; i++)
     {
+        platform.cpus[arch_cpu_id()].numa_node = &platform.numa_nodes[i];
         platform.numa_nodes[i].heap.lock = 0;
 
         for (size_t j = 0; j < OBJECT_SIZE_CLASS_COUNT; j++)
@@ -275,6 +277,7 @@ void heap_init(void)
         }
     }
 
+    platform.cpus[arch_cpu_id()].numa_node = original;
     kprintf("Arx kernel: heap initialized\n");
 }
 

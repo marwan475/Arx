@@ -1,5 +1,6 @@
 #include "integrationtests.hpp"
 #include "ScheduledFixture.hpp"
+#include <selftests/PollBudget.hpp>
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SynchronizationManager.hpp"
 #include "layers/Logic/ProcessController.hpp"
@@ -145,8 +146,73 @@ static void event_notifier(ScheduledFixture& f)
     f.L->eventManager->Notify();
 }
 
+static void sibling_remote(ScheduledFixture& fixture)
+{
+    const uint8_t cpu = arch_cpu_id();
+    const uint8_t other = fixture.Main->ownerCpu;
+    const bool simultaneous = other < platform.cpu_count && other != cpu && fixture.R->taskManager->GetRunningTask(other) == fixture.Main && fixture.R->processManager->GetRunningProcess(other) == fixture.Process && fixture.R->processManager->GetCurrentProcess() == fixture.Process;
+    kfree(reinterpret_cast<void*>(fixture.Result));
+    fixture.Result = reinterpret_cast<uint64_t>(kmalloc(128));
+    __atomic_store_n(&fixture.Word, simultaneous ? 1U : 2U, __ATOMIC_RELEASE);
+}
+
+static void sibling_main(ScheduledFixture& fixture)
+{
+    cpu_preemption_disable();
+    const uint8_t cpu = arch_cpu_id();
+    uint8_t remote = (cpu + 1) % platform.cpu_count;
+    for (size_t i = 0; i < platform.cpu_count; ++i)
+    {
+        if (platform.cpus[i].numa_node != platform.cpus[cpu].numa_node)
+        {
+            remote = i;
+            break;
+        }
+    }
+    fixture.T.Equal(fixture.L->scheduler->SetAffinity(fixture.Main, 1ULL << cpu), 0, "pin main sibling");
+    fixture.T.Equal(fixture.L->scheduler->SetAffinity(fixture.Peer, 1ULL << remote), 0, "pin remote sibling");
+    fixture.Result = reinterpret_cast<uint64_t>(kmalloc(128));
+    fixture.T.Check(fixture.Result != 0, "allocate object before cross-node free");
+    if (!fixture.PublishPeer())
+    {
+        kfree(reinterpret_cast<void*>(fixture.Result));
+        return;
+    }
+    PollBudget budget;
+    while (__atomic_load_n(&fixture.Word, __ATOMIC_ACQUIRE) == 0 || !fixture.Peer->dying || fixture.Peer->state == task_t::RUNNING || fixture.Peer->state == task_t::SWITCHING)
+    {
+        if (budget.Expired())
+        {
+            SelfTestManager::Get().AbortUnsafe("remote sibling did not execute and quiesce while main stayed running");
+        }
+        arch_pause();
+    }
+    fixture.T.Equal(fixture.Word, 1, "siblings execute concurrently in one process and address space");
+    fixture.T.Check(fixture.Result != 0, "remote sibling allocates from its node heap");
+    kfree(reinterpret_cast<void*>(fixture.Result));
+}
+
 void test_wait_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
 {
+    {
+        TestCase test("poststartkernel/scheduler/concurrent_siblings");
+        if (platform.cpu_count < 2)
+        {
+            test.Skip("requires two CPUs");
+        }
+        else if (r != nullptr && l != nullptr && l->scheduler != nullptr)
+        {
+            uint64_t now = 0;
+            arch_time_read_monotonic(&now);
+            ScheduledFixture fixture(test, r, l, sibling_main, sibling_remote);
+            fixture.Run(now + 1000000000);
+        }
+        else
+        {
+            test.Block("scheduler resources unavailable");
+        }
+    }
+
     if (r && l && l->scheduler && l->synchronizationManager && l->processController)
     {
         for (sharedOperation = 0; sharedOperation < 3; ++sharedOperation)

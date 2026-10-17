@@ -34,7 +34,11 @@ struct signal_record_t
     int32_t  code;
     uint32_t pid;
     uint32_t uid;
-    uint8_t  reserved[108];
+    uint8_t  reserved[20];
+    int32_t  status;
+    int32_t  valueInteger;
+    uint64_t valuePointer;
+    uint8_t  tail[72];
 };
 static_assert(sizeof(signal_record_t) == 128, "Linux signalfd_siginfo ABI");
 struct notification_watch_t
@@ -415,10 +419,6 @@ uint64_t EventManager::SignalDescriptor(int32_t fd, uint64_t mask, uint32_t flag
         return LINUX_EINVAL;
     }
     mask &= ~SIGNAL_UNBLOCKABLE;
-    if (mask & ~0x7fffffffULL)
-    {
-        return LINUX_EOPNOTSUPP;
-    }
     if (fd == -1)
     {
         auto state = static_cast<signal_descriptor_t*>(kzalloc(sizeof(signal_descriptor_t)));
@@ -629,30 +629,24 @@ uint64_t EventManager::NotificationReadVector(file_t* file, const file_iovec_t* 
                     {
                         break;
                     }
-                    const uint32_t  index  = (uint32_t) __builtin_ctzll(available);
-                    const uint64_t  bit    = 1ULL << index;
-                    const bool      thread = (__atomic_load_n(&task->signalPending, __ATOMIC_ACQUIRE) & bit) != 0;
-                    signal_sender_t sender = thread && task->signalSenders != nullptr ? task->signalSenders[index] : process->signalSenders[index];
+                    signal_sender_t sender = {};
+                    const int       signal = SignalManager::Peek(process, task, mask, &sender);
                     signal_record_t record = {};
-                    record.number          = index + 1;
+                    record.number          = signal;
                     record.pid             = sender.pid;
                     record.uid             = sender.uid;
                     record.code            = sender.code;
+                    record.status          = sender.code > 0 && sender.code <= 6 ? static_cast<int32_t>(sender.value) : 0;
+                    record.valueInteger    = sender.code == -1 ? static_cast<int32_t>(sender.value) : 0;
+                    record.valuePointer    = sender.code == -1 ? sender.value : 0;
                     if (!copy_record(&access, vectors, count, copied, &record, sizeof(record)))
                     {
                         result = LINUX_EFAULT;
                         break;
                     }
-                    if (thread)
-                    {
-                        __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE);
-                    }
-                    else
-                    {
-                        __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
-                    }
+                    SignalManager::Consume(process, task, signal);
                     copied += sizeof(record);
-                    alarm |= index == 13;
+                    alarm |= signal == 14;
                 }
                 signalGuard.Release();
                 if (alarm && manager->Resources->timeManager != nullptr)

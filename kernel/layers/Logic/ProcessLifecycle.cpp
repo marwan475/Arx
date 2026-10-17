@@ -132,6 +132,11 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
     {
         return LINUX_ESRCH;
     }
+    const uint64_t policyStatus = Logic->scheduler->ValidateClonePolicy(caller);
+    if (policyStatus != 0)
+    {
+        return policyStatus;
+    }
 
     Logic->scheduler->ReapExitedProcesses();
 
@@ -229,6 +234,22 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
 
     }
 
+    if (!thread && arguments.exitSignal >= 32 && child->hasParent)
+    {
+        process_t* recipient = processes->AcquireProcess(child->parentId);
+        const uint64_t status = Logic->signalManager->ReserveExit(child, recipient);
+        if (recipient != nullptr)
+        {
+            processes->ReleaseProcess(recipient);
+        }
+        if (status != 0)
+        {
+            tasks->FreeTask(task);
+            processes->FreeProcess(child);
+            return status;
+        }
+    }
+
     // Prepare every resource before publishing the child. Until publication,
     // FreeTask/FreeProcess own all rollback, including retained open files.
     descriptor_table_t*    table        = parent->Files();
@@ -297,6 +318,11 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         __atomic_add_fetch(&filesystem->references, 1U, __ATOMIC_RELAXED);
     }
 
+    task->affinityMask    = caller->affinityMask;
+    task->baseNice        = caller->baseNice;
+    task->effectiveNice   = caller->baseNice;
+    task->scheduleRuntime = caller->scheduleRuntime;
+    Logic->scheduler->InheritPolicy(caller, task);
     task->signalMask  = caller->signalMask;
     task->signalStack = (flags & CLONE_VM) != 0 && (flags & CLONE_VFORK) == 0 ? signal_stack_t{0, 2, 0, 0} : caller->signalStack;
     memcpy(task->name, caller->name, sizeof(task->name));
@@ -1315,12 +1341,13 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     current->programBreak          = breakBase;
     current->elfMetadata           = nullptr;
     current->credentials           = credentials;
+    SignalManager::ReleaseExit(Resources, current, false);
     current->exitSignal            = 17;
 
     {
         SignalDispositionGuard guard(current);
 
-        for (size_t index = 0; index < 32; ++index)
+        for (size_t index = 0; index < 64; ++index)
         {
             if (current->Signals()->actions[index].handler != 1)
             {

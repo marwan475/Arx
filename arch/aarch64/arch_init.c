@@ -66,3 +66,25 @@ bool arch_device_init(void)
 {
     return false;
 }
+
+bool arch_task_context_supported(void)
+{
+    return false;
+}
+
+void arch_request_reschedule(uint8_t cpu)
+{
+    (void) cpu;
+}
+
+bool arch_scheduler_timer_ready(uint8_t cpu)
+{
+    (void) cpu;
+    return false;
+}
+
+bool arch_program_scheduler_timer(uint64_t nanoseconds)
+{
+    (void) nanoseconds;
+    return false;
+}

@@ -9,6 +9,8 @@ extern "C"
 #include <platform/memory/vmm.h>
 }
 
+extern "C" void dispatcher_account_scheduling(bool beginExecution);
+
 static TaskManager* contextTaskManager;
 
 size_t TaskManager::CountTasks() const
@@ -105,6 +107,7 @@ bool TaskManager::SetCurrentTlsBase(bool gs, uint64_t value)
 extern "C" void task_context_switch_complete(void)
 {
     contextTaskManager->CompleteSwitch();
+    dispatcher_account_scheduling(true);
 }
 
 static uint64_t task_save_and_disable_interrupts()
@@ -172,7 +175,26 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->state                = task_t::READY;
     task->ownerCpu             = -1;
     task->dispatchUsers        = 0;
+    task->affinityMask         = platform.cpu_count >= 64 ? UINT64_MAX : (1ULL << platform.cpu_count) - 1;
+    task->scheduleRuntime      = 0;
+    task->scheduling = allocated ? static_cast<task_scheduling_t*>(kzalloc(sizeof(task_scheduling_t))) : nullptr;
+    if (allocated && task->scheduling == nullptr)
+    {
+        task->allocated = false;
+    }
+    if (task->scheduling != nullptr)
+    {
+        task->scheduling->reservationCpu = -1;
+        task->scheduling->roundRobinRemaining = SCHEDULING_RR_QUANTUM;
+    }
+    task->baseNice             = 0;
+    task->effectiveNice        = 0;
+    task->placementCpu         = -1;
+    task->schedulerQueued      = false;
+    task->migrationEnabled     = false;
+    task->schedulingBusy       = false;
     task->dying                = false;
+    task->priorityCleanupDone  = false;
     task->isUserTask           = false;
     task->sleepPending         = false;
     task->sleepBlocked         = false;
@@ -192,6 +214,7 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->signalStack          = {0, 2, 0, 0};
     task->signalDepth          = 0;
     task->signalSenders        = nullptr;
+    task->signalQueue          = nullptr;
     task->robustHead           = 0;
     task->clearChildTid        = 0;
     task->setChildTid          = 0;
@@ -211,6 +234,8 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 TaskManager::TaskManager()
 {
     static_assert(sizeof(TaskManager) <= 131072, "TaskManager must fit the largest heap object");
+    PriorityCleanup        = nullptr;
+    PriorityCleanupContext = nullptr;
     ManagerLock        = 0;
     LoadEpoch          = 0;
     memset(LoadAverages, 0, sizeof(LoadAverages));
@@ -247,7 +272,7 @@ task_t* TaskManager::AllocateTaskUnlocked()
         if (!Tasks[i].allocated && FindTask(i) == nullptr)
         {
             ResetTaskSlot(&Tasks[i], i, true);
-            return &Tasks[i];
+            return Tasks[i].allocated ? &Tasks[i] : nullptr;
         }
     }
 
@@ -361,6 +386,12 @@ task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint
     }
 
     ResetTaskSlot(task, id, true);
+    if (!task->allocated)
+    {
+        UnlockManager();
+        vfree(allocation);
+        return nullptr;
+    }
     task->stack      = static_cast<uint8_t*>(allocation) + PAGE_SIZE;
     task->isUserTask = true;
     auto* saved     = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(*frame));
@@ -416,8 +447,10 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         return false;
     }
 
-    if (task->retirementCleanup != nullptr)
+    if (task->retirementCleanup != nullptr || (PriorityCleanup != nullptr && !task->priorityCleanupDone))
     {
+        const bool priorityCleanup = PriorityCleanup != nullptr && !task->priorityCleanupDone;
+        task->priorityCleanupDone = true;
         auto  cleanup           = task->retirementCleanup;
         void* context           = task->retirementContext;
         task->retirementCleanup = nullptr;
@@ -425,7 +458,14 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         task->state             = task_t::DYING;
         ++task->dispatchUsers;
         UnlockManager();
-        cleanup(context, task);
+        if (priorityCleanup)
+        {
+            PriorityCleanup(PriorityCleanupContext, task);
+        }
+        if (cleanup != nullptr)
+        {
+            cleanup(context, task);
+        }
         LockManager();
         --task->dispatchUsers;
     }
@@ -480,6 +520,8 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         }
     }
 
+    task_scheduling_t* schedulingToFree = task->scheduling;
+    signal_queue_t* queueToFree = task->signalQueue;
     sendersToFree = task->signalSenders;
     ResetTaskSlot(task, (uint64_t) (task - &Tasks[0]), false);
 
@@ -501,6 +543,8 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         ReleaseTaskResources(resources);
     }
     kfree(sendersToFree);
+    kfree(queueToFree);
+    kfree(schedulingToFree);
 
     if (retiredStack != nullptr)
     {
@@ -547,6 +591,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
         return false;
     }
 
+    dispatcher_account_scheduling(false);
     LockManager();
 
     if (releaseDispatchClaim && task->dispatchUsers != 0)
@@ -554,7 +599,8 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
         --task->dispatchUsers;
     }
 
-    if (!task->allocated || (task->dying && !task->sleepPending) || task->state == task_t::SWITCHING || (task->ownerCpu >= 0 && task->ownerCpu != cpuId) || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
+    if (!task->allocated || (task->dying && !task->sleepPending) || task->state == task_t::SWITCHING || (task->ownerCpu >= 0 && task->ownerCpu != cpuId && !__atomic_load_n(&task->migrationEnabled, __ATOMIC_ACQUIRE)) || (task->state == task_t::RUNNING && RunningTasks[cpuId] != task)
+        || !(__atomic_load_n(&task->affinityMask, __ATOMIC_ACQUIRE) & (1ULL << cpuId)) || __atomic_load_n(&task->sleepBlocked, __ATOMIC_ACQUIRE))
     {
         UnlockManager();
         return false;
@@ -578,6 +624,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     AccountCurrent(current->accountingUser);
     current->accountingRunning    = false;
     task->accountingRunning       = arch_time_read_monotonic(&task->accountingStamp);
+    platform.cpus[cpuId].switching_context = true;
     current->state                = task_t::SWITCHING;
     SwitchingTasks[cpuId]         = current;
     task->state                   = task_t::RUNNING;
@@ -604,7 +651,9 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
 
     arch_save_switch_and_execute_context(&current->taskContext, &task->taskContext);
 
-    // We only reach here after another switch restores this task.
+    // A suspended task may resume on a different CPU. Never reuse its old
+    // per-CPU pointer after restoring the task context.
+    cpu_info                   = &platform.cpus[arch_cpu_id()];
     cpu_info->preemption_depth = current->preemptionDepth;
 #if defined(__x86_64__)
     cpu_info->arch_info.syscall_ctx.active = current->syscallActive;
@@ -638,6 +687,7 @@ void TaskManager::CompleteSwitch()
     }
 
     SwitchingTasks[cpuId] = nullptr;
+    platform.cpus[cpuId].switching_context = false;
     UnlockManager();
 }
 
@@ -692,12 +742,18 @@ bool TaskManager::CleanupRetiredTask(task_t* task)
         return false;
     }
 
+    const bool priorityCleanup = PriorityCleanup != nullptr && !task->priorityCleanupDone;
+    task->priorityCleanupDone = true;
     auto  cleanup           = task->retirementCleanup;
     void* context           = task->retirementContext;
     task->retirementCleanup = nullptr;
     ++task->dispatchUsers;
     UnlockManager();
 
+    if (priorityCleanup)
+    {
+        PriorityCleanup(PriorityCleanupContext, task);
+    }
     if (cleanup != nullptr)
     {
         cleanup(context, task);
@@ -709,11 +765,22 @@ bool TaskManager::CleanupRetiredTask(task_t* task)
     return true;
 }
 
+void TaskManager::SetPriorityCleanup(void* context, void (*cleanup)(void*, task_t*))
+{
+    PriorityCleanupContext = context;
+    PriorityCleanup        = cleanup;
+}
+
 void TaskManager::CleanupCurrentTask()
 {
     cpu_preemption_disable();
     task_t* task = GetCurrentTask();
 
+    if (task != nullptr && PriorityCleanup != nullptr && !task->priorityCleanupDone)
+    {
+        task->priorityCleanupDone = task->dying;
+        PriorityCleanup(PriorityCleanupContext, task);
+    }
     if (task != nullptr && task->retirementCleanup != nullptr)
     {
         auto cleanup            = task->retirementCleanup;

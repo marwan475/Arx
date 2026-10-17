@@ -198,11 +198,14 @@ static bool test_signal_case(process_t* process, uint64_t number)
 
         ok &= expect((pending_signals(process, task) & 512) != 0, "signal routed to current process/thread");
 
-        ok &= expect(send(65) == LINUX_EINVAL && send(34) == LINUX_EOPNOTSUPP, "invalid and unsupported realtime signals");
+        ok &= expect(send(65) == LINUX_EINVAL && send(34) == 0 && send(34) == 0, "invalid signal rejected and repeated realtime signals queued");
 
         ok &= expect(number == SYSCALL_kill ? syscall_call(number, 0, 0) == 0 : syscall_call(number, process->id, 0, 10) == LINUX_EINVAL,
             "signal group lookup and invalid thread targeting");
 
+        signal_action_t rtIgnore = {1, 0, 0, 0};
+        fixture_store(process, input, &rtIgnore, sizeof(rtIgnore));
+        ok &= expect(syscall_call(SYSCALL_rt_sigaction, 34, input, 0, 8) == 0 && ((process->signalPending | task->signalPending) & (1ULL << 33)) == 0, "RT ignore registration discards all queued instances");
         signal_action_t ignore = {1, 0, 0, 0};
 
         fixture_store(process, input, &ignore, sizeof(ignore));
@@ -296,7 +299,15 @@ static bool test_signal_case(process_t* process, uint64_t number)
 
         fixture_store(process, base + 512, &syscallInstruction, 2);
 
-        ok &= expect(syscall_call(SYSCALL_kill, process->id, 10) == 0, "signal return pending fixture");
+        uint8_t queuedInfo[128] = {};
+        const int32_t queuedCode = -1;
+        const int32_t queuedPid = process->id;
+        const uint64_t queuedPayload = 0x1122334455667788ULL;
+        memcpy(queuedInfo + 8, &queuedCode, 4);
+        memcpy(queuedInfo + 16, &queuedPid, 4);
+        memcpy(queuedInfo + 24, &queuedPayload, 8);
+        fixture_store(process, input, queuedInfo, sizeof(queuedInfo));
+        ok &= expect(syscall_call(SYSCALL_rt_sigqueueinfo, process->id, 10, input) == 0, "signal return queued payload fixture");
 
         ok &= expect(signals->Deliver(&f, (uint64_t) -4, true) == 0 && f.user_rip == action.handler && f.arg0 == 10, "signal frame delivery");
 
@@ -304,6 +315,9 @@ static bool test_signal_case(process_t* process, uint64_t number)
         signal_frame_fixture_t saved        = {};
 
         fixture_load(process, frameAddress, &saved, sizeof(saved));
+        uint64_t deliveredPayload = 0;
+        memcpy(&deliveredPayload, saved.info + 24, 8);
+        ok &= expect(deliveredPayload == queuedPayload, "SA_SIGINFO handler receives full queued payload");
 
         ok &= expect(saved.uc.context.ax == SYSCALL_futex && saved.uc.context.ip == base + 512 && saved.uc.context.bx == 0x123456789abcdef0ULL && (frameAddress & 15) == 8,
             "SA_RESTART rewind and full register context");

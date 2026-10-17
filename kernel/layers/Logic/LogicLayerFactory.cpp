@@ -57,6 +57,7 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
     LogicLayerExportCaps->scheduler->SetEventManager(LogicLayerExportCaps->eventManager);
     LogicLayerExportCaps->virtualFileSystem->SetEventManager(LogicLayerExportCaps->eventManager);
     LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->scheduler->SetPriorityManager(LogicLayerExportCaps->synchronizationManager);
     LogicLayerExportCaps->signalManager          = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
     LogicLayerExportCaps->processController      = new ProcessController(resourceLayerCaps, LogicLayerExportCaps);
     LogicLayerExportCaps->socketManager          = new SocketManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);

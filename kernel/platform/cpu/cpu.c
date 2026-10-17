@@ -3,6 +3,8 @@
 #include <platform.h>
 #include <platform/memory/vmm.h>
 
+extern void dispatcher_service_pending_reschedule(void);
+
 platform_t platform;
 
 static cpu_info_t platform_cpus[BOOT_SMP_MAX_CPUS];
@@ -76,7 +78,17 @@ void cpu_preemption_enable(void)
 
         if (__atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) != 0)
         {
-            __atomic_sub_fetch(&cpu->preemption_depth, 1, __ATOMIC_RELAXED);
+            const uint32_t remaining = __atomic_sub_fetch(&cpu->preemption_depth, 1, __ATOMIC_RELAXED);
+#if defined(__x86_64__)
+            uint64_t flags;
+            __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+            if (remaining == 0 && (flags & (1ULL << 9)) && !cpu->switching_context && __atomic_load_n(&cpu->reschedule_pending, __ATOMIC_ACQUIRE))
+            {
+                dispatcher_service_pending_reschedule();
+            }
+#else
+            (void) remaining;
+#endif
         }
     }
 }

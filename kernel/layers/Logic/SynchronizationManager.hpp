@@ -15,10 +15,15 @@ class SynchronizationManager
 {
 public:
     SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler);
-    uint64_t Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline, bool shared                                            = false);
+    uint64_t Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline, bool shared = false, uint64_t priorityDestination = 0);
     uint64_t Wake(uint64_t address, int32_t count, uint32_t bits, bool shared                                                                   = false);
     uint64_t Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected, bool shared = false);
     uint64_t WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation, bool shared      = false);
+    uint64_t PriorityFutex(uint64_t address, uint32_t command, uint64_t deadline, bool shared);
+    uint64_t RequeuePriority(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, uint32_t expected, bool shared);
+    bool LockSchedulingChange(task_t* task, uint64_t affinity = 0);
+    void UnlockSchedulingChange();
+    void     RefreshPriorities();
     uint64_t SetRobustList(uint64_t head);
     void     ConfigureChildTid(task_t* task, process_t* owner, uint64_t address);
     uint64_t GetRobustList(int32_t tid, uint64_t* head, uint64_t* length);
@@ -37,7 +42,42 @@ private:
         bool                 used;
         bool                 queued;
         bool                 woken;
+        bool                 requeuePriority;
+        bool                 converted;
+        void*                destinationIdentity;
+        virt_backing_object* destinationObject;
+        uint64_t             destinationOffset;
+        task_t*              task;
     };
+    struct pi_state_t
+    {
+        bool                 used;
+        bool                 dead;
+        void*                identity;
+        virt_backing_object* object;
+        uint64_t             offset;
+        task_t*              owner;
+        process_t*           memoryOwner;
+        uint64_t             address;
+    };
+    struct pi_waiter_t
+    {
+        bool     used;
+        size_t   state;
+        task_t*  task;
+        uint64_t sequence;
+        uint64_t order;
+    };
+    pi_state_t         PiStates[CAPACITY];
+    pi_waiter_t        PiWaiters[CAPACITY];
+    uint64_t           PiOrder;
+    uint64_t           PriorityRescheduleMask;
+    bool               IsRequeueKeyLocked(void* identity, uint64_t offset) const;
+    bool               IsPriorityKeyLocked(void* identity, uint64_t offset) const;
+    bool               HasPiWaiters(size_t state) const;
+    size_t             BestPiWaiter(size_t state) const;
+    void               RefreshPrioritiesLocked();
+    static void        CleanupPriority(void* context, task_t* task);
     void               Remove(size_t index);
     uint64_t           WakeKey(void* identity, uint64_t offset, int32_t count, uint32_t bits);
     void               WakeExitWord(virt_addr_space* space, uint64_t address);

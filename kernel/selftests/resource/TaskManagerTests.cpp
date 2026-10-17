@@ -162,6 +162,28 @@ void test_TaskManager(ResourceLayerCaps* resources)
         t.Check(!m->FreeTask(task), "double free rejected");
     });
 
+    suite.Run("resource/TaskManager/retirement_cleanup_once", [&](TestCase& t)
+    {
+        task_t* task = m->AllocateTask();
+        if (!t.Check(task != nullptr, "allocate retirement fixture"))
+        {
+            return;
+        }
+        unsigned calls = 0;
+        task->retirementContext = &calls;
+        task->retirementCleanup = [](void* context, task_t*)
+        {
+            ++*static_cast<unsigned*>(context);
+        };
+        m->MarkDying(task);
+        t.Check(m->CleanupRetiredTask(task), "cleanup outside scheduler lock");
+        t.Check(task->priorityCleanupDone, "priority retirement completed before freeing");
+        t.Check(m->CleanupRetiredTask(task), "repeated retirement is safe");
+        t.Equal(calls, 1U, "retirement callback runs once");
+        t.Check(m->FreeTask(task), "free without repeating priority retirement");
+        t.Equal(calls, 1U, "free preserves single cleanup");
+    });
+
     suite.Run("resource/TaskManager/name_and_current_identity", [&](TestCase& t)
     {
         TestFixture f(resources);

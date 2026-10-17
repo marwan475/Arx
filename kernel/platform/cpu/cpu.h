@@ -57,6 +57,8 @@ typedef struct cpu_info
     ipi_request_data_t ipi_request_data;
     spinlock_t         ipi_lock;
     uint32_t           preemption_depth;
+    bool               reschedule_pending;
+    bool               switching_context;
     void*              kernel_stack_base;
     size_t             kernel_stack_size;
 } cpu_info_t;

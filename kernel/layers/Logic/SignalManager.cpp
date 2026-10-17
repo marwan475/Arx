@@ -28,21 +28,6 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
         return LINUX_EINVAL;
     }
 
-    if (signal >= 32)
-    {
-        if (action != nullptr)
-        {
-            return LINUX_EOPNOTSUPP;
-        }
-
-        if (previous != nullptr)
-        {
-            *previous = {};
-        }
-
-        return 0;
-    }
-
     if (action != nullptr)
     {
         if (signal == 9 || signal == 19)
@@ -95,7 +80,7 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
         if (ignored)
         {
             __atomic_fetch_or(&process->Signals()->ignored, bit, __ATOMIC_RELEASE);
-            __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
+            Discard(&process->signalPending, process->signalQueue, signal);
 
             for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
             {
@@ -105,11 +90,11 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
                 {
                     if ((task->process != nullptr && task->process->signalDispositions == process->Signals()) || task == Resources->taskManager->GetCurrentTask())
                     {
-                        __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE);
+                        Discard(&task->signalPending, task->signalQueue, signal);
 
                         if (task->process != nullptr)
                         {
-                            __atomic_fetch_and(&task->process->signalPending, ~bit, __ATOMIC_RELEASE);
+                            Discard(&task->process->signalPending, task->process->signalQueue, signal);
                         }
                     }
 
@@ -274,7 +259,7 @@ uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previ
     return 0;
 }
 
-uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
+uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal, const signal_sender_t* queued)
 {
     if (signal < 0 || signal > 64)
     {
@@ -287,6 +272,10 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
     }
 
     ProcessManager* processes = Resources->processManager;
+    if (queued != nullptr && pid <= 0)
+    {
+        return LINUX_EINVAL;
+    }
     if (pid <= 0)
     {
         if (tid >= 0 || pid == INT32_MIN)
@@ -351,6 +340,11 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
             return (uint64_t) -1;
         }
 
+        if (queued != nullptr && (queued->code >= 0 || queued->code == -6) && (target != source || (tid >= 0 && static_cast<uint64_t>(tid) != Resources->taskManager->GetCurrentTask()->id)))
+        {
+            return static_cast<uint64_t>(-1);
+        }
+
         task_t* task = nullptr;
 
         if (tid >= 0)
@@ -393,52 +387,16 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal)
             return 0;
         }
 
-        if (signal >= 32)
+        if (signal != 0)
         {
-            status = LINUX_EOPNOTSUPP; // RT queues and stop/continue are pending.
-        }
-        else if (signal != 0)
-        {
-            const uint64_t         bit = 1ULL << (signal - 1);
             SignalDispositionGuard signalGuard(target);
-            const bool             ignored = (__atomic_load_n(&target->Signals()->ignored, __ATOMIC_RELAXED) & bit) != 0;
-
-            if (!ignored && task != nullptr && task->signalSenders == nullptr)
-            {
-                task->signalSenders = static_cast<signal_sender_t*>(kzalloc(32 * sizeof(signal_sender_t)));
-
-                if (task->signalSenders == nullptr)
-                {
-                    status = LINUX_ENOMEM;
-                }
-            }
-
-            if (status == 0 && !ignored)
-            {
-                signal_sender_t info = {(int32_t) source->id, sender.real, tid >= 0 ? -6 : 0};
-
-                if (task != nullptr)
-                {
-                    if (!(__atomic_load_n(&task->signalPending, __ATOMIC_RELAXED) & bit))
-                    {
-                        task->signalSenders[signal - 1] = info;
-                    }
-
-                    __atomic_fetch_or(&task->signalPending, bit, __ATOMIC_RELEASE);
-                }
-                else
-                {
-                    if (!(__atomic_load_n(&target->signalPending, __ATOMIC_RELAXED) & bit))
-                    {
-                        target->signalSenders[signal - 1] = info;
-                    }
-
-                    __atomic_fetch_or(&target->signalPending, bit, __ATOMIC_RELEASE);
-                }
-            }
-
+            const signal_sender_t  info = {(int32_t) source->id, sender.real, tid >= 0 ? -6 : 0};
+            status                      = Queue(target, task, signal, queued != nullptr ? *queued : info);
             signalGuard.Release();
-            SchedulerManager->WakeSignalWaiters(target);
+            if (status == 0)
+            {
+                SchedulerManager->WakeSignalWaiters(target);
+            }
         }
 
         if (task != nullptr)
@@ -538,21 +496,11 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
         FinishTemporaryMask(false);
         return result;
     }
-    const int       signal = (pending & (1ULL << 8)) ? 9 : __builtin_ctzll(pending) + 1;
+    signal_sender_t sender = {};
+    const int       signal = Peek(process, task, pending, &sender);
     const uint64_t  bit    = 1ULL << (signal - 1);
     signal_action_t action = process->Signals()->actions[signal - 1];
-    signal_sender_t sender;
-
-    if (__atomic_load_n(&task->signalPending, __ATOMIC_RELAXED) & bit)
-    {
-        sender = task->signalSenders[signal - 1];
-        __atomic_fetch_and(&task->signalPending, ~bit, __ATOMIC_RELEASE);
-    }
-    else
-    {
-        sender = process->signalSenders[signal - 1];
-        __atomic_fetch_and(&process->signalPending, ~bit, __ATOMIC_RELEASE);
-    }
+    Consume(process, task, signal);
 
     if (action.flags & RESETHAND)
     {
@@ -644,4 +592,206 @@ uint64_t SignalManager::Restore(arch_syscall_frame_t* frame)
     task->signalStack = stack;
     --task->signalDepth;
     return result;
+}
+
+uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, const signal_sender_t& sender)
+{
+    if (signal < 1 || signal > 64)
+    {
+        return LINUX_EINVAL;
+    }
+    const uint64_t bit = 1ULL << (signal - 1);
+    if (process->Signals()->ignored & bit)
+    {
+        return 0;
+    }
+    uint64_t* pending = task != nullptr ? &task->signalPending : &process->signalPending;
+    if (signal >= 32)
+    {
+        signal_queue_t*& queue = task != nullptr ? task->signalQueue : process->signalQueue;
+        if (queue == nullptr)
+        {
+            queue = static_cast<signal_queue_t*>(kzalloc(sizeof(signal_queue_t)));
+            if (queue == nullptr)
+            {
+                return LINUX_ENOMEM;
+            }
+        }
+        if (queue->count + queue->reserved == signal_queue_t::CAPACITY)
+        {
+            return static_cast<uint64_t>(-11);
+        }
+        queue->records[queue->count++] = {static_cast<uint32_t>(signal), sender};
+    }
+    else if (!(*pending & bit))
+    {
+        if (task != nullptr && task->signalSenders == nullptr)
+        {
+            task->signalSenders = static_cast<signal_sender_t*>(kzalloc(32 * sizeof(signal_sender_t)));
+            if (task->signalSenders == nullptr)
+            {
+                return LINUX_ENOMEM;
+            }
+        }
+        (task != nullptr ? task->signalSenders : process->signalSenders)[signal - 1] = sender;
+    }
+    __atomic_fetch_or(pending, bit, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int SignalManager::Peek(process_t* process, task_t* task, uint64_t mask, signal_sender_t* sender)
+{
+    uint64_t   available = task->signalPending & mask;
+    const bool thread    = available != 0;
+    if (!thread)
+    {
+        available = process->signalPending & mask;
+    }
+    const uint64_t standard = (task->signalPending | process->signalPending) & mask & 0x7fffffffULL;
+    if (standard != 0)
+    {
+        available = standard;
+    }
+    // SIGKILL cannot be delayed by a lower-numbered thread-directed signal.
+    if ((task->signalPending | process->signalPending) & mask & (1ULL << 8))
+    {
+        available = 1ULL << 8;
+    }
+    if (available == 0)
+    {
+        return 0;
+    }
+    const int  signal     = __builtin_ctzll(available) + 1;
+    const bool fromThread = (task->signalPending & (1ULL << (signal - 1))) != 0;
+    if (signal >= 32)
+    {
+        signal_queue_t* queue = fromThread ? task->signalQueue : process->signalQueue;
+        for (size_t i = 0; queue != nullptr && i < queue->count; ++i)
+        {
+            if (queue->records[i].number == static_cast<uint32_t>(signal))
+            {
+                *sender = queue->records[i].sender;
+                break;
+            }
+        }
+    }
+    else
+    {
+        *sender = fromThread && task->signalSenders != nullptr ? task->signalSenders[signal - 1] : process->signalSenders[signal - 1];
+    }
+    return signal;
+}
+
+void SignalManager::Consume(process_t* process, task_t* task, int signal)
+{
+    const uint64_t  bit       = 1ULL << (signal - 1);
+    const bool      thread    = (task->signalPending & bit) != 0;
+    uint64_t*       pending   = thread ? &task->signalPending : &process->signalPending;
+    signal_queue_t* queue     = thread ? task->signalQueue : process->signalQueue;
+    bool            remaining = false;
+    bool            removed   = false;
+    if (signal >= 32 && queue != nullptr)
+    {
+        size_t count = 0;
+        for (size_t i = 0; i < queue->count; ++i)
+        {
+            const auto record = queue->records[i];
+            if (!removed && record.number == static_cast<uint32_t>(signal))
+            {
+                removed = true;
+                continue;
+            }
+            queue->records[count++] = record;
+            remaining |= record.number == static_cast<uint32_t>(signal);
+        }
+        queue->count = count;
+    }
+    if (!remaining)
+    {
+        __atomic_fetch_and(pending, ~bit, __ATOMIC_RELEASE);
+    }
+}
+
+void SignalManager::Discard(uint64_t* pending, signal_queue_t* queue, int signal)
+{
+    if (queue != nullptr && signal >= 32)
+    {
+        size_t count = 0;
+        for (size_t i = 0; i < queue->count; ++i)
+        {
+            if (queue->records[i].number != static_cast<uint32_t>(signal))
+            {
+                queue->records[count++] = queue->records[i];
+            }
+        }
+        queue->count = count;
+    }
+    __atomic_fetch_and(pending, ~(1ULL << (signal - 1)), __ATOMIC_RELEASE);
+}
+
+uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
+{
+    process_t* retained = recipient != nullptr ? Resources->processManager->AcquireProcess(recipient->id) : nullptr;
+    if (retained == nullptr)
+    {
+        return LINUX_ESRCH;
+    }
+    uint64_t result = 0;
+    {
+        SignalDispositionGuard guard(retained);
+        if (retained->exited)
+        {
+            result = LINUX_ESRCH;
+        }
+        else
+        {
+            if (retained->signalQueue == nullptr)
+            {
+                retained->signalQueue = static_cast<signal_queue_t*>(kzalloc(sizeof(signal_queue_t)));
+            }
+            signal_queue_t* queue = retained->signalQueue;
+            if (queue == nullptr)
+            {
+                result = LINUX_ENOMEM;
+            }
+            else if (queue->count + queue->reserved == signal_queue_t::CAPACITY)
+            {
+                result = LINUX_EAGAIN;
+            }
+            else
+            {
+                ++queue->reserved;
+                child->exitRecipient = retained;
+            }
+        }
+    }
+    if (result != 0)
+    {
+        Resources->processManager->ReleaseProcess(retained);
+    }
+    return result;
+}
+
+void SignalManager::ReleaseExit(ResourceLayerCaps* resources, process_t* child, bool deliver)
+{
+    process_t* recipient = __atomic_exchange_n(&child->exitRecipient, nullptr, __ATOMIC_ACQ_REL);
+    if (recipient == nullptr)
+    {
+        return;
+    }
+    SignalDispositionGuard guard(recipient);
+    signal_queue_t* queue = recipient->signalQueue;
+    if (queue != nullptr && queue->reserved != 0)
+    {
+        --queue->reserved;
+        if (deliver && !recipient->exited)
+        {
+            const signal_sender_t sender = {static_cast<int32_t>(child->id), child->credentials.user.real, child->terminationSignal != 0 ? 2 : 1, static_cast<uint64_t>(child->terminationSignal != 0 ? child->terminationSignal : child->exitStatus)};
+            // Reservation guarantees capacity and allocated storage. No exit
+            // path blocks or allocates to report this notification.
+            (void) Queue(recipient, nullptr, child->exitSignal, sender);
+        }
+    }
+    guard.Release();
+    resources->processManager->ReleaseProcess(recipient);
 }

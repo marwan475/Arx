@@ -297,3 +297,8 @@ bool arch_device_init(void)
 {
     return pci_init();
 }
+
+bool arch_task_context_supported(void)
+{
+    return true;
+}

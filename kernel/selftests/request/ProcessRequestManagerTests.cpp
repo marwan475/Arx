@@ -323,12 +323,12 @@ struct lifecycle_fixture_t
 };
 
 #if defined(__x86_64__)
-static uint64_t lifecycle_clone(lifecycle_fixture_t& fixture, uint64_t number, uint64_t flags, uint64_t childTid = 0)
+static uint64_t lifecycle_clone(lifecycle_fixture_t& fixture, uint64_t number, uint64_t flags, uint64_t childTid = 0, uint64_t exitSignal = 17)
 {
     process_clone_arguments_t arguments = {};
 
     arguments.flags      = flags;
-    arguments.exitSignal = (flags & 0x10000) != 0 ? 0 : 17;
+    arguments.exitSignal = (flags & 0x10000) != 0 ? 0 : exitSignal;
     arguments.stack      = lifecycle_fixture_t::STACK;
     arguments.stackSize  = PAGE_SIZE;
     arguments.childTid   = childTid;
@@ -369,6 +369,25 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
         return dispatcher_dispatch_syscall(&frame);
     };
 
+    const uint64_t realtimeChild = lifecycle_clone(fixture, number, 0, 0, 34);
+    bool supportedExitSignal = expect(static_cast<int64_t>(realtimeChild) > 0, "RT child-exit notification reserves bounded queue capacity");
+    if (supportedExitSignal)
+    {
+        fixture.logic->scheduler->KillProcess(realtimeChild, 7);
+        process_t* retired = fixture.resources->processManager->AcquireProcess(realtimeChild);
+        if (retired != nullptr)
+        {
+            retired->waitConsumed = true;
+            fixture.resources->processManager->ReleaseProcess(retired);
+        }
+        SignalDispositionGuard guard(fixture.process);
+        signal_sender_t sender = {};
+        supportedExitSignal &= expect(SignalManager::Peek(fixture.process, fixture.resources->taskManager->GetCurrentTask(), 1ULL << 33, &sender) == 34 && sender.pid == static_cast<int32_t>(realtimeChild) && sender.value == 7, "reserved child-exit record retains child and status");
+        SignalManager::Consume(fixture.process, fixture.resources->taskManager->GetCurrentTask(), 34);
+        guard.Release();
+        fixture.logic->scheduler->ReapExitedProcesses();
+    }
+
     const char         directory[] = "/clone-resource-sharing";
     VirtualFileSystem* files       = fixture.logic->virtualFileSystem;
     ProcessManager*    processes   = fixture.resources->processManager;
@@ -377,9 +396,7 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
     // initramfs so cwd sharing is exercised without requiring a writable mount.
     vfs_path_t directoryPath = {};
 
-    bool passed = expect(files->ResolvePath({}, directory, &directoryPath) && directoryPath.dentry != nullptr && directoryPath.dentry->inode != nullptr &&
-                             directoryPath.dentry->inode->type == INODE_DIRECTORY,
-        "clone matrix directory exists in initramfs");
+    bool passed = supportedExitSignal && expect(files->ResolvePath({}, directory, &directoryPath) && directoryPath.dentry != nullptr && directoryPath.dentry->inode != nullptr && directoryPath.dentry->inode->type == INODE_DIRECTORY, "clone matrix directory exists in initramfs");
 
     uint8_t originalCode[64] = {};
 
@@ -511,8 +528,15 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
 
         passed &= copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE, resourceCode, sizeof(resourceCode));
 
-        const uint64_t id    = lifecycle_clone(fixture, number, flags);
-        task_t*        child = static_cast<int64_t>(id) > 0 ? fixture.resources->taskManager->FindTask(id) : nullptr;
+        const uint64_t originalAffinity  = fixture.caller->affinityMask;
+        const int32_t  originalNice      = fixture.caller->baseNice;
+        const uint64_t inheritedAffinity = 1ULL << arch_cpu_id();
+        passed &= fixture.logic->scheduler->SetAffinity(fixture.caller, inheritedAffinity) == 0;
+        passed &= fixture.logic->scheduler->SetNice(fixture.caller, 7) == 0;
+        const uint64_t id = lifecycle_clone(fixture, number, flags);
+        passed &= fixture.logic->scheduler->SetAffinity(fixture.caller, originalAffinity) == 0;
+        passed &= fixture.logic->scheduler->SetNice(fixture.caller, originalNice) == 0;
+        task_t* child = static_cast<int64_t>(id) > 0 ? fixture.resources->taskManager->FindTask(id) : nullptr;
 
         if (!expect(observed && child != nullptr, "clone accepts each supported resource-sharing combination"))
         {
@@ -529,6 +553,8 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
 
             break;
         }
+
+        passed &= expect(child->affinityMask == inheritedAffinity && child->baseNice == 7, "clone inherits restricted affinity and nondefault base priority");
 
         passed &= expect((child->descriptorTable == fixture.process->Files()) == shareFiles, "CLONE_FILES selects shared table independently of thread group");
 
@@ -848,7 +874,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
 
         fixture.logic->scheduler->ReapExitedProcesses();
 
-        return passed;
+        return expect(passed, "clone thread tid publication, execution and retirement");
     }
 
     if (number == SYSCALL_wait4 || number == SYSCALL_waitid)

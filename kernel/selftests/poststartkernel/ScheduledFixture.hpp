@@ -64,6 +64,10 @@ public:
 
             if (Process->tasks)
             {
+                for (task_t* task = Process->tasks; task != nullptr; task = task->next)
+                {
+                    kprintf("[DEBUG-sibling] active=%u task=%llu state=%u dying=%u claims=%u sleep=%u\n", Process->retirementActive, task->id, task->state, task->dying, task->dispatchUsers, task->sleepPending);
+                }
                 SelfTestManager::Get().AbortUnsafe("scheduled tasks did not retire");
             }
         }

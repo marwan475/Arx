@@ -1672,6 +1672,59 @@ static bool test_signalfd_framework(process_t* process, uint64_t base, uint64_t 
 
     ok &= expect(info[0] == 14 && info[2] == 128, "signalfd timer SI_KERNEL record");
 
+    const uint64_t rtMask = (1ULL << 31) | (1ULL << 33) | (1ULL << 63);
+    fixture_store(process, base + 128, &rtMask, sizeof(rtMask));
+    ok &= expect(syscall_call(SYSCALL_rt_sigprocmask, 0, base + 128, 0, 8) == 0 && syscall_call(SYSCALL_signalfd4, fd, base + 128, 8, 0) == fd, "signalfd accepts RT mask including signals 32 and 64");
+    ok &= expect(syscall_call(SYSCALL_kill, process->id, 64) == 0 && syscall_call(SYSCALL_kill, process->id, 32) == 0 && syscall_call(SYSCALL_kill, process->id, 32) == 0, "signalfd queues repeated process RT signals");
+    ok &= expect(syscall_call(SYSCALL_tgkill, process->id, tid, 34) == 0 && syscall_call(SYSCALL_tgkill, process->id, tid, 34) == 0, "signalfd queues repeated thread RT signals");
+    ok &= expect(syscall_call(SYSCALL_read, fd, CANONICAL_KERNEL_BASE, 128) == LINUX_EFAULT, "RT signalfd fault retains queued records");
+    const uint32_t expectedSignals[] = {34, 34, 32, 32, 64};
+    for (uint32_t expectedSignal : expectedSignals)
+    {
+        ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "RT signalfd returns one complete queued record");
+        fixture_load(process, base + 512, info, sizeof(info));
+        ok &= expect(info[0] == expectedSignal && static_cast<int32_t>(info[2]) == (expectedSignal == 34 ? -6 : 0) && info[3] == process->id, "RT signalfd target precedence, number ordering and sender metadata");
+    }
+    uint8_t queuedInfo[128] = {};
+    const int32_t queueCode = -1;
+    const int32_t queuePid = process->id;
+    const uint32_t queueUid = process->credentials.user.real;
+    memcpy(queuedInfo + 8, &queueCode, 4);
+    memcpy(queuedInfo + 16, &queuePid, 4);
+    memcpy(queuedInfo + 20, &queueUid, 4);
+    const uint64_t payloads[] = {0x1122334455667788ULL, 0x8877665544332211ULL};
+    for (uint64_t payload : payloads)
+    {
+        memcpy(queuedInfo + 24, &payload, 8);
+        fixture_store(process, base + 2048, queuedInfo, sizeof(queuedInfo));
+        ok &= expect(syscall_call(SYSCALL_rt_tgsigqueueinfo, process->id, tid, 34, base + 2048) == 0, "queue thread signal with full-width payload");
+    }
+    for (uint64_t payload : payloads)
+    {
+        ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "consume queued payload record");
+        uint64_t actual = 0;
+        int32_t integer = 0;
+        fixture_load(process, base + 512 + 48, &actual, 8);
+        fixture_load(process, base + 512 + 44, &integer, 4);
+        ok &= expect(actual == payload && integer == static_cast<int32_t>(payload), "signalfd preserves pointer and integer payload in FIFO order");
+    }
+    ok &= expect(syscall_call(SYSCALL_rt_sigqueueinfo, process->id, 34, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "queued signal validates complete user siginfo");
+    ok &= expect(syscall_call(SYSCALL_fcntl, fd, 4, 04000) == 0 && syscall_call(SYSCALL_read, fd, base + 512, 128) == static_cast<uint64_t>(-11), "RT signalfd drains repeated records exactly once");
+    for (size_t index = 0; index < signal_queue_t::CAPACITY; ++index)
+    {
+        ok &= expect(syscall_call(SYSCALL_kill, process->id, 32) == 0, "RT send fills bounded queue");
+    }
+    ok &= expect(syscall_call(SYSCALL_kill, process->id, 32) == static_cast<uint64_t>(-11), "RT syscall queue exhaustion returns EAGAIN");
+    for (size_t index = 0; index < signal_queue_t::CAPACITY; ++index)
+    {
+        ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "exhaustion retains all previously queued records");
+    }
+    ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == static_cast<uint64_t>(-11), "queue summary clears only after final repeated record");
+
+    syscall_call(SYSCALL_fcntl, fd, 4, 0);
+    syscall_peer_context_t rtPeer = {nullptr, SYSCALL_kill, {process->id, 34}, UINT64_MAX};
+    ok &= with_syscall_peer(process, &rtPeer, [&]() { return expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128 && rtPeer.result == 0, "blocked signalfd wakes for a masked real-time peer signal"); });
+
     ok &= expect(syscall_call(SYSCALL_signalfd4, fd, base + 128, 4, 0) == LINUX_EINVAL && syscall_call(SYSCALL_signalfd4, fd, CANONICAL_KERNEL_BASE, 8, 0) == LINUX_EFAULT &&
                      syscall_call(SYSCALL_signalfd4, UINT32_MAX, base + 128, 8, 1) == LINUX_EINVAL,
         "signalfd sigset size, pointer and flag validation");

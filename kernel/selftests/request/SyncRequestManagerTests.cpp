@@ -1,5 +1,7 @@
 #include "RequestTestSupport.hpp"
 
+#include <selftests/PollBudget.hpp>
+
 namespace request_selftest
 {
 struct futex_peer_context_t
@@ -307,6 +309,404 @@ static bool test_sync_requeue_fifo(process_t* process, uint64_t base)
     return ok;
 }
 
+struct pi_test_context_t
+{
+    Scheduler*         scheduler;
+    ResourceLayerCaps* resources;
+    uint64_t           first;
+    uint64_t           second;
+    uint64_t           ready[2];
+    uint64_t           release;
+    uint64_t           done;
+    bool               inherited[2];
+    bool               restored[2];
+    bool               mediumRan;
+    bool               inverted;
+    uint64_t           result[2];
+};
+
+static void pi_low_owner(void* argument)
+{
+    auto context = static_cast<pi_test_context_t*>(argument);
+    cpu_preemption_disable();
+    task_t* task       = context->resources->taskManager->GetCurrentTask();
+    context->result[0] = syscall_call(SYSCALL_futex, context->first, 134);
+    __atomic_store_n(&context->ready[0], 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->ready[0]);
+    if (context->release == 0)
+    {
+        context->scheduler->WaitForEvent(&context->release, 0, coordination_deadline());
+    }
+    context->inherited[0] = task->effectiveNice == -10;
+    context->inverted |= context->mediumRan;
+    context->result[0] |= syscall_call(SYSCALL_futex, context->first, 135);
+    context->restored[0] = task->effectiveNice == task->baseNice;
+    __atomic_add_fetch(&context->done, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->done);
+    context->scheduler->ExitCurrentTask();
+}
+
+static void pi_middle_owner(void* argument)
+{
+    auto context = static_cast<pi_test_context_t*>(argument);
+    cpu_preemption_disable();
+    task_t* task       = context->resources->taskManager->GetCurrentTask();
+    context->result[1] = syscall_call(SYSCALL_futex, context->second, 134);
+    __atomic_store_n(&context->ready[1], 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->ready[1]);
+    context->result[1] |= syscall_call(SYSCALL_futex, context->first, 134);
+    context->inherited[1] = task->effectiveNice == -10;
+    context->result[1] |= syscall_call(SYSCALL_futex, context->first, 135);
+    context->result[1] |= syscall_call(SYSCALL_futex, context->second, 135);
+    context->restored[1] = task->effectiveNice == task->baseNice;
+    __atomic_add_fetch(&context->done, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->done);
+    context->scheduler->ExitCurrentTask();
+}
+
+static void pi_medium_competitor(void* argument)
+{
+    auto context = static_cast<pi_test_context_t*>(argument);
+    cpu_preemption_disable();
+    context->mediumRan = true;
+    __atomic_add_fetch(&context->done, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->done);
+    context->scheduler->ExitCurrentTask();
+}
+
+struct pi_cleanup_context_t
+{
+    Scheduler*         scheduler;
+    ResourceLayerCaps* resources;
+    uint64_t           address;
+    uint64_t           ready;
+    uint64_t           release;
+    uint64_t           done;
+    uint64_t           result;
+    bool               die;
+    bool               shared;
+    bool               inherited;
+    uint32_t           observedCpu;
+};
+
+static void pi_cleanup_owner(void* argument)
+{
+    cpu_preemption_disable();
+    auto context    = static_cast<pi_cleanup_context_t*>(argument);
+    context->result = syscall_call(SYSCALL_futex, context->address, context->shared ? 6 : 134);
+    __atomic_store_n(&context->ready, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->ready);
+    if (!context->die)
+    {
+        context->scheduler->WaitForEvent(&context->release, 0, coordination_deadline());
+        context->observedCpu = arch_cpu_id();
+        context->inherited   = context->resources->taskManager->GetCurrentTask()->effectiveNice == -10;
+        context->result |= syscall_call(SYSCALL_futex, context->address, context->shared ? 7 : 135);
+    }
+    __atomic_store_n(&context->done, 1ULL, __ATOMIC_RELEASE);
+    context->scheduler->WakeEventWaiters(&context->done);
+    context->scheduler->ExitCurrentTask();
+}
+
+static bool test_pi_cleanup(process_t* process, uint64_t base)
+{
+    auto          dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto          resources  = dispatcher->GetResourceLayerCaps();
+    auto          scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    task_t*       caller     = resources->taskManager->GetCurrentTask();
+    const int32_t oldNice    = caller->baseNice;
+    scheduler->SetNice(caller, -10);
+    bool       ok      = true;
+    const bool modes[] = {true, false};
+    for (bool death : modes)
+    {
+        uint32_t word = 0;
+        fixture_store(process, base, &word, sizeof(word));
+        pi_cleanup_context_t context  = {scheduler, resources, base, 0, 0, 0, UINT64_MAX, death};
+        task_t*              peer     = resources->taskManager->CreateKernelTask(pi_cleanup_owner, &context);
+        const bool           retained = resources->taskManager->RetainForDispatch(peer);
+        const bool           added    = retained && resources->processManager->AddTask(process, peer);
+        ok &= expect(added, "PI cleanup owner fixture");
+        if (added)
+        {
+            scheduler->SetNice(peer, 15);
+            scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+            ok &= expect(scheduler->WaitForEvent(&context.ready, 0, coordination_deadline()) == 0 && context.ready == 1, "PI cleanup owner acquires word");
+            if (death)
+            {
+                fixture_load(process, base, &word, sizeof(word));
+                ok &= expect((word & 0x40000000U) != 0 && (word & 0x3fffffffU) == 0, "owner exit publishes OWNER_DIED without a robust-list registration");
+                ok &= expect(syscall_call(SYSCALL_futex, base, 134) == 0 && syscall_call(SYSCALL_futex, base, 135) == 0, "PI owner-death recovery acquires and releases word");
+            }
+            else
+            {
+                time_timespec_t timeout = {};
+                ok &= expect(resources->timeManager->ReadClock(0, &timeout) == 0, "PI timeout clock available");
+                timeout.nanoseconds += 2000000;
+                if (timeout.nanoseconds >= 1000000000)
+                {
+                    ++timeout.seconds;
+                    timeout.nanoseconds -= 1000000000;
+                }
+                fixture_store(process, base + 32, &timeout, sizeof(timeout));
+                ok &= expect(syscall_call(SYSCALL_futex, base, 134, 0, base + 32) == static_cast<uint64_t>(-110), "PI timeout cancels queued ownership wait");
+                ok &= expect(peer->effectiveNice == peer->baseNice, "timeout cancellation removes donation");
+                // An already pending signal cancels before parking.
+                {
+                    SignalDispositionGuard guard(process);
+                    SignalManager::Queue(process, caller, 10, {static_cast<int32_t>(process->id), 0, 0});
+                }
+                ok &= expect(syscall_call(SYSCALL_futex, base, 134) == static_cast<uint64_t>(-4), "PI signal cancellation returns EINTR");
+                ok &= expect(peer->effectiveNice == peer->baseNice, "signal cancellation removes donation");
+                {
+                    SignalDispositionGuard guard(process);
+                    SignalManager::Consume(process, caller, 10);
+                }
+                __atomic_store_n(&context.release, 1ULL, __ATOMIC_RELEASE);
+                scheduler->WakeEventWaiters(&context.release);
+                ok &= expect(scheduler->WaitForEvent(&context.done, 0, coordination_deadline()) == 0 && context.done == 1, "cancelled PI waiter leaves owner able to unlock");
+            }
+            ok &= expect(context.result == 0, "PI cleanup owner completed successfully");
+            detach_fixture_peer(resources, process, peer);
+        }
+        if (retained)
+        {
+            resources->taskManager->ReleaseDispatchClaim(peer);
+        }
+        if (peer != nullptr)
+        {
+            ok &= cleanup(resources->taskManager->FreeTask(peer), "PI cleanup owner retirement");
+        }
+    }
+    scheduler->SetNice(caller, oldNice);
+    return ok;
+}
+
+static bool test_shared_pi(process_t* process)
+{
+    auto           dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto           resources  = dispatcher->GetResourceLayerCaps();
+    auto           scheduler  = dispatcher->GetLogicLayerCaps()->scheduler;
+    const uint64_t address    = fixture_map(1, 0x500000000ULL, 0x21);
+    if (static_cast<int64_t>(address) < 0)
+    {
+        return false;
+    }
+    uint32_t zero = 0;
+    fixture_store(process, address, &zero, sizeof(zero));
+    auto           space        = resources->virtualMemoryManager->CreateUserAddressSpace();
+    process_t*     ownerProcess = space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
+    const auto     region       = resources->virtualMemoryManager->FindRegion(process->addressSpace, address);
+    const uint64_t alias        = address + 32 * PAGE_SIZE;
+    bool           mapped       = false;
+    if (ownerProcess != nullptr && region != nullptr)
+    {
+        spinlock_acquire_preempt(&space->operation_lock);
+        mapped = resources->virtualMemoryManager->MapBackingPage(space, alias, region->object, region->backing_offset, 3, true, 3);
+        spinlock_release_preempt(&space->operation_lock);
+    }
+    pi_cleanup_context_t context  = {scheduler, resources, alias, 0, 0, 0, UINT64_MAX, false, true, false};
+    task_t*              peer     = mapped ? resources->taskManager->CreateKernelTask(pi_cleanup_owner, &context) : nullptr;
+    const bool           retained = resources->taskManager->RetainForDispatch(peer);
+    const bool           added    = retained && resources->processManager->AddTask(ownerProcess, peer);
+    bool                 ok       = expect(added, "shared PI owner has a distinct process and differently addressed shared mapping");
+    task_t*              caller   = resources->taskManager->GetCurrentTask();
+    const int32_t        oldNice  = caller->baseNice;
+    if (added)
+    {
+        scheduler->SetNice(caller, -10);
+        scheduler->SetNice(peer, 15);
+        scheduler->EnqueueProcess(arch_cpu_id(), ownerProcess->id);
+        ok &= expect(scheduler->WaitForEvent(&context.ready, 0, coordination_deadline()) == 0 && context.ready == 1, "shared PI owner acquires before cross-process waiter");
+        const uint32_t destination = platform.cpu_count > 1 ? (arch_cpu_id() + 1) % platform.cpu_count : arch_cpu_id();
+        ok &= expect(scheduler->SetAffinity(peer, 1ULL << destination) == 0, "sleeping shared owner accepts restricted destination");
+        __atomic_store_n(&context.release, 1ULL, __ATOMIC_RELEASE);
+        scheduler->WakeEventWaiters(&context.release);
+        ok &= expect(syscall_call(SYSCALL_futex, address, 6) == 0, "shared backing identifies cross-process PI lock");
+        ok &= expect(context.inherited && context.result == 0 && context.observedCpu == destination, "shared PI donates across process boundary and preserves migrated sleeper wakeup");
+        ok &= expect(syscall_call(SYSCALL_futex, address, 7) == 0, "shared PI handoff releases successfully");
+        PollBudget retirement;
+        while (__atomic_load_n(&peer->state, __ATOMIC_ACQUIRE) == task_t::RUNNING || __atomic_load_n(&peer->state, __ATOMIC_ACQUIRE) == task_t::SWITCHING)
+        {
+            if (retirement.Expired())
+            {
+                SelfTestManager::Get().AbortUnsafe("shared PI owner did not quiesce after remote handoff");
+            }
+            arch_pause();
+        }
+        scheduler->SetNice(caller, oldNice);
+        detach_fixture_peer(resources, ownerProcess, peer);
+    }
+    if (retained)
+    {
+        resources->taskManager->ReleaseDispatchClaim(peer);
+    }
+    if (peer != nullptr)
+    {
+        ok &= cleanup(resources->taskManager->FreeTask(peer), "shared PI peer cleanup");
+    }
+    if (ownerProcess != nullptr)
+    {
+        ok &= cleanup(resources->processManager->FreeProcess(ownerProcess), "shared PI owner process cleanup");
+    }
+    if (space != nullptr)
+    {
+        resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+    }
+    return ok;
+}
+
+static bool test_priority_futex(process_t* process, uint64_t base)
+{
+    auto          dispatcher   = static_cast<Dispatcher*>(platform.dispacher);
+    auto          resources    = dispatcher->GetResourceLayerCaps();
+    auto          scheduler    = dispatcher->GetLogicLayerCaps()->scheduler;
+    task_t*       caller       = resources->taskManager->GetCurrentTask();
+    const int32_t previousNice = caller->baseNice;
+    uint32_t      zero         = 0;
+    fixture_store(process, base, &zero, sizeof(zero));
+    fixture_store(process, base + 4, &zero, sizeof(zero));
+    bool     ok     = expect(syscall_call(SYSCALL_futex, base, 136) == 0, "PI trylock acquires uncontended word");
+    uint32_t actual = 0;
+    fixture_load(process, base, &actual, sizeof(actual));
+    ok &= expect((actual & 0x3fffffffU) == caller->id && syscall_call(SYSCALL_futex, base, 134) == static_cast<uint64_t>(-35), "PI owner TID and recursive deadlock rejection");
+    ok &= expect(syscall_call(SYSCALL_futex, base, 135) == 0 && syscall_call(SYSCALL_futex, base, 135) == static_cast<uint64_t>(-1), "PI unlock checks ownership");
+    ok &= expect(syscall_call(SYSCALL_futex, base, 134) == 0, "PI lock before userspace release");
+    fixture_store(process, base, &zero, sizeof(zero));
+    ok &= expect(syscall_call(SYSCALL_futex, base, 136) == 0, "PI reconciles uncontended userspace release");
+    ok &= expect(syscall_call(SYSCALL_futex, base, 129, 1) == LINUX_EINVAL, "ordinary wake rejects tracked PI ownership");
+    ok &= expect(syscall_call(SYSCALL_futex, base, 135) == 0, "reconciled PI owner unlocks");
+    pi_test_context_t context     = {};
+    context.scheduler             = scheduler;
+    context.resources             = resources;
+    context.first                 = base;
+    context.second                = base + 4;
+    task_t*           peers[3]    = {};
+    bool              retained[3] = {};
+    bool              attached[3] = {};
+    arch_task_entry_t entries[]   = {pi_low_owner, pi_middle_owner, pi_medium_competitor};
+    scheduler->SetNice(caller, -10);
+    for (size_t i = 0; i < 3; ++i)
+    {
+        peers[i]    = resources->taskManager->CreateKernelTask(entries[i], &context);
+        retained[i] = resources->taskManager->RetainForDispatch(peers[i]);
+        attached[i] = retained[i] && resources->processManager->AddTask(process, peers[i]);
+        ok &= expect(attached[i], "PI inversion peer allocation");
+        if (!attached[i])
+        {
+            break;
+        }
+        scheduler->SetNice(peers[i], i == 0 ? 15 : i == 1 ? 5 : 0);
+        if (i < 2)
+        {
+            scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+            ok &= expect(scheduler->WaitForEvent(&context.ready[i], 0, coordination_deadline()) == 0 && context.ready[i] == 1, "PI owner ready before contention");
+        }
+    }
+    __atomic_store_n(&context.release, 1ULL, __ATOMIC_RELEASE);
+    scheduler->WakeEventWaiters(&context.release);
+    if (attached[2])
+    {
+        scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+        ok &= expect(syscall_call(SYSCALL_futex, base + 4, 134) == 0, "high-priority waiter acquires after transitive handoff");
+        ok &= expect(context.inherited[0] && context.inherited[1] && context.restored[0] && context.restored[1] && !context.inverted && context.result[0] == 0 && context.result[1] == 0, "transitive PI runs both owners before medium competitor and restores priorities");
+        ok &= expect(syscall_call(SYSCALL_futex, base + 4, 135) == 0, "PI final owner releases handoff");
+    }
+    while (context.done < 3 && attached[2])
+    {
+        const uint64_t done = context.done;
+        if (scheduler->WaitForEvent(&context.done, done, coordination_deadline()) != 0)
+        {
+            ok = false;
+            break;
+        }
+    }
+    scheduler->SetNice(caller, previousNice);
+    for (size_t i = 0; i < 3; ++i)
+    {
+        if (attached[i])
+        {
+            detach_fixture_peer(resources, process, peers[i]);
+        }
+        if (retained[i])
+        {
+            resources->taskManager->ReleaseDispatchClaim(peers[i]);
+        }
+        if (peers[i] != nullptr)
+        {
+            ok &= cleanup(resources->taskManager->FreeTask(peers[i]), "PI peer retirement");
+        }
+    }
+    return ok;
+}
+
+struct requeue_pi_context_t
+{
+    ResourceLayerCaps* resources;
+    Scheduler* scheduler;
+    uint64_t source;
+    uint64_t destination;
+    uint64_t result;
+    bool inherited;
+    bool restored;
+};
+
+static void requeue_pi_owner(void* argument)
+{
+    cpu_preemption_disable();
+    auto context = static_cast<requeue_pi_context_t*>(argument);
+    task_t* task = context->resources->taskManager->GetCurrentTask();
+    context->result = syscall_call(SYSCALL_futex, context->destination, 141);
+    context->result |= syscall_call(SYSCALL_futex, context->source, 129, 1) == LINUX_EINVAL ? 0 : 1;
+    context->result |= syscall_call(SYSCALL_futex, context->source, 140, 1, 1, context->destination, 8) == LINUX_EAGAIN ? 0 : 1;
+    context->result |= syscall_call(SYSCALL_futex, context->source, 140, 1, 1, context->destination, 7) == 1 ? 0 : 1;
+    context->inherited = task->scheduling->effectivePolicy == SCHEDULING_RR && task->scheduling->effectivePriority == 50;
+    context->result |= syscall_call(SYSCALL_futex, context->destination, 135);
+    context->restored = task->scheduling->effectivePolicy == SCHEDULING_OTHER;
+    context->scheduler->ExitCurrentTask();
+}
+
+static bool test_requeue_pi(process_t* process, uint64_t base)
+{
+    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto resources = dispatcher->GetResourceLayerCaps();
+    auto scheduler = dispatcher->GetLogicLayerCaps()->scheduler;
+    task_t* caller = resources->taskManager->GetCurrentTask();
+    scheduling_attributes_t previous = {}, realtime = {};
+    scheduler->ReadPolicy(caller, &previous);
+    realtime.size = sizeof(realtime);
+    realtime.policy = SCHEDULING_RR;
+    realtime.priority = 50;
+    uint32_t words[] = {7, 0};
+    fixture_store(process, base, words, sizeof(words));
+    requeue_pi_context_t context = {resources, scheduler, base, base + 4, UINT64_MAX};
+    task_t* peer = resources->taskManager->CreateKernelTask(requeue_pi_owner, &context);
+    const bool retained = resources->taskManager->RetainForDispatch(peer);
+    const bool attached = retained && resources->processManager->AddTask(process, peer);
+    bool ok = expect(attached, "allocate PI requeue owner");
+    if (attached)
+    {
+        ok &= expect(scheduler->ConfigurePolicy(caller, realtime) == 0, "configure real-time inversion waiter");
+        scheduler->EnqueueProcess(arch_cpu_id(), process->id);
+        ok &= expect(syscall_call(SYSCALL_futex, base, 139, 7, 0, base + 4) == 0, "wait-requeue returns only after PI ownership acquired");
+        uint32_t word = 0;
+        fixture_load(process, base + 4, &word, 4);
+        ok &= expect((word & 0x3fffffffU) == caller->id && context.result == 0 && context.inherited && context.restored, "atomic PI requeue donates RT priority and restores owner");
+        ok &= expect(syscall_call(SYSCALL_futex, base + 4, 135) == 0, "requeued owner unlocks");
+        ok &= expect(scheduler->ConfigurePolicy(caller, previous) == 0, "restore caller scheduling policy");
+        detach_fixture_peer(resources, process, peer);
+    }
+    if (retained)
+    {
+        resources->taskManager->ReleaseDispatchClaim(peer);
+    }
+    if (peer != nullptr)
+    {
+        ok &= cleanup(resources->taskManager->FreeTask(peer), "retire PI requeue owner");
+    }
+    return ok;
+}
+
 static bool test_sync_futex(process_t* process)
 {
     const uint64_t base = fixture_map(2);
@@ -325,6 +725,10 @@ static bool test_sync_futex(process_t* process)
     bool ok = expect(syscall_call(SYSCALL_futex, address, 128, 8) == (uint64_t) -11, "futex compare mismatch EAGAIN");
 
     ok &= test_sync_wake_operation(process, base);
+    ok &= test_priority_futex(process, base + 256);
+    ok &= test_pi_cleanup(process, base + 512);
+    ok &= test_shared_pi(process);
+    ok &= test_requeue_pi(process, base + 768);
 
     ok &= expect(syscall_call(SYSCALL_futex, address, 129, 1) == 0 && syscall_call(SYSCALL_futex, address, 129, 0) == 0, "futex wake with no waiters/zero count");
 
@@ -336,9 +740,7 @@ static bool test_sync_futex(process_t* process)
                      syscall_call(SYSCALL_futex, address, 129, UINT64_MAX) == 0,
         "futex bitsets and empty legacy wake count");
 
-    ok &= expect(syscall_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && syscall_call(SYSCALL_futex, address, 134, 7) == LINUX_ENOSYS &&
-                     syscall_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS,
-        "futex shared/PI/unsupported clock modes explicit");
+    ok &= expect(syscall_call(SYSCALL_futex, address, 0, 7) == LINUX_EOPNOTSUPP && syscall_call(SYSCALL_futex, address, 139, 7) == LINUX_EINVAL && syscall_call(SYSCALL_futex, address, 128 | 256, 7) == LINUX_ENOSYS, "futex rejects unsupported backing, missing PI destination and invalid clock mode");
 
     ok &= expect(syscall_call(SYSCALL_futex, address, 131, 0, 1, address + 4) == 0 && syscall_call(SYSCALL_futex, address, 132, 0, 1, address + 4, 8) == (uint64_t) -11,
         "futex requeue empty queue and compare mismatch");

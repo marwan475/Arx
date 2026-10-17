@@ -52,7 +52,7 @@ struct signal_dispositions_t
     uint32_t        references;
     spinlock_t      lock;
     uint64_t        ignored;
-    signal_action_t actions[32];
+    signal_action_t actions[64];
 };
 
 struct process_user_auxv_entry_t
@@ -128,6 +128,7 @@ struct process_t
     uint64_t               execSequence;
     uint64_t               waitOwner;
     uint32_t               exitSignal;
+    process_t*             exitRecipient;
     int32_t                terminationSignal;
     bool                   waitable;
     bool                   waitConsumed;
@@ -167,6 +168,7 @@ struct process_t
     mutable spinlock_t     resourceLock;
     uint64_t               signalPending;
     signal_sender_t        signalSenders[32];
+    signal_queue_t*        signalQueue;
 
     descriptor_table_t*    Files() const;
     uint64_t               DescriptorLimit() const;

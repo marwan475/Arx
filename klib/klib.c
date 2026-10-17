@@ -825,9 +825,13 @@ void kfree(void* ptr)
         return;
     }
 
-    kernel_heap_t* heap = &cpu->numa_node->heap;
-
-    spinlock_acquire_preempt(&heap->lock);
-    heap_free(heap, ptr);
-    spinlock_release_preempt(&heap->lock);
+    // A task may free an allocation after migrating to a different node.
+    // Slab membership, rather than current placement, determines its owner.
+    for (size_t node = 0; node < platform.numa_node_count; ++node)
+    {
+        kernel_heap_t* heap = &platform.numa_nodes[node].heap;
+        spinlock_acquire_preempt(&heap->lock);
+        heap_free(heap, ptr);
+        spinlock_release_preempt(&heap->lock);
+    }
 }

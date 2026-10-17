@@ -58,6 +58,7 @@ void InterruptRequestManager::HandleScheduleRequest()
         return;
     }
 
+    __atomic_store_n(&platform.cpus[cpuId].reschedule_pending, false, __ATOMIC_RELEASE);
     process_t* currentProcess = processManager->GetCurrentProcess();
 
     if (currentProcess != nullptr && currentProcess->exited && resourceLayerCaps->taskManager != nullptr)
@@ -75,7 +76,7 @@ void InterruptRequestManager::HandleScheduleRequest()
         (void) scheduler->EnqueueProcess(cpuId, currentProcess->id);
     }
 
-    (void) scheduler->RunNextReadyProcess(cpuId);
+    (void) scheduler->RunNextReadyProcess(cpuId, Scheduler::scheduling_reason_t::TIMER);
 }
 
 void InterruptRequestManager::HandleInterruptRequest(uint64_t requestNumber)

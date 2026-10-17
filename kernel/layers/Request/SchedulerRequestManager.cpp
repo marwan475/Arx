@@ -2,9 +2,11 @@
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SynchronizationManager.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/TaskManager.hpp"
 #include "layers/Resource/VirtualMemoryManager.hpp"
 
 extern "C"
@@ -29,7 +31,7 @@ uint64_t SchedulerRequestManager::HandleSched_yieldRequest(const arch_syscall_fr
     }
 
     const uint8_t cpuId = arch_cpu_id();
-    (void) LogicCaps->scheduler->RunNextReadyProcess(cpuId);
+    (void) LogicCaps->scheduler->RunNextReadyProcess(cpuId, Scheduler::scheduling_reason_t::YIELD);
     return 0;
 }
 
@@ -52,12 +54,18 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
         return LINUX_ESRCH;
     }
 
-    const int64_t pid = (int64_t) frame->arg0;
-
-    if (pid != 0 && (uint64_t) pid != currentProcess->id)
+    if (ResourceCaps->taskManager == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    const int64_t tid  = (int64_t) frame->arg0;
+    task_t*       task = tid == 0 ? ResourceCaps->taskManager->GetCurrentTask() : tid > 0 ? ResourceCaps->taskManager->FindTask(tid) : nullptr;
+    if (!ResourceCaps->taskManager->RetainForDispatch(task))
     {
         return LINUX_ESRCH;
     }
+    const uint64_t storedMask = __atomic_load_n(&task->affinityMask, __ATOMIC_ACQUIRE);
+    ResourceCaps->taskManager->ReleaseDispatchClaim(task);
 
     const uint64_t  setSize = frame->arg1;
     const uintptr_t userSet = (uintptr_t) frame->arg2;
@@ -76,13 +84,7 @@ uint64_t SchedulerRequestManager::HandleSched_getaffinityRequest(const arch_sysc
 
     uint8_t affinityMaskBuffer[sizeof(uint64_t)] = {0};
 
-    uint64_t      mask     = 0;
-    const uint8_t cpuCount = (uint8_t) ((platform.cpu_count > BOOT_SMP_MAX_CPUS) ? BOOT_SMP_MAX_CPUS : platform.cpu_count);
-
-    for (uint8_t cpu = 0; cpu < cpuCount; ++cpu)
-    {
-        mask |= (1ULL << cpu);
-    }
+    const uint64_t mask = storedMask;
 
     memcpy(affinityMaskBuffer, &mask, sizeof(mask));
 
@@ -136,25 +138,80 @@ uint64_t SchedulerRequestManager::HandleGetcpuRequest(const arch_syscall_frame_t
     const uintptr_t cpuPtr  = (uintptr_t) frame->arg0;
     const uintptr_t nodePtr = (uintptr_t) frame->arg1;
 
-    if (cpuPtr != 0)
+    if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
     {
-        const uint32_t cpuId = (uint32_t) arch_cpu_id();
-
-        if (!safe_write_user(cpuPtr, &cpuId, sizeof(cpuId)))
-        {
-            return LINUX_EFAULT;
-        }
+        return LINUX_ENOSYS;
     }
-
-    if (nodePtr != 0)
+    uint32_t       cpuId  = 0;
+    uint32_t       nodeId = 0;
+    const uint64_t status = LogicCaps->scheduler->GetCpu(&cpuId, nodePtr != 0 ? &nodeId : nullptr);
+    if (status != 0)
     {
-        const uint32_t nodeId = 0;
-
-        if (!safe_write_user(nodePtr, &nodeId, sizeof(nodeId)))
-        {
-            return LINUX_EFAULT;
-        }
+        return status;
+    }
+    if ((cpuPtr != 0 && !safe_write_user(cpuPtr, &cpuId, sizeof(cpuId))) || (nodePtr != 0 && !safe_write_user(nodePtr, &nodeId, sizeof(nodeId))))
+    {
+        return LINUX_EFAULT;
     }
 
     return 0;
+}
+
+uint64_t SchedulerRequestManager::HandleSched_setaffinityRequest(const arch_syscall_frame_t* frame)
+{
+    if (frame == nullptr)
+    {
+        return LINUX_EINVAL;
+    }
+    if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    if (frame->arg1 == 0)
+    {
+        return LINUX_EINVAL;
+    }
+    uint64_t     mask = 0;
+    const size_t size = frame->arg1 < sizeof(mask) ? frame->arg1 : sizeof(mask);
+    if (!safe_read_user(frame->arg2, &mask, size))
+    {
+        return LINUX_EFAULT;
+    }
+    task_t*        task   = nullptr;
+    const uint64_t status = LogicCaps->scheduler->AcquireTask((int64_t) frame->arg0, true, &task);
+    if (status != 0)
+    {
+        return status;
+    }
+    const uint64_t result = LogicCaps->scheduler->SetAffinity(task, mask);
+    ResourceCaps->taskManager->ReleaseDispatchClaim(task);
+    return result;
+}
+
+uint64_t SchedulerRequestManager::HandleGetpriorityRequest(const arch_syscall_frame_t* frame)
+{
+    if (frame == nullptr || frame->arg0 > 2)
+    {
+        return LINUX_EINVAL;
+    }
+    if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    return LogicCaps->scheduler->UserPriority(frame->arg0, frame->arg1, false, 0);
+}
+
+uint64_t SchedulerRequestManager::HandleSetpriorityRequest(const arch_syscall_frame_t* frame)
+{
+    if (frame == nullptr || frame->arg0 > 2)
+    {
+        return LINUX_EINVAL;
+    }
+    if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
+    {
+        return LINUX_ENOSYS;
+    }
+    const int32_t requested = static_cast<int32_t>(frame->arg2);
+    const int32_t nice = requested < -20 ? -20 : requested > 19 ? 19 : requested;
+    return LogicCaps->scheduler->UserPriority(frame->arg0, frame->arg1, true, nice);
 }

@@ -26,24 +26,33 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
     const uint32_t operation = (uint32_t) frame->arg1;
     const uint32_t command   = operation & ~384U; // FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME
 
-    if (command != 0 && command != 1 && command != 3 && command != 4 && command != 5 && command != 9 && command != 10)
+    if (command != 0 && command != 1 && command != 3 && command != 4 && command != 5 && command != 6 && command != 7 && command != 8 && command != 9 && command != 10 && command != 11 && command != 12 && command != 13)
     {
         return LINUX_ENOSYS;
     }
 
-    const bool wait     = command == 0 || command == 9;
+    const bool wait     = command == 0 || command == 9 || command == 6 || command == 11 || command == 13;
     const bool realtime = (operation & 256) != 0;
 
-    if (realtime && command != 9)
+    if (realtime && command != 9 && command != 11 && command != 13)
     {
         return LINUX_ENOSYS;
     }
 
     const bool shared = (operation & 128) == 0;
+    if (command == 11 && frame->arg4 == 0)
+    {
+        return LINUX_EINVAL;
+    }
 
     if ((frame->arg0 & 3) != 0)
     {
         return LINUX_EINVAL;
+    }
+
+    if (command == 12)
+    {
+        return Logic->synchronizationManager->RequeuePriority(frame->arg0, frame->arg4, static_cast<int32_t>(frame->arg2), static_cast<int32_t>(frame->arg3), static_cast<uint32_t>(frame->arg5), shared);
     }
 
     if (command == 3 || command == 4)
@@ -61,6 +70,11 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
     if (bits == 0)
     {
         return LINUX_EINVAL;
+    }
+
+    if (command == 7 || command == 8)
+    {
+        return Logic->synchronizationManager->PriorityFutex(frame->arg0, command, UINT64_MAX, shared);
     }
 
     if (!wait)
@@ -89,7 +103,7 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
             return LINUX_ENOSYS;
         }
 
-        const uint64_t status = Resources->timeManager->CalculateSleepDeadline(realtime ? 0 : 1, command == 9, timeout, &deadline);
+        const uint64_t status = Resources->timeManager->CalculateSleepDeadline(realtime || command == 6 ? 0 : 1, command == 9 || command == 6 || command == 11 || command == 13, timeout, &deadline);
 
         if (status != 0)
         {
@@ -102,7 +116,12 @@ uint64_t SyncRequestManager::HandleFutexRequest(const arch_syscall_frame_t* fram
         }
     }
 
-    return Logic->synchronizationManager->Wait(frame->arg0, (uint32_t) frame->arg2, bits, deadline, shared);
+    if (command == 6 || command == 13)
+    {
+        return Logic->synchronizationManager->PriorityFutex(frame->arg0, command, deadline, shared);
+    }
+
+    return Logic->synchronizationManager->Wait(frame->arg0, (uint32_t) frame->arg2, bits, deadline, shared, command == 11 ? frame->arg4 : 0);
 }
 
 uint64_t SyncRequestManager::HandleSet_robust_listRequest(const arch_syscall_frame_t* frame)

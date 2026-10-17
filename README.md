@@ -12,6 +12,8 @@ Targets:
 
 - [Kernel architecture](docs/architecture/KernelArch.md)
 - [Platform services](docs/architecture/platform/Platform.md)
+- [x86_64 support](docs/architecture/arch/x86_64.md)
+- [AArch64 support and stubs](docs/architecture/arch/aarch64.md)
 
 ## Third Party
 

@@ -113,6 +113,9 @@ the previous session. Required checks that fail or cannot run keep the ticket
 
 1. Confirm every acceptance criterion is met and required verification passed.
    Record the relevant checks and results as evidence in the work log.
+   For documentation tickets, add or update links to the resulting guides in the
+   root README's Documentation section and verify that they resolve before
+   requesting closure, unless the owner explicitly directs otherwise.
 2. Append a dated **Ready for owner review** entry summarizing the completed work,
    verification, and any deferred TODOs. Keep status `in progress` and leave the
    ticket in `tickets/in_progress/`.

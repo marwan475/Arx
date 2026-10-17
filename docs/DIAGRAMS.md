@@ -1,6 +1,7 @@
 # Diagrams
 
-Editable Mermaid sources for the SVGs embedded in Platform.md and KernelArch.md.
+Editable Mermaid sources for SVGs embedded in the kernel, platform, and
+architecture guides.
 The rendered SVG files remain in `docs/imgs/`. Render each block with Mermaid CLI,
 using `platform-mermaid-config.json` and its listed SVG filename. Keep the guides
 using the rendered SVGs rather than inline Mermaid blocks.
@@ -321,4 +322,87 @@ flowchart TB
     Q --> R[Resource operates on kernel objects]
     L --> R
     R --> P[Platform and Arch provide machine services]
+```
+
+## x86_64 initialization
+
+SVG: `x86_64-initialization.svg`
+
+```mermaid
+flowchart TB
+    accTitle: x86_64 architecture initialization
+    accDescr: The bootstrap CPU establishes platform prerequisites and shared controller information before starting secondary CPUs and handing off to kernel startup.
+    A[Arch entry: boot data and baseline floating-point state] --> P[Platform: CPU records, memory and early ACPI]
+    P --> B[BSP arch_init: PAT check and MADT discovery]
+    B --> C[Per-CPU GDT, TSS and syscall MSRs]
+    C --> I[IDT, LAPIC and bootstrap timer; enable interrupts]
+    I --> D[BSP: devices, DMA and AP launch]
+    D --> AP[APs repeat per-CPU architecture setup]
+    AP --> T[BSP waits for initialized CPUs and runs platform tests]
+    T --> S[Kernel stacks and CPU rendezvous]
+    S --> K[BSP enters kmain; APs wait for scheduling]
+```
+
+## x86_64 interrupt entry and return
+
+SVG: `x86_64-interrupt-flow.svg`
+
+```mermaid
+flowchart TB
+    accTitle: x86_64 interrupt entry and return
+    accDescr: Interrupt stubs save registers and floating-point state, call the C handler, and restore the saved return frame. User return also considers signals.
+    A[Interrupt or exception] --> B[CPU and ISR stub build vector, error and return state]
+    B --> C[If entry was from userspace: swapgs]
+    C --> D[Save general registers and aligned FXSAVE image]
+    D --> E[ISRHANDLER: account time and handle event]
+    E --> F{Handled successfully?}
+    F -- no --> H[Log fatal event and halt]
+    F -- yes --> U{Returning to userspace?}
+    U -- yes --> S[Guard preemption; enable interrupts for signal work]
+    S --> V[Prepare pending signals and restore interrupt guard]
+    V --> R[Restore floating-point and general registers]
+    U -- no --> R
+    R --> G[If returning to userspace: swapgs]
+    G --> X[iretq restores execution]
+```
+
+## x86_64 syscall entry and return
+
+SVG: `x86_64-syscall-flow.svg`
+
+```mermaid
+flowchart TB
+    accTitle: x86_64 syscall entry and return
+    accDescr: Syscall entry changes to the kernel stack, saves a frame, dispatches the request, handles signals, and returns with iretq.
+    A[Userspace executes syscall] --> B[Enter LSTAR with unsafe flags masked]
+    B --> C[swapgs; save user RSP and select kernel stack]
+    C --> D[Build syscall frame and save floating-point state]
+    D --> E[Set syscall active; enable interrupts]
+    E --> F[arch_syscall_dispatch]
+    F --> G{Handled by fixture hook?}
+    G -- yes --> R[Return fixture result]
+    G -- no --> H[Dispatcher and Request manager handle syscall]
+    H --> I[Account, service pending scheduling and deliver signals]
+    I --> J[Disable interrupts and clear syscall active]
+    R --> J
+    J --> K[Restore floating-point and saved registers]
+    K --> L[swapgs and iretq]
+    L --> U[Resume user code or signal handler]
+```
+
+## AArch64 initialization boundary
+
+SVG: `aarch64-initialization.svg`
+
+```mermaid
+flowchart TB
+    accTitle: AArch64 existing startup code and runtime boundary
+    accDescr: Existing boot and platform code can reach arch_init, but arch_init returns false and bootstrap panics. Normal kernel scheduling is not implemented by these stubs.
+    A[Existing entry: MMU bit, FP access and PL011 serial] --> B[Convert Limine boot information]
+    B --> C[Enter shared platform_init]
+    C --> D[Attempt platform prerequisites]
+    D --> E[If prerequisites succeed: call arch_init]
+    E --> F[arch_init returns false]
+    F --> G[Bootstrap reports architecture failure and panics]
+    G -. normal runtime not reached .-> X[Layer construction, scheduling and user execution unavailable]
 ```

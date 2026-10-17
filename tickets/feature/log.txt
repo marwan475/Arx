@@ -1,2 +1,3 @@
 document_platform_layer.md
 document_project_structure.md
+document_architecture_layer.md

@@ -32,7 +32,7 @@ implementation defects discovered during research separately.
 
 ## Related work
 
-Coordinate structure with [the kernel architecture overview](../in_progress/document_project_structure.md). Formal layer guides own factory/capability explanations; component tickets own component internals.
+Coordinate structure with [the kernel architecture overview](document_project_structure.md). Formal layer guides own factory/capability explanations; component tickets own component internals.
 
 ## Source entry points
 

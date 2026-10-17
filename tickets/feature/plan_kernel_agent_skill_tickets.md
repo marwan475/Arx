@@ -98,7 +98,7 @@ so skills describe available behavior and label planned capabilities accurately.
 - [Platform services](../../kernel/platform)
 - [Architecture code](../../arch)
 - [Current documentation](../../docs)
-- [Project structure documentation ticket](document_project_structure.md)
+- [Project structure documentation ticket](../closed/document_project_structure.md)
 - [Self-test documentation ticket](document_self_tests.md)
 - [GDB-extension investigation and ticket creation](plan_gdb_extension_tickets.md)
 

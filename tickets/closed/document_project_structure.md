@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P1
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -24,8 +24,9 @@ and distinguish any verified implementation differences from the intended design
 
 Keep this focused on kernel design rather than repository structure. Leave build
 instructions, detailed subsystem walkthroughs, and operational/debugging manuals
-to other guides. Leave the root README and existing diagrams unchanged. Diagrams
-are deferred; track that follow-up as a TODO in this ticket.
+to other guides. Add SVG diagrams showing architectural responsibilities, startup,
+and request flow. Remove duplicated material from the root README and link to
+KernelArch.md and Platform.md; retain README details not yet covered by the guides.
 
 Write for an experienced kernel developer learning Arx's implementation, and for
 agents gathering focused context or investigating failures. Explain repository-specific
@@ -59,12 +60,13 @@ These are starting points; inspect callers, dependencies, and tests before makin
 - [x] Arch, platform, klib, Resource, Logic, Request, and Dispatcher responsibilities and interactions follow the agreed design; verified implementation differences are explicit.
 - [x] Every manager in each formal layer has a one-line responsibility; other principal factory-created components are included.
 - [x] Dependency direction, factory/capability wiring, and initialization order are explained with plain filenames and no clickable links.
-- [x] Root README and existing diagrams remain unchanged by this ticket; diagram work is recorded as a deferred TODO.
+- [x] KernelArch.md embeds verified SVG architecture, startup, and request-flow diagrams with editable Mermaid sources.
+- [x] README links to both new guides, removes covered material, and preserves useful details not covered there.
 
-## Deferred TODO
+## Diagram follow-up
 
-- Add architecture diagrams in later work, after agreeing their scope with the owner.
-  This follow-up is outside the current completion criteria.
+The owner authorized the previously deferred architecture diagrams as part of
+finishing this ticket. All three SVG diagrams are now complete and verified.
 
 ## Work log
 
@@ -217,3 +219,47 @@ framework filenames, and log outcomes. Checked phase order and final-summary
 behavior against `SelfTestManager.cpp` and its interface. Plain filenames and
 no-link formatting checks pass. Ticket remains `in progress`, awaiting owner
 review and explicit closure/destination authorization; diagrams remain deferred.
+
+### 2026-10-17 — Owner-authorized final scope and execution
+
+The owner explicitly instructed finishing this in-progress ticket, adding diagrams
+for KernelArch.md, removing covered information from README, and linking to the
+new guides. This instruction supersedes the earlier README and diagram exclusions
+and authorizes executing this update and finalizing the ticket in the established
+`tickets/closed/` destination once verification passes.
+
+Updated plan: add three concise Mermaid-generated SVGs for architecture roles,
+initialization, and incoming request flow, using the established platform diagram
+style. Keep editable sources in DIAGRAMS.md. Replace duplicated README design,
+layer, process, and filesystem overview material with links to KernelArch.md and
+Platform.md; preserve ELF API instructions not yet covered by either guide and
+retain third-party/license and AI-usage information. Verify diagrams visually,
+check all local links and the 30-component inventory, then close the ticket and
+update both logs. This is documentation work only.
+
+### 2026-10-17 — Final verification
+
+Added three Mermaid-generated SVG diagrams to KernelArch.md: architectural
+responsibilities, bootstrap initialization order, and incoming request flow.
+Editable sources are retained in DIAGRAMS.md and use the same rendering style as
+Platform.md. Checked each SVG's XML and accessibility text, rendered previews,
+and visually inspected labels, spacing, arrows, and clipping.
+
+Verified all guide and README local links and images resolve; KernelArch.md still
+contains every factory-created component (eight Resource, ten Logic, twelve
+Request) and uses plain source filenames without clickable source links. Checked
+startup order against bootstrap, kernel startup, Dispatcher, and self-test code.
+No runtime tests were needed for these documentation-only changes.
+
+README now links to both guides and no longer duplicates their architecture,
+layer, process, or filesystem overview. Detailed ELF-loading instructions and
+third-party/license information were preserved; the stale single-selftest-file
+attribution was updated. Diagram follow-up is fulfilled, and every acceptance
+criterion is met. Incoming ticket references were repaired for the final move.
+
+### 2026-10-17 — Completion
+
+The owner authorized finishing this ticket and its diagram/README follow-up.
+Completed the kernel architecture guide, three SVG diagrams, and README navigation;
+moved the ticket to the established `tickets/closed/` destination and updated the
+feature and closed logs.

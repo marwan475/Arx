@@ -24,7 +24,7 @@ implementation defects discovered during research separately.
 
 ## Related work
 
-Coordinate structure and navigation with [the project overview](document_project_structure.md). Formal layer guides own factory/capability explanations; component tickets own component internals.
+Coordinate structure and navigation with [the project overview](../closed/document_project_structure.md). Formal layer guides own factory/capability explanations; component tickets own component internals.
 
 ## Source entry points
 

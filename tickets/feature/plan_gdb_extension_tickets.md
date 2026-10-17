@@ -76,7 +76,7 @@ analysis rather than inventing work to meet a count.
 - [Platform services](../../kernel/platform)
 - [Layer managers and Dispatcher](../../kernel/layers)
 - [Self-test infrastructure and suites](../../kernel/selftests)
-- [Project structure documentation ticket](document_project_structure.md)
+- [Project structure documentation ticket](../closed/document_project_structure.md)
 - [Self-test documentation ticket](document_self_tests.md)
 
 ## Acceptance criteria

@@ -1,8 +1,8 @@
 # Diagrams
 
-Editable Mermaid sources for the platform SVGs embedded in Platform.md.
+Editable Mermaid sources for the SVGs embedded in Platform.md and KernelArch.md.
 The rendered SVG files remain in `docs/imgs/`. Render each block with Mermaid CLI,
-using `platform-mermaid-config.json` and its listed SVG filename. Keep Platform.md
+using `platform-mermaid-config.json` and its listed SVG filename. Keep the guides
 using the rendered SVGs rather than inline Mermaid blocks.
 Preserve text spacing in exported SVGs with `xml:space="preserve"` on the root element.
 
@@ -266,4 +266,59 @@ flowchart TD
         B12 --> B13[Read Write Seek via backend]
         B13 --> B14[Retain Close refcount lifecycle]
     end
+```
+
+## Kernel architecture responsibilities
+
+SVG: `kernel-architecture.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Arx architectural responsibilities
+    accDescr: Dispatcher routes requests into Request. Request uses Logic and Resource, Logic uses Resource, and Resource uses platform services backed by Arch. Klib is shared throughout the kernel.
+    D[Dispatcher: entry bridge] --> Q[Request: handle incoming requests]
+    subgraph STACK[Layer stack]
+        Q --> L[Logic: behavior and policy]
+        Q --> R[Resource: objects and mechanisms]
+        L --> R
+    end
+    R --> P[Platform: hardware interface]
+    P --> A[Arch: machine-specific operations]
+    K[Klib: shared utilities available to every kernel area]
+```
+
+## Kernel initialization order
+
+SVG: `kernel-startup.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Arx initialization order
+    accDescr: Platform setup and CPU startup precede Dispatcher and layer construction. Scheduling enables the final integration and Request tests.
+    A[Arch entry reads boot information] --> P[Platform prepares hardware and memory]
+    P --> S[Start other CPUs and run platform tests]
+    S --> C[Kernel stacks and CPU rendezvous]
+    C --> D[kmain creates Dispatcher]
+    D --> R[Create Resource, then run its tests]
+    R --> L[Create Logic using Resource, then run its tests]
+    L --> Q[Create Request using Resource and Logic]
+    Q --> F[Mount root and queue per-CPU tasks]
+    F --> G[Release waiting CPUs and activate scheduling]
+    G --> T[Scheduled post-init and Request tests]
+```
+
+## Kernel request flow
+
+SVG: `kernel-request-flow.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Incoming kernel request flow
+    accDescr: Architecture entry sends syscalls and scheduling requests through Dispatcher to Request handlers, which use Logic or Resource services.
+    A[Arch entry: syscall or scheduling interrupt] --> D[Dispatcher selects a handler]
+    D --> Q[Request manager interprets arguments]
+    Q --> L[Logic coordinates kernel behavior]
+    Q --> R[Resource operates on kernel objects]
+    L --> R
+    R --> P[Platform and Arch provide machine services]
 ```

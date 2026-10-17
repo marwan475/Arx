@@ -116,6 +116,8 @@ the following managers.
 | `SocketRequestManager.hpp` | Handles socket creation, connections, messages, and options. |
 | `InterruptRequestManager.hpp` | Handles common interrupt requests, currently for scheduling. |
 
+![Incoming kernel request flow](../imgs/kernel-request-flow.svg)
+
 ## 8. Start normal kernel work
 
 Once the layers exist, `kmain` mounts the initramfs through VirtualFileSystem and
@@ -126,6 +128,15 @@ perform later initialization and tests.
 During normal execution, architecture entry code sends syscalls and scheduling
 interrupt requests through Dispatcher. Request managers then use the lower layers
 to carry out the work.
+
+Scheduling requests are tick-gated by InterruptRequestManager. When the interval
+is reached, it wakes sleeping tasks and, if scheduling is active, requeues the
+current process and asks Scheduler to run the next ready process.
+
+![Kernel initialization order](../imgs/kernel-startup.svg)
+
+This follows the bootstrap CPU. Other CPUs initialize in parallel and wait for
+scheduling to begin.
 
 ## 9. Self-tests: check the kernel as it starts
 
@@ -150,6 +161,10 @@ summary reports `INCOMPLETE` when tests are blocked and no failures were recorde
 Reaching kernel startup alone does not mean all tests have finished.
 
 ## Rules for working across boundaries
+
+![Kernel architectural responsibilities](../imgs/kernel-architecture.svg)
+
+Arrows show the main service dependencies. Klib is available to every kernel area.
 
 Higher layers may access any lower layer. Request may use both Logic and Resource;
 Logic may use Resource. Lower layers must not depend on layers above them. Managers

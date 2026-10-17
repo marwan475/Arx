@@ -34,7 +34,7 @@ implementation defects discovered during research separately.
 
 ## Related work
 
-Coordinate navigation with [the project overview](document_project_structure.md); component guides link to relevant suites rather than duplicating framework documentation.
+Coordinate navigation with [the project overview](../closed/document_project_structure.md); component guides link to relevant suites rather than duplicating framework documentation.
 
 ## Source entry points
 

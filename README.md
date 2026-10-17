@@ -7,7 +7,7 @@ Targets:
 
 ## Design
 
-![Arx](docs/Arx_Arch.png)
+![Arx](docs/imgs/Arx_Arch.png)
 
 Design in order of initialization
 
@@ -56,7 +56,7 @@ Dispatcher
 
 ### Platform
 
-![Platform Access Flow](docs/dispatcher-2026-04-15-070216.svg)
+![Platform Access Flow](docs/imgs/dispatcher-2026-04-15-070216.svg)
 - platform variable which stores important global and per cpu platform data structures
 - Type is `platform_t` defined in `kernel/platform/platform.h`
 - index by arch cpu id
@@ -66,18 +66,18 @@ Dispatcher
 
 Physical memory managment
 
-![NUMA Node Allocation Flow](docs/NUMA%20Node%20Allocation%20Flow-2026-04-15-064600.svg)
+![NUMA Node Allocation Flow](docs/imgs/NUMA%20Node%20Allocation%20Flow-2026-04-15-064600.svg)
 - Zone is built from boot memory map
 - Currently only one Numa node and zone but gives us space to scale into suporting Non Uniform Memory Access and different memory zones
 
 Allocations | pmm_alloc(size)
 
-![PMM Allocation Flow](docs/pmmalloc-2026-04-15-065023.svg)
+![PMM Allocation Flow](docs/imgs/pmmalloc-2026-04-15-065023.svg)
 
 
 Frees | pmm_free(addr)
 
-![PMM Free Flow](docs/pmmfree-2026-04-15-065114.svg)
+![PMM Free Flow](docs/imgs/pmmfree-2026-04-15-065114.svg)
 
 
 Virtual memory managment
@@ -97,27 +97,27 @@ Virtual address space management
 
 Virtual address space structure
 
-![VMM addrspace](docs/vaddr-2026-04-15-074940.svg)
+![VMM addrspace](docs/imgs/vaddr-2026-04-15-074940.svg)
 
 Reserve region in address space
 
-![VMM reserve](docs/vmmreserve-2026-04-15-072825.svg)
+![VMM reserve](docs/imgs/vmmreserve-2026-04-15-072825.svg)
 
 Free region in address space
 
-![VMM free](docs/vmmfree-2026-04-15-072859.svg)
+![VMM free](docs/imgs/vmmfree-2026-04-15-072859.svg)
 
 Heap structure
 
-![Heap](docs/heap-2026-04-19-224905.svg)
+![Heap](docs/imgs/heap-2026-04-19-224905.svg)
 
 Heap Alloc
 
-![Heap alloc](docs/heapalloc-2026-04-19-225900.svg)
+![Heap alloc](docs/imgs/heapalloc-2026-04-19-225900.svg)
 
 Heap Free
 
-![Heap free](docs/heapfree-2026-04-19-225920.svg)
+![Heap free](docs/imgs/heapfree-2026-04-19-225920.svg)
     
 Klib allocations
 - vmalloc and vfree

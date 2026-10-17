@@ -13,7 +13,14 @@
 #include "layers/Request/TimeRequestManager.hpp"
 #include "layers/Request/VfsRequestManager.hpp"
 
+#include <klib/klib.h>
 #include <stdint.h>
+
+struct ResourceLayerCaps;
+struct LogicLayerCaps;
+
+// Shared Linux ABI-style syscall return codes used by request managers.
+constexpr int64_t LINUX_AT_FDCWD = -100;
 
 enum : uint64_t
 {
@@ -33,6 +40,8 @@ enum : uint64_t
     SYSCALL_rt_sigaction      = 13,
     SYSCALL_rt_sigprocmask    = 14,
     SYSCALL_rt_sigreturn      = 15,
+    SYSCALL_rt_sigqueueinfo    = 129,
+    SYSCALL_rt_tgsigqueueinfo  = 297,
     SYSCALL_ioctl             = 16,
     SYSCALL_pread64           = 17,
     SYSCALL_pwrite64          = 18,
@@ -124,6 +133,17 @@ enum : uint64_t
     SYSCALL_mknod             = 133,
     SYSCALL_statfs            = 137,
     SYSCALL_fstatfs           = 138,
+    SYSCALL_getpriority       = 140,
+    SYSCALL_setpriority       = 141,
+    SYSCALL_sched_setparam = 142,
+    SYSCALL_sched_getparam = 143,
+    SYSCALL_sched_setscheduler = 144,
+    SYSCALL_sched_getscheduler = 145,
+    SYSCALL_sched_get_priority_max = 146,
+    SYSCALL_sched_get_priority_min = 147,
+    SYSCALL_sched_rr_get_interval = 148,
+    SYSCALL_sched_setattr = 314,
+    SYSCALL_sched_getattr = 315,
     SYSCALL_prctl             = 157,
     SYSCALL_arch_prctl        = 158,
     SYSCALL_setrlimit         = 160,
@@ -131,6 +151,7 @@ enum : uint64_t
     SYSCALL_gettid            = 186,
     SYSCALL_time              = 201,
     SYSCALL_futex             = 202,
+    SYSCALL_sched_setaffinity = 203,
     SYSCALL_sched_getaffinity = 204,
     SYSCALL_epoll_create      = 213,
     SYSCALL_getdents64        = 217,
@@ -207,7 +228,7 @@ public:
     RequestLayerFactory();
     ~RequestLayerFactory();
 
-    RequestLayerCaps* Create();
+    RequestLayerCaps* Create(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps);
 
     RequestLayerCaps* GetCaps() const;
 

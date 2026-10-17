@@ -1,0 +1,253 @@
+#include <selftests/SelfTestManager.hpp>
+
+// Basic task context-switch selftest between two task entry functions.
+
+#include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/TaskManager.hpp"
+
+extern "C"
+{
+#include <cpu/cpu.h>
+#include <klib/klib.h>
+#include <selftests/selftests.h>
+}
+
+struct task_test_context_t
+{
+    TaskManager* manager;
+    task_t*      taskA;
+    task_t*      taskB;
+    task_t*      bspTask;
+    volatile int step;
+    bool         tlsCorrect;
+    uint64_t     originalFs;
+    uint64_t     originalGs;
+};
+
+static task_test_context_t g_task_test_ctx;
+
+static bool task_test_tls_matches(TaskManager* manager, uint64_t fs, uint64_t gs)
+{
+#if defined(__x86_64__)
+    uint64_t actualFs = 0, actualGs = 0;
+    return manager->GetCurrentTlsBase(false, &actualFs) && manager->GetCurrentTlsBase(true, &actualGs) && actualFs == fs && actualGs == gs;
+#else
+    (void) manager;
+    (void) fs;
+    (void) gs;
+    return true;
+#endif
+}
+
+static void task_test_set_tls(TaskManager* manager, uint64_t fs, uint64_t gs)
+{
+#if defined(__x86_64__)
+    manager->SetCurrentTlsBase(false, fs);
+    manager->SetCurrentTlsBase(true, gs);
+#else
+    (void) manager;
+    (void) fs;
+    (void) gs;
+#endif
+}
+
+static void task_entry_a(void* arg)
+{
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
+    task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
+
+    kprintf("Arx kernel: task_selftest task A entered\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0, 0);
+    task_test_set_tls(ctx->manager, 0x12345000, 0x23456000);
+    ctx->step = 1;
+    kprintf("Arx kernel: task_selftest switching A -> B\n");
+    ctx->manager->ExecuteTask(ctx->taskB);
+
+    // If task B switched back to task A, we reach here.
+    kprintf("Arx kernel: task_selftest task A resumed\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0x12345000, 0x23456000);
+    ctx->step = 3;
+    kprintf("Arx kernel: task_selftest switching A -> BSP\n");
+    ctx->manager->ExecuteTask(ctx->bspTask);
+
+    for (;;)
+    {
+        arch_pause();
+    }
+}
+
+static void task_entry_b(void* arg)
+{
+    // Direct handoffs must not race timer-driven dispatch.
+    cpu_preemption_disable();
+
+    task_test_context_t* ctx = static_cast<task_test_context_t*>(arg);
+
+    kprintf("Arx kernel: task_selftest task B entered\n");
+    ctx->tlsCorrect &= task_test_tls_matches(ctx->manager, 0, 0);
+    task_test_set_tls(ctx->manager, 0x34567000, 0x45678000);
+    ctx->step = 2;
+    kprintf("Arx kernel: task_selftest switching B -> A\n");
+    ctx->manager->ExecuteTask(ctx->taskA);
+
+    for (;;)
+    {
+        arch_pause();
+    }
+}
+
+extern "C" void run_task_selftests(void* resourceLayerCaps)
+{
+    cpu_preemption_disable();
+
+    unsigned long long passes              = 0;
+    unsigned long long fails               = 0;
+    TaskManager*       manager             = nullptr;
+    task_t*            taskA               = nullptr;
+    task_t*            taskB               = nullptr;
+    task_t*            bspTask             = nullptr;
+    task_t*            originalRunningTask = nullptr;
+    task_t*            surrogateTask       = nullptr;
+    auto               cpuId               = arch_cpu_id();
+
+    SelfTestManager::Get().CaseBegin("poststartkernel/process/task_context_tls");
+
+    ResourceLayerCaps* caps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
+
+    if (caps == nullptr || caps->taskManager == nullptr)
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("missing resource layer task manager");
+        kprintf("Arx kernel: task_selftest FAIL: missing resource layer task manager\n");
+        goto done;
+    }
+
+    manager = caps->taskManager;
+
+    originalRunningTask = manager->GetRunningTask(cpuId);
+    bspTask             = originalRunningTask;
+
+    if (bspTask == nullptr)
+    {
+        surrogateTask = manager->AllocateTask();
+
+        if (surrogateTask == nullptr)
+        {
+            fails++;
+            SelfTestManager::Get().RecordFailureDetail("failed to allocate surrogate running task");
+            kprintf("Arx kernel: task_selftest FAIL: failed to allocate surrogate running task\n");
+            goto done;
+        }
+
+        if (!manager->SetRunningTask(cpuId, surrogateTask))
+        {
+            fails++;
+            SelfTestManager::Get().RecordFailureDetail("failed to set surrogate running task");
+            kprintf("Arx kernel: task_selftest FAIL: failed to set surrogate running task\n");
+            goto cleanup;
+        }
+
+        bspTask = surrogateTask;
+        kprintf("Arx kernel: task_selftest INFO: using surrogate running task\n");
+    }
+
+    g_task_test_ctx.manager = manager;
+
+    if (manager->FreeTask(bspTask))
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("FreeTask reclaimed the running task");
+        goto cleanup;
+    }
+
+    passes++;
+    g_task_test_ctx.taskA      = nullptr;
+    g_task_test_ctx.taskB      = nullptr;
+    g_task_test_ctx.bspTask    = bspTask;
+    g_task_test_ctx.step       = 0;
+    g_task_test_ctx.tlsCorrect = true;
+#if defined(__x86_64__)
+    g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs) && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
+#endif
+
+    taskA                 = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);
+    taskB                 = manager->CreateKernelTask(task_entry_b, &g_task_test_ctx);
+    g_task_test_ctx.taskA = taskA;
+    g_task_test_ctx.taskB = taskB;
+
+    if (taskA == nullptr || taskB == nullptr)
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("failed to create task pair");
+        kprintf("Arx kernel: task_selftest FAIL: failed to create task pair\n");
+        goto cleanup;
+    }
+
+    kprintf("Arx kernel: task_selftest created tasks A(id=%llu) B(id=%llu)\n", (unsigned long long) taskA->id, (unsigned long long) taskB->id);
+
+    if (!manager->ExecuteTask(taskA))
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("ExecuteTask(taskA) failed");
+        kprintf("Arx kernel: task_selftest FAIL: ExecuteTask(taskA) failed\n");
+        goto cleanup;
+    }
+
+    kprintf("Arx kernel: task_selftest returned to BSP after task chain, step=%d\n", g_task_test_ctx.step);
+
+    if (!g_task_test_ctx.tlsCorrect || !task_test_tls_matches(manager, g_task_test_ctx.originalFs, g_task_test_ctx.originalGs))
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("task TLS bases were not isolated/restored across A -> B -> A");
+    }
+    else
+        passes++;
+
+    if (g_task_test_ctx.step != 3)
+    {
+        fails++;
+        SelfTestManager::Get().RecordFailureDetail("expected step=3 after task chain");
+        kprintf("Arx kernel: task_selftest FAIL: expected step=3, got %d\n", g_task_test_ctx.step);
+    }
+    else
+    {
+        passes++;
+    }
+
+cleanup:
+
+    if (surrogateTask != nullptr)
+    {
+        manager->SetRunningTask(cpuId, originalRunningTask);
+    }
+
+    if (taskA != nullptr)
+    {
+        if (!manager->FreeTask(taskA))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
+    }
+
+    if (taskB != nullptr)
+    {
+        if (!manager->FreeTask(taskB))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
+    }
+
+    if (surrogateTask != nullptr)
+    {
+        if (!manager->FreeTask(surrogateTask))
+        {
+            SelfTestManager::Get().AbortUnsafe("integration fixture reclamation failed");
+        }
+    }
+
+done:
+    SelfTestManager::Get().CaseEnd("poststartkernel/process/task_context_tls", passes, fails);
+    cpu_preemption_enable();
+}

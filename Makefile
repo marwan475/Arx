@@ -1,5 +1,6 @@
 
 override MAKEFILES :=
+.DEFAULT_GOAL := all
 
 BOOT_DIR ?= boot
 BOOT_CFG ?= $(BOOT_DIR)/limine.conf
@@ -17,8 +18,8 @@ IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 KERNEL_SRC ?= kernel/bootstrap.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
-KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/arch_syscall.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
-KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
+KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_signal.cpp $(ARCH_DIR)/x86_64/arch_time.c $(ARCH_DIR)/x86_64/arch_dma.c $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/arch_syscall.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
+KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_signal.cpp $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
 
@@ -30,7 +31,7 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 X86_64_CXX ?= g++
 AARCH64_CXX ?= aarch64-linux-gnu-g++
 X86_64_AS ?= nasm
-INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
+INCLUDE_DIRS ?= -I. -Ikernel -Ikernel/selftests -Ikernel/platform -Ikernel/platform/terminal/flanterm -Ikernel/platform/terminal/flanterm/flanterm_backends
 DEBUG ?= 0
 
 UACPI_DIR ?= kernel/platform/acpi/uACPI
@@ -71,13 +72,71 @@ BOOTX64_EFI := $(BOOT_DIR)/x86_64/BOOTX64.EFI
 BOOTAA64_EFI := $(BOOT_DIR)/aarch64/BOOTAA64.EFI
 INITRAMFS_DIR ?= initramfs
 INITRAMFS_IMAGE ?= $(BIN_DIR)/initramfs.cpio
+MUSL_CC ?= musl-gcc
+MUSL_RUNTIME ?= /lib/ld-musl-x86_64.so.1
+DYNAMIC_FIXTURE_SOURCES := $(wildcard kernel/selftests/usertests/*) scripts/build-dynamic-fixtures.sh
+DYNAMIC_ROOT := $(BUILD_DIR)/userspace/x86_64
 INITRAMFS_CONTENTS := $(shell find $(INITRAMFS_DIR) -type f 2>/dev/null)
 USER_TEST_ELF_SRC ?= $(INITRAMFS_DIR)/test_syscall_exit.S
 USER_TEST_ELF ?= $(INITRAMFS_DIR)/test_syscall_exit.elf
 
 .PHONY: all x86_64 aarch64 initramfs prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c kernel/selftests/selftest.c kernel/selftests/syscalltests.cpp kernel/selftests/smpselftests.cpp kernel/selftests/schedulertests.cpp kernel/selftests/tasktests.cpp kernel/selftests/processtests.cpp kernel/selftests/vfstests.cpp kernel/selftests/poststartvfstests.cpp kernel/selftests/poststartelftests.cpp kernel/selftests/datastructurestests.c kernel/selftests/memorytests.c kernel/selftests/klibtests.c kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
+SELFTEST_SRCS := \
+    kernel/selftests/SelfTestManager.cpp \
+    kernel/selftests/platform/datastructurestests.c \
+    kernel/selftests/platform/klibtests.c \
+    kernel/selftests/platform/memorytests.c \
+    kernel/selftests/platform/platforminvariants.c \
+    kernel/selftests/platform/platformtests.c \
+    kernel/selftests/resource/InitRamFileSystemManagerTests.cpp \
+    kernel/selftests/resource/PhysicalMemoryManagerTests.cpp \
+    kernel/selftests/resource/DmaManagerTests.cpp \
+    kernel/selftests/resource/ProcessManagerTests.cpp \
+    kernel/selftests/resource/ResourceFileSystemTests.cpp \
+    kernel/selftests/resource/resourcetests.cpp \
+    kernel/selftests/resource/TaskManagerTests.cpp \
+    kernel/selftests/resource/TimeManagerTests.cpp \
+    kernel/selftests/resource/VirtualMemoryManagerTests.cpp \
+    kernel/selftests/logic/CredentialManagerTests.cpp \
+    kernel/selftests/logic/ElfMapperTests.cpp \
+    kernel/selftests/logic/EventManagerTests.cpp \
+    kernel/selftests/logic/InterProcessCommunicationManagerTests.cpp \
+    kernel/selftests/logic/logictests.cpp \
+    kernel/selftests/logic/ProcessControllerTests.cpp \
+    kernel/selftests/logic/SchedulerTests.cpp \
+    kernel/selftests/logic/SignalManagerTests.cpp \
+    kernel/selftests/logic/SocketManagerTests.cpp \
+    kernel/selftests/logic/SynchronizationManagerTests.cpp \
+    kernel/selftests/logic/VirtualFileSystemTests.cpp \
+    kernel/selftests/poststartkernel/communicationintegration.cpp \
+    kernel/selftests/poststartkernel/eventintegration.cpp \
+    kernel/selftests/poststartkernel/memoryintegration.cpp \
+    kernel/selftests/poststartkernel/poststartelftests.cpp \
+    kernel/selftests/poststartkernel/poststartkerneltests.cpp \
+    kernel/selftests/poststartkernel/poststartvfstests.cpp \
+    kernel/selftests/poststartkernel/processlifecycletests.cpp \
+    kernel/selftests/poststartkernel/schedulertests.cpp \
+    kernel/selftests/poststartkernel/signalintegration.cpp \
+    kernel/selftests/poststartkernel/smpselftests.cpp \
+    kernel/selftests/poststartkernel/taskcontexttests.cpp \
+    kernel/selftests/poststartkernel/tlbintegration.cpp \
+    kernel/selftests/poststartkernel/waitintegration.cpp \
+    kernel/selftests/request/requesttests.cpp \
+    kernel/selftests/request/RequestTestSupport.cpp \
+    kernel/selftests/request/ProcessRequestManagerTests.cpp \
+    kernel/selftests/request/SchedulerRequestManagerTests.cpp \
+    kernel/selftests/request/TimeRequestManagerTests.cpp \
+    kernel/selftests/request/MemoryRequestManagerTests.cpp \
+    kernel/selftests/request/VfsRequestManagerTests.cpp \
+    kernel/selftests/request/EventRequestManagerTests.cpp \
+    kernel/selftests/request/SyncRequestManagerTests.cpp \
+    kernel/selftests/request/SignalRequestManagerTests.cpp \
+    kernel/selftests/request/CredentialRequestManagerTests.cpp \
+    kernel/selftests/request/SystemRequestManagerTests.cpp \
+    kernel/selftests/request/SocketRequestManagerTests.cpp
+
+KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/CredentialManager.cpp kernel/layers/Logic/EventManager.cpp kernel/layers/Logic/EventNotifications.cpp kernel/layers/Logic/SynchronizationManager.cpp kernel/layers/Logic/SignalManager.cpp kernel/layers/Logic/SocketManager.cpp kernel/layers/Logic/InterProcessCommunicationManager.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/SchedulerPolicies.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Logic/ProcessLifecycle.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/SchedulerPolicyRequests.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/DmaManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Logic/ProcessMemoryManager.cpp kernel/layers/Resource/TimeManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c $(SELFTEST_SRCS) kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/numa.c kernel/platform/dma/dma.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/device/device.c klib/printf/printf.c klib/klib.c
 KERNEL_X86_64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_X86_64_SRC) $(KERNEL_X86_64_ARCH_SRC)
 KERNEL_X86_64_ASM_SRCS := $(ARCH_DIR)/x86_64/interrupts.asm $(ARCH_DIR)/x86_64/arch_context.asm $(ARCH_DIR)/x86_64/arch_syscall_entry.asm
 KERNEL_AARCH64_SRCS := $(KERNEL_COMMON_SRCS) $(KERNEL_AARCH64_SRC) $(KERNEL_AARCH64_ARCH_SRC)
@@ -100,19 +159,36 @@ DEP_FILES := $(KERNEL_X86_64_OBJS:.o=.d) $(KERNEL_AARCH64_OBJS:.o=.d)
 
 -include $(filter %.d,$(DEP_FILES))
 
-all: x86_64 aarch64 initramfs
+all: x86_64 initramfs
 
-initramfs: $(USER_TEST_ELF) $(INITRAMFS_IMAGE)
+initramfs: $(INITRAMFS_IMAGE)
 
 $(USER_TEST_ELF): $(USER_TEST_ELF_SRC)
 	@mkdir -p $(INITRAMFS_DIR)
 	$(X86_64_CC) -nostdlib -static -Wl,-n,-e,_start,-Ttext-segment=0x400000 -o $@ $<
 
-$(INITRAMFS_IMAGE): $(INITRAMFS_CONTENTS) $(USER_TEST_ELF)
+# Check musl even on incremental builds; a missing dependency must not be
+# hidden by an existing archive. Fixture recipes run before archive creation.
+.PHONY: require-musl
+require-musl:
+	@sh scripts/build-dynamic-fixtures.sh --check "$(MUSL_CC)" "$(MUSL_RUNTIME)"
+
+$(BUILD_DIR)/musl-fixture.config: require-musl
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n' "$(MUSL_CC)" "$(MUSL_RUNTIME)" > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+
+$(DYNAMIC_ROOT)/.stamp: Makefile $(DYNAMIC_FIXTURE_SOURCES) $(wildcard $(MUSL_RUNTIME)) $(BUILD_DIR)/musl-fixture.config | require-musl
+	sh scripts/build-dynamic-fixtures.sh --build "$(MUSL_CC)" "$(MUSL_RUNTIME)" "$(DYNAMIC_ROOT)" kernel/selftests/usertests
+	$(X86_64_CC) -nostdlib -static -Wl,-e,_start -o $(DYNAMIC_ROOT)/dynamic_launcher.elf kernel/selftests/usertests/dynamic_launcher.S
+	@touch $@
+
+$(INITRAMFS_IMAGE): Makefile $(INITRAMFS_CONTENTS) $(USER_TEST_ELF) $(DYNAMIC_ROOT)/.stamp | require-musl
 	@mkdir -p $(BIN_DIR)
 	@test -d "$(INITRAMFS_DIR)" || { echo "Error: missing $(INITRAMFS_DIR)" >&2; exit 1; }
 	@command -v cpio >/dev/null 2>&1 || { echo "Error: cpio not found." >&2; exit 1; }
 	@cd "$(INITRAMFS_DIR)" && find . -print | cpio -o -H newc > "$(abspath $@)"
+	@cd "$(DYNAMIC_ROOT)" && find . -mindepth 1 ! -name .stamp -print | cpio -o -A -H newc -F "$(abspath $@)"
 
 prepare-iso-tools:
 	@command -v parted >/dev/null 2>&1 || { echo "Error: parted not found." >&2; exit 1; }

@@ -1,213 +1,239 @@
 # Diagrams
 
+Editable Mermaid sources for the SVGs embedded in Platform.md and KernelArch.md.
+The rendered SVG files remain in `docs/imgs/`. Render each block with Mermaid CLI,
+using `platform-mermaid-config.json` and its listed SVG filename. Keep the guides
+using the rendered SVGs rather than inline Mermaid blocks.
+Preserve text spacing in exported SVGs with `xml:space="preserve"` on the root element.
 
+## NUMA allocation structure
 
-```mermaid
-graph TD
-
-    subgraph Dispatcher
-        CPU1[CPU 1]
-        CPU2[CPU 2]
-        CPU3[CPU 3]
-        CPUN[CPU N]
-    end
-
-    CPU1 --> NUMA
-    CPU2 --> NUMA
-    CPU3 --> NUMA
-    CPUN --> NUMA
-
-    NUMA[NUMA Node]
-    NUMA --> ZONE[Zone]
-    ZONE --> BUDDY[Buddy Allocator]
-```
+SVG: `NUMA Node Allocation Flow-2026-04-15-064600.svg`
 
 ```mermaid
-flowchart TD
-    subgraph Alloc
-        K[bytes to pages to order] --> L[lock zone]
-        L --> M[buddy alloc]
-        M --> N{higher order block}
-        N -- yes --> O[split until requested order]
-        N -- no --> P[use block]
-        O --> Q[update free pages and used pages]
-        P --> Q
-        Q --> R[unlock zone]
-        R --> S[return HHDM virtual address]
-    end
+flowchart TB
+    accTitle: NUMA memory organization
+    accDescr: CPU records reference their NUMA node. Each node owns Normal and DMA zones backed by buddy allocators.
+    P[Platform CPU records] --> C[Current CPU]
+    C --> N[Assigned NUMA node]
+    P --> O[Other CPUs and NUMA nodes]
+    N --> Z[Normal zone]
+    N --> D[DMA zone]
+    Z --> B[Buddy allocator]
+    D --> DB[Buddy allocator]
+    Z -. allocation fallback .-> R[Other nodes' Normal zones]
 ```
+
+## Physical memory allocation
+
+SVG: `pmmalloc-2026-04-15-065023.svg`
 
 ```mermaid
-flowchart TD
-    subgraph Free
-        T[HHDM VA to PA to PFN] --> U[lock zone]
-        U --> V[buddy free]
-        V --> W{buddy free and same order}
-        W -- yes --> X[merge and retry]
-        W -- no --> Y[insert block in free list]
-        X --> W
-        Y --> Z[update free pages and used pages]
-        Z --> AA[unlock zone]
-    end
+flowchart TB
+    accTitle: Physical memory allocation
+    accDescr: Try the local Normal zone, then remote zones, splitting buddy blocks as needed.
+    A[pmm_alloc: requested bytes] --> B[Select local Normal zone]
+    B --> C{Valid size and order?}
+    C -- no --> X[Return NULL]
+    C -- yes --> D[Lock zone]
+    D --> E{Free block available?}
+    E -- no --> F[Unlock zone]
+    F --> G{Another node to try?}
+    G -- yes --> H[Select next Normal zone]
+    H --> D
+    G -- no --> X
+    E -- yes --> I[Split larger buddies if needed]
+    I --> J[Mark block used and update counters]
+    J --> K[Unlock zone]
+    K --> L[Return HHDM pointer]
 ```
+
+## Physical memory release
+
+SVG: `pmmfree-2026-04-15-065114.svg`
 
 ```mermaid
-graph TD
-
-    subgraph Dispatcher
-        CPU1[cpu entry 0]
-        CPU2[cpu entry 1]
-        SLOT[selected cpu entry]
-        CPUN[cpu entry N]
-    end
-
-    SLOT --> CPU[cpu_info struct]
-    CPU --> NUMA[numa_node pointer]
-    CPU --> VAS[address_space pointer]
-    CPU --> ARCH[arch_info]
+flowchart TB
+    accTitle: Physical memory release
+    accDescr: Locate the owning Normal or DMA zone, validate the allocation, and merge free buddies.
+    A[pmm_free: allocation pointer] --> B{Non-null pointer?}
+    B -- no --> X[Return]
+    B -- yes --> C[Find owning node and Normal or DMA zone]
+    C --> D{Aligned address in a zone?}
+    D -- no --> X
+    D -- yes --> E[Lock zone]
+    E --> F{Valid allocated block?}
+    F -- no --> K[Unlock zone]
+    F -- yes --> G[Record original block size]
+    G --> H[Merge free buddies of the same order]
+    H --> I[Insert resulting block into free list]
+    I --> J[Update counters using original size]
+    J --> K
+    K --> X
 ```
 
+## Platform CPU state
 
+SVG: `dispatcher-2026-04-15-070216.svg`
 
 ```mermaid
-flowchart TD
-
-    subgraph Reserve Path
-        R0[vmm_reserve_region] --> R1[validate and align size]
-        R1 --> R2[select kernel or user lists]
-        R2 --> R3[lock space]
-        R3 --> R4[scan free list for fit]
-        R4 --> R5{exact size match}
-        R5 -- yes --> R6[move free node to used]
-        R5 -- no --> R7[alloc metadata node]
-        R7 --> R8{metadata available}
-        R8 -- no --> R9[unlock and return 0]
-        R8 -- yes --> R10[create used at free start]
-        R10 --> R11[advance free start shrink size]
-        R6 --> R12[unlock and return reserved start]
-        R11 --> R12
-    end
-
-```
-```mermaid
-flowchart TD
-    subgraph Free Path
-        F0[vmm_free_region] --> F1[validate inputs]
-        F1 --> F2[lock space]
-        F2 --> F3[find by start in used lists]
-        F3 --> F4{region found}
-        F4 -- no --> F5[unlock and return]
-        F4 -- yes --> F6[remove region from used list]
-        F6 --> F7[insert into free list sorted]
-        F7 --> F8[merge left if adjacent]
-        F8 --> F9[merge right if adjacent]
-        F9 --> F10[unlock]
-    end
+flowchart TB
+    accTitle: Platform CPU state
+    accDescr: The current architecture CPU ID selects a platform CPU record containing machine and memory state.
+    P[Platform state] --> T[CPU records]
+    I[arch_cpu_id] --> C[Current CPU record]
+    T --> C
+    C --> N[NUMA node]
+    C --> V[Active address space]
+    C --> A[Architecture state]
+    C --> S[Kernel stack]
+    C --> R[Preemption and reschedule state]
 ```
 
+## Virtual region reservation
 
-
-
+SVG: `vmmreserve-2026-04-15-072825.svg`
 
 ```mermaid
-flowchart LR
-    A[Address Space]
-    B[State and lock]
-    C[Kernel Free List]
-    D[Kernel Used List]
-    E[User Free List]
-    F[User Used List]
-    G[Region Metadata Pool]
-    H[Virtual Region]
-    I[Region info: start end size]
-    K[Neighbor links]
-
-    A --> B
-    A --> C
-    A --> D
-    A --> E
-    A --> F
-    A --> G
-
-    C --> H
-    D --> H
-    E --> H
-    F --> H
-
-    H --> I
-    H --> K
-    K --> H
+flowchart TB
+    accTitle: Virtual address reservation
+    accDescr: Claim an aligned free address range without allocating or mapping physical pages.
+    A[vmm_reserve_region] --> B[Select address space and align size]
+    B --> C{Valid inputs?}
+    C -- no --> X[Return 0]
+    C -- yes --> D[Select kernel or user lists and metadata pool]
+    D --> E[Lock address space]
+    E --> F{Free range fits?}
+    F -- no --> U[Unlock and return 0]
+    F -- yes --> G{Exact fit?}
+    G -- yes --> H[Move free record to used list]
+    G -- no --> I{Metadata record available?}
+    I -- no --> U
+    I -- yes --> J[Create used record and shrink free range]
+    H --> K[Unlock and return reserved address]
+    J --> K
 ```
+
+## Virtual region release
+
+SVG: `vmmfree-2026-04-15-072859.svg`
 
 ```mermaid
-flowchart LR
-    A[Kernel Heap]
-    B[Heap lock]
-    C[Caches by size class]
-    D[Cache]
-    E[Partial list]
-    F[Full list]
-    G[Empty list]
-    H[Slab metadata array]
-    I[Slab]
-
-    A --> B
-    A --> C
-    C --> D
-    D --> E
-    D --> F
-    D --> G
-    D --> H
-    E --> I
-    F --> I
-    G --> I
-    H --> I
+flowchart TB
+    accTitle: Virtual address reservation release
+    accDescr: Return a reserved address range and merge adjacent free ranges; this does not unmap pages.
+    A[vmm_free_region] --> B[Select address space]
+    B --> C{Valid inputs?}
+    C -- no --> X[Return]
+    C -- yes --> D[Lock address space]
+    D --> E{Used range starts at address?}
+    E -- no --> K[Unlock address space]
+    E -- yes --> F[Remove from used list]
+    F --> G[Insert into sorted free list]
+    G --> H[Merge adjacent left and right ranges]
+    H --> I[Recycle merged metadata records]
+    I --> K
+    K --> X
 ```
+
+## Virtual address-space structure
+
+SVG: `vaddr-2026-04-15-074940.svg`
 
 ```mermaid
-flowchart TD
-    subgraph Heap Alloc Path
-        A0[request] --> A1[validate heap and size]
-        A1 --> A2{valid}
-        A2 -- no --> A3[return NULL]
-        A2 -- yes --> A4[pick cache for size]
-        A4 --> A5{cache found}
-        A5 -- no --> A3
-        A5 -- yes --> A6[try partial list]
-        A6 --> A7{success}
-        A7 -- yes --> A8[return ptr]
-        A7 -- no --> A9[try full list]
-        A9 --> A10{success}
-        A10 -- yes --> A11[move full to partial]
-        A11 --> A8
-        A10 -- no --> A12[grow cache then retry full]
-        A12 --> A13{success}
-        A13 -- yes --> A11
-        A13 -- no --> A3
-    end
+flowchart TB
+    accTitle: Virtual address-space state
+    accDescr: An address space holds page tables, locks, separate kernel and user region lists, and metadata pools.
+    A[Address space] --> S[Page-table root and locks]
+    A --> K[Kernel regions]
+    A --> U[User regions]
+    K --> KF[Free list]
+    K --> KU[Used list]
+    K --> KM[Kernel region metadata pool]
+    U --> UF[Free list]
+    U --> UU[Used list]
+    U --> UM[User region metadata pool]
+    KF --> R[Region record]
+    KU --> R
+    UF --> R
+    UU --> R
+    R --> I[Start, end, size, type and backing]
+    R --> L[Previous and next links]
 ```
 
+## Heap structure
+
+SVG: `heap-2026-04-19-224905.svg`
+
 ```mermaid
-flowchart TD
-    subgraph Heap Free Path
-        F0[request] --> F1[validate heap and ptr]
-        F1 --> F2{valid}
-        F2 -- no --> F3[return]
-        F2 -- yes --> F4[scan caches]
-        F4 --> F5[try empty list first]
-        F5 --> F6{found owner slab}
-        F6 -- yes --> F7[free object]
-        F7 --> F8[move empty to partial if needed]
-        F8 --> F3
-        F6 -- no --> F9[try partial list]
-        F9 --> F10{found owner slab}
-        F10 -- no --> F11[next cache]
-        F11 --> F4
-        F10 -- yes --> F12[free object]
-        F12 --> F13[move partial to full if slab fully free]
-        F13 --> F3
-    end
+flowchart TB
+    accTitle: Per-node heap structure
+    accDescr: A NUMA node owns a heap whose size-class caches track slabs and metadata.
+    N[NUMA node] --> H[Kernel heap]
+    H --> L[Heap lock]
+    H --> C[Size-class caches]
+    C --> O[Object size]
+    C --> P[partial_slabs: in-use slabs]
+    C --> F[full_slabs: all objects available]
+    C --> E[empty_slabs: exhausted-slab list]
+    C --> M[Slab metadata pool]
+    P --> S[Slab record]
+    F --> S
+    E --> S
+    S --> B[Object storage and allocation bitmap]
+    S --> V[Object counts and list links]
 ```
+
+## Heap allocation
+
+SVG: `heapalloc-2026-04-19-225900.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Small-object heap allocation
+    accDescr: Select a size class, reuse a slab or grow the cache, and return an object.
+    A[heap_alloc: heap and size] --> B{Valid size class?}
+    B -- no --> X[Return NULL]
+    B -- yes --> C[Try partial_slabs]
+    C --> D{Object allocated?}
+    D -- yes --> R[Return object pointer]
+    D -- no --> E[Try full_slabs: all objects available]
+    E --> F{Object allocated?}
+    F -- yes --> M[Move slab to partial_slabs]
+    F -- no --> G[Grow cache with PMM storage and metadata]
+    G --> H[Retry full_slabs]
+    H --> I{Object allocated?}
+    I -- no --> X
+    I -- yes --> M
+    M --> R
+```
+
+## Heap release
+
+SVG: `heapfree-2026-04-19-225920.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Small-object heap release
+    accDescr: Find the owning slab in each size-class cache and update the allocation bitmap and slab list.
+    A[heap_free: heap and pointer] --> B{Valid inputs?}
+    B -- no --> X[Return]
+    B -- yes --> C[Select next size-class cache]
+    C --> D{Owner in empty_slabs?}
+    D -- yes --> E[Free object and move to partial_slabs if available]
+    D -- no --> F{Owner in partial_slabs?}
+    F -- yes --> G[Free object]
+    G --> H{All objects available?}
+    H -- yes --> I[Move slab to full_slabs]
+    H -- no --> J{More caches?}
+    I --> J
+    E --> J
+    F -- no --> J
+    J -- yes --> C
+    J -- no --> X
+```
+
+## VFS mount and open flow
 
 ```mermaid
 flowchart TD
@@ -242,9 +268,57 @@ flowchart TD
     end
 ```
 
+## Kernel architecture responsibilities
 
+SVG: `kernel-architecture.svg`
 
+```mermaid
+flowchart TB
+    accTitle: Arx architectural responsibilities
+    accDescr: Dispatcher routes requests into Request. Request uses Logic and Resource, Logic uses Resource, and Resource uses platform services backed by Arch. Klib is shared throughout the kernel.
+    D[Dispatcher: entry bridge] --> Q[Request: handle incoming requests]
+    subgraph STACK[Layer stack]
+        Q --> L[Logic: behavior and policy]
+        Q --> R[Resource: objects and mechanisms]
+        L --> R
+    end
+    R --> P[Platform: hardware interface]
+    P --> A[Arch: machine-specific operations]
+    K[Klib: shared utilities available to every kernel area]
+```
 
+## Kernel initialization order
 
+SVG: `kernel-startup.svg`
 
+```mermaid
+flowchart TB
+    accTitle: Arx initialization order
+    accDescr: Platform setup and CPU startup precede Dispatcher and layer construction. Scheduling enables the final integration and Request tests.
+    A[Arch entry reads boot information] --> P[Platform prepares hardware and memory]
+    P --> S[Start other CPUs and run platform tests]
+    S --> C[Kernel stacks and CPU rendezvous]
+    C --> D[kmain creates Dispatcher]
+    D --> R[Create Resource, then run its tests]
+    R --> L[Create Logic using Resource, then run its tests]
+    L --> Q[Create Request using Resource and Logic]
+    Q --> F[Mount root and queue per-CPU tasks]
+    F --> G[Release waiting CPUs and activate scheduling]
+    G --> T[Scheduled post-init and Request tests]
+```
 
+## Kernel request flow
+
+SVG: `kernel-request-flow.svg`
+
+```mermaid
+flowchart TB
+    accTitle: Incoming kernel request flow
+    accDescr: Architecture entry sends syscalls and scheduling requests through Dispatcher to Request handlers, which use Logic or Resource services.
+    A[Arch entry: syscall or scheduling interrupt] --> D[Dispatcher selects a handler]
+    D --> Q[Request manager interprets arguments]
+    Q --> L[Logic coordinates kernel behavior]
+    Q --> R[Resource operates on kernel objects]
+    L --> R
+    R --> P[Platform and Arch provide machine services]
+```

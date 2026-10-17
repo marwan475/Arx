@@ -10,6 +10,9 @@ namespace
 constexpr size_t CPIO_HEADER_SIZE     = 110;
 constexpr size_t CPIO_MAGIC_SIZE      = 6;
 constexpr size_t CPIO_FILESIZE_OFFSET = 54;
+constexpr size_t CPIO_MODE_OFFSET     = 14;
+constexpr size_t CPIO_UID_OFFSET      = 22;
+constexpr size_t CPIO_GID_OFFSET      = 30;
 constexpr size_t CPIO_NAMESIZE_OFFSET = 94;
 
 constexpr char CPIO_NEWC_MAGIC[] = "070701";
@@ -31,6 +34,7 @@ size_t normalizePathStart(const uint8_t* name, size_t nameLen)
 
     return start;
 }
+
 } // namespace
 
 InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress) : ArchiveCount(0)
@@ -40,6 +44,9 @@ InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintp
         Archives[i].path = nullptr;
         Archives[i].size = 0;
         Archives[i].data = nullptr;
+        Archives[i].mode = 0;
+        Archives[i].uid  = 0;
+        Archives[i].gid  = 0;
     }
 
     loadArchivesFromCpio(initramfsSize, initramfsAddress);
@@ -57,6 +64,9 @@ void InitRamFileSystemManager::reset()
 
         Archives[i].size = 0;
         Archives[i].data = nullptr;
+        Archives[i].mode = 0;
+        Archives[i].uid  = 0;
+        Archives[i].gid  = 0;
     }
 
     ArchiveCount = 0;
@@ -132,10 +142,12 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
     reset();
 
     offset = 0;
+
     while (offset + CPIO_HEADER_SIZE <= initramfsSize)
     {
         const uint8_t* header;
         uint64_t       fileSize;
+        uint64_t       mode, uid, gid;
         uint64_t       nameSize;
         uint64_t       dataOffset;
         uint64_t       nextOffset;
@@ -148,6 +160,11 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         header = base + offset;
 
         if (memcmp(header, CPIO_NEWC_MAGIC, CPIO_MAGIC_SIZE) != 0)
+        {
+            return false;
+        }
+
+        if (!parseHexField(header + CPIO_MODE_OFFSET, 8, &mode) || !parseHexField(header + CPIO_UID_OFFSET, 8, &uid) || !parseHexField(header + CPIO_GID_OFFSET, 8, &gid))
         {
             return false;
         }
@@ -168,6 +185,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         }
 
         nameEndOffset = offset + CPIO_HEADER_SIZE + nameSize;
+
         if (nameEndOffset > initramfsSize)
         {
             return false;
@@ -177,12 +195,14 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         nameLen = (size_t) (nameSize - 1);
 
         dataOffset = align_up(nameEndOffset, 4);
+
         if (dataOffset > initramfsSize || fileSize > (initramfsSize - dataOffset))
         {
             return false;
         }
 
         nextOffset = align_up(dataOffset + fileSize, 4);
+
         if (nextOffset > initramfsSize)
         {
             return false;
@@ -209,6 +229,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
             archive = &Archives[ArchiveCount];
 
             path = (char*) kmalloc(normalizedLen + 1);
+
             if (path == nullptr)
             {
                 return false;
@@ -219,6 +240,9 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
             archive->path = path;
             archive->size = fileSize;
+            archive->mode = static_cast<uint32_t>(mode);
+            archive->uid  = static_cast<uint32_t>(uid);
+            archive->gid  = static_cast<uint32_t>(gid);
             archive->data = (uint8_t*) (base + dataOffset);
             ArchiveCount++;
         }
@@ -234,6 +258,7 @@ initramfs_archive_t* InitRamFileSystemManager::find(const char* path)
     for (size_t i = 0; i < ArchiveCount; i++)
     {
         initramfs_archive_t* iter = &Archives[i];
+
         if (iter->path != nullptr && stringEquals(iter->path, path))
         {
             return iter;
@@ -241,6 +266,16 @@ initramfs_archive_t* InitRamFileSystemManager::find(const char* path)
     }
 
     return nullptr;
+}
+
+const initramfs_archive_t* InitRamFileSystemManager::GetArchiveAt(size_t index) const
+{
+    if (index >= ArchiveCount)
+    {
+        return nullptr;
+    }
+
+    return &Archives[index];
 }
 
 size_t InitRamFileSystemManager::GetArchiveCount() const

@@ -8,10 +8,7 @@
 #include <klib/klib.h>
 #include <platform.h>
 
-extern "C"
-{
-#include <selftests/selftests.h>
-}
+#include <selftests/SelfTestManager.hpp>
 
 static void KernelPostInit(void);
 static void KernelPostInitTask(void* arg);
@@ -30,17 +27,30 @@ extern "C" void kmain(void)
 
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+    bool               mounted          = false;
 
     if (resourceLayerCaps != nullptr && logicLayerCaps != nullptr && logicLayerCaps->virtualFileSystem != nullptr)
     {
-        const bool mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
-        kprintf("Arx kernel: root initramfs mount %s\n", mounted ? "ok" : "failed");
-        poststartkerneltests((void*) resourceLayerCaps, (void*) logicLayerCaps);
+        mounted = logicLayerCaps->virtualFileSystem->MountRootFileSystem("cpio", resourceLayerCaps->initRamFileSystemManager);
+
+        if (mounted)
+        {
+            kprintf("Arx kernel: root initramfs mount ok\n");
+        }
+        else
+        {
+            error_logger("Arx kernel: root initramfs mount failed\n");
+        }
     }
 
-    BootstrapPostInitTasks(dispatcher);
+    SelfTestManager::Get().SetRootFileSystemMounted(mounted);
 
-    platform.bsp_kmain_exited = 1;
+    if (!BootstrapPostInitTasks(dispatcher))
+    {
+        SelfTestManager::Get().AbortUnsafe("post-init task creation or enqueue failed");
+    }
+
+    __atomic_store_n(&platform.bsp_kmain_exited, 1, __ATOMIC_RELEASE);
 
     if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)
     {
@@ -55,43 +65,17 @@ extern "C" void kmain(void)
 
 static void KernelPostInit(void)
 {
-    smp_selftests();
-
-    if (arch_cpu_id() == platform.bsp_id)
-    {
-        Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
-        if (dispatcher != nullptr)
-        {
-            launch_syscall_selftests((void*) dispatcher->GetRequestLayerCaps());
-        }
-
-        unsigned long long smpPasses   = 0;
-        unsigned long long smpFails    = 0;
-        unsigned long long smpFinished = 0;
-
-        smp_selftests_wait_for_all_cpus();
-        smp_selftests_get_totals(&smpPasses, &smpFails, &smpFinished);
-
-        KDEBUG("smp summary: finished_cpus=%llu pass=%llu fail=%llu\n", smpFinished, smpPasses, smpFails);
-        smp_selftests_kdebug_summary_details();
-
-        selftest_group_begin("smp");
-        selftest_case_begin("smp_selftests");
-        if (smpFails > 0)
-        {
-            smp_selftests_record_failure_details();
-        }
-        selftest_case_end("smp_selftests", smpPasses, smpFails);
-        selftest_group_end("smp");
-
-        selftest_print_summary();
-    }
+#if defined(__x86_64__)
+    (void) lapic_timer_calibrate();
+#endif
+    SelfTestManager::Get().RunPostInitTests();
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
+
     for (;;)
     {
-        arch_pause();
+        arch_halt();
     }
 }
 
@@ -111,6 +95,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+
     if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->processManager == nullptr || resourceLayerCaps->taskManager == nullptr || logicLayerCaps->scheduler == nullptr)
     {
         kprintf("Arx kernel: bootstrap post-init tasks skipped (missing caps)\n");
@@ -126,6 +111,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
     for (uint8_t cpuId = 0; cpuId < (uint8_t) platform.cpu_count; cpuId++)
     {
         virt_addr_space_t* activeSpace = platform.cpus[cpuId].address_space;
+
         if (activeSpace == nullptr && platform.bsp_id < platform.cpu_count)
         {
             activeSpace = platform.cpus[platform.bsp_id].address_space;
@@ -139,17 +125,19 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
         }
 
         process_t* process = processManager->CreateProcess(activeSpace);
+
         if (process == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init process create failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init process create failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }
 
         task_t* seedTask = taskManager->AllocateTask();
+
         if (seedTask == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u running task allocation failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running task allocation failed\n", (unsigned) cpuId);
             (void) processManager->FreeProcess(process);
             all_ok = false;
             continue;
@@ -157,7 +145,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!taskManager->SetRunningTask(cpuId, seedTask))
         {
-            kprintf("Arx kernel: bootstrap cpu %u running task set failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running task set failed\n", (unsigned) cpuId);
             (void) taskManager->FreeTask(seedTask);
             (void) processManager->FreeProcess(process);
             all_ok = false;
@@ -166,7 +154,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!processManager->SetRunningProcess(cpuId, process))
         {
-            kprintf("Arx kernel: bootstrap cpu %u running process set failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u running process set failed\n", (unsigned) cpuId);
             (void) taskManager->SetRunningTask(cpuId, nullptr);
             (void) taskManager->FreeTask(seedTask);
             (void) processManager->FreeProcess(process);
@@ -175,16 +163,17 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
         }
 
         task_t* postInitTask = taskManager->CreateKernelTask(KernelPostInitTask, (void*) (uintptr_t) cpuId);
+
         if (postInitTask == nullptr)
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init task create failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init task create failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }
 
         if (!processManager->AddTask(process, postInitTask))
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init task attach failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init task attach failed\n", (unsigned) cpuId);
             (void) taskManager->FreeTask(postInitTask);
             all_ok = false;
             continue;
@@ -192,7 +181,7 @@ static bool BootstrapPostInitTasks(Dispatcher* dispatcher)
 
         if (!scheduler->EnqueueProcess(cpuId, process->id))
         {
-            kprintf("Arx kernel: bootstrap cpu %u post-init enqueue failed\n", (unsigned) cpuId);
+            error_logger("Arx kernel: bootstrap cpu %u post-init enqueue failed\n", (unsigned) cpuId);
             all_ok = false;
             continue;
         }

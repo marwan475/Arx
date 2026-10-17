@@ -9,16 +9,13 @@
 
 static const uint8_t PIC_MASK_ALL_IRQS = 0xFF;
 
+// Reserved independently of every task and boot stack, available even when
+// allocation or the current stack is damaged.
+static uint8_t double_fault_stacks[BOOT_SMP_MAX_CPUS][4 * PAGE_SIZE] __attribute__((aligned(16)));
+
 static inline void outb(uint16_t port, uint8_t value)
 {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-static uint64_t read_rsp(void)
-{
-    uint64_t rsp = 0;
-    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
-    return rsp;
 }
 
 uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context)
@@ -34,12 +31,6 @@ uint64_t arch_task_context_stack_pointer(const struct arch_task_context* context
 static bool is_low_half_user_va(uint64_t va)
 {
     return (va & 0xFFFF800000000000ULL) == 0;
-}
-
-static void set_tss_rsp0(tss_t* tss, uint64_t rsp0)
-{
-    tss->RSP0_lower = (uint32_t) (rsp0 & 0xFFFFFFFFu);
-    tss->RSP0_upper = (uint32_t) ((rsp0 >> 32) & 0xFFFFFFFFu);
 }
 
 static void set_tss_ist1(tss_t* tss, uint64_t ist1)
@@ -107,17 +98,18 @@ static void gdt_init()
     memset(&cpu_info->arch_info.tss, 0, sizeof(cpu_info->arch_info.tss));
 
     uint64_t kernel_stack_top = 0;
+
     if (cpu_info->kernel_stack_base != NULL && cpu_info->kernel_stack_size != 0)
     {
         kernel_stack_top = (uint64_t) (uintptr_t) ((uint8_t*) cpu_info->kernel_stack_base + cpu_info->kernel_stack_size);
     }
     else
     {
-        kernel_stack_top = read_rsp();
+        kernel_stack_top = x86_read_rsp();
     }
 
-    set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
-    set_tss_ist1(&cpu_info->arch_info.tss, kernel_stack_top);
+    x86_set_tss_rsp0(&cpu_info->arch_info.tss, kernel_stack_top);
+    set_tss_ist1(&cpu_info->arch_info.tss, (uintptr_t) &double_fault_stacks[arch_cpu_id()][4 * PAGE_SIZE]);
     cpu_info->arch_info.tss.io_map_base = (uint16_t) sizeof(tss_t);
 
     build_tss_descriptor(&cpu_info->arch_info.tss, &cpu_info->arch_info.tss_descriptor);
@@ -165,7 +157,7 @@ static void set_idt_entry(int interrupt, void (*base)(), uint16_t segment, uint8
     uintptr_t base_addr        = (uintptr_t) base;
     idt[interrupt].offset_low  = (uint16_t) (base_addr & 0xFFFF);
     idt[interrupt].selector    = segment;
-    idt[interrupt].ist         = 0;
+    idt[interrupt].ist         = interrupt == 8 ? 1 : 0;
     idt[interrupt].type_attr   = flags;
     idt[interrupt].offset_mid  = (uint16_t) ((base_addr >> 16) & 0xFFFF);
     idt[interrupt].offset_high = (uint32_t) ((base_addr >> 32) & 0xFFFFFFFF);
@@ -223,10 +215,10 @@ static void init_interrupts()
     kprintf("Arx kernel: cpu %d interrupts initialized\n", arch_cpu_id());
 }
 
+extern void arch_x86_64_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1) __attribute__((noreturn));
+
 __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1)
 {
-    static const uint64_t USER_INITIAL_RFLAGS = (1ULL << 1) | (1ULL << 9);
-
     if (!is_low_half_user_va(user_rip) || !is_low_half_user_va(user_rsp))
     {
         kprintf("Arx kernel: arch_enter_user_mode rejected non-user VA rip=0x%llx rsp=0x%llx\n", (unsigned long long) user_rip, (unsigned long long) user_rsp);
@@ -238,23 +230,8 @@ __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t 
         kprintf("Arx kernel: arch_enter_user_mode rejected user rsp (expected rsp%%16 == 0 for ELF entry): 0x%llx\n", (unsigned long long) user_rsp);
         panic();
     }
-    uint64_t user_rflags = USER_INITIAL_RFLAGS;
-    uint64_t user_cs     = USER_CS;
-    uint64_t user_ss     = USER_SS;
 
-    arch_disable_interrupts();
-
-    __asm__ volatile("mov %[arg0], %%rdi\n"
-                     "mov %[arg1], %%rsi\n"
-                     "pushq %[ss]\n"
-                     "pushq %[rsp]\n"
-                     "pushq %[rflags]\n"
-                     "pushq %[cs]\n"
-                     "pushq %[rip]\n"
-                     "iretq\n"
-                     :
-                     : [arg0] "r"(arg0), [arg1] "r"(arg1), [ss] "r"(user_ss), [rsp] "r"(user_rsp), [rflags] "r"(user_rflags), [cs] "r"(user_cs), [rip] "r"(user_rip)
-                     : "rdi", "rsi", "memory");
+    arch_x86_64_enter_user_mode(user_rip, user_rsp, arg0, arg1);
 
     __builtin_unreachable();
 }
@@ -266,17 +243,19 @@ static bool init_arch_acpi()
     uacpi_table       madt_table;
 
     status = acpi_get_madt(&madt, &madt_table);
+
     if (status != UACPI_STATUS_OK)
     {
-        kprintf("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        error_logger("ACPI: failed to find MADT: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
         return false;
     }
 
     status = arch_acpi_init(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         uacpi_table_unref(&madt_table);
-        kprintf("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
+        error_logger("ACPI: failed arch MADT init: %s (%u)\n", uacpi_status_to_string(status), (unsigned) status);
         return false;
     }
 
@@ -288,6 +267,15 @@ static bool init_arch_acpi()
 
 bool arch_init(void)
 {
+    // Cache-type bits select architectural PAT index 3 (UC). Reject an
+    // incompatible boot PAT rather than reinterpret live boot mappings.
+
+    if (((x86_read_msr(0x277) >> 24) & 0xFF) != 0)
+    {
+        kprintf("Arx kernel: boot PAT index 3 must be UC\n");
+        return false;
+    }
+
     if ((uint64_t) arch_cpu_id() == platform.bsp_id)
     {
         if (!init_arch_acpi())
@@ -308,4 +296,9 @@ bool arch_init(void)
 bool arch_device_init(void)
 {
     return pci_init();
+}
+
+bool arch_task_context_supported(void)
+{
+    return true;
 }

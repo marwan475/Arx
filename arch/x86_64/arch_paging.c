@@ -65,6 +65,7 @@ typedef struct x86_64_walk_request
     phys_addr_t            pa_start;
     bool*                  any_changed;
     bool*                  requires_page_flush;
+    virt_addr_t*           failed_va;
 } x86_64_walk_request_t;
 
 typedef struct x86_64_walk_next_level_request
@@ -106,12 +107,13 @@ static bool x86_64_is_pa_encodable(phys_addr_t pa)
 static bool x86_64_is_canonical_va(virt_addr_t va)
 {
     const uint64_t high_bits = va & X86_64_CANONICAL_HIGH_MASK;
-    return high_bits == 0 || high_bits == X86_64_CANONICAL_HIGH_MASK;
+    return high_bits == ((va & (1ULL << 47)) ? X86_64_CANONICAL_HIGH_MASK : 0);
 }
 
 static bool x86_64_is_canonical_range(virt_addr_t va_start, uint64_t size)
 {
     const virt_addr_t last_va = va_start + size - PAGE_SIZE;
+
     if (!x86_64_is_canonical_va(va_start) || !x86_64_is_canonical_va(last_va))
     {
         return false;
@@ -135,12 +137,12 @@ static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t
     {
         cpu_info_t* cpu_info = &platform.cpus[cpu_id];
 
-        if (cpu_id == self_cpu_id || !cpu_info->initialized)
+        if (cpu_id == self_cpu_id || !__atomic_load_n(&cpu_info->initialized, __ATOMIC_ACQUIRE))
         {
             continue;
         }
 
-        if (cpu_info->address_space == NULL || cpu_info->address_space->pt != page_table)
+        if (va_start <= CANONICAL_USER_END && (cpu_info->address_space == NULL || cpu_info->address_space->pt != page_table))
         {
             continue;
         }
@@ -156,7 +158,7 @@ static void tlb_shootdown(phys_addr_t page_table, virt_addr_t va_start, uint64_t
 
 static void x86_64_sync_tlb_single_page(virt_addr_t va, phys_addr_t page_table)
 {
-    if (page_table == arch_get_pt())
+    if (page_table == arch_get_pt() || va > CANONICAL_USER_END)
     {
         x86_64_invlpg(va);
     }
@@ -171,7 +173,7 @@ static void x86_64_sync_tlb_range(virt_addr_t va_start, virt_addr_t range_end, b
         return;
     }
 
-    if (active_pt)
+    if (active_pt || va_start > CANONICAL_USER_END)
     {
         if (requires_page_flush)
         {
@@ -294,6 +296,7 @@ static bool x86_64_validate_range_op(const char* op, virt_addr_t va_start, uint6
     {
         const uint64_t    range_end = va_start + size;
         const phys_addr_t last_pa   = range_end == va_start ? pa_start : pa_start + size - PAGE_SIZE;
+
         if (!x86_64_is_pa_encodable(pa_start) || !x86_64_is_pa_encodable(last_pa) || !x86_64_is_pa_encodable((uint64_t) page_table))
         {
             kprintf("Arx kernel: %s rejected non-encodable PA/page_table\n", op);
@@ -344,6 +347,7 @@ void arch_set_pt(phys_addr_t pt)
 
     const uint64_t low_control_bits = old_cr3 & X86_64_PAGE_OFFSET_MASK;
     const uint64_t new_cr3          = (((uint64_t) pt) & X86_64_PTE_ADDR_MASK) | low_control_bits;
+
     if (new_cr3 == old_cr3)
     {
         return;
@@ -379,6 +383,7 @@ static bool x86_64_decode_table_entry(uint64_t entry, phys_addr_t* table_pa)
     }
 
     const phys_addr_t pa = entry & X86_64_PTE_ADDR_MASK;
+
     if (!x86_64_is_page_aligned(pa))
     {
         return false;
@@ -396,9 +401,10 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
     }
 
     void* new_table = pmm_alloc(PAGE_SIZE);
+
     if (new_table == NULL)
     {
-        kprintf("Arx kernel: arch_map_page failed: unable to allocate page table\n");
+        error_logger("Arx kernel: arch_map_page failed: unable to allocate page table\n");
         return false;
     }
 
@@ -407,7 +413,8 @@ static bool x86_64_get_or_alloc_table(uint64_t* entry, uint64_t inherited_flags,
 
     if (!x86_64_is_pa_encodable(new_table_pa))
     {
-        kprintf("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
+        error_logger("Arx kernel: arch_map_page failed: allocated table PA is not encodable\n");
+        pmm_free(new_table);
         return false;
     }
 
@@ -425,6 +432,7 @@ static bool x86_64_map_leaf_callback(uint64_t* pte, virt_addr_t va, phys_addr_t 
     const uint64_t sanitized_flags = *(const uint64_t*) context;
     const uint64_t old             = *pte;
     const uint64_t new_pte         = (pa & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+
     if (old == new_pte)
     {
         return true;
@@ -432,6 +440,7 @@ static bool x86_64_map_leaf_callback(uint64_t* pte, virt_addr_t va, phys_addr_t 
 
     *pte         = new_pte;
     *any_changed = true;
+
     if (((old | new_pte) & X86_64_PTE_GLOBAL) != 0)
     {
         *requires_page_flush = true;
@@ -447,6 +456,7 @@ static bool x86_64_unmap_leaf_callback(uint64_t* pte, virt_addr_t va, phys_addr_
     (void) context;
 
     const uint64_t old = *pte;
+
     if ((old & X86_64_PTE_PRESENT) == 0)
     {
         return true;
@@ -454,6 +464,7 @@ static bool x86_64_unmap_leaf_callback(uint64_t* pte, virt_addr_t va, phys_addr_
 
     *pte         = 0;
     *any_changed = true;
+
     if ((old & X86_64_PTE_GLOBAL) != 0)
     {
         *requires_page_flush = true;
@@ -468,6 +479,7 @@ static bool x86_64_protect_leaf_callback(uint64_t* pte, virt_addr_t va, phys_add
     (void) pa;
 
     const uint64_t old = *pte;
+
     if ((old & X86_64_PTE_PRESENT) == 0)
     {
         return true;
@@ -475,6 +487,7 @@ static bool x86_64_protect_leaf_callback(uint64_t* pte, virt_addr_t va, phys_add
 
     const uint64_t sanitized_flags = *(const uint64_t*) context;
     const uint64_t new_pte         = (old & X86_64_PTE_ADDR_MASK) | sanitized_flags | X86_64_PTE_PRESENT;
+
     if (old == new_pte)
     {
         return true;
@@ -482,6 +495,7 @@ static bool x86_64_protect_leaf_callback(uint64_t* pte, virt_addr_t va, phys_add
 
     *pte         = new_pte;
     *any_changed = true;
+
     if (((old | new_pte) & X86_64_PTE_GLOBAL) != 0)
     {
         *requires_page_flush = true;
@@ -495,15 +509,59 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
     const uint64_t level_index = (request->va >> request->level_shift) & X86_64_PT_INDEX_MASK;
     request->next_end          = request->va + x86_64_chunk_size(request->va, request->parent_end - request->va, request->level_shift);
 
+    uint64_t* parent = &request->current_table[level_index];
+
+    if ((*parent & (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT)) == (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT))
+    {
+        if (request->level_shift != 30 && request->level_shift != 21)
+        {
+            return X86_64_WALK_LEVEL_ERROR;
+        }
+
+        uint64_t* children = pmm_alloc(PAGE_SIZE);
+
+        if (children == NULL)
+        {
+            return X86_64_WALK_LEVEL_ERROR;
+        }
+
+        const uint64_t old         = *parent;
+        const uint64_t child_shift = request->level_shift - 9;
+        const uint64_t base        = old & X86_64_PTE_ADDR_MASK & ~((1ULL << request->level_shift) - 1);
+        uint64_t       flags       = old & ~X86_64_PTE_ADDR_MASK;
+
+        if (child_shift == 12)
+        {
+            flags &= ~X86_64_PTE_PAGE_SIZE_OR_PAT;
+
+            if (old & (1ULL << 12))
+            {
+                flags |= X86_64_PTE_PAGE_SIZE_OR_PAT;
+            }
+        }
+        else if (old & (1ULL << 12))
+            flags |= (1ULL << 12);
+
+        for (uint64_t i = 0; i < X86_64_PT_ENTRIES; ++i)
+        {
+            children[i] = (base + (i << child_shift)) | flags;
+        }
+
+        const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+        *parent            = hhdm_to_pa((uintptr_t) children, zone->hhdm_present, zone->hhdm_offset) | X86_64_PTE_PRESENT | X86_64_PTE_WRITABLE | (old & X86_64_PTE_USER);
+    }
+
     phys_addr_t next_table_pa = 0;
+
     if (request->allocate_tables)
     {
         if (!x86_64_get_or_alloc_table(&request->current_table[level_index], request->inherited_table_flags, &next_table_pa))
         {
             if (request->failure_context != NULL)
             {
-                kprintf("Arx kernel: %s failed at %s[%llu]\n", request->failure_context, request->level_name, (unsigned long long) level_index);
+                error_logger("Arx kernel: %s failed at %s[%llu]\n", request->failure_context, request->level_name, (unsigned long long) level_index);
             }
+
             return X86_64_WALK_LEVEL_ERROR;
         }
     }
@@ -549,15 +607,23 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                 .next_table            = NULL,
         };
         const x86_64_walk_level_result_t pml4_result = x86_64_walk_next_level(&pml4_request);
+
         if (pml4_result == X86_64_WALK_LEVEL_ERROR)
         {
+            if (request->failed_va != NULL)
+            {
+                *request->failed_va = va;
+            }
+
             return false;
         }
+
         if (pml4_result == X86_64_WALK_LEVEL_SKIP)
         {
             va = pml4_request.next_end;
             continue;
         }
+
         const uint64_t pml4_end = pml4_request.next_end;
         uint64_t*      pdpt     = pml4_request.next_table;
 
@@ -576,15 +642,23 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                     .next_table            = NULL,
             };
             const x86_64_walk_level_result_t pdpt_result = x86_64_walk_next_level(&pdpt_request);
+
             if (pdpt_result == X86_64_WALK_LEVEL_ERROR)
             {
+                if (request->failed_va != NULL)
+                {
+                    *request->failed_va = va;
+                }
+
                 return false;
             }
+
             if (pdpt_result == X86_64_WALK_LEVEL_SKIP)
             {
                 va = pdpt_request.next_end;
                 continue;
             }
+
             const uint64_t pdpt_end = pdpt_request.next_end;
             uint64_t*      pd       = pdpt_request.next_table;
 
@@ -603,15 +677,23 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                         .next_table            = NULL,
                 };
                 const x86_64_walk_level_result_t pd_result = x86_64_walk_next_level(&pd_request);
+
                 if (pd_result == X86_64_WALK_LEVEL_ERROR)
                 {
+                    if (request->failed_va != NULL)
+                    {
+                        *request->failed_va = va;
+                    }
+
                     return false;
                 }
+
                 if (pd_result == X86_64_WALK_LEVEL_SKIP)
                 {
                     va = pd_request.next_end;
                     continue;
                 }
+
                 const uint64_t pt_end      = pd_request.next_end;
                 uint64_t*      pt          = pd_request.next_table;
                 const uint64_t pt_index    = (va >> X86_64_PT_SHIFT_PT) & X86_64_PT_INDEX_MASK;
@@ -627,8 +709,9 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
                     {
                         if (failure_context != NULL)
                         {
-                            kprintf("Arx kernel: %s failed at PT[%llu] for VA 0x%llx\n", failure_context, (unsigned long long) (pt_index + entry), (unsigned long long) leaf_va);
+                            error_logger("Arx kernel: %s failed at PT[%llu] for VA 0x%llx\n", failure_context, (unsigned long long) (pt_index + entry), (unsigned long long) leaf_va);
                         }
+
                         return false;
                     }
                 }
@@ -642,11 +725,53 @@ static bool x86_64_walk_page_table(const x86_64_walk_request_t* request)
     return true;
 }
 
-void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
+static bool prune_empty_tables(phys_addr_t table, unsigned depth, virt_addr_t failed_va, phys_addr_t* retired, unsigned* count)
+{
+    uint64_t*      words = x86_64_table_from_pa(table);
+    const unsigned index = (failed_va >> (12 + 9 * (depth - 1))) & X86_64_PT_INDEX_MASK;
+    const uint64_t entry = words[index];
+
+    if (depth > 1 && (entry & X86_64_PTE_PRESENT) && !(entry & X86_64_PTE_PAGE_SIZE_OR_PAT) && prune_empty_tables(entry & X86_64_PTE_ADDR_MASK, depth - 1, failed_va, retired, count) && !(depth == 4 && index >= 256))
+    {
+        words[index]        = 0;
+        retired[(*count)++] = entry & X86_64_PTE_ADDR_MASK;
+    }
+
+    for (unsigned i = 0; i < 512; ++i)
+
+        if (words[i] & X86_64_PTE_PRESENT)
+        {
+            return false;
+        }
+
+    return true;
+}
+
+static void rollback_empty_tables(phys_addr_t page_table, virt_addr_t failed_va)
+{
+    // One failed leaf descent can allocate at most three intermediate tables.
+    // Keep detached tables intact until all paging-structure caches are flushed.
+    phys_addr_t retired[3];
+    unsigned    count = 0;
+    prune_empty_tables(page_table, 4, failed_va, retired, &count);
+
+    if (count != 0)
+    {
+        x86_64_flush_active_tlb_non_global();
+        tlb_shootdown(page_table, CANONICAL_KERNEL_BASE, 2 * PAGE_SIZE, false);
+
+        for (unsigned i = 0; i < count; ++i)
+        {
+            pmm_free(x86_64_table_from_pa(retired[i]));
+        }
+    }
+}
+
+bool __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, phys_addr_t page_table)
 {
     if (!x86_64_validate_single_page_op("arch_map_page", va, page_table, true, pa))
     {
-        return;
+        return false;
     }
 
     const uint64_t        sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
@@ -666,11 +791,19 @@ void __attribute__((weak)) arch_map_page(virt_addr_t va, phys_addr_t pa, uint64_
             .requires_page_flush   = &requires_flush,
     };
 
-    (void) x86_64_walk_page_table(&walk_request);
+    const bool success = x86_64_walk_page_table(&walk_request);
+
     if (any_changed)
     {
         x86_64_sync_tlb_single_page(va, page_table);
     }
+
+    if (!success)
+    {
+        rollback_empty_tables(page_table, va);
+    }
+
+    return success;
 }
 
 void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_table)
@@ -697,20 +830,22 @@ void __attribute__((weak)) arch_unmap_page(virt_addr_t va, phys_addr_t page_tabl
     };
 
     (void) x86_64_walk_page_table(&walk_request);
+
     if (any_changed)
     {
         x86_64_sync_tlb_single_page(va, page_table);
     }
 }
 
-void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
+bool __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, phys_addr_t page_table)
 {
     if (!x86_64_validate_range_op("arch_map_range", va_start, size, page_table, true, pa_start))
     {
-        return;
+        return false;
     }
 
     const uint64_t range_end = va_start + size;
+    virt_addr_t    failed_va = va_start;
 
     const uint64_t sanitized_flags = flags & X86_64_PTE_ALLOWED_MAP_FLAGS;
     const bool     active_pt       = page_table == arch_get_pt();
@@ -724,6 +859,7 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             .allocate_tables       = true,
             .inherited_table_flags = sanitized_flags,
             .failure_context       = "arch_map_range",
+            .failed_va             = &failed_va,
             .leaf_callback         = x86_64_map_leaf_callback,
             .leaf_context          = (void*) &sanitized_flags,
             .pa_start              = pa_start,
@@ -731,9 +867,16 @@ void __attribute__((weak)) arch_map_range(virt_addr_t va_start, phys_addr_t pa_s
             .requires_page_flush   = &requires_page_flush,
     };
 
-    (void) x86_64_walk_page_table(&walk_request);
+    const bool success = x86_64_walk_page_table(&walk_request);
 
     x86_64_sync_tlb_range(va_start, range_end, any_changed, active_pt, requires_page_flush, page_table);
+
+    if (!success)
+    {
+        rollback_empty_tables(page_table, failed_va);
+    }
+
+    return success;
 }
 
 void __attribute__((weak)) arch_unmap_range(virt_addr_t va_start, uint64_t size, phys_addr_t page_table)
@@ -791,6 +934,7 @@ void __attribute__((weak)) arch_protect(virt_addr_t va, uint64_t flags, phys_add
     };
 
     (void) x86_64_walk_page_table(&walk_request);
+
     if (any_changed)
     {
         x86_64_sync_tlb_single_page(va, page_table);
@@ -849,31 +993,199 @@ phys_addr_t __attribute__((weak)) arch_virt_to_phys(virt_addr_t va, phys_addr_t 
     uint64_t* pml4 = x86_64_table_from_pa((uint64_t) page_table);
 
     phys_addr_t pdpt_pa = 0;
+
     if (!x86_64_decode_table_entry(pml4[pml4_index], &pdpt_pa))
     {
         return 0;
     }
+
     uint64_t* pdpt = x86_64_table_from_pa(pdpt_pa);
 
+    const uint64_t pdpte = pdpt[pdpt_index];
+
+    if ((pdpte & (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT)) == (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT))
+    {
+        return (pdpte & X86_64_PTE_ADDR_MASK & ~((1ULL << 30) - 1)) | (va & ((1ULL << 30) - 1));
+    }
+
     phys_addr_t pd_pa = 0;
-    if (!x86_64_decode_table_entry(pdpt[pdpt_index], &pd_pa))
+
+    if (!x86_64_decode_table_entry(pdpte, &pd_pa))
     {
         return 0;
     }
+
     uint64_t* pd = x86_64_table_from_pa(pd_pa);
 
+    const uint64_t pde = pd[pd_index];
+
+    if ((pde & (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT)) == (X86_64_PTE_PRESENT | X86_64_PTE_PAGE_SIZE_OR_PAT))
+    {
+        return (pde & X86_64_PTE_ADDR_MASK & ~((1ULL << 21) - 1)) | (va & ((1ULL << 21) - 1));
+    }
+
     phys_addr_t pt_pa = 0;
-    if (!x86_64_decode_table_entry(pd[pd_index], &pt_pa))
+
+    if (!x86_64_decode_table_entry(pde, &pt_pa))
     {
         return 0;
     }
+
     uint64_t* pt = x86_64_table_from_pa(pt_pa);
 
     const uint64_t pte = pt[pt_index];
+
     if ((pte & X86_64_PTE_PRESENT) == 0)
     {
         return 0;
     }
 
     return (pte & X86_64_PTE_ADDR_MASK) | (va & X86_64_PAGE_OFFSET_MASK);
+}
+
+phys_addr_t arch_create_user_page_table(void)
+{
+    void* root = pmm_alloc(PAGE_SIZE);
+
+    if (!root)
+    {
+        return 0;
+    }
+
+    memset(root, 0, PAGE_SIZE);
+    virt_addr_space_t* kernel = vmm_kernel_space();
+    spinlock_acquire_preempt(&kernel->lock);
+    uint64_t* source = x86_64_table_from_pa(kernel->pt);
+    // User roots share stable upper-half parents, including currently empty
+    // slots where a later kernel allocation may install a mapping.
+
+    for (unsigned i = 256; i < 512; ++i)
+    {
+        phys_addr_t child;
+
+        if (!x86_64_get_or_alloc_table(&source[i], 0, &child))
+        {
+            spinlock_release_preempt(&kernel->lock);
+            pmm_free(root);
+            return 0;
+        }
+    }
+
+    memcpy((uint64_t*) root + 256, source + 256, PAGE_SIZE / 2);
+    spinlock_release_preempt(&kernel->lock);
+    return hhdm_to_pa((uintptr_t) root, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+}
+
+static void destroy_empty_user_tables(phys_addr_t table, unsigned depth, unsigned entries)
+{
+    uint64_t* words = x86_64_table_from_pa(table);
+
+    if (depth > 1)
+
+        for (unsigned i = 0; i < entries; ++i)
+
+            if ((words[i] & X86_64_PTE_PRESENT) && !(words[i] & (1ULL << 7)))
+            {
+                destroy_empty_user_tables(words[i] & X86_64_PTE_ADDR_MASK, depth - 1, 512);
+            }
+
+    pmm_free(words);
+}
+
+void arch_destroy_user_page_table(phys_addr_t page_table)
+{
+    if (page_table && page_table != arch_get_pt())
+    {
+        destroy_empty_user_tables(page_table, 4, 256);
+    }
+}
+
+bool arch_user_page_accessible(virt_addr_t va, phys_addr_t page_table, bool write)
+{
+    if (va > CANONICAL_USER_END || !page_table || !x86_64_is_page_aligned(page_table) || !x86_64_is_pa_encodable(page_table))
+    {
+        return false;
+    }
+
+    phys_addr_t table = page_table;
+
+    for (int shift = 39; shift >= 12; shift -= 9)
+    {
+        const uint64_t entry = x86_64_table_from_pa(table)[(va >> shift) & X86_64_PT_INDEX_MASK];
+
+        if ((entry & (X86_64_PTE_PRESENT | X86_64_PTE_USER)) != (X86_64_PTE_PRESENT | X86_64_PTE_USER) || (write && (entry & X86_64_PTE_WRITABLE) == 0))
+        {
+            return false;
+        }
+
+        if (shift == 12 || ((shift == 30 || shift == 21) && (entry & X86_64_PTE_PAGE_SIZE_OR_PAT)))
+        {
+            return true;
+        }
+
+        if (!x86_64_decode_table_entry(entry, &table))
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+// Before PMM/VMM initialization, firmware tables may be absent from Limine's
+// direct map. Reserve page-table pages from the boot memory map so PMM never
+// publishes them as allocatable RAM. This runs only on the BSP before AP start.
+bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t length)
+{
+    if (boot == NULL || !boot->hhdm_present || length == 0 || physical > UINT64_MAX - length || physical + length > UINT64_MAX - boot->hhdm_offset - PAGE_SIZE)
+    {
+        return false;
+    }
+    uint64_t first = physical & ~(PAGE_SIZE - 1ULL);
+    const uint64_t end = align_up(physical + length, PAGE_SIZE);
+    for (uint64_t page = first; page < end; page += PAGE_SIZE)
+    {
+        const uint64_t address = page + boot->hhdm_offset;
+        uint64_t* table = (void*) (uintptr_t) (arch_get_pt() + boot->hhdm_offset);
+        for (unsigned shift = 39; shift >= 12; shift -= 9)
+        {
+            uint64_t* entry = &table[(address >> shift) & 511];
+            if ((*entry & 1) != 0)
+            {
+                if (shift == 12 || (*entry & 128) != 0)
+                {
+                    break;
+                }
+            }
+            else if (shift == 12)
+            {
+                *entry = page | 3;
+                __asm__ volatile("invlpg (%0)" : : "r"(address) : "memory");
+                break;
+            }
+            else
+            {
+                uint64_t reserved = 0;
+                struct boot_memmap_entry* entries = (void*) boot->memmap_entries;
+                for (size_t i = 0; i < boot->memmap_entry_count; ++i)
+                {
+                    if (entries[i].type == BOOT_MEMMAP_USABLE && entries[i].length >= 2 * PAGE_SIZE)
+                    {
+                        const uint64_t last = align_down(entries[i].base + entries[i].length, PAGE_SIZE);
+                        reserved = last - PAGE_SIZE;
+                        entries[i].length = reserved - entries[i].base;
+                        break;
+                    }
+                }
+                if (reserved == 0)
+                {
+                    return false;
+                }
+                memset((void*) (uintptr_t) (reserved + boot->hhdm_offset), 0, PAGE_SIZE);
+                *entry = reserved | 3;
+            }
+            table = (void*) (uintptr_t) ((*entry & X86_64_PTE_ADDR_MASK) + boot->hhdm_offset);
+        }
+    }
+    return true;
 }

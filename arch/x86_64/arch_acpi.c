@@ -1,6 +1,26 @@
 #include <acpi/acpi.h>
 #include <platform.h>
 
+// Advances only across records whose generic header fits in the table.
+static uacpi_status madt_next_entry(uacpi_u8** cursor, uacpi_u8* table_end, struct acpi_entry_hdr** out_entry)
+{
+    if (*cursor + sizeof(struct acpi_entry_hdr) > table_end)
+    {
+        return UACPI_STATUS_NOT_FOUND;
+    }
+
+    struct acpi_entry_hdr* entry = (struct acpi_entry_hdr*) *cursor;
+
+    if (entry->length < sizeof(*entry) || *cursor + entry->length > table_end)
+    {
+        return UACPI_STATUS_INVALID_TABLE_LENGTH;
+    }
+
+    *out_entry = entry;
+    *cursor += entry->length;
+    return UACPI_STATUS_OK;
+}
+
 static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_lapic_base_addr)
 {
     struct acpi_entry_hdr* entry;
@@ -21,18 +41,11 @@ static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_la
     entry           = madt->entries;
     table_end       = (uacpi_u8*) madt + madt->hdr.length;
 
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    uacpi_u8*    cursor = (uacpi_u8*) entry;
+    uacpi_status walk_status;
+
+    while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
-        if (entry->length < sizeof(*entry))
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
         if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC_ADDRESS_OVERRIDE)
         {
             struct acpi_madt_lapic_address_override* lapic_override;
@@ -45,8 +58,11 @@ static uacpi_status get_lapic_base_addr(struct acpi_madt* madt, uint64_t* out_la
             lapic_override  = (struct acpi_madt_lapic_address_override*) entry;
             lapic_base_addr = lapic_override->address;
         }
+    }
 
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    if (walk_status != UACPI_STATUS_NOT_FOUND)
+    {
+        return walk_status;
     }
 
     *out_lapic_base_addr = lapic_base_addr;
@@ -58,7 +74,6 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
     struct acpi_entry_hdr* entry;
     uacpi_u8*              table_end;
     size_t                 lapic_count;
-    size_t                 lapic_stored_count;
     uint64_t               lapic_base_addr;
     uacpi_status           status;
 
@@ -68,6 +83,7 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
     }
 
     status = get_lapic_base_addr(madt, &lapic_base_addr);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
@@ -82,23 +98,15 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
         platform.cpus[i].arch_info.acpi_lapic_flags     = 0;
     }
 
-    entry              = madt->entries;
-    table_end          = (uacpi_u8*) madt + madt->hdr.length;
-    lapic_count        = 0;
-    lapic_stored_count = 0;
+    entry       = madt->entries;
+    table_end   = (uacpi_u8*) madt + madt->hdr.length;
+    lapic_count = 0;
 
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    uacpi_u8*    cursor = (uacpi_u8*) entry;
+    uacpi_status walk_status;
+
+    while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
-        if (entry->length < sizeof(*entry))
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
         if (entry->type == ACPI_MADT_ENTRY_TYPE_LAPIC)
         {
             struct acpi_madt_lapic* lapic;
@@ -110,20 +118,27 @@ static uacpi_status get_lapics_from_madt(struct acpi_madt* madt)
 
             lapic = (struct acpi_madt_lapic*) entry;
 
-            if (lapic_stored_count < BOOT_SMP_MAX_CPUS)
+            for (size_t logical = 0; logical < platform.cpu_count; ++logical)
             {
-                platform.cpus[lapic_stored_count].arch_info.acpi_has_lapic       = 1;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_base_addr = lapic_base_addr;
-                platform.cpus[lapic_stored_count].arch_info.acpi_processor_uid   = lapic->uid;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_id        = lapic->id;
-                platform.cpus[lapic_stored_count].arch_info.acpi_lapic_flags     = lapic->flags;
-                lapic_stored_count++;
+                if (platform.cpus[logical].hardware_id != lapic->id)
+                {
+                    continue;
+                }
+
+                platform.cpus[logical].arch_info.acpi_has_lapic       = 1;
+                platform.cpus[logical].arch_info.acpi_lapic_base_addr = lapic_base_addr;
+                platform.cpus[logical].arch_info.acpi_processor_uid   = lapic->uid;
+                platform.cpus[logical].arch_info.acpi_lapic_id        = lapic->id;
+                platform.cpus[logical].arch_info.acpi_lapic_flags     = lapic->flags;
             }
 
             lapic_count++;
         }
+    }
 
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    if (walk_status != UACPI_STATUS_NOT_FOUND)
+    {
+        return walk_status;
     }
 
     if (lapic_count == 0)
@@ -153,20 +168,11 @@ static uacpi_status get_ioapic_from_madt(struct acpi_madt* madt, struct acpi_mad
     entry     = madt->entries;
     table_end = (uacpi_u8*) madt + madt->hdr.length;
 
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    uacpi_u8*    cursor = (uacpi_u8*) entry;
+    uacpi_status walk_status;
+
+    while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
-        if (entry->length < sizeof(*entry))
-        {
-            *out_ioapic = NULL;
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            *out_ioapic = NULL;
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
         if (entry->type == ACPI_MADT_ENTRY_TYPE_IOAPIC)
         {
             if (entry->length < sizeof(struct acpi_madt_ioapic))
@@ -178,8 +184,12 @@ static uacpi_status get_ioapic_from_madt(struct acpi_madt* madt, struct acpi_mad
             *out_ioapic = (struct acpi_madt_ioapic*) entry;
             return UACPI_STATUS_OK;
         }
+    }
 
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    if (walk_status != UACPI_STATUS_NOT_FOUND)
+    {
+        *out_ioapic = NULL;
+        return walk_status;
     }
 
     *out_ioapic = NULL;
@@ -214,18 +224,11 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
     entry     = madt->entries;
     table_end = (uacpi_u8*) madt + madt->hdr.length;
 
-    while ((uacpi_u8*) entry + sizeof(*entry) <= table_end)
+    uacpi_u8*    cursor = (uacpi_u8*) entry;
+    uacpi_status walk_status;
+
+    while ((walk_status = madt_next_entry(&cursor, table_end, &entry)) == UACPI_STATUS_OK)
     {
-        if (entry->length < sizeof(*entry))
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
-        if ((uacpi_u8*) entry + entry->length > table_end)
-        {
-            return UACPI_STATUS_INVALID_TABLE_LENGTH;
-        }
-
         if (entry->type == ACPI_MADT_ENTRY_TYPE_INTERRUPT_SOURCE_OVERRIDE)
         {
             struct acpi_madt_interrupt_source_override* iso;
@@ -252,8 +255,11 @@ static uacpi_status get_iso_overrides_from_madt(struct acpi_madt* madt)
                 platform.arch_info.acpi_iso_overrides[source].gsi     = iso->gsi;
             }
         }
+    }
 
-        entry = (struct acpi_entry_hdr*) ((uacpi_u8*) entry + entry->length);
+    if (walk_status != UACPI_STATUS_NOT_FOUND)
+    {
+        return walk_status;
     }
 
     return UACPI_STATUS_OK;
@@ -265,18 +271,21 @@ uacpi_status arch_acpi_init(struct acpi_madt* madt)
     uacpi_status             status;
 
     status = get_lapics_from_madt(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
     }
 
     status = get_ioapic_from_madt(madt, &ioapic);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;
     }
 
     status = get_iso_overrides_from_madt(madt);
+
     if (status != UACPI_STATUS_OK)
     {
         return status;

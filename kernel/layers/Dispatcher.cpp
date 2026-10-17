@@ -1,13 +1,13 @@
 #include "layers/Dispatcher.hpp"
 
+#include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SignalManager.hpp"
+#include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 #include <platform.h>
 
-extern "C"
-{
-#include <selftests/selftests.h>
-}
+#include <selftests/SelfTestManager.hpp>
 
 Dispatcher::Dispatcher()
 {
@@ -27,13 +27,13 @@ void Dispatcher::StartKernel()
 {
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
 
-    resourcelayer_selftests((void*) ResourceLayerImportCaps);
+    SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
 
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
-    logiclayer_selftests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
+    SelfTestManager::Get().RunLogicLayerTests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
 
-    RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create();
+    RequestLayerCaps* RequestLayerImportCaps = requestLayerFactory->Create(ResourceLayerImportCaps, LogicLayerImportCaps);
 
     (void) RequestLayerImportCaps;
 }
@@ -53,6 +53,48 @@ RequestLayerCaps* Dispatcher::GetRequestLayerCaps() const
     return requestLayerFactory != nullptr ? requestLayerFactory->GetCaps() : nullptr;
 }
 
+extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64_t result)
+{
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    if (logic == nullptr || logic->signalManager == nullptr)
+    {
+        return result;
+    }
+
+    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write || frame->syscall_number == SYSCALL_readv || frame->syscall_number == SYSCALL_writev || frame->syscall_number == SYSCALL_accept
+                             || frame->syscall_number == SYSCALL_accept4 || frame->syscall_number == SYSCALL_connect || frame->syscall_number == SYSCALL_recvfrom || frame->syscall_number == SYSCALL_recvmsg || frame->syscall_number == SYSCALL_sendto || frame->syscall_number == SYSCALL_sendmsg;
+    if (logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(false);
+        logic->scheduler->ServicePendingReschedule(true);
+    }
+
+    return logic->signalManager->Deliver(frame, result, restartable);
+}
+
+extern "C" void dispatcher_account_mode(bool userMode)
+{
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(userMode);
+    }
+}
+
+extern "C" void dispatcher_account_minor_fault(virt_addr_space_t* space)
+{
+    task_t* task = TaskManager::GetActiveTask();
+
+    if (task != nullptr && task->process != nullptr && task->process->addressSpace == space)
+    {
+        __atomic_fetch_add(&task->process->minorFaults, 1ULL, __ATOMIC_RELAXED);
+    }
+}
+
 uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
 {
     if (frame == nullptr)
@@ -61,6 +103,7 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
     }
 
     RequestLayerCaps* caps = GetRequestLayerCaps();
+
     if (caps == nullptr)
     {
         return (uint64_t) -38;
@@ -105,8 +148,24 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
         case SYSCALL_setsid:
             return caps->processRequestManager->HandleSetsidRequest(frame);
 
+        case SYSCALL_sched_setparam:
+        case SYSCALL_sched_getparam:
+        case SYSCALL_sched_setscheduler:
+        case SYSCALL_sched_getscheduler:
+        case SYSCALL_sched_get_priority_max:
+        case SYSCALL_sched_get_priority_min:
+        case SYSCALL_sched_rr_get_interval:
+        case SYSCALL_sched_setattr:
+        case SYSCALL_sched_getattr:
+            return caps->schedulerRequestManager->HandleSchedulingPolicyRequest(frame);
         case SYSCALL_sched_yield:
             return caps->schedulerRequestManager->HandleSched_yieldRequest(frame);
+        case SYSCALL_sched_setaffinity:
+            return caps->schedulerRequestManager->HandleSched_setaffinityRequest(frame);
+        case SYSCALL_getpriority:
+            return caps->schedulerRequestManager->HandleGetpriorityRequest(frame);
+        case SYSCALL_setpriority:
+            return caps->schedulerRequestManager->HandleSetpriorityRequest(frame);
         case SYSCALL_sched_getaffinity:
             return caps->schedulerRequestManager->HandleSched_getaffinityRequest(frame);
         case SYSCALL_getcpu:
@@ -311,6 +370,9 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
         case SYSCALL_get_robust_list:
             return caps->syncRequestManager->HandleGet_robust_listRequest(frame);
 
+        case SYSCALL_rt_sigqueueinfo:
+        case SYSCALL_rt_tgsigqueueinfo:
+            return caps->signalRequestManager->HandleQueuedSignalRequest(frame);
         case SYSCALL_rt_sigreturn:
             return caps->signalRequestManager->HandleRt_sigreturnRequest(frame);
         case SYSCALL_rt_sigprocmask:
@@ -419,6 +481,7 @@ uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
 void Dispatcher::DispatchInterruptRequest(uint64_t interruptNumber) const
 {
     RequestLayerCaps* caps = GetRequestLayerCaps();
+
     if (caps == nullptr || caps->interruptRequestManager == nullptr)
     {
         return;
@@ -430,21 +493,96 @@ void Dispatcher::DispatchInterruptRequest(uint64_t interruptNumber) const
 extern "C" uint64_t dispatcher_dispatch_syscall(const arch_syscall_frame_t* frame)
 {
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         return (uint64_t) -38;
     }
 
-    return dispatcher->DispatchSyscall(frame);
+    dispatcher_account_mode(false);
+    const uint64_t     result    = dispatcher->DispatchSyscall(frame);
+    ResourceLayerCaps* resources = dispatcher->GetResourceLayerCaps();
+    LogicLayerCaps*    logic     = dispatcher->GetLogicLayerCaps();
+
+    if (resources != nullptr && resources->processManager != nullptr && resources->taskManager != nullptr)
+    {
+        process_t* process = resources->processManager->GetCurrentProcess();
+        task_t*    task    = resources->taskManager->GetCurrentTask();
+
+        if (process != nullptr && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE) && task != nullptr && task->isUserTask && logic != nullptr && logic->scheduler != nullptr)
+        {
+            logic->scheduler->ExitCurrentTask();
+        }
+    }
+
+    return result;
 }
 
 extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
 {
     Dispatcher* dispatcher = (Dispatcher*) platform.dispacher;
+
     if (dispatcher == nullptr)
     {
         return;
     }
 
     dispatcher->DispatchInterruptRequest(interrupt_number);
+}
+
+// C bridge for klib: resolve the current process here, keeping process ownership
+// out of VirtualMemoryManager and keeping C++ classes out of klib.c.
+extern "C" bool begin_user_memory(user_memory_access_t* access)
+{
+    if (access == nullptr)
+    {
+        return false;
+    }
+
+    *access = {};
+    cpu_preemption_disable();
+    Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    ResourceLayerCaps* caps       = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
+    ProcessManager*    manager    = caps != nullptr ? caps->processManager : nullptr;
+    process_t*         process    = manager != nullptr ? manager->AcquireCurrentMemoryProcess(false) : nullptr;
+
+    if (process == nullptr)
+    {
+        cpu_preemption_enable();
+        return false;
+    }
+
+    spinlock_acquire(&process->addressSpace->operation_lock);
+    access->process_manager = manager;
+    access->process         = process;
+    access->space           = process->addressSpace;
+    return true;
+}
+
+extern "C" void end_user_memory(user_memory_access_t* access)
+{
+    spinlock_release(&access->space->operation_lock);
+    static_cast<ProcessManager*>(access->process_manager)->ReleaseMemoryProcess(access->process);
+    *access = {};
+    cpu_preemption_enable();
+}
+
+extern "C" void dispatcher_service_pending_reschedule(void)
+{
+    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->ServicePendingReschedule();
+    }
+}
+
+extern "C" void dispatcher_account_scheduling(bool beginExecution)
+{
+    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountSchedulingCurrent(beginExecution);
+    }
 }

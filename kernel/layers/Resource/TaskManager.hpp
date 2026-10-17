@@ -1,13 +1,50 @@
 #pragma once
 
+#include "layers/Logic/SignalManager.hpp"
+#include "layers/Resource/TaskScheduling.hpp"
+
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
 
+struct process_t;
+struct descriptor_table_t;
+struct filesystem_context_t;
+
+struct retired_task_resources_t
+{
+    descriptor_table_t*   table;
+    filesystem_context_t* filesystem;
+    descriptor_table_t*   defaultTable;
+    filesystem_context_t* defaultFilesystem;
+};
+
 struct task_t
 {
+    enum state_t
+    {
+        READY,
+        RUNNING,
+        SWITCHING,
+        SUSPENDED,
+        DYING
+    };
+    state_t  state;
+    int16_t  ownerCpu;
+    uint32_t dispatchUsers;
+    uint64_t affinityMask;
+    uint64_t scheduleRuntime;
+    task_scheduling_t* scheduling;
+    int32_t  baseNice;
+    int32_t  effectiveNice;
+    int16_t  placementCpu;
+    bool     schedulerQueued;
+    bool     migrationEnabled;
+    bool     schedulingBusy;
+    bool     dying;
+    bool     priorityCleanupDone;
     struct user_launch_context_t
     {
         uint64_t userRip;
@@ -16,9 +53,37 @@ struct task_t
         uint64_t arg1;
     } userLaunchContext;
 
-    bool                     allocated;
-    bool                     isUserTask;
-    uint64_t                 id;
+    bool                  allocated;
+    bool                  isUserTask;
+    bool                  sleepPending;
+    bool                  sleepBlocked;
+    bool                  sleepUninterruptible;
+    uint64_t              syscallActive;
+    uint64_t              accountingStamp;
+    bool                  accountingRunning;
+    bool                  accountingUser;
+    uint32_t              preemptionDepth;
+    uint64_t              id;
+    char                  name[16];
+    process_t*            process;
+    descriptor_table_t*   descriptorTable;
+    filesystem_context_t* filesystemContext;
+    uint64_t              signalMask;
+    // Interrupted masked waits restore this through the handler's signal frame.
+    uint64_t         signalSavedMask;
+    bool             signalRestoreMask;
+    uint64_t         signalPending;
+    uint64_t         signalSequence;
+    signal_sender_t* signalSenders;
+    signal_queue_t*  signalQueue;
+    signal_stack_t   signalStack;
+    uint64_t         signalDepth;
+    uint64_t         robustHead;
+    uint64_t         clearChildTid;
+    uint64_t         setChildTid;
+    process_t*       robustOwner;
+    void*            retirementContext;
+    void (*retirementCleanup)(void*, task_t*);
     struct arch_task_context taskContext;
     void*                    stack;
     task_t*                  next;
@@ -32,27 +97,58 @@ public:
 
     TaskManager();
 
-    task_t* AllocateTask();
-    task_t* CreateKernelTask(arch_task_entry_t entry, void* arg);
-    task_t* CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
-    bool    FreeTask(task_t* task);
-    bool    ExecuteTask(task_t* task);
+    task_t*     AllocateTask();
+    task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);
+    task_t*     CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1);
+    task_t*     CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id);
+    bool        FreeTask(task_t* task, void** retiredStack = nullptr, retired_task_resources_t* retiredResources = nullptr);
+    static void ReleaseTaskResources(const retired_task_resources_t& resources);
+    void        SetPriorityCleanup(void* context, void (*cleanup)(void*, task_t*));
+    void        CleanupCurrentTask();
+    bool        CleanupRetiredTask(task_t* task);
+    static void ReleaseTaskStack(void* stack);
+    bool        ExecuteTask(task_t* task, bool releaseDispatchClaim = false);
+    bool        RetainForDispatch(task_t* task);
+    void        ReleaseDispatchClaim(task_t* task);
+    void        MarkDying(task_t* task);
+    void        CompleteSwitch();
+    bool        MarkSleeping(task_t* task);
+    void        FinishSleeping(task_t* task);
 
-    task_t* GetRunningTask(uint8_t cpuId) const;
-    bool    SetRunningTask(uint8_t cpuId, task_t* task);
-    task_t* GetCurrentTask() const;
+    task_t*        GetRunningTask(uint8_t cpuId) const;
+    bool           SetRunningTask(uint8_t cpuId, task_t* task);
+    task_t*        GetCurrentTask() const;
+    static task_t* GetActiveTask();
+    void           AccountCurrent(bool userMode);
+    static void    AccountActive(bool userMode);
+    bool           HasRunningTasks(const process_t* process) const;
+    void           ReadSystemStatistics(uint64_t now, uint64_t loads[3], uint16_t* liveTasks);
+    task_t*        FindTask(uint64_t id) const;
+    void           SetCurrentIdentity(uint64_t id);
 
     task_t*       GetTasks();
     const task_t* GetTasks() const;
 
     size_t GetCapacity() const;
+    size_t CountTasks() const;
+    bool   GetCurrentName(char* name);
+    bool   SetCurrentName(const char* name);
+    bool   GetCurrentTlsBase(bool gs, uint64_t* value);
+    bool   SetCurrentTlsBase(bool gs, uint64_t value);
 
 private:
-    task_t* AllocateTaskUnlocked();
-    void    LockManager() const;
-    void    UnlockManager() const;
+    static void ResetTaskSlot(task_t* task, uint64_t id, bool allocated);
+    task_t*     CreateTask(arch_task_entry_t entry, void* arg, const task_t::user_launch_context_t* userLaunch);
+    task_t*     AllocateTaskUnlocked();
+    void        LockManager() const;
+    void        UnlockManager() const;
 
+    void* PriorityCleanupContext;
+    void (*PriorityCleanup)(void*, task_t*);
     mutable spinlock_t ManagerLock;
-    task_t  Tasks[MAX_TASKS];
-    task_t* RunningTasks[BOOT_SMP_MAX_CPUS];
+    uint64_t           LoadEpoch;
+    uint64_t           LoadAverages[3];
+    task_t             Tasks[MAX_TASKS];
+    task_t*            RunningTasks[BOOT_SMP_MAX_CPUS];
+    task_t*            SwitchingTasks[BOOT_SMP_MAX_CPUS];
 };

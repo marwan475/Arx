@@ -1,9 +1,11 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
 #include <layers/Request/InterruptRequestManager.hpp>
+#include <memory/vmm.h>
 #include <platform.h>
 
 extern void dispatcher_handle_interrupt_request(uint64_t interrupt_number);
+extern void dispatcher_account_mode(bool userMode);
 
 static void blue_screen(void)
 {
@@ -15,12 +17,14 @@ static void blue_screen(void)
     }
 
     size_t bytes_per_pixel = fb->pitch / fb->width;
+
     if (bytes_per_pixel == 0)
     {
         bytes_per_pixel = 4;
     }
 
     uint32_t pixel = 0;
+
     if (fb->blue_mask_size >= 32)
     {
         pixel = 0xFFFFFFFFu;
@@ -35,9 +39,11 @@ static void blue_screen(void)
     for (size_t y = 0; y < fb->height; y++)
     {
         uint8_t* row = base + (y * fb->pitch);
+
         for (size_t x = 0; x < fb->width; x++)
         {
             uint8_t* px = row + (x * bytes_per_pixel);
+
             for (size_t b = 0; b < bytes_per_pixel; b++)
             {
                 px[b] = (uint8_t) ((pixel >> (8 * b)) & 0xFFu);
@@ -83,6 +89,7 @@ static void ipi_invalidate_tlb(const ipi_request_data_t* req)
     else if (req->tlb_invalidation.requires_page_flush)
     {
         const uint64_t range_end = req->tlb_invalidation.va_start + req->tlb_invalidation.size;
+
         for (virt_addr_t va = req->tlb_invalidation.va_start; va < range_end; va += PAGE_SIZE)
         {
             x86_64_invlpg(va);
@@ -106,7 +113,8 @@ static void ipi_broadcast_exception(void)
         }
 
         cpu_info_t* target_cpu_info = &platform.cpus[cpu_id];
-        if (!target_cpu_info->initialized || !target_cpu_info->arch_info.acpi_has_lapic)
+
+        if (!__atomic_load_n(&target_cpu_info->initialized, __ATOMIC_ACQUIRE) || !target_cpu_info->arch_info.acpi_has_lapic)
         {
             continue;
         }
@@ -144,17 +152,37 @@ static void handle_ipi(registers_t* reg)
         memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
         spinlock_release(&cpu_info->ipi_lock);
 
+        cpu_info->emergency_logging = true;
         blue_screen();
         panic();
     }
 
-    cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
-    memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
-    spinlock_release(&cpu_info->ipi_lock);
+    if (request_type != IPI_REQUEST_NONE)
+    {
+        cpu_info->ipi_request_data.type = IPI_REQUEST_NONE;
+        memset(&cpu_info->ipi_request_data, 0, sizeof(cpu_info->ipi_request_data));
+        spinlock_release(&cpu_info->ipi_lock);
+    }
+    if (request_type == IPI_REQUEST_RESCHEDULE)
+    {
+        __atomic_store_n(&cpu_info->reschedule_pending, true, __ATOMIC_RELEASE);
+    }
+    if (__atomic_load_n(&cpu_info->reschedule_pending, __ATOMIC_ACQUIRE) && cpu_info->preemption_depth == 0 && cpu_info->arch_info.syscall_ctx.active == 0)
+    {
+        dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+    }
+
 }
 
-void ISRHANDLER(registers_t* reg)
+static void handle_interrupt(registers_t* reg)
 {
+    // Spurious delivery has no in-service bit and must not receive an EOI.
+
+    if (reg->interrupt_number == 0xFF)
+    {
+        return;
+    }
+
     if (reg->interrupt_number >= 32)
     {
         lapic_eoi();
@@ -162,7 +190,26 @@ void ISRHANDLER(registers_t* reg)
 
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
-        dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+        (void) arch_program_scheduler_timer(10000000ULL);
+        // Maintain narrow HPET/PM timer epochs even without clock syscalls.
+        // This uses no scheduler locks and must run even while dispatch is deferred.
+
+        if (arch_cpu_id() == platform.bsp_id)
+        {
+            uint64_t now;
+            (void) arch_time_read_monotonic(&now);
+        }
+
+        // Bootstrap/kernel tasks still require timer dispatch. Defer only
+        // active syscalls and explicitly guarded critical sections.
+        cpu_info_t* cpu = &platform.cpus[arch_cpu_id()];
+        __atomic_store_n(&cpu->reschedule_pending, true, __ATOMIC_RELEASE);
+
+        if (cpu->arch_info.syscall_ctx.active == 0 && __atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) == 0)
+        {
+            dispatcher_handle_interrupt_request(INTERRUPT_REQUEST_SCHEDULE);
+        }
+
         return;
     }
 
@@ -172,8 +219,20 @@ void ISRHANDLER(registers_t* reg)
         return;
     }
 
+    if (reg->interrupt_number == 14 && (reg->error_code & 7) == 7)
+    {
+        uint64_t address;
+        __asm__ volatile("mov %%cr2, %0" : "=r"(address));
+        arch_enable_interrupts();
+        if (vmm_handle_cow_fault(platform.cpus[arch_cpu_id()].address_space, address))
+        {
+            return;
+        }
+    }
+
     if (reg->interrupt_number < 32)
     {
+        platform.cpus[arch_cpu_id()].emergency_logging = true;
         ipi_broadcast_exception();
         blue_screen();
     }
@@ -185,4 +244,24 @@ void ISRHANDLER(registers_t* reg)
 
     kprintf("Arx kernel: received interrupt: %llu\n", (unsigned long long) reg->interrupt_number);
     panic();
+}
+
+extern void arch_signal_interrupt(registers_t* reg, void* floating);
+void        ISRHANDLER(registers_t* reg, void* floating)
+{
+    dispatcher_account_mode(false);
+    handle_interrupt(reg);
+
+    if ((reg->cs & 3) == 3)
+    {
+        // The user frame/FPU image are on the kernel stack. Permit IPIs while
+        // signal delivery accesses user mappings, but defer ordinary preemption.
+        cpu_preemption_disable();
+        arch_enable_interrupts();
+        arch_signal_interrupt(reg, floating);
+        arch_disable_interrupts();
+        cpu_preemption_enable();
+    }
+
+    dispatcher_account_mode((reg->cs & 3) == 3);
 }

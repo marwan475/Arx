@@ -10,6 +10,253 @@ virt_addr_t USER_VIRTUAL_END;
 
 static virt_addr_space_t init_kernel_address_space = {0};
 
+extern void dispatcher_account_minor_fault(virt_addr_space_t* space);
+
+static spinlock_t             pending_writeback_lock;
+static virt_backing_object_t* pending_writeback;
+static uint64_t              shared_resident_bytes;
+
+void vmm_account_shared_page(virt_shared_page_t* page)
+{
+    // Called once before publication of an anonymous shared backing page.
+    page->shared_accounting = true;
+    __atomic_fetch_add(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
+}
+
+uint64_t vmm_shared_memory_bytes(void)
+{
+    return __atomic_load_n(&shared_resident_bytes, __ATOMIC_RELAXED);
+}
+
+void vmm_retain_object(virt_backing_object_t* object)
+{
+    if (object != NULL)
+    {
+        __atomic_add_fetch(&object->references, 1U, __ATOMIC_ACQ_REL);
+    }
+}
+
+void vmm_put_page(virt_shared_page_t* page)
+{
+    if (page != NULL && __atomic_sub_fetch(&page->references, 1U, __ATOMIC_ACQ_REL) == 0)
+    {
+        if (page->shared_accounting)
+        {
+            __atomic_fetch_sub(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
+        }
+
+        pmm_free(page->pointer);
+        kfree(page);
+    }
+}
+
+int64_t vmm_flush_object(virt_backing_object_t* object)
+{
+    if (object == NULL || object->volatile_storage)
+    {
+        return 0;
+    }
+
+    spinlock_acquire_preempt(&object->lock);
+    int64_t result = 0;
+
+    for (virt_shared_page_t* page = object->pages; page != NULL; page = page->next)
+    {
+        if (!page->dirty || page->offset >= object->size)
+        {
+            continue;
+        }
+
+        if (object->write == NULL)
+        {
+            result = -95;
+            break;
+        }
+
+        uint64_t bytes = object->size - page->offset;
+
+        if (bytes > PAGE_SIZE)
+        {
+            bytes = PAGE_SIZE;
+        }
+
+        int64_t written = object->write(object->context, page->offset, page->pointer, bytes);
+
+        if (written != (int64_t) bytes)
+        {
+            result = written < 0 ? written : -5;
+            break;
+        }
+
+        // A writable alias may store again without faulting. Keep it dirty
+        // until all such aliases have gone; never infer cleanliness from a copy.
+        page->dirty = __atomic_load_n(&object->writable_mappings, __ATOMIC_ACQUIRE) != 0;
+    }
+
+    spinlock_release_preempt(&object->lock);
+
+    return result;
+}
+
+void vmm_put_object(virt_backing_object_t* object)
+{
+    if (object == NULL || __atomic_sub_fetch(&object->references, 1U, __ATOMIC_ACQ_REL) != 0)
+    {
+        return;
+    }
+
+    if (vmm_flush_object(object) != 0)
+    {
+        // Keep failed writeback reachable and retryable after the last mapping.
+        object->references = 1;
+        spinlock_acquire_preempt(&pending_writeback_lock);
+        object->pending_next = pending_writeback;
+        pending_writeback    = object;
+        spinlock_release_preempt(&pending_writeback_lock);
+        return;
+    }
+
+    virt_shared_page_t* page = object->pages;
+
+    while (page != NULL)
+    {
+        virt_shared_page_t* next = page->next;
+        vmm_put_page(page);
+        page = next;
+    }
+
+    if (object->release_context != NULL)
+    {
+        object->release_context(object->context);
+    }
+
+    kfree(object);
+}
+
+int64_t vmm_retry_writeback(void)
+{
+    spinlock_acquire_preempt(&pending_writeback_lock);
+    virt_backing_object_t* list = pending_writeback;
+    pending_writeback           = NULL;
+    spinlock_release_preempt(&pending_writeback_lock);
+    int64_t result = 0;
+
+    while (list != NULL)
+    {
+        virt_backing_object_t* next   = list->pending_next;
+        int64_t                status = vmm_flush_object(list);
+
+        if (status != 0)
+        {
+            result = status;
+        }
+
+        vmm_put_object(list);
+        list = next;
+    }
+
+    return result;
+}
+
+void vmm_release_backing(virt_region_t* region)
+{
+    if (region->shared != NULL)
+    {
+        vmm_put_page(region->shared);
+        region->shared = NULL;
+    }
+    else if (region->backing != NULL)
+    {
+        pmm_free(region->backing);
+    }
+
+    if (region->object != NULL)
+    {
+        __atomic_sub_fetch(&region->object->mappings, 1U, __ATOMIC_ACQ_REL);
+
+        if (region->shared_mapping && (region->maximum_protection & 2) != 0)
+        {
+            __atomic_sub_fetch(&region->object->writable_mappings, 1U, __ATOMIC_ACQ_REL);
+        }
+
+        vmm_put_object(region->object);
+        region->object = NULL;
+    }
+}
+
+bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
+{
+    virt_region_t* region = vmm_find_region(space, address);
+
+    if (region == NULL || region->shared == NULL || (region->protection & 2) == 0)
+    {
+        return false;
+    }
+
+    if (region->shared_mapping)
+    {
+        return true;
+    }
+
+    uint64_t flags = 0;
+    ARCH_PAGE_FLAGS_INIT(flags);
+    ARCH_PAGE_FLAG_SET_READ(flags);
+    ARCH_PAGE_FLAG_SET_WRITE(flags);
+    ARCH_PAGE_FLAG_SET_USER(flags);
+    if (region->protection & 4)
+    {
+        ARCH_PAGE_FLAG_SET_EXEC(flags);
+    }
+
+    if (__atomic_load_n(&region->shared->references, __ATOMIC_ACQUIRE) == 1)
+    {
+        const bool fault = !arch_user_page_accessible(region->start, space->pt, true);
+        vmm_protect_page(region->start, flags, space);
+
+        if (fault)
+        {
+            dispatcher_account_minor_fault(space);
+        }
+
+        return true;
+    }
+
+    void* page = pmm_alloc(PAGE_SIZE);
+
+    if (page == NULL)
+    {
+        return false;
+    }
+
+    memcpy(page, region->backing, PAGE_SIZE);
+    phys_addr_t physical = hhdm_to_pa((uintptr_t) page, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
+
+    if (!vmm_map_page(region->start, physical, flags, space))
+    {
+        pmm_free(page);
+        return false;
+    }
+
+    vmm_put_page(region->shared);
+    region->shared  = NULL;
+    region->backing = page;
+    dispatcher_account_minor_fault(space);
+    return true;
+}
+
+bool vmm_handle_cow_fault(virt_addr_space_t* space, virt_addr_t address)
+{
+    if (space == NULL || address > CANONICAL_USER_END)
+    {
+        return false;
+    }
+
+    spinlock_acquire_preempt(&space->operation_lock);
+    bool result = vmm_resolve_cow_locked(space, address);
+    spinlock_release_preempt(&space->operation_lock);
+    return result;
+}
+
 static virt_region_t* alloc_region_struct(metadata_pool_t* metadata_pool, size_t* metadata_count)
 {
     if (metadata_pool == NULL || metadata_count == NULL)
@@ -18,12 +265,14 @@ static virt_region_t* alloc_region_struct(metadata_pool_t* metadata_pool, size_t
     }
 
     virt_region_t* region = (virt_region_t*) metadata_pool_alloc(metadata_pool);
+
     if (region == NULL)
     {
         return NULL;
     }
 
     (*metadata_count)++;
+    memset(region, 0, sizeof(*region));
     region->allocated = true;
     ILIST_NODE_INIT(region);
     return region;
@@ -86,6 +335,7 @@ static void handle_middle_split_case(virt_region_t* free, virt_region_t** free_r
     free->size          = free->end - free->start;
 
     virt_region_t* right_region = alloc_region_struct(metadata_pool, metadata_count);
+
     if (right_region == NULL)
     {
         panic();
@@ -132,10 +382,12 @@ static void remove_existing_mappings(virt_region_t** free_regions, virt_region_t
             {
                 bool stop = false;
                 handle_full_cover_case(free, free_regions, metadata_pool, metadata_count, &stop);
+
                 if (stop)
                 {
                     break;
                 }
+
                 continue;
             }
 
@@ -201,6 +453,7 @@ void vmm_init(struct boot_info* boot_info)
     existing_hhdm_region->end           = boot_info->hhdm_present ? boot_info->hhdm_end : 0;
     existing_hhdm_region->size          = boot_info->hhdm_present ? (boot_info->hhdm_end - boot_info->hhdm_start) : 0;
     existing_hhdm_region->type          = VIRT_ADDR_KERNEL;
+
     if (boot_info->hhdm_present)
     {
         add_to_regions_list(existing_hhdm_region, &init_kernel_address_space.kernel_used_regions);
@@ -224,78 +477,160 @@ void vmm_init(struct boot_info* boot_info)
 
     kprintf("Arx kernel: virtual memory manager initialized\n");
 
-    uint8_t num_cpus = boot_info->smp.cpu_count < BOOT_SMP_MAX_CPUS ? boot_info->smp.cpu_count : BOOT_SMP_MAX_CPUS;
+    uint8_t num_cpus = platform.cpu_count;
+
     for (uint8_t i = 0; i < num_cpus; i++)
     {
         platform.cpus[i].address_space = &init_kernel_address_space;
     }
 }
 
-void vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
+virt_addr_space_t* vmm_kernel_space(void)
 {
-    spinlock_acquire(&space->lock);
-    arch_map_page(va, pa, flags, space->pt);
-    spinlock_release(&space->lock);
+    return &init_kernel_address_space;
+}
+
+uint64_t vmm_kernel_page_flags(bool uncached, bool global)
+{
+    uint64_t flags = 0;
+    ARCH_PAGE_FLAGS_INIT(flags);
+    ARCH_PAGE_FLAG_SET_READ(flags);
+    ARCH_PAGE_FLAG_SET_WRITE(flags);
+
+    if (uncached)
+    {
+        ARCH_PAGE_FLAG_SET_NOCACHE(flags);
+    }
+
+    if (global)
+    {
+        ARCH_PAGE_FLAG_SET_GLOBAL(flags);
+    }
+
+    return flags;
+}
+
+virt_addr_t vmm_map_direct_mmio_page(phys_addr_t page, virt_addr_space_t* space)
+{
+    const zone_t*     zone    = &platform.cpus[arch_cpu_id()].numa_node->zone;
+    const virt_addr_t address = pa_to_hhdm(page, zone->hhdm_present, zone->hhdm_offset);
+
+    if (!vmm_map_page(address, page, vmm_kernel_page_flags(true, true), space))
+    {
+        return 0;
+    }
+
+    return address;
+}
+
+bool vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
+{
+    if (va >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
+    bool success = arch_map_page(va, pa, flags, space->pt);
+    spinlock_release_preempt(&space->lock);
+    return success;
 }
 
 void vmm_unmap_page(virt_addr_t va, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    if (va >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
     arch_unmap_page(va, space->pt);
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
 }
 
-void vmm_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, virt_addr_space_t* space)
+bool vmm_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
-    arch_map_range(va_start, pa_start, size, flags, space->pt);
-    spinlock_release(&space->lock);
+    if (va_start >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
+    bool success = arch_map_range(va_start, pa_start, size, flags, space->pt);
+    spinlock_release_preempt(&space->lock);
+    return success;
 }
 
 void vmm_unmap_range(virt_addr_t va_start, uint64_t size, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    if (va_start >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
     arch_unmap_range(va_start, size, space->pt);
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
 }
 
 void vmm_protect_page(virt_addr_t va, uint64_t flags, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    if (va >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
     arch_protect(va, flags, space->pt);
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
 }
 
 void vmm_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    if (va_start >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
     arch_protect_range(va_start, size, flags, space->pt);
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
 }
 
 void vmm_switch_addr_space(virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    // Loading the local root does not mutate page tables. Taking the table lock
+    // in an interrupt handler could block the IPI needed by its current owner.
     arch_set_pt(space->pt);
-    spinlock_release(&space->lock);
 }
 
 phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space)
 {
-    spinlock_acquire(&space->lock);
+    if (va >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
+    spinlock_acquire_preempt(&space->lock);
     phys_addr_t pa = arch_virt_to_phys(va, space->pt);
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
     return pa;
 }
 
 virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_t type)
 {
+    if (type == VIRT_ADDR_KERNEL)
+    {
+        space = vmm_kernel_space();
+    }
+
     if (space == NULL || size == 0)
     {
         return 0;
     }
 
     size_t aligned_size = align_up(size, PAGE_SIZE);
+
     if (aligned_size == 0)
     {
         return 0;
@@ -321,7 +656,7 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
         metadata_count = &space->user_regions_count;
     }
 
-    spinlock_acquire(&space->lock);
+    spinlock_acquire_preempt(&space->lock);
 
     ILIST_FOR_EACH(free, *free_regions)
     {
@@ -342,14 +677,15 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
             free->type  = type;
 
             add_to_regions_list(free, used_regions);
-            spinlock_release(&space->lock);
+            spinlock_release_preempt(&space->lock);
             return reserved_start;
         }
 
         virt_region_t* used = alloc_region_struct(metadata_pool, metadata_count);
+
         if (used == NULL)
         {
-            spinlock_release(&space->lock);
+            spinlock_release_preempt(&space->lock);
             return 0;
         }
 
@@ -363,22 +699,27 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
         free->size = free->end - free->start;
 
         add_to_regions_list(used, used_regions);
-        spinlock_release(&space->lock);
+        spinlock_release_preempt(&space->lock);
         return reserved_start;
     }
 
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
     return 0;
 }
 
 void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 {
+    if (addr >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
     if (space == NULL || addr == 0)
     {
         return;
     }
 
-    spinlock_acquire(&space->lock);
+    spinlock_acquire_preempt(&space->lock);
 
     virt_region_t*   region         = NULL;
     virt_region_t**  used_regions   = NULL;
@@ -417,13 +758,14 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 
     if (region == NULL)
     {
-        spinlock_release(&space->lock);
+        spinlock_release_preempt(&space->lock);
         return;
     }
 
     remove_from_regions_list(region, used_regions);
 
     virt_region_t* insert_before = *free_regions;
+
     while (insert_before != NULL && insert_before->start < region->start)
     {
         insert_before = insert_before->next;
@@ -457,23 +799,28 @@ void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
         free_region_struct(metadata_pool, right, metadata_count);
     }
 
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
 }
 
 virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
 {
+    if (addr >= CANONICAL_KERNEL_BASE)
+    {
+        space = vmm_kernel_space();
+    }
+
     if (space == NULL || addr == 0)
     {
         return NULL;
     }
 
-    spinlock_acquire(&space->lock);
+    spinlock_acquire_preempt(&space->lock);
 
     ILIST_FOR_EACH(it, space->kernel_used_regions)
     {
         if (it->start <= addr && addr < it->end)
         {
-            spinlock_release(&space->lock);
+            spinlock_release_preempt(&space->lock);
             return it;
         }
     }
@@ -482,11 +829,98 @@ virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
     {
         if (it->start <= addr && addr < it->end)
         {
-            spinlock_release(&space->lock);
+            spinlock_release_preempt(&space->lock);
             return it;
         }
     }
 
-    spinlock_release(&space->lock);
+    spinlock_release_preempt(&space->lock);
     return NULL;
+}
+
+// Caller holds operation_lock; the allocator lock protects the free/used lists.
+bool vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr)
+{
+    if (space == NULL || addr == 0 || (addr & (PAGE_SIZE - 1)) != 0 || addr > CANONICAL_USER_END - PAGE_SIZE + 1)
+    {
+        return false;
+    }
+
+    spinlock_acquire_preempt(&space->lock);
+    ILIST_FOR_EACH(free, space->user_free_regions)
+    {
+        if (addr < free->start || addr + PAGE_SIZE > free->end)
+        {
+            continue;
+        }
+
+        virt_region_t* used  = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);
+        virt_region_t* right = NULL;
+        const bool     split = addr > free->start && addr + PAGE_SIZE < free->end;
+
+        if (used != NULL && split)
+        {
+            right = alloc_region_struct(&space->user_region_metadata_pool, &space->user_regions_count);
+        }
+
+        // Acquire all metadata before mutating the free interval.
+
+        if (used == NULL || (split && right == NULL))
+        {
+            if (used != NULL)
+            {
+                free_region_struct(&space->user_region_metadata_pool, used, &space->user_regions_count);
+            }
+
+            spinlock_release_preempt(&space->lock);
+            return false;
+        }
+
+        used->start = addr;
+        used->end   = addr + PAGE_SIZE;
+        used->size  = PAGE_SIZE;
+        used->type  = VIRT_ADDR_USER;
+
+        if (right != NULL)
+        {
+            right->start = used->end;
+            right->end   = free->end;
+            right->size  = right->end - right->start;
+            right->type  = VIRT_ADDR_USER;
+
+            if (free->next != NULL)
+            {
+                ILIST_INSERT_BEFORE(space->user_free_regions, free->next, right);
+            }
+            else
+            {
+                ILIST_APPEND(space->user_free_regions, right);
+            }
+
+            free->end = addr;
+        }
+        else if (addr == free->start)
+        {
+            free->start += PAGE_SIZE;
+        }
+        else
+        {
+            free->end = addr;
+        }
+
+        free->size = free->end - free->start;
+
+        if (free->size == 0)
+        {
+            remove_from_regions_list(free, &space->user_free_regions);
+            free_region_struct(&space->user_region_metadata_pool, free, &space->user_regions_count);
+        }
+
+        add_to_regions_list(used, &space->user_used_regions);
+        spinlock_release_preempt(&space->lock);
+        return true;
+    }
+
+    spinlock_release_preempt(&space->lock);
+    return false;
 }

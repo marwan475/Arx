@@ -48,17 +48,34 @@ typedef struct ipi_request_data
 typedef struct cpu_info
 {
     uint8_t            id;
+    uint32_t           hardware_id;
+    bool               emergency_logging;
     bool               initialized;
     numa_node_t*       numa_node;
     virt_addr_space_t* address_space;
     arch_info_t        arch_info;
     ipi_request_data_t ipi_request_data;
     spinlock_t         ipi_lock;
+    uint32_t           preemption_depth;
+    bool               reschedule_pending;
+    bool               switching_context;
     void*              kernel_stack_base;
     size_t             kernel_stack_size;
 } cpu_info_t;
 
-void                           cpus_init(size_t cpu_count);
-__attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    void                           cpus_init(size_t cpu_count);
+    void                           cpu_preemption_disable(void);
+    void                           cpu_preemption_enable(void);
+    __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg);
+
+#ifdef __cplusplus
+}
+
+#endif
 
 #endif

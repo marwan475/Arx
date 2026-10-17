@@ -1,6 +1,7 @@
 #include <boot/boot.h>
 #include <boot/limine.h>
 #include <klib/klib.h>
+#include <platform.h>
 #include <stdint.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
@@ -58,6 +59,7 @@ __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
 static struct boot_memmap_entry boot_memmap[BOOT_MEMMAP_MAX_ENTRIES];
+static struct limine_smp_info*  selected_cpus[BOOT_SMP_MAX_CPUS];
 
 extern uint8_t __kernel_start[];
 extern uint8_t __kernel_end[];
@@ -110,6 +112,9 @@ static void arch_enable_fp_simd(void)
     write_cr0(cr0);
 
     cr4 |= (1ull << 9) | (1ull << 10);
+    // FXSAVE supports the baseline x87/SSE ABI. Do not inherit firmware's
+    // OSXSAVE setting until per-task extended-state save/restore is implemented.
+    cr4 &= ~(1ull << 18);
     write_cr4(cr4);
 
     __asm__ volatile("fninit");
@@ -145,7 +150,19 @@ uint8_t arch_cpu_id(void)
 
     __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
 
-    return (uint8_t) ((ebx >> 24) & 0xff);
+    const uint32_t hardware_id = (ebx >> 24) & 0xff;
+
+    if (platform.cpus != NULL)
+
+        for (uint8_t i = 0; i < platform.cpu_count; ++i)
+
+            if (platform.cpus[i].hardware_id == hardware_id)
+            {
+                return i;
+            }
+
+    // Before platform initialization only the BSP executes.
+    return 0;
 }
 
 void arch_serial_putchar(char c)
@@ -196,9 +213,7 @@ static void start_core(struct limine_smp_info* cpu)
     static const char                cpu_boot_message[] = "hello from cpu entry\n";
 
     vcpu->extra_argument = (uint64_t) (uintptr_t) cpu_boot_message;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    vcpu->goto_address = smp_entry;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_store_n(&vcpu->goto_address, smp_entry, __ATOMIC_RELEASE);
 }
 
 void arch_smp_init(struct boot_info* boot_info)
@@ -207,11 +222,12 @@ void arch_smp_init(struct boot_info* boot_info)
 
     if (boot_info->smp.cpu_count == 0 || boot_info->smp.cpus == 0)
     {
-        kprintf("Arx kernel: smp cpu array unavailable\n");
+        error_logger("Arx kernel: smp cpu array unavailable\n");
         return;
     }
 
     smp_cpus = (struct limine_smp_info**) (uintptr_t) boot_info->smp.cpus;
+
     for (uint64_t i = 0; i < boot_info->smp.cpu_count; i++)
     {
         uint64_t cpu_hw_id = (uint64_t) smp_cpus[i]->lapic_id;
@@ -281,6 +297,7 @@ static void gather_boot_info(struct boot_info* boot_info)
     {
         uint64_t count            = memmap_request.response->entry_count;
         uint64_t max_physical_end = 0;
+
         if (count > BOOT_MEMMAP_MAX_ENTRIES)
         {
             count = BOOT_MEMMAP_MAX_ENTRIES;
@@ -346,16 +363,62 @@ static void gather_boot_info(struct boot_info* boot_info)
 
     if (smp_request.response != 0)
     {
-        uint64_t count = smp_request.response->cpu_count;
-        if (count > BOOT_SMP_MAX_CPUS)
+        if ((smp_request.response->flags & 1) != 0)
         {
-            count = BOOT_SMP_MAX_CPUS;
+            serial_write_string("Arx kernel: x2APIC is unsupported\n");
+            panic();
+        }
+
+        uint64_t count = 0;
+
+        for (uint64_t i = 0; i < smp_request.response->cpu_count; ++i)
+
+            if (smp_request.response->cpus[i]->lapic_id == smp_request.response->bsp_lapic_id)
+            {
+                if (count != 0)
+                {
+                    panic();
+                }
+
+                selected_cpus[count++] = smp_request.response->cpus[i];
+            }
+
+        if (count != 1)
+        {
+            panic();
+        }
+
+        if (selected_cpus[0]->lapic_id > 255)
+        {
+            panic();
+        }
+
+        for (uint64_t i = 0; i < smp_request.response->cpu_count && count < BOOT_SMP_MAX_CPUS; ++i)
+        {
+            struct limine_smp_info* cpu = smp_request.response->cpus[i];
+
+            if (cpu->lapic_id > 255)
+            {
+                panic();
+            }
+
+            if (cpu->lapic_id != smp_request.response->bsp_lapic_id)
+            {
+                for (uint64_t selected = 0; selected < count; ++selected)
+
+                    if (selected_cpus[selected]->lapic_id == cpu->lapic_id)
+                    {
+                        panic();
+                    }
+
+                selected_cpus[count++] = cpu;
+            }
         }
 
         boot_info->smp.flags     = smp_request.response->flags;
         boot_info->smp.bsp_id    = smp_request.response->bsp_lapic_id;
         boot_info->smp.cpu_count = count;
-        boot_info->smp.cpus      = (uintptr_t) smp_request.response->cpus;
+        boot_info->smp.cpus      = (uintptr_t) selected_cpus;
     }
 }
 

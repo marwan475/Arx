@@ -1,7 +1,14 @@
 #include "layers/Logic/LogicLayerFactory.hpp"
 
+#include "layers/Logic/CredentialManager.hpp"
 #include "layers/Logic/ElfMapper.hpp"
+#include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/InterProcessCommunicationManager.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/ProcessController.hpp"
+#include "layers/Logic/SignalManager.hpp"
+#include "layers/Logic/SocketManager.hpp"
+#include "layers/Logic/SynchronizationManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
@@ -14,6 +21,13 @@ LogicLayerFactory::~LogicLayerFactory()
 {
     if (LogicLayerExportCaps != nullptr)
     {
+        delete LogicLayerExportCaps->processController;
+        delete LogicLayerExportCaps->interProcessCommunicationManager;
+        delete LogicLayerExportCaps->socketManager;
+        delete LogicLayerExportCaps->signalManager;
+        delete LogicLayerExportCaps->synchronizationManager;
+        delete LogicLayerExportCaps->eventManager;
+        delete LogicLayerExportCaps->credentialManager;
         delete LogicLayerExportCaps->elfMapper;
         delete LogicLayerExportCaps->virtualFileSystem;
         delete LogicLayerExportCaps->scheduler;
@@ -34,10 +48,21 @@ LogicLayerCaps* LogicLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps)
         return nullptr;
     }
 
-    LogicLayerExportCaps                    = new LogicLayerCaps();
-    LogicLayerExportCaps->scheduler         = new Scheduler(resourceLayerCaps);
-    LogicLayerExportCaps->virtualFileSystem = new VirtualFileSystem(resourceLayerCaps);
-    LogicLayerExportCaps->elfMapper         = new ElfMapper(resourceLayerCaps);
+    LogicLayerExportCaps                         = new LogicLayerCaps();
+    LogicLayerExportCaps->scheduler              = new Scheduler(resourceLayerCaps);
+    LogicLayerExportCaps->virtualFileSystem      = new VirtualFileSystem(resourceLayerCaps);
+    LogicLayerExportCaps->elfMapper              = new ElfMapper(resourceLayerCaps);
+    LogicLayerExportCaps->credentialManager      = new CredentialManager(resourceLayerCaps);
+    LogicLayerExportCaps->eventManager           = new EventManager(resourceLayerCaps, LogicLayerExportCaps->scheduler, LogicLayerExportCaps->virtualFileSystem);
+    LogicLayerExportCaps->scheduler->SetEventManager(LogicLayerExportCaps->eventManager);
+    LogicLayerExportCaps->virtualFileSystem->SetEventManager(LogicLayerExportCaps->eventManager);
+    LogicLayerExportCaps->synchronizationManager = new SynchronizationManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->scheduler->SetPriorityManager(LogicLayerExportCaps->synchronizationManager);
+    LogicLayerExportCaps->signalManager          = new SignalManager(resourceLayerCaps, LogicLayerExportCaps->scheduler);
+    LogicLayerExportCaps->processController      = new ProcessController(resourceLayerCaps, LogicLayerExportCaps);
+    LogicLayerExportCaps->socketManager          = new SocketManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
+
+    LogicLayerExportCaps->interProcessCommunicationManager = new InterProcessCommunicationManager(resourceLayerCaps, LogicLayerExportCaps->virtualFileSystem, LogicLayerExportCaps->eventManager, LogicLayerExportCaps->signalManager);
 
     return LogicLayerExportCaps;
 }

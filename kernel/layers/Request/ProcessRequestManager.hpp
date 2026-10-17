@@ -3,9 +3,14 @@
 #include <arch/arch.h>
 #include <stdint.h>
 
+struct ResourceLayerCaps;
+struct LogicLayerCaps;
+
 class ProcessRequestManager
 {
 public:
+    ProcessRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps);
+
     uint64_t HandleExitRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleExit_groupRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleForkRequest(const arch_syscall_frame_t* frame);
@@ -24,4 +29,8 @@ public:
     uint64_t HandleSetpgidRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleGetsidRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleSetsidRequest(const arch_syscall_frame_t* frame);
+
+private:
+    ResourceLayerCaps* ResourceCaps;
+    LogicLayerCaps*    LogicCaps;
 };

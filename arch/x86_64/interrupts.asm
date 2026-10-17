@@ -31,6 +31,15 @@ ISR_STUB i
 
 ISRCOMMON:
 
+    ; The stub has pushed interrupt number/error code. CS is at rsp+24.
+    ; SYSCALL and kernel code already use kernel GS; user interrupts do not.
+    test byte [rsp + 24], 3
+    jz .kernel_gs_ready
+    swapgs
+.kernel_gs_ready:
+    lfence
+    cld
+
     push r15
     push r14
     push r13
@@ -51,8 +60,20 @@ ISRCOMMON:
 
     mov rbx, rsp
     and rsp, -16
+    sub rsp, 512
+    xor eax,eax
+    mov rdi,rsp
+    mov ecx,64
+    rep stosq
+    fxsave64 [rsp]
+    fninit
+    ldmxcsr [rel interrupt_kernel_mxcsr]
 
+    mov rdi,rbx
+    mov rsi,rsp
     call ISRHANDLER
+
+    fxrstor64 [rsp]
 
     mov rsp, rbx          
 
@@ -74,4 +95,14 @@ ISRCOMMON:
 
     add rsp, 16           
 
+    ; CS is now at rsp+8 in the hardware return frame.
+    test byte [rsp + 8], 3
+    jz .return_with_kernel_gs
+    swapgs
+.return_with_kernel_gs:
+
     iretq
+
+section .rodata
+align 4
+interrupt_kernel_mxcsr: dd 0x1f80

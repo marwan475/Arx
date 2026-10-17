@@ -21,6 +21,7 @@ static bool metadata_pool_grow(metadata_pool_t* pool)
     }
 
     metadata_chunk_t* chunk = (metadata_chunk_t*) pmm_alloc(sizeof(metadata_chunk_t));
+
     if (chunk == NULL)
     {
         return false;
@@ -28,8 +29,10 @@ static bool metadata_pool_grow(metadata_pool_t* pool)
 
     size_t chunk_bytes = pool->element_size * pool->elements_per_chunk;
     chunk->data        = pmm_alloc(chunk_bytes);
+
     if (chunk->data == NULL)
     {
+        pmm_free(chunk);
         return false;
     }
 

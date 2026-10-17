@@ -20,6 +20,44 @@ struct resource_node_t
     uint64_t       size;
 };
 
+constexpr int64_t RESOURCE_ERR_NOENT = -2;
+constexpr int64_t RESOURCE_ERR_INVAL = -22;
+constexpr int64_t RESOURCE_ERR_ROFS  = -30;
+
+static bool normalize_runtime_path(const char* path, char* outPath, size_t outPathSize)
+{
+    if (path == nullptr || outPath == nullptr || outPathSize == 0)
+    {
+        return false;
+    }
+
+    while (path[0] == '/')
+    {
+        path++;
+    }
+
+    while (path[0] == '.' && path[1] == '/')
+    {
+        path += 2;
+    }
+
+    size_t len = strlen(path);
+
+    while (len > 0 && path[len - 1] == '/')
+    {
+        len--;
+    }
+
+    if (len + 1 > outPathSize)
+    {
+        return false;
+    }
+
+    memcpy(outPath, path, len);
+    outPath[len] = '\0';
+    return true;
+}
+
 static uint64_t resource_hash_path(const char* path, bool isDirectory)
 {
     uint64_t hash = 1469598103934665603ULL;
@@ -57,6 +95,46 @@ static bool has_component_separator(const char* name)
     return false;
 }
 
+static bool path_starts_with_component(const char* path, const char* prefix)
+{
+    if (path == nullptr || prefix == nullptr)
+    {
+        return false;
+    }
+
+    const size_t prefixLen = strlen(prefix);
+
+    if (prefixLen == 0)
+    {
+        return true;
+    }
+
+    if (memcmp(path, prefix, prefixLen) != 0)
+    {
+        return false;
+    }
+
+    return path[prefixLen] == '\0' || path[prefixLen] == '/';
+}
+
+static bool is_duplicate_name(const char* const* names, size_t count, const char* name, size_t nameLen)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (names[i] == nullptr)
+        {
+            continue;
+        }
+
+        if (strlen(names[i]) == nameLen && memcmp(names[i], name, nameLen) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDirectory, uint64_t size)
 {
     if (fs == nullptr)
@@ -65,6 +143,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
     }
 
     resource_node_t* node = (resource_node_t*) kmalloc(sizeof(resource_node_t));
+
     if (node == nullptr)
     {
         return nullptr;
@@ -77,6 +156,7 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
 
     const char* safePath = path != nullptr ? path : "";
     node->path           = kstrdup(safePath);
+
     if (node->path == nullptr)
     {
         kfree(node);
@@ -93,8 +173,15 @@ ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSyst
     Caps.GetRootNode     = GetRootNodeThunk;
     Caps.GetNodeInfo     = GetNodeInfoThunk;
     Caps.Lookup          = LookupThunk;
+    Caps.ReadDirectory   = ReadDirectoryThunk;
     Caps.Read            = ReadThunk;
     Caps.Write           = WriteThunk;
+    Caps.Mkdir           = MkdirThunk;
+    Caps.Unlink          = UnlinkThunk;
+    Caps.Rename          = RenameThunk;
+    Caps.Link            = LinkThunk;
+    Caps.Mknod           = MknodThunk;
+    Caps.Truncate        = TruncateThunk;
 }
 
 ResourceLayerFileSystemCaps* ResourceFileSystem::GetCaps()
@@ -136,6 +223,12 @@ resource_node_t* ResourceFileSystem::LookupThunk(ResourceLayerFileSystemCaps* ca
     return self != nullptr ? self->Lookup(directory, name) : nullptr;
 }
 
+int64_t ResourceFileSystem::ReadDirectoryThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->ReadDirectory(directory, cursor, entry) : -1;
+}
+
 int64_t ResourceFileSystem::ReadThunk(ResourceLayerFileSystemCaps* caps, resource_node_t* node, uint64_t offset, void* buffer, uint64_t size)
 {
     ResourceFileSystem* self = FromCaps(caps);
@@ -148,6 +241,42 @@ int64_t ResourceFileSystem::WriteThunk(ResourceLayerFileSystemCaps* caps, resour
     return self != nullptr ? self->Write(node, offset, buffer, size) : -1;
 }
 
+int64_t ResourceFileSystem::MkdirThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Mkdir(path, mode) : -1;
+}
+
+int64_t ResourceFileSystem::UnlinkThunk(ResourceLayerFileSystemCaps* caps, const char* path, bool directory)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Unlink(path, directory) : -1;
+}
+
+int64_t ResourceFileSystem::RenameThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Rename(oldPath, newPath) : -1;
+}
+
+int64_t ResourceFileSystem::LinkThunk(ResourceLayerFileSystemCaps* caps, const char* oldPath, const char* newPath, bool followSymlink)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Link(oldPath, newPath, followSymlink) : -1;
+}
+
+int64_t ResourceFileSystem::MknodThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint32_t mode, uint64_t device)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Mknod(path, mode, device) : -1;
+}
+
+int64_t ResourceFileSystem::TruncateThunk(ResourceLayerFileSystemCaps* caps, const char* path, uint64_t size)
+{
+    ResourceFileSystem* self = FromCaps(caps);
+    return self != nullptr ? self->Truncate(path, size) : -1;
+}
+
 resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* source)
 {
     if (type == nullptr || strcmp(type, "cpio") != 0)
@@ -156,12 +285,14 @@ resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* sourc
     }
 
     InitRamFileSystemManager* manager = source != nullptr ? (InitRamFileSystemManager*) source : InitRamManager;
+
     if (manager == nullptr)
     {
         return nullptr;
     }
 
     resource_fs_t* fs = (resource_fs_t*) kmalloc(sizeof(resource_fs_t));
+
     if (fs == nullptr)
     {
         return nullptr;
@@ -186,6 +317,18 @@ bool ResourceFileSystem::GetNodeInfo(resource_node_t* node, resource_node_info_t
     info->inodeNumber = resource_hash_path(node->path, node->isDirectory);
     info->size        = node->size;
     info->type        = node->isDirectory ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
+    info->mode        = node->isDirectory ? 0755 : 0644;
+    info->uid         = 0;
+    info->gid         = 0;
+
+    const initramfs_archive_t* archive = node->fs->initRamManager->find(node->path);
+
+    if (archive != nullptr)
+    {
+        info->mode = archive->mode & 07777;
+        info->uid  = archive->uid;
+        info->gid  = archive->gid;
+    }
     return true;
 }
 
@@ -208,6 +351,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
     const size_t fullLen   = hasPrefix ? (baseLen + 1 + nameLen) : nameLen;
 
     char* fullPath = (char*) kmalloc(fullLen + 1);
+
     if (fullPath == nullptr)
     {
         return nullptr;
@@ -223,26 +367,43 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
     {
         memcpy(fullPath, name, nameLen);
     }
+
     fullPath[fullLen] = '\0';
 
     initramfs_archive_t* file = directory->fs->initRamManager->find(fullPath);
+
     if (file != nullptr)
     {
-        resource_node_t* node = make_node(directory->fs, fullPath, false, file->size);
+        const bool isDirectory = (file->mode & 0170000) == 0040000;
+        resource_node_t* node = make_node(directory->fs, fullPath, isDirectory, file->size);
         kfree(fullPath);
         return node;
     }
 
     const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
-    const size_t prefixLen      = fullLen;
     bool         directoryFound = false;
 
     for (size_t i = 0; i < archiveCount; ++i)
     {
-        // We do not have random archive access yet, so directory discovery stays file-only.
-        // Keep loop for future expansion without changing API.
-        (void) i;
-        break;
+        const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+
+        if (archive == nullptr || archive->path == nullptr)
+        {
+            continue;
+        }
+
+        if (!path_starts_with_component(archive->path, fullPath))
+        {
+            continue;
+        }
+
+        const size_t fullPathLen = strlen(fullPath);
+
+        if (strlen(archive->path) > fullPathLen && archive->path[fullPathLen] == '/')
+        {
+            directoryFound = true;
+            break;
+        }
     }
 
     if (directoryFound)
@@ -252,9 +413,120 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         return node;
     }
 
-    (void) prefixLen;
     kfree(fullPath);
     return nullptr;
+}
+
+int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry)
+{
+    if (directory == nullptr || directory->fs == nullptr || directory->fs->initRamManager == nullptr || cursor == nullptr || entry == nullptr)
+    {
+        return -1;
+    }
+
+    if (!directory->isDirectory)
+    {
+        return -1;
+    }
+
+    const char*    basePath     = directory->path != nullptr ? directory->path : "";
+    const size_t   baseLen      = strlen(basePath);
+    const size_t   archiveCount = directory->fs->initRamManager->GetArchiveCount();
+    const uint64_t targetIndex  = *cursor;
+    uint64_t       currentIndex = 0;
+
+    // Track discovered names to avoid duplicate directory entries from multiple descendants.
+    const char* discoveredNames[1024] = {};
+    size_t      discoveredCount       = 0;
+
+    for (size_t i = 0; i < archiveCount; ++i)
+    {
+        const initramfs_archive_t* archive = directory->fs->initRamManager->GetArchiveAt(i);
+
+        if (archive == nullptr || archive->path == nullptr)
+        {
+            continue;
+        }
+
+        const char* path = archive->path;
+
+        if (baseLen > 0)
+        {
+            if (memcmp(path, basePath, baseLen) != 0 || path[baseLen] != '/')
+            {
+                continue;
+            }
+
+            path += baseLen + 1;
+        }
+
+        if (*path == '\0')
+        {
+            continue;
+        }
+
+        const char* separator = nullptr;
+
+        for (const char* p = path; *p != '\0'; ++p)
+        {
+            if (*p == '/')
+            {
+                separator = p;
+                break;
+            }
+        }
+
+        const size_t nameLen = separator != nullptr ? (size_t) (separator - path) : strlen(path);
+
+        if (nameLen == 0 || nameLen >= sizeof(entry->name))
+        {
+            continue;
+        }
+
+        if (is_duplicate_name(discoveredNames, discoveredCount, path, nameLen))
+        {
+            continue;
+        }
+
+        if (discoveredCount < (sizeof(discoveredNames) / sizeof(discoveredNames[0])))
+        {
+            discoveredNames[discoveredCount++] = path;
+        }
+
+        if (currentIndex == targetIndex)
+        {
+            memset(entry, 0, sizeof(*entry));
+            memcpy(entry->name, path, nameLen);
+            entry->name[nameLen] = '\0';
+            entry->type          = separator != nullptr ? RESOURCE_NODE_DIRECTORY : RESOURCE_NODE_REGULAR;
+
+            if (separator == nullptr && (archive->mode & 0170000) == 0040000)
+            {
+                entry->type = RESOURCE_NODE_DIRECTORY;
+            }
+
+            char fullPath[512] = {};
+
+            if (baseLen > 0)
+            {
+                memcpy(fullPath, basePath, baseLen);
+                fullPath[baseLen] = '/';
+                memcpy(fullPath + baseLen + 1, entry->name, nameLen + 1);
+            }
+            else
+            {
+                memcpy(fullPath, entry->name, nameLen + 1);
+            }
+
+            entry->inodeNumber = resource_hash_path(fullPath, entry->type == RESOURCE_NODE_DIRECTORY);
+            *cursor += 1;
+            return 1;
+        }
+
+        currentIndex += 1;
+    }
+
+    return 0;
 }
 
 int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size)
@@ -270,6 +542,7 @@ int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* b
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
+
     if (file == nullptr)
     {
         return -1;
@@ -299,6 +572,7 @@ int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const 
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
+
     if (file == nullptr)
     {
         return -1;
@@ -313,4 +587,71 @@ int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const 
     uint64_t toWrite   = size < remaining ? size : remaining;
     memcpy(file->data + offset, buffer, toWrite);
     return (int64_t) toWrite;
+}
+
+int64_t ResourceFileSystem::Mkdir(const char* path, uint32_t mode)
+{
+    (void) path;
+    (void) mode;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Unlink(const char* path, bool directory)
+{
+    (void) path;
+    (void) directory;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Rename(const char* oldPath, const char* newPath)
+{
+    (void) oldPath;
+    (void) newPath;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Link(const char* oldPath, const char* newPath, bool followSymlink)
+{
+    (void) oldPath;
+    (void) newPath;
+    (void) followSymlink;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Mknod(const char* path, uint32_t mode, uint64_t device)
+{
+    (void) path;
+    (void) mode;
+    (void) device;
+    return RESOURCE_ERR_ROFS;
+}
+
+int64_t ResourceFileSystem::Truncate(const char* path, uint64_t size)
+{
+    if (InitRamManager == nullptr || path == nullptr)
+    {
+        return RESOURCE_ERR_INVAL;
+    }
+
+    char normalizedPath[512] = {};
+
+    if (!normalize_runtime_path(path, normalizedPath, sizeof(normalizedPath)) || normalizedPath[0] == '\0')
+    {
+        return RESOURCE_ERR_INVAL;
+    }
+
+    initramfs_archive_t* file = InitRamManager->find(normalizedPath);
+
+    if (file == nullptr)
+    {
+        return RESOURCE_ERR_NOENT;
+    }
+
+    if (size > file->size)
+    {
+        return RESOURCE_ERR_ROFS;
+    }
+
+    file->size = size;
+    return 0;
 }

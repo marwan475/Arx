@@ -16,6 +16,7 @@ static void* slab_alloc(slab_t* slab)
     }
 
     size_t index;
+
     if (!bitmap_find_first_clear(slab->object_bitmap, slab->total_objects, &index))
     {
         return NULL;
@@ -35,6 +36,7 @@ static void slab_free(slab_t* slab, void* ptr)
     }
 
     uint64_t index = ((uintptr_t) ptr - (uintptr_t) slab->objects_array) / slab->object_size;
+
     if (index >= slab->total_objects)
     {
         return;
@@ -85,6 +87,7 @@ static slab_t* alloc_slab_struct(cache_t* cache)
     }
 
     slab_t* slab = (slab_t*) metadata_pool_alloc(&cache->slab_metadata_pool);
+
     if (slab == NULL)
     {
         return NULL;
@@ -135,6 +138,7 @@ static void* cache_alloc(cache_t* cache)
     ILIST_FOR_EACH(slab, cache->partial_slabs)
     {
         void* ptr = slab_alloc(slab);
+
         if (ptr != NULL)
         {
             return ptr;
@@ -144,6 +148,7 @@ static void* cache_alloc(cache_t* cache)
     ILIST_FOR_EACH(slab, cache->full_slabs)
     {
         void* ptr = slab_alloc(slab);
+
         if (ptr != NULL)
         {
             ILIST_REMOVE(cache->full_slabs, slab);
@@ -155,6 +160,7 @@ static void* cache_alloc(cache_t* cache)
     for (size_t i = 0; i < INITIAL_SLABS_PER_CACHE; i++)
     {
         slab_t* slab = alloc_slab_struct(cache);
+
         if (slab == NULL)
         {
             break;
@@ -172,6 +178,7 @@ static void* cache_alloc(cache_t* cache)
     ILIST_FOR_EACH(slab, cache->full_slabs)
     {
         void* ptr = slab_alloc(slab);
+
         if (ptr != NULL)
         {
             ILIST_REMOVE(cache->full_slabs, slab);
@@ -239,14 +246,16 @@ static void cache_init(cache_t* cache, size_t object_size)
     for (size_t i = 0; i < INITIAL_SLABS_PER_CACHE; i++)
     {
         slab_t* slab = alloc_slab_struct(cache);
+
         if (slab == NULL)
         {
-            kprintf("Arx kernel: failed to allocate slab metadata for cache\n");
+            error_logger("Arx kernel: failed to allocate slab metadata for cache\n");
             panic();
         }
+
         if (!slab_init(slab, object_size))
         {
-            kprintf("Arx kernel: failed to initialize slab\n");
+            error_logger("Arx kernel: failed to initialize slab\n");
             panic();
         }
 
@@ -256,8 +265,10 @@ static void cache_init(cache_t* cache, size_t object_size)
 
 void heap_init(void)
 {
+    numa_node_t* original = platform.cpus[arch_cpu_id()].numa_node;
     for (size_t i = 0; i < platform.numa_node_count; i++)
     {
+        platform.cpus[arch_cpu_id()].numa_node = &platform.numa_nodes[i];
         platform.numa_nodes[i].heap.lock = 0;
 
         for (size_t j = 0; j < OBJECT_SIZE_CLASS_COUNT; j++)
@@ -266,6 +277,7 @@ void heap_init(void)
         }
     }
 
+    platform.cpus[arch_cpu_id()].numa_node = original;
     kprintf("Arx kernel: heap initialized\n");
 }
 

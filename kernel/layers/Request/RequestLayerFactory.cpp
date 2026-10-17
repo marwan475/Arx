@@ -26,7 +26,7 @@ RequestLayerFactory::~RequestLayerFactory()
     }
 }
 
-RequestLayerCaps* RequestLayerFactory::Create()
+RequestLayerCaps* RequestLayerFactory::Create(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps)
 {
     if (RequestLayerExportCaps != nullptr)
     {
@@ -34,17 +34,17 @@ RequestLayerCaps* RequestLayerFactory::Create()
     }
 
     RequestLayerExportCaps                           = new RequestLayerCaps();
-    RequestLayerExportCaps->processRequestManager    = new ProcessRequestManager();
-    RequestLayerExportCaps->schedulerRequestManager  = new SchedulerRequestManager();
-    RequestLayerExportCaps->timeRequestManager       = new TimeRequestManager();
-    RequestLayerExportCaps->memoryRequestManager     = new MemoryRequestManager();
-    RequestLayerExportCaps->vfsRequestManager        = new VfsRequestManager();
-    RequestLayerExportCaps->eventRequestManager      = new EventRequestManager();
-    RequestLayerExportCaps->syncRequestManager       = new SyncRequestManager();
-    RequestLayerExportCaps->signalRequestManager     = new SignalRequestManager();
-    RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager();
-    RequestLayerExportCaps->systemRequestManager     = new SystemRequestManager();
-    RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager();
+    RequestLayerExportCaps->processRequestManager    = new ProcessRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->schedulerRequestManager  = new SchedulerRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->timeRequestManager       = new TimeRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->memoryRequestManager     = new MemoryRequestManager(logicLayerCaps);
+    RequestLayerExportCaps->vfsRequestManager        = new VfsRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->eventRequestManager      = new EventRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->syncRequestManager       = new SyncRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->signalRequestManager     = new SignalRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->credentialRequestManager = new CredentialRequestManager(resourceLayerCaps, logicLayerCaps);
+    RequestLayerExportCaps->systemRequestManager     = new SystemRequestManager(resourceLayerCaps);
+    RequestLayerExportCaps->socketRequestManager     = new SocketRequestManager(resourceLayerCaps, logicLayerCaps);
     RequestLayerExportCaps->interruptRequestManager  = new InterruptRequestManager();
 
     return RequestLayerExportCaps;

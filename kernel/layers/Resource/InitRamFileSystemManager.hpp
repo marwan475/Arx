@@ -8,6 +8,9 @@ struct initramfs_archive_t
     char*    path;
     uint64_t size;
     uint8_t* data;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
 };
 
 class InitRamFileSystemManager
@@ -17,7 +20,8 @@ public:
 
     InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress);
 
-    initramfs_archive_t* find(const char* path);
+    initramfs_archive_t*       find(const char* path);
+    const initramfs_archive_t* GetArchiveAt(size_t index) const;
 
     size_t GetArchiveCount() const;
 

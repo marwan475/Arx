@@ -131,6 +131,9 @@ static bool test_scheduling_policies()
         ok &= expect(child->scheduling->policy == SCHEDULING_OTHER && child->scheduling->reservationCpu == -1, "reset child receives no reservation or PI donation");
         ok &= cleanup(tasks->FreeTask(child), "free policy inheritance child");
     }
+    // Measure selection from a fresh interval: inheritance fixture setup is
+    // not part of the deadline execution interval exercised below.
+    scheduler->AccountSchedulingCurrent(true);
     ok &= expect(select(Scheduler::scheduling_reason_t::TIMER) == caller, "deadline class precedes real-time class");
     scheduler->AccountSchedulingCurrent(true);
     arch_time_read_monotonic(&start);

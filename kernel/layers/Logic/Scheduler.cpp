@@ -49,6 +49,11 @@ Scheduler::Scheduler(ResourceLayerCaps* resourceLayerCaps)
         {
             panic();
         }
+
+        // Idle contexts belong to one CPU. Priority refresh also visits tasks
+        // without a process and must not place all idle stacks on the BSP.
+        IdleTasks[i]->affinityMask = 1ULL << i;
+        IdleTasks[i]->placementCpu = i;
     }
 }
 

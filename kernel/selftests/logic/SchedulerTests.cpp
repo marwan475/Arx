@@ -3,6 +3,7 @@
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SynchronizationManager.hpp"
 
 void test_Scheduler(ResourceLayerCaps* resources, LogicLayerCaps* logic)
 {
@@ -13,6 +14,31 @@ void test_Scheduler(ResourceLayerCaps* resources, LogicLayerCaps* logic)
         t.Check(!m->IsSchedulingActive(), "timer scheduling stays inactive during layer unit tests");
         t.Check(resources->processManager->GetCurrentProcess() != nullptr, "BSP process seeded");
         t.Check(resources->taskManager->GetCurrentTask() != nullptr, "BSP task seeded");
+    });
+
+    suite.Run("logic/Scheduler/idle_placement", [&](TestCase& t)
+    {
+        // Priority refresh visits idle tasks too, before they first execute.
+        logic->synchronizationManager->RefreshPriorities();
+        uint64_t idleCpus = 0;
+        task_t* tasks = resources->taskManager->GetTasks();
+        for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
+        {
+            if (!tasks[i].allocated || tasks[i].process != nullptr)
+            {
+                continue;
+            }
+            const int cpu = tasks[i].placementCpu;
+            if (!t.Check(cpu >= 0 && cpu < platform.cpu_count, "idle task has a CPU placement"))
+            {
+                continue;
+            }
+            const uint64_t mask = 1ULL << cpu;
+            t.Equal(tasks[i].affinityMask, mask, "priority refresh preserves pinned idle affinity");
+            t.Check(!(idleCpus & mask), "each CPU has a distinct idle task");
+            idleCpus |= mask;
+        }
+        t.Equal(idleCpus, Scheduler::AvailableCpuMask(), "idle tasks cover every CPU after priority refresh");
     });
 
     suite.Run("logic/Scheduler/priority_permissions",

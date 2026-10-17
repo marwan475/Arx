@@ -39,4 +39,72 @@ void test_Scheduler(ResourceLayerCaps* resources, LogicLayerCaps* logic)
         t.Check(!m->ScheduleProcess(UINT64_MAX), "invalid process cannot dispatch");
         t.Equal(m->WaitForEvent(nullptr, 0, 0), LINUX_EINVAL, "wait requires sequence");
     });
+
+    suite.Run("logic/Scheduler/deferred_retirement", [&](TestCase& test)
+    {
+        VirtualMemoryManager* memory    = resources->virtualMemoryManager;
+        ProcessManager*       processes = resources->processManager;
+        TaskManager*          tasks     = resources->taskManager;
+        virt_addr_space_t*    space     = memory->CreateUserAddressSpace();
+
+        if (!test.Check(space != nullptr, "create retirement address space"))
+        {
+            return;
+        }
+
+        process_t* process = processes->CreateProcess(space);
+        task_t*    task    = tasks->AllocateTask();
+
+        if (test.Check(process != nullptr && task != nullptr, "create retirement process and task"))
+        {
+            process_t* retained = processes->AcquireProcess(process->id);
+            const bool attached = processes->AddTask(process, task);
+            const bool claimed  = attached && tasks->RetainForDispatch(task);
+
+            test.Check(retained == process && claimed, "retain process and pending dispatch");
+
+            if (retained != nullptr && claimed)
+            {
+                bool retired = true;
+                process->retirementActive = true;
+                test.Check(!m->KillProcess(process->id, 0, false, &retired) && !retired, "active retirement does not report completion");
+                process->retirementActive = false;
+
+                test.Check(m->KillProcess(process->id, 0, false, &retired), "exit request accepts a pending dispatch");
+                test.Check(!retired && process->tasks == task && task->allocated, "dispatch claim defers task retirement");
+                tasks->ReleaseDispatchClaim(task);
+                test.Check(m->KillProcess(process->id, 0, false, &retired) && retired, "retry completes retirement after dispatch release");
+                test.Check(process->tasks == nullptr && !task->allocated, "retirement unlinks and releases the task slot");
+            }
+            else
+            {
+                if (claimed)
+                {
+                    tasks->ReleaseDispatchClaim(task);
+                }
+
+                if (attached)
+                {
+                    processes->RemoveTask(process, task);
+                }
+            }
+
+            if (retained != nullptr)
+            {
+                processes->ReleaseProcess(retained);
+            }
+        }
+
+        if (task != nullptr && task->allocated)
+        {
+            test.Check(tasks->FreeTask(task), "release retirement test task");
+        }
+
+        if (process != nullptr)
+        {
+            test.Check(processes->FreeProcess(process), "release retirement test process");
+        }
+
+        memory->DestroyUserAddressSpace(space);
+    });
 }

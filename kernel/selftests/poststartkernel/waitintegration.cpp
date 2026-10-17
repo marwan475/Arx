@@ -58,7 +58,7 @@ void shared_waiter(ScheduledFixture& f)
     {
         f.Result = f.L->synchronizationManager->Wait(SharedSource + PAGE_SIZE, 7, 2, f.Deadline, true);
         f.T.Equal(f.Result, 0, "cross-process shared waiter wakes");
-        f.T.Check(f.PeerDone, "independent peer completed");
+        f.T.Check(__atomic_load_n(&f.PeerDone, __ATOMIC_ACQUIRE), "independent peer completed");
     }
 
     cpu_preemption_enable();
@@ -113,7 +113,7 @@ static void futex_waiter(ScheduledFixture& f)
 
     f.Result = f.L->synchronizationManager->Wait(TestFixture::Buffer, 7, UINT32_MAX, f.Deadline);
     f.T.Equal(f.Result, 0, "queued futex waiter was woken");
-    f.T.Check(f.PeerDone, "waker completed before waiter resumed");
+    f.T.Check(__atomic_load_n(&f.PeerDone, __ATOMIC_ACQUIRE), "waker completed before waiter resumed");
     cpu_preemption_enable();
 }
 
@@ -137,7 +137,7 @@ static void event_waiter(ScheduledFixture& f)
     f.Result = f.L->eventManager->Wait(sequence, f.Deadline);
     f.T.Equal(f.Result, 0, "event waiter resumed after notification");
     f.T.Check(f.L->eventManager->Sequence() != sequence, "wait observes published event generation");
-    f.T.Check(f.PeerDone, "notifier completed before waiter resumed");
+    f.T.Check(__atomic_load_n(&f.PeerDone, __ATOMIC_ACQUIRE), "notifier completed before waiter resumed");
     cpu_preemption_enable();
 }
 
@@ -148,8 +148,8 @@ static void event_notifier(ScheduledFixture& f)
 
 static void sibling_remote(ScheduledFixture& fixture)
 {
-    const uint8_t cpu = arch_cpu_id();
-    const uint8_t other = fixture.Main->ownerCpu;
+    const uint8_t cpu          = arch_cpu_id();
+    const uint8_t other        = fixture.Main->ownerCpu;
     const bool simultaneous = other < platform.cpu_count && other != cpu && fixture.R->taskManager->GetRunningTask(other) == fixture.Main && fixture.R->processManager->GetRunningProcess(other) == fixture.Process && fixture.R->processManager->GetCurrentProcess() == fixture.Process;
     kfree(reinterpret_cast<void*>(fixture.Result));
     fixture.Result = reinterpret_cast<uint64_t>(kmalloc(128));
@@ -159,8 +159,9 @@ static void sibling_remote(ScheduledFixture& fixture)
 static void sibling_main(ScheduledFixture& fixture)
 {
     cpu_preemption_disable();
-    const uint8_t cpu = arch_cpu_id();
-    uint8_t remote = (cpu + 1) % platform.cpu_count;
+    const uint8_t cpu    = arch_cpu_id();
+    uint8_t       remote = (cpu + 1) % platform.cpu_count;
+
     for (size_t i = 0; i < platform.cpu_count; ++i)
     {
         if (platform.cpus[i].numa_node != platform.cpus[cpu].numa_node)
@@ -169,24 +170,30 @@ static void sibling_main(ScheduledFixture& fixture)
             break;
         }
     }
+
     fixture.T.Equal(fixture.L->scheduler->SetAffinity(fixture.Main, 1ULL << cpu), 0, "pin main sibling");
     fixture.T.Equal(fixture.L->scheduler->SetAffinity(fixture.Peer, 1ULL << remote), 0, "pin remote sibling");
     fixture.Result = reinterpret_cast<uint64_t>(kmalloc(128));
     fixture.T.Check(fixture.Result != 0, "allocate object before cross-node free");
+
     if (!fixture.PublishPeer())
     {
         kfree(reinterpret_cast<void*>(fixture.Result));
         return;
     }
+
     PollBudget budget;
-    while (__atomic_load_n(&fixture.Word, __ATOMIC_ACQUIRE) == 0 || !fixture.Peer->dying || fixture.Peer->state == task_t::RUNNING || fixture.Peer->state == task_t::SWITCHING)
+
+    while (!__atomic_load_n(&fixture.PeerDone, __ATOMIC_ACQUIRE))
     {
         if (budget.Expired())
         {
-            SelfTestManager::Get().AbortUnsafe("remote sibling did not execute and quiesce while main stayed running");
+            SelfTestManager::Get().AbortUnsafe("remote sibling did not finish while main stayed running");
         }
+
         arch_pause();
     }
+
     fixture.T.Equal(fixture.Word, 1, "siblings execute concurrently in one process and address space");
     fixture.T.Check(fixture.Result != 0, "remote sibling allocates from its node heap");
     kfree(reinterpret_cast<void*>(fixture.Result));
@@ -236,7 +243,7 @@ void test_wait_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
                 // before its process/task IDs can be reused by later cases.
                 if (sharedPeer)
                 {
-                    (void) l->scheduler->KillProcess(sharedPeer->id, 0);
+                    f.RetireProcess(sharedPeer);
                 }
             }
 

@@ -214,17 +214,39 @@ void Scheduler::WakeSignalWaiters(process_t* process)
 
 void Scheduler::ReapExitedProcesses()
 {
+    // A suspended reaper must not retain a process or block another CPU's
+    // retirement pass while the scheduler runs a different task.
+    cpu_preemption_disable();
     ProcessManager* manager = ResourceLayerImportCaps->processManager;
 
     for (size_t i = 0; i < manager->GetCapacity(); ++i)
     {
-        process_t* process = &manager->GetProcesses()[i];
+        process_t* process = manager->AcquireProcess(i);
 
-        if (process->allocated && __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE))
+        if (process == nullptr)
         {
-            (void) KillProcess(i, 0, true);
+            continue;
         }
-        else if (process->allocated)
+
+        LockQueues();
+        const bool exited      = __atomic_load_n(&process->exited, __ATOMIC_ACQUIRE);
+        const bool retireTasks = !exited && !process->retirementActive;
+
+        if (retireTasks)
+        {
+            process->retirementActive = true;
+        }
+
+        UnlockQueues();
+
+        if (exited)
+        {
+            manager->ReleaseProcess(process);
+            (void) KillProcess(i, 0, true);
+            continue;
+        }
+
+        if (retireTasks)
         {
             TaskManager* tasks = ResourceLayerImportCaps->taskManager;
 
@@ -263,8 +285,16 @@ void Scheduler::ReapExitedProcesses()
 
                 task = next;
             }
+
+            LockQueues();
+            process->retirementActive = false;
+            UnlockQueues();
         }
+
+        manager->ReleaseProcess(process);
     }
+
+    cpu_preemption_enable();
 }
 
 [[noreturn]] void Scheduler::ExitCurrentTask()
@@ -1178,8 +1208,13 @@ void Scheduler::ServicePendingReschedule(bool syscallBoundary)
     }
 }
 
-bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited)
+bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited, bool* retired)
 {
+    if (retired != nullptr)
+    {
+        *retired = false;
+    }
+
     if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr || ResourceLayerImportCaps->taskManager == nullptr)
     {
         return false;
@@ -1274,8 +1309,8 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     LockQueues();
-    const bool reap           = process->tasks == nullptr && (!process->waitable || process->waitConsumed);
-    process->retirementActive = false;
+    const bool tasksRetired = process->tasks == nullptr;
+    const bool reap         = tasksRetired && (!process->waitable || process->waitConsumed);
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a
     // timer handler can finish their short queue transaction and accept IPIs.
@@ -1285,7 +1320,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         TaskManager::ReleaseTaskStack(retiredStacks[i]);
     }
 
-    if (process->tasks == nullptr)
+    if (tasksRetired)
     {
         ProcessManager::ReleaseProcessResources(process);
 
@@ -1299,11 +1334,19 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
         }
     }
 
+    LockQueues();
+    process->retirementActive = false;
+    UnlockQueues();
     processManager->ReleaseProcess(process);
 
     if (reap)
     {
         (void) processManager->TryReapExitedProcess(processId);
+    }
+
+    if (retired != nullptr)
+    {
+        *retired = tasksRetired;
     }
 
     return true;

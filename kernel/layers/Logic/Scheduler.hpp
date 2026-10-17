@@ -70,7 +70,9 @@ public:
     bool              EnqueueProcess(uint8_t cpuId, uint64_t processId);
     bool              PublishTask(process_t* process, task_t* task);
     bool              RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason = scheduling_reason_t::RESCHEDULE);
-    bool              KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false);
+    // A successful exit request may leave tasks awaiting quiescence. The
+    // optional output reports completion of task and resource retirement.
+    bool              KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfExited = false, bool* retired = nullptr);
     uint64_t          SleepUntil(uint64_t monotonicDeadline);
     uint64_t          WaitForEvent(const uint64_t* sequence, uint64_t expected, uint64_t monotonicDeadline = UINT64_MAX, bool uninterruptible = false);
     void              WakeEventWaiters(const uint64_t* sequence);

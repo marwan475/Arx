@@ -1,6 +1,7 @@
 #pragma once
 
 #include <selftests/TestFixture.hpp>
+#include <selftests/PollBudget.hpp>
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
@@ -51,7 +52,7 @@ public:
     {
         cpu_preemption_disable();
 
-        if (Published && !PeerDone)
+        if (Published && !__atomic_load_n(&PeerDone, __ATOMIC_ACQUIRE))
         {
             SelfTestManager::Get().AbortUnsafe("scheduled peer did not finish");
         }
@@ -60,16 +61,15 @@ public:
         {
             // Remove every ready-queue entry before the process ID is reused.
             // The lifetime reference prevents a timer reaper freeing our slot.
-            (void) L->scheduler->KillProcess(Process->id, 0);
+            RetireProcess(Process);
+            // Attached task slots belong to the scheduler and may already
+            // have been reused once retirement completes.
+            Main = nullptr;
+        }
 
-            if (Process->tasks)
-            {
-                for (task_t* task = Process->tasks; task != nullptr; task = task->next)
-                {
-                    kprintf("[DEBUG-sibling] active=%u task=%llu state=%u dying=%u claims=%u sleep=%u\n", Process->retirementActive, task->id, task->state, task->dying, task->dispatchUsers, task->sleepPending);
-                }
-                SelfTestManager::Get().AbortUnsafe("scheduled tasks did not retire");
-            }
+        if (Published)
+        {
+            Peer = nullptr;
         }
 
         if (Main && Main->allocated)
@@ -145,6 +145,29 @@ public:
         return T.Check(Published, "publish runnable peer");
     }
 
+    void RetireProcess(process_t* process)
+    {
+        PollBudget budget;
+
+        for (;;)
+        {
+            bool retired = false;
+            (void) L->scheduler->KillProcess(process->id, 0, false, &retired);
+
+            if (retired)
+            {
+                return;
+            }
+
+            if (budget.Expired())
+            {
+                SelfTestManager::Get().AbortUnsafe("scheduled tasks did not retire");
+            }
+
+            arch_pause();
+        }
+    }
+
     TestCase&          T;
     ResourceLayerCaps* R;
     LogicLayerCaps*    L;
@@ -179,7 +202,7 @@ private:
         auto& self = *static_cast<ScheduledFixture*>(argument);
         cpu_preemption_disable();
         self.PeerAction(self);
-        self.PeerDone = true;
+        __atomic_store_n(&self.PeerDone, true, __ATOMIC_RELEASE);
         self.L->scheduler->ExitCurrentTask();
     }
 

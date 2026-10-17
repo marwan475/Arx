@@ -8,15 +8,16 @@
 
 namespace
 {
-constexpr uint32_t NONBLOCK      = 04000;
-constexpr uint32_t CLOEXEC       = 02000000;
-constexpr size_t   MAX_INSTANCES = 64;
-constexpr size_t   MAX_WATCHES   = 128;
-constexpr size_t   MAX_EVENTS    = 64;
-constexpr uint32_t IN_IGNORED    = 0x8000;
-constexpr uint32_t IN_OVERFLOW   = 0x4000;
-constexpr uint32_t IN_ONESHOT    = 0x80000000;
-constexpr uint64_t AGAIN         = (uint64_t) -11;
+constexpr uint32_t NONBLOCK       = 04000;
+constexpr uint32_t CLOEXEC        = 02000000;
+constexpr size_t   MAX_INSTANCES  = 64;
+constexpr size_t   MAX_WATCHES    = 128;
+constexpr size_t   MAX_EVENTS     = 64;
+constexpr uint32_t IN_IGNORED     = 0x8000;
+constexpr uint32_t IN_OVERFLOW    = 0x4000;
+constexpr uint32_t IN_ONESHOT     = 0x80000000;
+constexpr uint32_t IN_EXCL_UNLINK = 0x04000000;
+constexpr uint64_t AGAIN          = (uint64_t) -11;
 
 struct notification_record_t
 {
@@ -217,10 +218,6 @@ uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
     {
         result = LINUX_EINVAL;
     }
-    else if (mask & 0x04000000U)
-    {
-        result = LINUX_EOPNOTSUPP;
-    }
     else if (!safe_read_user_string(pointer, path, sizeof(path), nullptr))
     {
         result = LINUX_EFAULT;
@@ -296,7 +293,7 @@ uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
                 slot->descriptor = ++state->nextDescriptor;
                 slot->mask       = 0;
             }
-            slot->mask = (mask & 0x20000000U ? slot->mask : 0U) | (mask & (0xfffU | IN_ONESHOT));
+            slot->mask = (mask & 0x20000000U ? slot->mask : 0U) | (mask & (0xfffU | IN_ONESHOT | IN_EXCL_UNLINK));
             result     = (uint64_t) slot->descriptor;
         }
         spinlock_release_preempt(&NotificationLock);
@@ -344,7 +341,7 @@ uint64_t EventManager::RemoveWatch(int32_t fd, int32_t descriptor)
     return result;
 }
 
-void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, const char* name, uint32_t cookie)
+void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, const char* name, uint32_t cookie, bool unlinked)
 {
     file_t* changed[MAX_INSTANCES];
     size_t  count = 0;
@@ -363,6 +360,10 @@ void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, con
             const bool matches        = (watch.mask & mask & 0xfff) != 0;
             const bool directoryEvent = (mask & (0x100U | 0x200U | 0x40U | 0x80U)) != 0;
             if (watch.inode == nullptr || (!matches && !deleted) || (watch.inode != inode && watch.inode != parent) || (directoryEvent && watch.inode != parent))
+            {
+                continue;
+            }
+            if (unlinked && watch.inode == parent && (watch.mask & IN_EXCL_UNLINK))
             {
                 continue;
             }

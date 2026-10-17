@@ -76,7 +76,7 @@ bool lapic_timer_calibrate(void)
     if (!cpu->arch_info.acpi_has_lapic || cpu->arch_info.acpi_lapic_base_addr == 0 || !arch_time_read_monotonic(&start))
         return false;
 
-    // The HPET is available only after resource initialization. Calibrate here
+    // The selected clock is available after resource initialization. Calibrate here
     // from each CPU's post-init task, retaining the bootstrap timer on failure.
     // IPIs remain enabled; only timer dispatch is masked during measurement.
     cpu_preemption_disable();
@@ -89,7 +89,7 @@ bool lapic_timer_calibrate(void)
     bool           measured = arch_time_read_monotonic(&start);
     const uint32_t first    = REG(uint32_t, registers + LAPIC_REG_CURRENT_COUNT);
     finish                  = start;
-    // A bounded loop must restore timer delivery even if HPET stops advancing.
+    // A bounded loop must restore timer delivery if the clock stops advancing.
 
     for (unsigned attempts = 0; measured && attempts < 1000000; ++attempts)
     {

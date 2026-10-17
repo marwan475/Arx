@@ -198,13 +198,14 @@ uint64_t TimeRequestManager::SleepRequest(int clock, bool absolute, uint64_t req
 
     if (result == (uint64_t) -4 && !absolute && remainderAddress != 0)
     {
-        uint64_t now;
+        time_timespec_t sample;
 
-        if (!arch_time_read_monotonic(&now))
+        if (manager->ReadClock(1, &sample) != 0)
         {
             return LINUX_ENOSYS;
         }
 
+        const uint64_t  now       = (uint64_t) sample.seconds * 1000000000 + sample.nanoseconds;
         uint64_t        left      = deadline > now ? deadline - now : 0;
         time_timespec_t remaining = {(int64_t) (left / 1000000000), (int64_t) (left % 1000000000)};
 

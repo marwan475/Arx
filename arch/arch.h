@@ -106,6 +106,9 @@ extern "C"
     phys_addr_t arch_virt_to_phys(virt_addr_t va, phys_addr_t page_table);
     bool        arch_user_page_accessible(virt_addr_t va, phys_addr_t page_table, bool write);
 
+    // Select and publish one validated platform source on the BSP. All CPUs,
+    // deadline queues and accounting consume the same monotonic epoch. RTC
+    // availability is independent; unsupported platforms return false.
     bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds);
     bool arch_time_read_monotonic(uint64_t* nanoseconds);
 #if defined(__x86_64__)

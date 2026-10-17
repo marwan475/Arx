@@ -122,6 +122,8 @@ struct file_operations_t
     int64_t (*Mmap)(file_t* file, void* address, uint64_t length, uint64_t prot, uint64_t flags, uint64_t offset);
 
     void (*Release)(file_t* file);
+    // A nonblocking state snapshot. It may run under ReadinessLock: never
+    // publish events or mutate observer registrations from this callback.
     uint32_t (*Poll)(file_t* file);
     // Blocking anonymous files own their user-copy/state transaction. These
     // callbacks run with a retained file, outside descriptor and VFS I/O locks.
@@ -137,6 +139,9 @@ struct file_operations_t
     // Backend I/O must use these canonical pages while cached. External storage
     // needs a nonblocking positioned writer with object-lifetime context.
     int64_t (*GetBacking)(file_t*, VirtualMemoryManager*, uint32_t, bool, virt_backing_object**, uint32_t*);
+    // Optional reference-drop transaction for files with collectable internal
+    // references. It must serialize the decrement with its ownership graph.
+    bool (*DropReference)(file_t* file, bool* last);
 };
 
 struct inode_t
@@ -174,6 +179,8 @@ struct dentry_t
 
     bool      cacheOwnedAllocation;
     dentry_t* retiredNext;
+    dentry_t* renamedTo;
+    bool      unlinked;
 };
 
 struct mount_t
@@ -195,6 +202,13 @@ struct vfs_path_t
 {
     mount_t*  mount;
     dentry_t* dentry;
+};
+
+struct file_close_observer_t
+{
+    file_close_observer_t* next;
+    void (*Closing)(file_close_observer_t* observer, file_t* file);
+    void* context;
 };
 
 struct file_t
@@ -221,7 +235,8 @@ struct file_t
     // Installed while holding a live reference; invoked after the last put,
     // before Release/free, to detach weak readiness registrations.
     void (*closeObserver)(void* context, file_t* file);
-    void* closeObserverContext;
+    void*                  closeObserverContext;
+    file_close_observer_t* readinessObservers;
 };
 
 struct vfs_namespace_t
@@ -234,10 +249,18 @@ struct vfs_overlay_dentry_entry_t;
 class VirtualFileSystem
 {
 public:
+    // Readiness graph mutation and final-close detachment share this lock.
+    // Observers are intrusive and weak. Closing runs under this lock and may
+    // detach observers, but cannot close files or call producer/driver code.
+    static spinlock_t ReadinessLock;
+    static void       ObserveFileLocked(file_t* file, file_close_observer_t* observer);
+    static void       UnobserveFileLocked(file_t* file, file_close_observer_t* observer);
+    void              NotifyReadiness(file_t* file, uint32_t events);
+
     explicit VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps);
-    void SetEventManager(EventManager* events);
-    void InitializeAnonymousInode(inode_t* inode, inode_type_t type, uint32_t mode);
-    void NotifyFile(file_t* file, uint32_t mask);
+    void     SetEventManager(EventManager* events);
+    void     InitializeAnonymousInode(inode_t* inode, inode_type_t type, uint32_t mode);
+    void     NotifyFile(file_t* file, uint32_t mask);
     ~VirtualFileSystem();
 
     uint32_t  HashDentryKey(const dentry_t* parent, const char* name) const;
@@ -248,20 +271,24 @@ public:
     bool      RegisterMount(mount_t* mount);
     // Registered type descriptors and backend inodes live until VFS teardown.
     // Unmount also cleans partially initialized state after a failed Mount.
-    bool           RegisterFileSystemType(const filesystem_type_t* type);
-    bool           MountRootFileSystem(const char* filesystemType, void* source);
-    bool           ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result);
+    bool RegisterFileSystemType(const filesystem_type_t* type);
+    bool MountRootFileSystem(const char* filesystemType, void* source);
+    bool ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result, uint64_t* accessError = nullptr);
     bool           BuildAbsolutePath(const vfs_path_t& path, char* output, size_t capacity) const;
     bool           BuildAbsolutePathFromDentry(const dentry_t* dentry, char* outPath, size_t outPathSize) const;
     bool           JoinPath(const char* base, const char* path, char* outPath, size_t outPathSize) const;
-    int64_t        StatNoFollow(const vfs_path_t& start, const char* path, inode_t** outInode, vfs_path_t* resolvedPath = nullptr);
-    int64_t        Symlink(const vfs_path_t& start, const char* target, const char* linkPath);
-    int64_t        Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize);
-    int64_t        Mkdir(const vfs_path_t& start, const char* path, uint32_t mode);
-    int64_t        Unlink(const vfs_path_t& start, const char* path, bool directory);
-    int64_t        Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath);
-    int64_t        Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink);
-    int64_t        Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device);
+    int64_t StatNoFollow(const vfs_path_t& start, const char* path, inode_t** outInode, vfs_path_t* resolvedPath = nullptr);
+    int64_t Symlink(const vfs_path_t& start, const char* target, const char* linkPath);
+    int64_t Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize);
+    int64_t Mkdir(const vfs_path_t& start, const char* path, uint32_t mode);
+    int64_t Unlink(const vfs_path_t& start, const char* path, bool directory);
+    int64_t Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath);
+    int64_t Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink);
+    int64_t Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device);
+    // Creation returns an inode open count owned by the bound endpoint.
+    // Lookup returns stable borrowed backend identity and checks write access.
+    int64_t        SocketNode(const char* path, bool create, inode_t** inode);
+    void           ReleaseSocketNode(inode_t* inode);
     int64_t        TruncatePath(const vfs_path_t& start, const char* path, uint64_t size);
     int64_t        TruncateFile(file_t* file, uint64_t size);
     uint64_t       ChangeMetadata(inode_t* inode, bool ownership, uint32_t first, uint32_t second = 0, mount_t* mount = nullptr, dentry_t* dentry = nullptr);
@@ -284,13 +311,14 @@ public:
     static void    ReleaseFileHandle(void* file);
 
 private:
-    int64_t   Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset);
-    int64_t   ResolveParent(const vfs_path_t& start, const char* path, vfs_path_t* parent, char* name, size_t capacity);
-    uint64_t  GetCreationAttributes(inode_t* parent, uint32_t mode, bool directory, bool symlink, inode_creation_attributes_t* attributes);
-    uint64_t  CheckInodeAccess(inode_t* inode, uint32_t requested);
-    uint64_t  CheckDirectoryMutation(const vfs_path_t& parent, const inode_t* victim = nullptr);
-    void      InvalidateDentry(dentry_t* parent, const char* name);
-    bool      BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity);
+    int64_t  Transfer(file_t* file, void* buffer, uint64_t count, bool write, const uint64_t* offset);
+    int64_t  ResolveParent(const vfs_path_t& start, const char* path, vfs_path_t* parent, char* name, size_t capacity);
+    uint64_t GetCreationAttributes(inode_t* parent, uint32_t mode, bool directory, bool symlink, inode_creation_attributes_t* attributes);
+    uint64_t CheckInodeAccess(inode_t* inode, uint32_t requested);
+    uint64_t CheckDirectoryMutation(const vfs_path_t& parent, const inode_t* victim = nullptr);
+    void     InvalidateDentry(dentry_t* parent, const char* name);
+    void     RetireEntryLocked(dentry_t* entry, dentry_t* moved = nullptr);
+    bool     BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity);
     mount_t*  FindChildMount(mount_t* parentMount, dentry_t* mountPoint) const;
     dentry_t* FindOverlayDentry(const dentry_t* parent, const char* name) const;
     bool      AddOverlayDentry(dentry_t* dentry);
@@ -305,6 +333,7 @@ private:
 
     vfs_namespace_t          Namespace;
     mutable spinlock_t       MountLock;
+    spinlock_t               NamespaceMutationLock = {};
     const filesystem_type_t* FileSystemTypes[32];
     mount_t*                 MountListHead;
 };

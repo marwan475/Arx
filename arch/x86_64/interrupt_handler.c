@@ -191,7 +191,7 @@ static void handle_interrupt(registers_t* reg)
     if (reg->interrupt_number == LAPIC_TIMER_VECTOR)
     {
         (void) arch_program_scheduler_timer(10000000ULL);
-        // Maintain the 32-bit HPET epoch even without sleepers or clock syscalls.
+        // Maintain narrow HPET/PM timer epochs even without clock syscalls.
         // This uses no scheduler locks and must run even while dispatch is deferred.
 
         if (arch_cpu_id() == platform.bsp_id)

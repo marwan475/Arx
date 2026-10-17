@@ -7,32 +7,56 @@
 
 #include <klib/klib.h>
 
+struct socket_ancillary_t
+{
+    socket_ancillary_t*  next;
+    size_t               count;
+    file_t*              files[253];
+    socket_credentials_t credentials;
+    bool                 explicitCredentials;
+    uint32_t             senderUid;
+};
+
 namespace
 {
-constexpr uint32_t NONBLOCK      = 04000;
-constexpr uint32_t CLOEXEC       = 02000000;
-constexpr size_t   MAX_ENDPOINTS = 128;
-constexpr size_t   BUFFER_LIMIT  = 65536;
-constexpr size_t   MAX_VECTORS   = 1024;
-constexpr uint32_t MSG_PEEK      = 2;
-constexpr uint32_t MSG_TRUNC     = 0x20;
-constexpr uint32_t MSG_DONTWAIT  = 0x40;
-constexpr uint32_t MSG_WAITALL   = 0x100;
-constexpr uint32_t MSG_NOSIGNAL  = 0x4000;
-constexpr uint64_t EAGAIN        = (uint64_t) -11;
-constexpr uint64_t ENOTSOCK      = (uint64_t) -88;
-constexpr uint64_t EPIPE         = (uint64_t) -32;
-constexpr uint64_t ENOTCONN      = (uint64_t) -107;
-constexpr uint64_t ECONNREFUSED  = (uint64_t) -111;
+constexpr uint32_t NONBLOCK         = 04000;
+constexpr uint32_t CLOEXEC          = 02000000;
+constexpr size_t   MAX_ENDPOINTS    = 128;
+constexpr size_t   BUFFER_LIMIT     = 65536;
+constexpr size_t   MAX_VECTORS      = 1024;
+constexpr uint32_t MSG_PEEK         = 2;
+constexpr uint32_t MSG_CTRUNC       = 8;
+constexpr uint32_t MSG_CMSG_CLOEXEC = 0x40000000;
+constexpr uint32_t MSG_TRUNC        = 0x20;
+constexpr uint32_t MSG_DONTWAIT     = 0x40;
+constexpr uint32_t MSG_WAITALL      = 0x100;
+constexpr uint32_t MSG_NOSIGNAL     = 0x4000;
+constexpr int32_t  SOL_SOCKET       = 1;
+constexpr int32_t  SCM_RIGHTS       = 1;
+constexpr int32_t  SCM_CREDENTIALS  = 2;
+constexpr uint64_t EAGAIN           = (uint64_t) -11;
+constexpr uint64_t ENOTSOCK         = (uint64_t) -88;
+constexpr uint64_t EPIPE            = (uint64_t) -32;
+constexpr uint64_t ENOTCONN         = (uint64_t) -107;
+constexpr uint64_t ECONNREFUSED     = (uint64_t) -111;
 
 struct socket_packet_t
 {
-    socket_packet_t* next;
-    size_t           size;
-    size_t           offset;
-    socket_address_t source;
-    uint32_t         sourceLength;
-    uint8_t          data[];
+    socket_packet_t*    next;
+    size_t              size;
+    size_t              offset;
+    socket_address_t    source;
+    uint32_t            sourceLength;
+    socket_ancillary_t* control;
+    uint8_t             data[];
+};
+
+struct socket_delivery_t
+{
+    uint8_t bytes[1072];
+    int32_t descriptors[253];
+    file_t* rollback[253];
+    size_t  installed;
 };
 
 uint64_t validate_socket(int32_t domain, int32_t type, int32_t protocol)
@@ -55,7 +79,7 @@ uint64_t validate_socket(int32_t domain, int32_t type, int32_t protocol)
     return protocol == 0 ? 0 : (uint64_t) -93; // EPROTONOSUPPORT
 }
 
-uint64_t read_address(uint64_t pointer, uint32_t length, socket_address_t* address)
+uint64_t read_address(uint64_t pointer, uint32_t& length, socket_address_t* address, bool autobind = false)
 {
     if (length < 2 || length > sizeof(*address))
     {
@@ -74,9 +98,25 @@ uint64_t read_address(uint64_t pointer, uint32_t length, socket_address_t* addre
         return LINUX_EINVAL;
     }
 
-    // Filesystem socket nodes need VFS bind/unlink/permission semantics. Until
-    // that backend exists, support Linux's length-delimited abstract namespace.
-    return length <= 2 || address->path[0] != 0 ? LINUX_EOPNOTSUPP : 0;
+    if (length <= 2)
+    {
+        return autobind ? 0 : LINUX_EOPNOTSUPP;
+    }
+    if (address->path[0] != 0)
+    {
+        size_t bytes = 0;
+        while (bytes < length - 2 && address->path[bytes] != 0)
+        {
+            ++bytes;
+        }
+        if (bytes == sizeof(address->path))
+        {
+            return LINUX_ENAMETOOLONG;
+        }
+        address->path[bytes] = 0;
+        length               = (uint32_t) bytes + 3;
+    }
+    return 0;
 }
 
 bool write_address(const user_memory_access_t* access, uint64_t pointer, uint64_t lengthPointer, const socket_address_t& address, uint32_t length)
@@ -92,11 +132,26 @@ bool write_address(const user_memory_access_t* access, uint64_t pointer, uint64_
     return (copied == 0 || safe_write_user_locked(access, pointer, &address, copied)) && safe_write_user_locked(access, lengthPointer, &length, sizeof(length));
 }
 
+void free_control(socket_ancillary_t* control)
+{
+    while (control != nullptr)
+    {
+        socket_ancillary_t* next = control->next;
+        for (size_t i = 0; i < control->count; ++i)
+        {
+            VirtualFileSystem::Close(control->files[i]);
+        }
+        kfree(control);
+        control = next;
+    }
+}
+
 void free_packets(socket_packet_t* packet)
 {
     while (packet != nullptr)
     {
         socket_packet_t* next = packet->next;
+        free_control(packet->control);
         kfree(packet);
         packet = next;
     }
@@ -167,6 +222,7 @@ struct socket_endpoint_t
     socket_endpoint_t* pendingNext;
     socket_packet_t*   head;
     socket_packet_t*   tail;
+    inode_t*           node;
     socket_address_t   address;
     socket_address_t   peerAddress;
     uint32_t           addressLength;
@@ -176,20 +232,25 @@ struct socket_endpoint_t
     uint32_t           pendingCount;
     uint32_t           packetCount;
     uint32_t           lastReadiness;
+    uint32_t           pendingReadiness;
     uint32_t           sendLimit;
     uint32_t           receiveLimit;
+    size_t             collectionIndex;
+    size_t             internalReferences;
     size_t             queued;
     bool               bound;
+    bool               binding;
     bool               connected;
     bool               listening;
     bool               readShutdown;
     bool               writeShutdown;
+    bool               passCredentials;
     int32_t            credentials[3];
     int32_t            peerCredentials[3];
 };
 
 const file_operations_t SocketManager::Operations = {
-        nullptr, nullptr, nullptr, Seek, nullptr, Ioctl, nullptr, Release, Poll, Read, Write, ReadVector, WriteVector,
+        nullptr, nullptr, nullptr, Seek, nullptr, Ioctl, nullptr, Release, Poll, Read, Write, ReadVector, WriteVector, nullptr, nullptr, false, nullptr, DropReference,
 };
 
 SocketManager::SocketManager(ResourceLayerCaps* resources, VirtualFileSystem* vfs, EventManager* events, SignalManager* signals) : Resources(resources), Vfs(vfs), Events(events), Signals(signals), Lock{}, Endpoints(nullptr), EndpointCount(0)
@@ -245,14 +306,14 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
     }
 
     Vfs->InitializeAnonymousInode(&endpoint->inode, INODE_SOCKET, 0777);
-    endpoint->manager        = this;
-    endpoint->file           = file;
-    endpoint->type           = type;
-    endpoint->address.family = endpoint->peerAddress.family = 1;
-    endpoint->addressLength = endpoint->peerAddressLength = 2;
-    endpoint->sendLimit = endpoint->receiveLimit = BUFFER_LIMIT;
+    endpoint->manager            = this;
+    endpoint->file               = file;
+    endpoint->type               = type;
+    endpoint->address.family     = endpoint->peerAddress.family = 1;
+    endpoint->addressLength      = endpoint->peerAddressLength = 2;
+    endpoint->sendLimit          = endpoint->receiveLimit = BUFFER_LIMIT;
     endpoint->peerCredentials[1] = endpoint->peerCredentials[2] = -1;
-    process_t* process                                          = Resources->processManager->GetCurrentProcess();
+    process_t* process           = Resources->processManager->GetCurrentProcess();
 
     if (process != nullptr)
     {
@@ -272,6 +333,7 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
 
     if (EndpointCount >= MAX_ENDPOINTS)
     {
+        RecordReadinessLocked();
         spinlock_release_preempt(&Lock);
         kfree(endpoint);
         kfree(file);
@@ -281,6 +343,7 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
     endpoint->next = Endpoints;
     Endpoints      = endpoint;
     ++EndpointCount;
+    RecordReadinessLocked();
     spinlock_release_preempt(&Lock);
     return file;
 }
@@ -292,6 +355,16 @@ uint64_t SocketManager::Install(file_t* file, uint32_t flags)
     return process != nullptr ? (uint64_t) Resources->processManager->AddFileDescriptor(process, file, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : LINUX_ESRCH;
 }
 
+void SocketManager::RecordReadinessLocked()
+{
+    for (auto* endpoint = Endpoints; endpoint != nullptr; endpoint = endpoint->next)
+    {
+        const uint32_t ready = ReadinessLocked(endpoint);
+        endpoint->pendingReadiness |= ready & ~endpoint->lastReadiness;
+        endpoint->lastReadiness = ready;
+    }
+}
+
 void SocketManager::Notify()
 {
     file_t*  files[MAX_ENDPOINTS];
@@ -301,9 +374,8 @@ void SocketManager::Notify()
 
     for (socket_endpoint_t* endpoint = Endpoints; endpoint != nullptr; endpoint = endpoint->next)
     {
-        const uint32_t ready    = ReadinessLocked(endpoint);
-        const uint32_t edges    = ready & ~endpoint->lastReadiness;
-        endpoint->lastReadiness = ready;
+        const uint32_t edges       = endpoint->pendingReadiness;
+        endpoint->pendingReadiness = 0;
 
         if (edges != 0 && Vfs->Retain(endpoint->file))
         {
@@ -311,6 +383,8 @@ void SocketManager::Notify()
             files[count++] = endpoint->file;
         }
     }
+
+    RecordReadinessLocked();
 
     spinlock_release_preempt(&Lock);
 
@@ -323,17 +397,377 @@ void SocketManager::Notify()
     Events->Notify();
 }
 
-socket_endpoint_t* SocketManager::FindAddress(const socket_address_t& address, uint32_t length)
+uint64_t SocketManager::ResolveAddress(const socket_address_t& address, inode_t** node)
+{
+    *node = nullptr;
+    return address.path[0] != 0 ? (uint64_t) Vfs->SocketNode(reinterpret_cast<const char*>(address.path), false, node) : 0;
+}
+
+uint64_t SocketManager::AutobindLocked(socket_endpoint_t* endpoint)
+{
+    if (endpoint->binding)
+    {
+        return LINUX_EINVAL;
+    }
+    static const char digits[] = "0123456789abcdef";
+    for (size_t attempt = 0; attempt <= MAX_ENDPOINTS; ++attempt)
+    {
+        socket_address_t   address = {};
+        address.family             = 1;
+        uint32_t value             = ++AutobindSequence;
+        for (size_t i = 0; i < 5; ++i)
+        {
+            address.path[5 - i] = digits[value & 15];
+            value >>= 4;
+        }
+        if (FindAddress(address, 8) == nullptr)
+        {
+            endpoint->address       = address;
+            endpoint->addressLength = 8;
+            endpoint->bound         = true;
+            return 0;
+        }
+    }
+    return (uint64_t) -98;
+}
+
+socket_endpoint_t* SocketManager::FindAddress(const socket_address_t& address, uint32_t length, inode_t* node)
 {
     for (socket_endpoint_t* endpoint = Endpoints; endpoint != nullptr; endpoint = endpoint->next)
     {
-        if (endpoint->bound && endpoint->addressLength == length && memcmp(&endpoint->address, &address, length) == 0)
+        if (endpoint->bound && (address.path[0] != 0 ? endpoint->node == node : endpoint->node == nullptr && endpoint->addressLength == length && memcmp(&endpoint->address, &address, length) == 0))
         {
             return endpoint;
         }
     }
 
     return nullptr;
+}
+
+uint64_t SocketManager::ParseControl(const socket_message_t* header, socket_ancillary_t** output)
+{
+    *output                     = nullptr;
+    socket_ancillary_t* control = static_cast<socket_ancillary_t*>(kzalloc(sizeof(socket_ancillary_t)));
+    if (control == nullptr)
+    {
+        return LINUX_ENOMEM;
+    }
+
+    process_t* process = Resources->processManager->AcquireCurrentCredentials();
+    if (process == nullptr)
+    {
+        kfree(control);
+        return LINUX_ESRCH;
+    }
+    const process_credentials_t identities = process->credentials;
+    control->credentials                   = {(int32_t) process->id, identities.user.real, identities.group.real};
+    control->senderUid                     = identities.user.effective;
+    Resources->processManager->ReleaseCredentials(process);
+
+    uint64_t       result = 0;
+    bool           rights = false;
+    const uint64_t length = header != nullptr ? header->controlLength : 0;
+    if (length > BUFFER_LIMIT || (length != 0 && length < sizeof(socket_control_t)))
+    {
+        result = LINUX_EINVAL;
+    }
+    for (uint64_t offset = 0; result == 0 && offset < length;)
+    {
+        socket_control_t item = {};
+        if (length - offset < sizeof(item))
+        {
+            break; // An incomplete final alignment pad is not another header.
+        }
+        if (header->control > UINT64_MAX - offset || !safe_read_user(header->control + offset, &item, sizeof(item)))
+        {
+            result = LINUX_EFAULT;
+            break;
+        }
+        if (item.length < sizeof(item) || item.length > length - offset)
+        {
+            result = LINUX_EINVAL;
+            break;
+        }
+        const uint64_t payload = item.length - sizeof(item);
+        if (item.level != SOL_SOCKET || (item.type != SCM_RIGHTS && item.type != SCM_CREDENTIALS))
+        {
+            result = LINUX_EOPNOTSUPP;
+            break;
+        }
+        if (header->control + offset > UINT64_MAX - item.length)
+        {
+            result = LINUX_EFAULT;
+            break;
+        }
+        const uint64_t data = header->control + offset + sizeof(item);
+        if (item.type == SCM_RIGHTS)
+        {
+            if (rights || payload % sizeof(int32_t) != 0 || payload / sizeof(int32_t) > 253)
+            {
+                result = LINUX_EINVAL;
+                break;
+            }
+            rights = true;
+            int32_t descriptors[253];
+            if (payload != 0 && !safe_read_user(data, descriptors, payload))
+            {
+                result = LINUX_EFAULT;
+                break;
+            }
+            {
+                FileDescriptorGuard guard(process);
+                for (size_t i = 0; i < payload / sizeof(int32_t); ++i)
+                {
+                    file_descriptor_t* descriptor = descriptors[i] >= 0 ? Resources->processManager->GetFileDescriptor(process, descriptors[i]) : nullptr;
+                    if (descriptor == nullptr)
+                    {
+                        result = LINUX_EBADF;
+                        break;
+                    }
+                    if (descriptor->release != VirtualFileSystem::ReleaseFileHandle)
+                    {
+                        result = LINUX_EOPNOTSUPP;
+                        break;
+                    }
+                    file_t* retained = static_cast<file_t*>(descriptor->file);
+                    if (retained->operations == &Operations && static_cast<socket_endpoint_t*>(retained->privateData)->manager != this)
+                    {
+                        result = LINUX_EOPNOTSUPP;
+                        break;
+                    }
+                    if (!Vfs->Retain(retained))
+                    {
+                        result = LINUX_EBADF;
+                        break;
+                    }
+                    control->files[control->count++] = retained;
+                }
+            }
+        }
+        else
+        {
+            socket_credentials_t supplied = {};
+            if (control->explicitCredentials || payload != sizeof(supplied))
+            {
+                result = LINUX_EINVAL;
+                break;
+            }
+            if (!safe_read_user(data, &supplied, sizeof(supplied)))
+            {
+                result = LINUX_EFAULT;
+                break;
+            }
+            if (supplied.pid != control->credentials.pid || (supplied.uid != identities.user.real && supplied.uid != identities.user.effective && supplied.uid != identities.user.saved)
+                || (supplied.gid != identities.group.real && supplied.gid != identities.group.effective && supplied.gid != identities.group.saved))
+            {
+                result = (uint64_t) -1;
+                break;
+            }
+            control->credentials         = supplied;
+            control->explicitCredentials = true;
+        }
+        const uint64_t advance = (item.length + 7) & ~7ULL;
+        if (advance > length - offset)
+        {
+            break;
+        }
+        offset += advance;
+    }
+
+    if (result != 0)
+    {
+        free_control(control);
+    }
+    else
+    {
+        *output = control;
+    }
+    return result;
+}
+
+bool SocketManager::MayQueueRightsLocked(const socket_ancillary_t* control)
+{
+    if (control->count == 0)
+    {
+        return true;
+    }
+    size_t         count = control->count;
+    const uint64_t limit = Resources->processManager->GetCurrentProcess()->DescriptorLimit();
+    for (auto* endpoint = Endpoints; endpoint != nullptr; endpoint = endpoint->next)
+    {
+        for (auto* packet = endpoint->head; packet != nullptr; packet = packet->next)
+        {
+            if (packet->control != nullptr && packet->control->senderUid == control->senderUid)
+            {
+                count += packet->control->count;
+            }
+        }
+    }
+    return count <= limit;
+}
+
+void SocketManager::ChangeControlLocked(socket_ancillary_t* control, bool add)
+{
+    for (size_t i = 0; control != nullptr && i < control->count; ++i)
+    {
+        file_t* file = control->files[i];
+        if (file->operations == &Operations)
+        {
+            auto* target = static_cast<socket_endpoint_t*>(file->privateData);
+            if (add)
+            {
+                ++target->internalReferences;
+            }
+            else
+            {
+                --target->internalReferences;
+            }
+        }
+    }
+}
+
+bool SocketManager::DropReference(file_t* file, bool* last)
+{
+    auto*              manager   = static_cast<socket_endpoint_t*>(file->privateData)->manager;
+    socket_packet_t*   discarded = nullptr;
+    socket_endpoint_t* abandoned = nullptr;
+    spinlock_acquire_preempt(&manager->Lock);
+    spinlock_acquire_preempt(&file->refLock);
+    if (file->refCount == 0)
+    {
+        spinlock_release_preempt(&file->refLock);
+        manager->RecordReadinessLocked();
+        spinlock_release_preempt(&manager->Lock);
+        return false;
+    }
+    *last             = --file->refCount == 0;
+    const bool rooted = file->refCount > static_cast<socket_endpoint_t*>(file->privateData)->internalReferences;
+    spinlock_release_preempt(&file->refLock);
+    if (rooted)
+    {
+        manager->RecordReadinessLocked();
+        spinlock_release_preempt(&manager->Lock);
+        return true;
+    }
+
+    // Queue edges and listener-owned accept references are the only internal
+    // owners. Count them, then mark every node reachable from external owners.
+    // Reference drops serialize with graph changes, so the final external put
+    // always observes and reclaims an otherwise unreachable socket cycle.
+    socket_endpoint_t* nodes[MAX_ENDPOINTS];
+    size_t             incoming[MAX_ENDPOINTS]  = {};
+    bool               reachable[MAX_ENDPOINTS] = {};
+    size_t             count                    = 0;
+    for (auto* node = manager->Endpoints; node != nullptr; node = node->next)
+    {
+        node->collectionIndex = count;
+        nodes[count++]        = node;
+    }
+    for (size_t i = 0; i < count; ++i)
+    {
+        for (auto* pending = nodes[i]->pendingHead; pending != nullptr; pending = pending->pendingNext)
+        {
+            ++incoming[pending->collectionIndex];
+        }
+        for (auto* packet = nodes[i]->head; packet != nullptr; packet = packet->next)
+        {
+            for (size_t k = 0; packet->control != nullptr && k < packet->control->count; ++k)
+            {
+                file_t* retained = packet->control->files[k];
+                if (retained->operations == &Operations)
+                {
+                    auto* target = static_cast<socket_endpoint_t*>(retained->privateData);
+                    if (target->manager == manager)
+                    {
+                        ++incoming[target->collectionIndex];
+                    }
+                }
+            }
+        }
+    }
+    size_t work[MAX_ENDPOINTS];
+    size_t queued = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        spinlock_acquire_preempt(&nodes[i]->file->refLock);
+        reachable[i] = nodes[i]->file->refCount > incoming[i];
+        spinlock_release_preempt(&nodes[i]->file->refLock);
+        if (reachable[i])
+        {
+            work[queued++] = i;
+        }
+    }
+    for (size_t cursor = 0; cursor < queued; ++cursor)
+    {
+        auto* node = nodes[work[cursor]];
+        for (auto* pending = node->pendingHead; pending != nullptr; pending = pending->pendingNext)
+        {
+            const size_t index = pending->collectionIndex;
+            if (!reachable[index])
+            {
+                reachable[index] = true;
+                work[queued++]   = index;
+            }
+        }
+        for (auto* packet = node->head; packet != nullptr; packet = packet->next)
+        {
+            for (size_t k = 0; packet->control != nullptr && k < packet->control->count; ++k)
+            {
+                file_t* retained = packet->control->files[k];
+                if (retained->operations != &Operations)
+                {
+                    continue;
+                }
+                auto*        target = static_cast<socket_endpoint_t*>(retained->privateData);
+                const size_t index  = target->collectionIndex;
+                if (target->manager == manager && !reachable[index])
+                {
+                    reachable[index] = true;
+                    work[queued++]   = index;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (reachable[i])
+        {
+            continue;
+        }
+        auto* node = nodes[i];
+        for (auto* packet = node->head; packet != nullptr; packet = packet->next)
+        {
+            manager->ChangeControlLocked(packet->control, false);
+        }
+        if (node->tail != nullptr)
+        {
+            node->tail->next = discarded;
+            discarded        = node->head;
+        }
+        node->head   = node->tail = nullptr;
+        node->queued = node->packetCount = 0;
+        while (node->pendingHead != nullptr)
+        {
+            auto* pending     = node->pendingHead;
+            node->pendingHead = pending->pendingNext;
+            --pending->internalReferences;
+            pending->pendingNext = abandoned;
+            abandoned            = pending;
+        }
+        node->pendingTail  = nullptr;
+        node->pendingCount = 0;
+    }
+    manager->RecordReadinessLocked();
+    spinlock_release_preempt(&manager->Lock);
+    free_packets(discarded);
+    while (abandoned != nullptr)
+    {
+        auto* pending = abandoned;
+        abandoned     = pending->pendingNext;
+        VirtualFileSystem::Close(pending->file);
+    }
+    return true;
 }
 
 void SocketManager::Release(file_t* file)
@@ -360,6 +794,15 @@ void SocketManager::Release(file_t* file)
     }
 
     socket_endpoint_t* pending = endpoint->pendingHead;
+    for (auto* incoming = pending; incoming != nullptr; incoming = incoming->pendingNext)
+    {
+        --incoming->internalReferences;
+    }
+    for (auto* packet = endpoint->head; packet != nullptr; packet = packet->next)
+    {
+        manager->ChangeControlLocked(packet->control, false);
+    }
+    manager->RecordReadinessLocked();
     spinlock_release_preempt(&manager->Lock);
 
     while (pending != nullptr)
@@ -370,6 +813,7 @@ void SocketManager::Release(file_t* file)
     }
 
     free_packets(endpoint->head);
+    manager->Vfs->ReleaseSocketNode(endpoint->node);
     kfree(endpoint);
     manager->Notify();
 }
@@ -433,13 +877,14 @@ uint64_t SocketManager::Socketpair(int32_t domain, int32_t type, int32_t protoco
     socket_endpoint_t* second = static_cast<socket_endpoint_t*>(files[1]->privateData);
     first->peer               = second;
     second->peer              = first;
-    first->connected = second->connected = true;
-    process_t* process                   = Resources->processManager->GetCurrentProcess();
+    first->connected          = second->connected = true;
+    process_t* process        = Resources->processManager->GetCurrentProcess();
     spinlock_acquire(&process->credentialLock);
     first->peerCredentials[0] = second->peerCredentials[0] = (int32_t) process->id;
     first->peerCredentials[1] = second->peerCredentials[1] = process->credentials.user.effective;
     first->peerCredentials[2] = second->peerCredentials[2] = process->credentials.group.effective;
     spinlock_release(&process->credentialLock);
+    RecordReadinessLocked();
     spinlock_release_preempt(&Lock);
 
     {
@@ -494,27 +939,49 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
     }
 
     socket_address_t address;
-    result = read_address(pointer, length, &address);
+    result = read_address(pointer, length, &address, true);
 
     if (result == 0)
     {
         spinlock_acquire_preempt(&Lock);
         socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
-        if (endpoint->bound)
+        if (endpoint->bound || endpoint->binding)
         {
             result = LINUX_EINVAL;
         }
-        else if (FindAddress(address, length) != nullptr)
+        else if (length == 2)
+        {
+            result = AutobindLocked(endpoint);
+        }
+        else if (address.path[0] == 0 && FindAddress(address, length) != nullptr)
         {
             result = (uint64_t) -98; // EADDRINUSE
         }
         else
         {
-            endpoint->address       = address;
-            endpoint->addressLength = length;
-            endpoint->bound         = true;
+            inode_t* node = nullptr;
+            if (address.path[0] != 0)
+            {
+                // Filesystem callbacks and notifications may poll sockets.
+                // Reserve this bind, but never enter VFS under the socket lock.
+                endpoint->binding = true;
+                RecordReadinessLocked();
+                spinlock_release_preempt(&Lock);
+                result = (uint64_t) Vfs->SocketNode(reinterpret_cast<const char*>(address.path), true, &node);
+                spinlock_acquire_preempt(&Lock);
+                endpoint->binding = false;
+            }
+            if (result == 0)
+            {
+                endpoint->node          = node;
+                endpoint->address       = address;
+                endpoint->addressLength = length;
+                endpoint->bound         = true;
+            }
         }
+
+        RecordReadinessLocked();
 
         spinlock_release_preempt(&Lock);
     }
@@ -549,6 +1016,8 @@ uint64_t SocketManager::Listen(int32_t fd, int32_t backlog)
         endpoint->listening = true;
         endpoint->backlog   = (uint32_t) backlog > 128 ? 128 : (uint32_t) backlog;
     }
+
+    RecordReadinessLocked();
 
     spinlock_release_preempt(&Lock);
     Vfs->Close(file);
@@ -589,12 +1058,18 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
         endpoint->peerAddress        = {};
         endpoint->peerAddress.family = 1;
         endpoint->peerAddressLength  = 2;
+        RecordReadinessLocked();
         spinlock_release_preempt(&Lock);
         Vfs->Close(file);
         return 0;
     }
 
-    result           = read_address(pointer, length, &address);
+    result        = read_address(pointer, length, &address);
+    inode_t* node = nullptr;
+    if (result == 0)
+    {
+        result = ResolveAddress(address, &node);
+    }
     file_t* accepted = result == 0 && endpoint->type != 2 ? CreateFile(endpoint->type, 0) : nullptr;
 
     if (result == 0 && endpoint->type != 2 && accepted == nullptr)
@@ -606,7 +1081,7 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
     {
         const uint64_t sequence = Events->Sequence();
         spinlock_acquire_preempt(&Lock);
-        socket_endpoint_t* target = FindAddress(address, length);
+        socket_endpoint_t* target = FindAddress(address, length, node);
 
         if (endpoint->connected && endpoint->type != 2)
         {
@@ -642,6 +1117,7 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
             {
                 socket_endpoint_t* incoming = static_cast<socket_endpoint_t*>(accepted->privateData);
                 incoming->connected         = true;
+                incoming->passCredentials   = target->passCredentials;
                 incoming->peer              = endpoint;
                 incoming->address           = target->address;
                 incoming->addressLength     = target->addressLength;
@@ -662,9 +1138,12 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
 
                 target->pendingTail = incoming;
                 ++target->pendingCount;
+                ++incoming->internalReferences;
                 accepted = nullptr; // The listener owns the incoming file reference.
             }
         }
+
+        RecordReadinessLocked();
 
         spinlock_release_preempt(&Lock);
 
@@ -740,9 +1219,12 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
             }
 
             --endpoint->pendingCount;
+            --incoming->internalReferences;
             incoming->file->statusFlags = 2 | (flags & NONBLOCK);
             result                      = 0;
         }
+
+        RecordReadinessLocked();
 
         spinlock_release_preempt(&Lock);
         end_user_memory(&access);
@@ -763,6 +1245,8 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
                 }
 
                 ++endpoint->pendingCount;
+                ++incoming->internalReferences;
+                RecordReadinessLocked();
                 spinlock_release_preempt(&Lock);
             }
 
@@ -808,6 +1292,7 @@ uint64_t SocketManager::Name(int32_t fd, uint64_t address, uint64_t length, bool
     spinlock_acquire_preempt(&Lock);
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
     result                      = peer && !endpoint->connected ? ENOTCONN : write_address(&access, address, length, peer ? endpoint->peerAddress : endpoint->address, peer ? endpoint->peerAddressLength : endpoint->addressLength) ? 0 : LINUX_EFAULT;
+    RecordReadinessLocked();
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     Vfs->Close(file);
@@ -820,6 +1305,7 @@ uint32_t SocketManager::Poll(file_t* file)
     SocketManager*     manager  = endpoint->manager;
     spinlock_acquire_preempt(&manager->Lock);
     const uint32_t result = ReadinessLocked(endpoint);
+    manager->RecordReadinessLocked();
     spinlock_release_preempt(&manager->Lock);
     return result;
 }
@@ -884,6 +1370,7 @@ int64_t SocketManager::Ioctl(file_t* file, uint64_t request, uint64_t argument)
     spinlock_acquire_preempt(&manager->Lock);
     const int32_t  available = (int32_t) (endpoint->type == 1 ? endpoint->queued : endpoint->head != nullptr ? endpoint->head->size : 0);
     const uint64_t result    = endpoint->listening ? LINUX_EINVAL : safe_write_user_locked(&access, argument, &available, sizeof(available)) ? 0 : LINUX_EFAULT;
+    manager->RecordReadinessLocked();
     spinlock_release_preempt(&manager->Lock);
     end_user_memory(&access);
     return (int64_t) result;
@@ -918,14 +1405,22 @@ uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
 
             if (endpoint->listening)
             {
-                endpoint->listening   = false;
-                pending               = endpoint->pendingHead;
-                endpoint->pendingHead = endpoint->pendingTail = nullptr;
-                endpoint->pendingCount                        = 0;
+                endpoint->listening = false;
+                pending             = endpoint->pendingHead;
+                for (auto* incoming = pending; incoming != nullptr; incoming = incoming->pendingNext)
+                {
+                    --incoming->internalReferences;
+                }
+                endpoint->pendingHead  = endpoint->pendingTail = nullptr;
+                endpoint->pendingCount = 0;
             }
 
             discarded      = endpoint->head;
-            endpoint->head = endpoint->tail = nullptr;
+            for (auto* packet = discarded; packet != nullptr; packet = packet->next)
+            {
+                ChangeControlLocked(packet->control, false);
+            }
+            endpoint->head   = endpoint->tail = nullptr;
             endpoint->queued = endpoint->packetCount = 0;
         }
 
@@ -934,6 +1429,8 @@ uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
             endpoint->writeShutdown = true;
         }
     }
+
+    RecordReadinessLocked();
 
     spinlock_release_preempt(&Lock);
     free_packets(discarded);
@@ -1003,6 +1500,9 @@ uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uin
                 memcpy(output, endpoint->peerCredentials, sizeof(output));
                 size = sizeof(output);
                 break;
+            case 16: // SO_PASSCRED
+                output[0] = endpoint->passCredentials;
+                break;
             case 30:
                 output[0] = endpoint->listening;
                 break;
@@ -1017,6 +1517,8 @@ uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uin
                 break;
         }
     }
+
+    RecordReadinessLocked();
 
     spinlock_release_preempt(&Lock);
 
@@ -1042,7 +1544,7 @@ uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uin
 
     int32_t value;
 
-    if (level != 1 || (option != 7 && option != 8))
+    if (level != 1 || (option != 7 && option != 8 && option != 16))
     {
         result = (uint64_t) -92;
     }
@@ -1060,7 +1562,18 @@ uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uin
         spinlock_acquire_preempt(&Lock);
         socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
-        if (option == 7)
+        if (option == 16)
+        {
+            if (value != 0 && !endpoint->bound)
+            {
+                result = AutobindLocked(endpoint);
+            }
+            if (result == 0)
+            {
+                endpoint->passCredentials = value != 0;
+            }
+        }
+        else if (option == 7)
         {
             endpoint->sendLimit = requested < 4608 ? 4608 : requested;
         }
@@ -1068,6 +1581,8 @@ uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uin
         {
             endpoint->receiveLimit = requested < 2304 ? 2304 : requested;
         }
+
+        RecordReadinessLocked();
 
         spinlock_release_preempt(&Lock);
     }
@@ -1097,210 +1612,329 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
     socket_endpoint_t* endpoint    = static_cast<socket_endpoint_t*>(file->privateData);
     size_t             transferred = 0;
     const size_t       allocation  = requested < BUFFER_LIMIT ? requested : BUFFER_LIMIT;
-    socket_packet_t*   outgoing    = send ? static_cast<socket_packet_t*>(kmalloc(sizeof(socket_packet_t) + allocation)) : nullptr;
+    socket_packet_t*   outgoing    = send ? static_cast<socket_packet_t*>(kzalloc(sizeof(socket_packet_t) + allocation)) : nullptr;
+    socket_delivery_t* delivery    = !send && message != 0 ? static_cast<socket_delivery_t*>(kzalloc(sizeof(socket_delivery_t))) : nullptr;
 
-    if (send && outgoing == nullptr)
+    if ((send && outgoing == nullptr) || (!send && message != 0 && delivery == nullptr))
     {
         return LINUX_ENOMEM;
     }
 
+    inode_t* destinationNode = nullptr;
+    if (send)
+    {
+        result = ParseControl(header, &outgoing->control);
+        if (result == 0 && destination != nullptr)
+        {
+            result = ResolveAddress(*destination, &destinationNode);
+        }
+        if (result == 0 && endpoint->type == 1 && requested == 0 && (outgoing->control->count != 0 || outgoing->control->explicitCredentials))
+        {
+            result = LINUX_EINVAL; // Stream ancillary delivery requires a data byte.
+        }
+        if (result != 0)
+        {
+            free_packets(outgoing);
+            return result;
+        }
+    }
+
     for (;;)
     {
-        const uint64_t       sequence = Events->Sequence();
-        user_memory_access_t access;
-
-        if (!begin_user_memory(&access))
+        const uint64_t      sequence         = Events->Sequence();
+        bool                changed          = false;
+        bool                complete         = false;
+        bool                wroteMetadata    = false;
+        socket_ancillary_t* discardedControl = nullptr;
+        socket_packet_t*    discardedPacket  = nullptr;
         {
-            result = LINUX_ESRCH;
-            break;
-        }
+            // Descriptor mutation precedes the socket lock, matching close/dup.
+            // No descriptor lock may be held across a blocking socket wait.
+            FileDescriptorGuard  descriptors(Resources->processManager->GetCurrentProcess());
+            user_memory_access_t access;
 
-        spinlock_acquire_preempt(&Lock);
-        result                   = EAGAIN;
-        bool       changed       = false;
-        bool       complete      = false;
-        bool       wroteMetadata = false;
-        const bool stream        = endpoint->type == 1;
+            if (!begin_user_memory(&access))
+            {
+                result = LINUX_ESRCH;
+                break;
+            }
 
-        if (endpoint->listening)
-        {
-            result = send ? EPIPE : LINUX_EINVAL;
-        }
-        else if (endpoint->type != 2 && !endpoint->connected)
-        {
-            result = send ? ENOTCONN : LINUX_EINVAL;
-        }
-        else if (send)
-        {
-            socket_endpoint_t* target = destination != nullptr ? FindAddress(*destination, destinationLength) : endpoint->peer;
+            spinlock_acquire_preempt(&Lock);
+            result            = EAGAIN;
+            const bool stream = endpoint->type == 1;
 
-            if (endpoint->writeShutdown)
+            if (endpoint->listening)
             {
-                result = EPIPE;
+                result = send ? EPIPE : LINUX_EINVAL;
             }
-            else if (destination != nullptr && endpoint->type != 2)
+            else if (endpoint->type != 2 && !endpoint->connected)
             {
-                result = (uint64_t) -106;
+                result = send ? ENOTCONN : LINUX_EINVAL;
             }
-            else if (target == nullptr)
+            else if (send)
             {
-                result = endpoint->type == 2 ? (destination != nullptr || endpoint->connected ? ECONNREFUSED : (uint64_t) -89) : EPIPE;
-            }
-            else if (target->type != endpoint->type)
-            {
-                result = (uint64_t) -91;
-            }
-            else if (target->readShutdown)
-            {
-                result = EPIPE;
-            }
-            else if (endpoint->type == 2 && target->connected && target->peer != endpoint)
-            {
-                result = (uint64_t) -1;
-            }
-            else if (!stream && (requested > BUFFER_LIMIT || requested > endpoint->sendLimit))
-            {
-                result = (uint64_t) -90; // EMSGSIZE: messages are atomic.
-            }
-            else if (stream && requested == 0)
-            {
-                result   = 0;
-                complete = true;
-            }
-            else
-            {
-                const size_t limit = stream && endpoint->sendLimit < target->receiveLimit ? endpoint->sendLimit : target->receiveLimit;
-                const size_t space = target->queued < limit ? limit - target->queued : 0;
-                size_t       bytes = stream && requested > space ? space : requested;
-                bytes              = stream && bytes > endpoint->sendLimit ? endpoint->sendLimit : bytes;
-                bytes              = bytes > allocation ? allocation : bytes;
+                socket_endpoint_t* target = destination != nullptr ? FindAddress(*destination, destinationLength, destinationNode) : endpoint->peer;
 
-                if ((stream ? bytes != 0 : requested <= space) && target->packetCount < 128)
+                if (endpoint->writeShutdown)
                 {
-                    if (!copy_vectors(&access, vectors, count, 0, outgoing->data, bytes, true))
-                    {
-                        result = LINUX_EFAULT;
-                    }
-                    else
-                    {
-                        outgoing->next         = nullptr;
-                        outgoing->offset       = 0;
-                        outgoing->size         = bytes;
-                        outgoing->source       = endpoint->address;
-                        outgoing->sourceLength = endpoint->bound ? endpoint->addressLength : 0;
-
-                        if (target->tail != nullptr)
-                        {
-                            target->tail->next = outgoing;
-                        }
-                        else
-                        {
-                            target->head = outgoing;
-                        }
-
-                        target->tail = outgoing;
-                        target->queued += bytes;
-                        ++target->packetCount;
-                        outgoing    = nullptr;
-                        transferred = bytes;
-                        changed = complete = true;
-                        result             = 0;
-                    }
+                    result = EPIPE;
                 }
-            }
-        }
-        else
-        {
-            socket_packet_t* packet = endpoint->head;
-            const bool       eof    = endpoint->readShutdown || (endpoint->type != 2 && endpoint->connected && (endpoint->peer == nullptr || endpoint->peer->writeShutdown));
-
-            if (stream && requested == 0)
-            {
-                result   = 0;
-                complete = true;
-            }
-            else if (packet != nullptr)
-            {
-                const size_t   available   = packet->size - packet->offset;
-                const size_t   bytes       = available < requested - transferred ? available : requested - transferred;
-                uint32_t       outputFlags = (!stream && bytes < available ? MSG_TRUNC : 0) | (flags & 0x40000000U);
-                const uint32_t nameLength  = stream ? 0 : packet->sourceLength;
-                bool           copied      = copy_vectors(&access, vectors, count, transferred, packet->data + packet->offset, bytes, false);
-
-                if (copied && transferred == 0 && source != 0)
+                else if (destination != nullptr && endpoint->type != 2)
                 {
-                    copied = write_address(&access, source, sourceLength, packet->source, nameLength);
+                    result = (uint64_t) -106;
                 }
-
-                if (copied && message != 0)
+                else if (target == nullptr)
                 {
-                    const uint32_t reportedName  = header->name != 0 ? nameLength : 0;
-                    const uint32_t copiedName    = header->nameLength < nameLength ? header->nameLength : nameLength;
-                    const uint64_t controlLength = 0;
-                    copied                       = (header->name == 0 || copiedName == 0 || safe_write_user_locked(&access, header->name, &packet->source, copiedName)) && safe_write_user_locked(&access, message + offsetof(socket_message_t, nameLength), &reportedName, sizeof(reportedName))
-                                                   && safe_write_user_locked(&access, message + offsetof(socket_message_t, controlLength), &controlLength, sizeof(controlLength)) && safe_write_user_locked(&access, message + offsetof(socket_message_t, flags), &outputFlags, sizeof(outputFlags));
+                    result = endpoint->type == 2 ? (destination != nullptr || endpoint->connected ? ECONNREFUSED : (uint64_t) -89) : EPIPE;
                 }
-
-                wroteMetadata = copied && message != 0;
-
-                if (!copied)
+                else if (target->type != endpoint->type)
                 {
-                    result = LINUX_EFAULT;
+                    result = (uint64_t) -91;
+                }
+                else if (target->readShutdown)
+                {
+                    result = EPIPE;
+                }
+                else if (endpoint->type == 2 && target->connected && target->peer != endpoint)
+                {
+                    result = (uint64_t) -1;
+                }
+                else if (!stream && (requested > BUFFER_LIMIT || requested > endpoint->sendLimit))
+                {
+                    result = (uint64_t) -90; // EMSGSIZE: messages are atomic.
+                }
+                else if (stream && requested == 0)
+                {
+                    result   = 0;
+                    complete = true;
                 }
                 else
                 {
-                    transferred += !stream && (flags & MSG_TRUNC) ? available : bytes;
-                    result   = 0;
-                    complete = !stream || transferred == requested || (flags & MSG_PEEK);
+                    const size_t limit = stream && endpoint->sendLimit < target->receiveLimit ? endpoint->sendLimit : target->receiveLimit;
+                    const size_t space = target->queued < limit ? limit - target->queued : 0;
+                    size_t       bytes = stream && requested > space ? space : requested;
+                    bytes              = stream && bytes > endpoint->sendLimit ? endpoint->sendLimit : bytes;
+                    bytes              = bytes > allocation ? allocation : bytes;
 
-                    if (!(flags & MSG_PEEK))
+                    if ((stream ? bytes != 0 : requested <= space) && target->packetCount < 128)
                     {
-                        endpoint->queued -= stream ? bytes : available;
-                        packet->offset += bytes;
-
-                        if (!stream || packet->offset == packet->size)
+                        if (!MayQueueRightsLocked(outgoing->control))
                         {
-                            endpoint->head = packet->next;
+                            result = (uint64_t) -109; // ETOOMANYREFS: bounded per-sender-UID in-flight rights.
+                        }
+                        else if (!copy_vectors(&access, vectors, count, 0, outgoing->data, bytes, true))
+                        {
+                            result = LINUX_EFAULT;
+                        }
+                        else
+                        {
+                            outgoing->next         = nullptr;
+                            outgoing->offset       = 0;
+                            outgoing->size         = bytes;
+                            outgoing->source       = endpoint->address;
+                            outgoing->sourceLength = endpoint->bound ? endpoint->addressLength : 0;
+                            ChangeControlLocked(outgoing->control, true);
 
-                            if (endpoint->head == nullptr)
+                            if (target->tail != nullptr)
                             {
-                                endpoint->tail = nullptr;
+                                target->tail->next = outgoing;
+                            }
+                            else
+                            {
+                                target->head = outgoing;
                             }
 
-                            --endpoint->packetCount;
-                            kfree(packet);
+                            target->tail = outgoing;
+                            target->queued += bytes;
+                            ++target->packetCount;
+                            outgoing    = nullptr;
+                            transferred = bytes;
+                            changed     = complete = true;
+                            result      = 0;
                         }
-
-                        changed = true;
                     }
                 }
             }
-            else if (eof)
+            else
             {
-                result   = 0;
-                complete = true;
-            }
-            else if (transferred != 0 && !(flags & MSG_WAITALL))
-            {
-                result   = 0;
-                complete = true;
-            }
-        }
+                socket_packet_t* packet = endpoint->head;
+                const bool       eof    = endpoint->readShutdown || (endpoint->type != 2 && endpoint->connected && (endpoint->peer == nullptr || endpoint->peer->writeShutdown));
 
-        if (!send && complete && result == 0 && transferred == 0 && message != 0 && !wroteMetadata)
+                if (stream && requested == 0)
+                {
+                    result   = 0;
+                    complete = true;
+                }
+                else if (packet != nullptr)
+                {
+                    const size_t   available   = packet->size - packet->offset;
+                    const size_t   bytes       = available < requested - transferred ? available : requested - transferred;
+                    uint32_t       outputFlags = (!stream && bytes < available ? MSG_TRUNC : 0) | (flags & 0x40000000U);
+                    const uint32_t nameLength  = stream ? 0 : packet->sourceLength;
+                    bool           copied      = copy_vectors(&access, vectors, count, transferred, packet->data + packet->offset, bytes, false);
+
+                    if (copied && transferred == 0 && source != 0)
+                    {
+                        copied = write_address(&access, source, sourceLength, packet->source, nameLength);
+                    }
+
+                    const bool hasControl = packet->control != nullptr && (packet->control->count != 0 || endpoint->passCredentials);
+                    if (copied && message != 0)
+                    {
+                        const uint32_t reportedName  = header->name != 0 ? nameLength : 0;
+                        const uint32_t copiedName    = header->nameLength < nameLength ? header->nameLength : nameLength;
+                        uint64_t       controlLength = 0;
+                        const uint64_t capacity      = header->control != 0 ? header->controlLength : 0;
+                        delivery->installed          = 0;
+                        memset(delivery->bytes, 0, sizeof(delivery->bytes));
+                        if (packet->control != nullptr && endpoint->passCredentials)
+                        {
+                            const size_t availableControl = capacity < 32 ? capacity : 32;
+                            if (availableControl >= sizeof(socket_control_t))
+                            {
+                                const size_t           payload = availableControl - sizeof(socket_control_t) < sizeof(socket_credentials_t) ? availableControl - sizeof(socket_control_t) : sizeof(socket_credentials_t);
+                                const socket_control_t item    = {sizeof(socket_control_t) + payload, SOL_SOCKET, SCM_CREDENTIALS};
+                                memcpy(delivery->bytes, &item, sizeof(item));
+                                memcpy(delivery->bytes + sizeof(item), &packet->control->credentials, payload);
+                                controlLength = availableControl;
+                            }
+                            if (availableControl < sizeof(socket_control_t) + sizeof(socket_credentials_t))
+                            {
+                                outputFlags |= MSG_CTRUNC;
+                            }
+                        }
+                        if (packet->control != nullptr && packet->control->count != 0)
+                        {
+                            const uint64_t remaining = capacity > controlLength ? capacity - controlLength : 0;
+                            size_t         limit     = remaining >= sizeof(socket_control_t) ? (remaining - sizeof(socket_control_t)) / sizeof(int32_t) : 0;
+                            limit                    = limit < packet->control->count ? limit : packet->control->count;
+                            process_t* process       = Resources->processManager->GetCurrentProcess();
+                            for (size_t i = 0; i < limit; ++i)
+                            {
+                                file_t*       received   = packet->control->files[i];
+                                const int64_t descriptor = Resources->processManager->AddFileDescriptor(process, received, flags & MSG_CMSG_CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle);
+                                if (descriptor < 0)
+                                {
+                                    if (descriptor != (int64_t) LINUX_EMFILE)
+                                    {
+                                        copied = false;
+                                        result = (uint64_t) descriptor;
+                                    }
+                                    break;
+                                }
+                                Vfs->Retain(received); // Allocation owns a reference, separate from the queued one.
+                                delivery->descriptors[delivery->installed] = (int32_t) descriptor;
+                                delivery->rollback[delivery->installed++]  = received;
+                            }
+                            if (delivery->installed < packet->control->count)
+                            {
+                                outputFlags |= MSG_CTRUNC;
+                            }
+                            if (delivery->installed != 0)
+                            {
+                                const uint64_t         size = sizeof(socket_control_t) + delivery->installed * sizeof(int32_t);
+                                const socket_control_t item = {size, SOL_SOCKET, SCM_RIGHTS};
+                                memcpy(delivery->bytes + controlLength, &item, sizeof(item));
+                                memcpy(delivery->bytes + controlLength + sizeof(item), delivery->descriptors, delivery->installed * sizeof(int32_t));
+                                controlLength += remaining < ((size + 7) & ~7ULL) ? remaining : ((size + 7) & ~7ULL);
+                            }
+                        }
+                        copied = copied && (header->name == 0 || copiedName == 0 || safe_write_user_locked(&access, header->name, &packet->source, copiedName))
+                                 && safe_write_user_locked(&access, message + offsetof(socket_message_t, nameLength), &reportedName, sizeof(reportedName))
+                                 && (controlLength == 0 || safe_write_user_locked(&access, header->control, delivery->bytes, controlLength))
+                                 && safe_write_user_locked(&access, message + offsetof(socket_message_t, controlLength), &controlLength, sizeof(controlLength))
+                                 && safe_write_user_locked(&access, message + offsetof(socket_message_t, flags), &outputFlags, sizeof(outputFlags));
+                        if (!copied)
+                        {
+                            for (size_t i = 0; i < delivery->installed; ++i)
+                            {
+                                *Resources->processManager->GetFileDescriptor(Resources->processManager->GetCurrentProcess(), delivery->descriptors[i]) = {};
+                            }
+                        }
+                        else
+                        {
+                            delivery->installed = 0; // Receiver table now owns the references.
+                        }
+                    }
+
+                    wroteMetadata = copied && message != 0;
+
+                    if (!copied)
+                    {
+                        result = result != EAGAIN ? result : LINUX_EFAULT;
+                    }
+                    else
+                    {
+                        transferred += !stream && (flags & MSG_TRUNC) ? available : bytes;
+                        result   = 0;
+                        complete = !stream || transferred == requested || (flags & MSG_PEEK) || hasControl;
+
+                        if (!(flags & MSG_PEEK))
+                        {
+                            endpoint->queued -= stream ? bytes : available;
+                            packet->offset += bytes;
+                            discardedControl = packet->control;
+                            ChangeControlLocked(discardedControl, false);
+                            packet->control = nullptr;
+
+                            if (!stream || packet->offset == packet->size)
+                            {
+                                endpoint->head = packet->next;
+
+                                if (endpoint->head == nullptr)
+                                {
+                                    endpoint->tail = nullptr;
+                                }
+
+                                --endpoint->packetCount;
+                                packet->next    = nullptr;
+                                discardedPacket = packet;
+                            }
+
+                            changed = true;
+                        }
+                    }
+                }
+                else if (eof)
+                {
+                    result   = 0;
+                    complete = true;
+                }
+                else if (transferred != 0 && !(flags & MSG_WAITALL))
+                {
+                    result   = 0;
+                    complete = true;
+                }
+            }
+
+            if (!send && complete && result == 0 && transferred == 0 && message != 0 && !wroteMetadata)
+            {
+                const uint32_t zero          = 0;
+                const uint64_t controlLength = 0;
+                const uint32_t outputFlags   = flags & 0x40000000U;
+                if (!safe_write_user_locked(&access, message + offsetof(socket_message_t, nameLength), &zero, sizeof(zero)) || !safe_write_user_locked(&access, message + offsetof(socket_message_t, controlLength), &controlLength, sizeof(controlLength))
+                    || !safe_write_user_locked(&access, message + offsetof(socket_message_t, flags), &outputFlags, sizeof(outputFlags)))
+                {
+                    result = LINUX_EFAULT;
+                }
+            }
+
+            RecordReadinessLocked();
+
+            spinlock_release_preempt(&Lock);
+            end_user_memory(&access);
+        }
+        // Releasing a passed socket can reenter the graph collector.
+        if (delivery != nullptr)
         {
-            const uint32_t zero          = 0;
-            const uint64_t controlLength = 0;
-            const uint32_t outputFlags   = flags & 0x40000000U;
-            if (!safe_write_user_locked(&access, message + offsetof(socket_message_t, nameLength), &zero, sizeof(zero)) || !safe_write_user_locked(&access, message + offsetof(socket_message_t, controlLength), &controlLength, sizeof(controlLength))
-                || !safe_write_user_locked(&access, message + offsetof(socket_message_t, flags), &outputFlags, sizeof(outputFlags)))
+            for (size_t i = 0; i < delivery->installed; ++i)
             {
-                result = LINUX_EFAULT;
+                Vfs->Close(delivery->rollback[i]);
             }
+            delivery->installed = 0;
         }
-
-        spinlock_release_preempt(&Lock);
-        end_user_memory(&access);
+        free_control(discardedControl);
+        free_packets(discardedPacket);
 
         if (changed)
         {
@@ -1328,7 +1962,8 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
         }
     }
 
-    kfree(outgoing);
+    free_packets(outgoing);
+    kfree(delivery);
 
     if (send && result == EPIPE && !(flags & MSG_NOSIGNAL) && Signals != nullptr)
     {
@@ -1404,10 +2039,6 @@ uint64_t SocketManager::Message(int32_t fd, uint64_t message, uint32_t flags, bo
     else if (header.vectorCount > MAX_VECTORS)
     {
         result = (uint64_t) -90;
-    }
-    else if (send && header.controlLength != 0)
-    {
-        result = LINUX_EOPNOTSUPP; // SCM_RIGHTS/SCM_CREDENTIALS need separate lifetime and policy support.
     }
     else
     {

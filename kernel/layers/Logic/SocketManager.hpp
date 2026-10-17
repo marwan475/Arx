@@ -8,6 +8,7 @@
 
 struct ResourceLayerCaps;
 struct socket_endpoint_t;
+struct socket_ancillary_t;
 class EventManager;
 class SignalManager;
 
@@ -18,6 +19,22 @@ struct socket_address_t
     uint8_t  path[108];
 };
 static_assert(sizeof(socket_address_t) == 110, "Linux sockaddr_un ABI");
+
+struct socket_control_t
+{
+    uint64_t length;
+    int32_t  level;
+    int32_t  type;
+};
+static_assert(sizeof(socket_control_t) == 16, "Linux LP64 cmsghdr ABI");
+
+struct socket_credentials_t
+{
+    int32_t  pid;
+    uint32_t uid;
+    uint32_t gid;
+};
+static_assert(sizeof(socket_credentials_t) == 12, "Linux ucred ABI");
 
 struct socket_message_t
 {
@@ -55,6 +72,7 @@ public:
 private:
     static const file_operations_t Operations;
     static void                    Release(file_t* file);
+    static bool                    DropReference(file_t* file, bool* last);
     static uint32_t                Poll(file_t* file);
     static uint32_t                ReadinessLocked(socket_endpoint_t* endpoint);
     static int64_t                 Seek(file_t* file, int64_t offset, int whence);
@@ -67,7 +85,13 @@ private:
     file_t*                        CreateFile(uint32_t type, uint32_t flags);
     uint64_t                       Install(file_t* file, uint32_t flags);
     void                           Notify();
-    socket_endpoint_t*             FindAddress(const socket_address_t& address, uint32_t length);
+    void                           RecordReadinessLocked();
+    socket_endpoint_t*             FindAddress(const socket_address_t& address, uint32_t length, inode_t* node = nullptr);
+    uint64_t                       ResolveAddress(const socket_address_t& address, inode_t** node);
+    uint64_t                       ParseControl(const socket_message_t* header, socket_ancillary_t** control);
+    uint64_t                       AutobindLocked(socket_endpoint_t* endpoint);
+    void                           ChangeControlLocked(socket_ancillary_t* control, bool add);
+    bool                           MayQueueRightsLocked(const socket_ancillary_t* control);
     uint64_t Transfer(file_t* file, const file_iovec_t* vectors, size_t count, uint32_t flags, bool send, const socket_address_t* destination = nullptr, uint32_t destinationLength = 0, uint64_t source = 0, uint64_t sourceLength = 0, uint64_t message = 0, const socket_message_t* header = nullptr);
     ResourceLayerCaps* Resources;
     VirtualFileSystem* Vfs;
@@ -76,4 +100,5 @@ private:
     spinlock_t         Lock;
     socket_endpoint_t* Endpoints;
     size_t             EndpointCount;
+    uint32_t           AutobindSequence = 0;
 };

@@ -6,6 +6,16 @@
 
 namespace
 {
+static bool initialize_platform_clock(void*, uint64_t* seconds, bool* available, uint64_t* resolution)
+{
+    return arch_time_init(seconds, available, resolution);
+}
+
+static bool read_platform_clock(void*, uint64_t* nanoseconds)
+{
+    return arch_time_read_monotonic(nanoseconds);
+}
+
 static uint64_t cpu_clock(const process_t* process, int which)
 {
     const uint64_t user   = __atomic_load_n(&process->userCpuNanoseconds, __ATOMIC_RELAXED);
@@ -28,10 +38,9 @@ static bool timeval_nanoseconds(const time_timeval_t& value, uint64_t* result)
 }
 } // namespace
 
-TimeManager::TimeManager() : RealtimeSeconds(0), ResolutionNanoseconds(0), ClockAvailable(false), RealtimeAvailable(false)
+TimeManager::TimeManager() : TimeManager({initialize_platform_clock, read_platform_clock, nullptr})
 {
-    ClockAvailable = arch_time_init(&RealtimeSeconds, &RealtimeAvailable, &ResolutionNanoseconds);
-    kprintf("Arx kernel: time clock=%s realtime=%s\n", ClockAvailable ? "HPET" : "unavailable", RealtimeAvailable ? "RTC" : "unavailable");
+    kprintf("Arx kernel: time clock=%s realtime=%s\n", ClockAvailable ? "available" : "unavailable", RealtimeAvailable ? "RTC" : "unavailable");
 
     if (!ClockAvailable)
     {
@@ -41,28 +50,48 @@ TimeManager::TimeManager() : RealtimeSeconds(0), ResolutionNanoseconds(0), Clock
         error_logger("Arx kernel: RTC unavailable; realtime clock reads are unavailable");
 }
 
+TimeManager::TimeManager(const time_clock_backend_t& backend) : RealtimeSeconds(0), ResolutionNanoseconds(0), ClockAvailable(false), RealtimeAvailable(false), Backend(backend)
+{
+    ClockAvailable = Backend.initialize != nullptr && Backend.read != nullptr && Backend.initialize(Backend.context, &RealtimeSeconds, &RealtimeAvailable, &ResolutionNanoseconds) && ResolutionNanoseconds != 0;
+}
+
+bool TimeManager::ReadMonotonic(uint64_t* nanoseconds) const
+{
+    return ClockAvailable && Backend.read(Backend.context, nanoseconds);
+}
+
 uint64_t TimeManager::ReadClock(int clock, time_timespec_t* value)
 {
-    if (clock != 0 && clock != 1)
+    // RAW shares the unadjusted hardware epoch. No frequency discipline or
+    // suspend accounting is implemented. CPU clocks await a complete live
+    // accounting snapshot; elapsed wall time must never stand in for CPU time.
+    if (clock != 0 && clock != 1 && clock != 4)
     {
         return LINUX_EINVAL;
     }
 
     uint64_t elapsed;
 
-    if (!ClockAvailable || (clock == 0 && !RealtimeAvailable) || !arch_time_read_monotonic(&elapsed))
+    if ((clock == 0 && !RealtimeAvailable) || !ReadMonotonic(&elapsed))
     {
         return LINUX_ENOSYS;
     }
 
-    value->seconds     = elapsed / 1000000000 + (clock == 0 ? RealtimeSeconds : 0);
+    const uint64_t seconds = elapsed / 1000000000;
+
+    if (clock == 0 && (RealtimeSeconds > INT64_MAX || seconds > (uint64_t) INT64_MAX - RealtimeSeconds))
+    {
+        return LINUX_EOVERFLOW;
+    }
+
+    value->seconds     = seconds + (clock == 0 ? RealtimeSeconds : 0);
     value->nanoseconds = elapsed % 1000000000;
     return 0;
 }
 
 uint64_t TimeManager::ReadResolution(int clock, time_timespec_t* value)
 {
-    if (clock != 0 && clock != 1)
+    if (clock != 0 && clock != 1 && clock != 4)
     {
         return LINUX_EINVAL;
     }
@@ -84,14 +113,14 @@ uint64_t TimeManager::CalculateSleepDeadline(int clock, bool absolute, const tim
         return LINUX_EINVAL;
     }
 
-    if (!ClockAvailable || (clock == 0 && !RealtimeAvailable))
+    if (!ClockAvailable || (absolute && clock == 0 && !RealtimeAvailable))
     {
         return LINUX_ENOSYS;
     }
 
     uint64_t elapsed;
 
-    if (!arch_time_read_monotonic(&elapsed))
+    if (!ReadMonotonic(&elapsed))
     {
         return LINUX_ENOSYS;
     }
@@ -170,7 +199,7 @@ uint64_t TimeManager::GetTimer(int which, uint64_t destination)
     TaskManager::AccountActive(false);
     spinlock_acquire_preempt(&process->timerLock);
 
-    if (((which == 0 && process->realTimerArmed) || which != 0) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
+    if (((which == 0 && process->realTimerArmed) || which != 0) && !ReadMonotonic(&now))
     {
         result = LINUX_ENOSYS;
     }
@@ -224,7 +253,7 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
         {
             result = LINUX_EOVERFLOW;
         }
-        else if ((which != 0 || duration != 0 || (previous != 0 && process->realTimerArmed)) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
+        else if ((which != 0 || duration != 0 || (previous != 0 && process->realTimerArmed)) && !ReadMonotonic(&now))
         {
             result = LINUX_ENOSYS;
         }
@@ -353,7 +382,7 @@ uint64_t TimeManager::SetAlarm(uint32_t seconds)
     const uint64_t duration = (uint64_t) seconds * 1000000000;
     spinlock_acquire_preempt(&process->timerLock);
 
-    if ((seconds != 0 || process->realTimerArmed) && (!ClockAvailable || !arch_time_read_monotonic(&now)))
+    if ((seconds != 0 || process->realTimerArmed) && !ReadMonotonic(&now))
     {
         result = LINUX_ENOSYS;
     }
@@ -431,7 +460,7 @@ void TimeManager::RestartRealTimer(process_t* process)
     spinlock_acquire_preempt(&process->timerLock);
     uint64_t now = 0;
 
-    if (process->realTimerExpired && process->realTimerInterval != 0 && ClockAvailable && arch_time_read_monotonic(&now))
+    if (process->realTimerExpired && process->realTimerInterval != 0 && ReadMonotonic(&now))
     {
         const uint64_t deadline = process->realTimerDeadline;
         const uint64_t interval = process->realTimerInterval;

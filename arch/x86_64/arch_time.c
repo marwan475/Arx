@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <klib/clock.h>
 #include <klib/klib.h>
 #include <memory/vmm.h>
 #include <platform.h>
@@ -6,16 +7,28 @@
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
 
-static volatile uint8_t* hpet;
-static uint64_t          counter_origin;
-static uint64_t          period_fs;
-static bool              counter_is_64bit;
-static uint64_t          extended_counter32;
-static uint8_t           cmos_index;
+static clock_source_t  sources[2];
+static clock_source_t* active_source;
+static uint8_t         cmos_index;
 
-static uint64_t hpet_read_counter(volatile uint8_t* registers, bool wide)
+static uint64_t hpet_read_counter(void* context)
 {
-    return wide ? REG(uint64_t, registers + 0xf0) : REG(uint32_t, registers + 0xf0);
+    volatile uint8_t* registers = context;
+    return REG(uint64_t, registers + 0xf0);
+}
+
+static uint64_t hpet_read_counter32(void* context)
+{
+    volatile uint8_t* registers = context;
+    return REG(uint32_t, registers + 0xf0);
+}
+
+static uint64_t pm_read_counter(void* context)
+{
+    uint32_t       value;
+    const uint16_t port = (uint16_t) (uintptr_t) context;
+    __asm__ volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
 }
 
 static uint8_t cmos_read(uint8_t index)
@@ -42,21 +55,8 @@ static bool leap_year(unsigned year)
     return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
 }
 
-static bool read_rtc(uint64_t* seconds)
+static bool read_rtc_calendar(uint64_t* seconds, uint8_t century_index)
 {
-    uint8_t     century_index = 0;
-    uacpi_table table;
-
-    if (uacpi_table_find_by_signature(ACPI_FADT_SIGNATURE, &table) == UACPI_STATUS_OK)
-    {
-        if (table.hdr->length >= offsetof(struct acpi_fadt, century) + 1)
-        {
-            century_index = ((struct acpi_fadt*) table.hdr)->century;
-        }
-
-        uacpi_table_unref(&table);
-    }
-
     // Two identical snapshots outside the update window avoid torn calendar reads.
     const uint8_t indices[]   = {0, 2, 4, 7, 8, 9, 0x0b, 0x0d};
     uint8_t       previous[9] = {0};
@@ -145,7 +145,34 @@ static bool read_rtc(uint64_t* seconds)
     return false;
 }
 
-bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds)
+static bool read_rtc(uint64_t* seconds)
+{
+    uint8_t     century_index = 0;
+    uacpi_table table;
+
+    if (uacpi_table_find_by_signature(ACPI_FADT_SIGNATURE, &table) == UACPI_STATUS_OK)
+    {
+        if (table.hdr->length >= offsetof(struct acpi_fadt, iapc_boot_arch) + sizeof(uint16_t) && (((struct acpi_fadt*) table.hdr)->iapc_boot_arch & ACPI_IA_PC_NO_CMOS_RTC) != 0)
+        {
+            uacpi_table_unref(&table);
+            return false;
+        }
+
+        if (table.hdr->length >= offsetof(struct acpi_fadt, century) + 1)
+        {
+            century_index = ((struct acpi_fadt*) table.hdr)->century;
+        }
+
+        uacpi_table_unref(&table);
+    }
+
+    __asm__ volatile("inb $0x70, %0" : "=a"(cmos_index));
+    const bool available = read_rtc_calendar(seconds, century_index);
+    __asm__ volatile("outb %0, $0x70" : : "a"(cmos_index));
+    return available;
+}
+
+static bool prepare_hpet(clock_source_t* source)
 {
     uacpi_table  table;
     uacpi_status status = uacpi_table_find_by_signature(ACPI_HPET_SIGNATURE, &table);
@@ -198,83 +225,89 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
 
     const bool wide = (capabilities & (1ULL << 13)) != 0;
     REG(uint64_t, registers + 0x10) |= 1;
-    uint64_t initial   = hpet_read_counter(registers, wide);
-    bool     advancing = false;
+    source->read        = wide ? hpet_read_counter : hpet_read_counter32;
+    source->context     = (void*) registers;
+    source->mask        = wide ? UINT64_MAX : UINT32_MAX;
+    source->numerator   = (uint32_t) period;
+    source->denominator = 1000000;
+    return true;
+}
 
-    for (unsigned i = 0; i < 100000; ++i)
+static bool prepare_pm_timer(clock_source_t* source)
+{
+    uacpi_table table;
+
+    if (uacpi_table_find_by_signature(ACPI_FADT_SIGNATURE, &table) != UACPI_STATUS_OK)
     {
-        if (hpet_read_counter(registers, wide) != initial)
-        {
-            advancing = true;
-            break;
-        }
-
-        arch_pause();
-    }
-
-    if (!advancing)
-    {
-        error_logger("Arx kernel: HPET unavailable: enabled counter did not advance\n");
         return false;
     }
 
-    __asm__ volatile("inb $0x70, %0" : "=a"(cmos_index));
-    // RTC is interpreted as UTC; no timezone-setting syscall is implemented.
+    const struct acpi_fadt* fadt     = (const struct acpi_fadt*) table.hdr;
+    uint64_t                address = 0;
+    bool                    wide    = false;
+    bool                    valid   = table.hdr->length >= offsetof(struct acpi_fadt, flags) + sizeof(fadt->flags);
+
+    if (valid)
+    {
+        address = fadt->pm_tmr_blk;
+        wide    = (fadt->flags & ACPI_TMR_VAL_EXT) != 0;
+        valid   = fadt->pm_tmr_len == 4 && (fadt->flags & ACPI_HW_REDUCED_ACPI) == 0;
+
+        if (table.hdr->length >= offsetof(struct acpi_fadt, x_pm_tmr_blk) + sizeof(fadt->x_pm_tmr_blk) && fadt->x_pm_tmr_blk.address != 0)
+        {
+            const struct acpi_gas gas = fadt->x_pm_tmr_blk;
+            address                  = gas.address;
+            // This backend implements 32-bit system-I/O accesses only. Never
+            // reinterpret a firmware MMIO address as a port or use legacy data
+            // when a supplied extended descriptor is unsupported.
+            valid = valid && gas.address_space_id == 1 && gas.register_bit_offset == 0 && gas.register_bit_width == 32 && (gas.access_size == 0 || gas.access_size == 3);
+        }
+    }
+
+    uacpi_table_unref(&table);
+
+    if (!valid || address == 0 || address > UINT16_MAX - 3)
+    {
+        error_logger("Arx kernel: ACPI PM timer unavailable: unsupported register descriptor\n");
+        return false;
+    }
+
+    source->read        = pm_read_counter;
+    source->context     = (void*) (uintptr_t) address;
+    source->mask        = wide ? UINT32_MAX : 0xffffff;
+    source->numerator   = 1000000000;
+    source->denominator = 3579545;
+    return true;
+}
+
+bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds)
+{
+    // Initialization runs once on the BSP. AP interrupt readers see either no
+    // source or the completely initialized selection, never a partial epoch.
+    *realtimeSeconds       = 0;
+    *realtimeAvailable     = false;
+    *resolutionNanoseconds = 0;
+    (void) prepare_hpet(&sources[0]);
+    (void) prepare_pm_timer(&sources[1]);
+
+    // Read the UTC calendar before anchoring the monotonic epoch, regardless
+    // of which counter was discovered. RTC absence never disables deadlines.
     *realtimeAvailable = read_rtc(realtimeSeconds);
-    __asm__ volatile("outb %0, $0x70" : : "a"(cmos_index));
-    counter_origin   = hpet_read_counter(registers, wide);
-    period_fs        = period;
-    counter_is_64bit = wide;
-    __atomic_store_n(&extended_counter32, counter_origin, __ATOMIC_RELAXED);
-    // AP timer reads may start before initialization finishes. Publish only
-    // after all immutable state and the 32-bit extension baseline are ready.
-    __atomic_store_n(&hpet, registers, __ATOMIC_RELEASE);
-    *resolutionNanoseconds = (period + 999999) / 1000000;
-    kprintf("Arx kernel: HPET counter=%u-bit period_fs=%llu\n", wide ? 64U : 32U, (unsigned long long) period);
+    clock_source_t* selected = clock_source_select(sources, 2);
+
+    if (selected == NULL)
+    {
+        error_logger("Arx kernel: neither HPET nor ACPI PM timer advances\n");
+        return false;
+    }
+
+    *resolutionNanoseconds = ((uint64_t) selected->numerator + selected->denominator - 1) / selected->denominator;
+    __atomic_store_n(&active_source, selected, __ATOMIC_RELEASE);
+    kprintf("Arx kernel: selected clock source %s\n", selected == &sources[0] ? "HPET" : "ACPI PM timer");
     return true;
 }
 
 bool arch_time_read_monotonic(uint64_t* nanoseconds)
 {
-    volatile uint8_t* registers = __atomic_load_n(&hpet, __ATOMIC_ACQUIRE);
-
-    if (registers == NULL || nanoseconds == NULL)
-    {
-        return false;
-    }
-
-    uint64_t counter;
-
-    if (counter_is_64bit)
-    {
-        counter = hpet_read_counter(registers, true);
-    }
-    else
-    {
-        for (;;)
-        {
-            uint64_t previous = __atomic_load_n(&extended_counter32, __ATOMIC_ACQUIRE);
-            // Re-read hardware after every failed CAS. Reusing an older sample
-            // after another CPU advanced the baseline would invent a wrap.
-            const uint32_t sample = (uint32_t) hpet_read_counter(registers, false);
-            counter               = extend_counter32(previous, sample);
-
-            if (__atomic_compare_exchange_n(&extended_counter32, &previous, counter, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
-            {
-                break;
-            }
-        }
-    }
-
-    uint64_t ticks    = counter - counter_origin;
-    uint64_t whole    = ticks / 1000000;
-    uint64_t fraction = (ticks % 1000000) * period_fs / 1000000;
-
-    if (whole > (UINT64_MAX - fraction) / period_fs)
-    {
-        return false;
-    }
-
-    *nanoseconds = whole * period_fs + fraction;
-    return true;
+    return clock_source_read(__atomic_load_n(&active_source, __ATOMIC_ACQUIRE), nanoseconds);
 }

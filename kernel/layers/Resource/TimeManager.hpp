@@ -23,10 +23,20 @@ struct time_itimerval_t
 };
 static_assert(sizeof(time_timespec_t) == 16 && sizeof(time_timeval_t) == 16 && sizeof(time_itimerval_t) == 32, "Linux time ABI");
 
+struct time_clock_backend_t
+{
+    bool (*initialize)(void* context, uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds);
+    bool (*read)(void* context, uint64_t* nanoseconds);
+    void* context;
+};
+
 class TimeManager
 {
 public:
     TimeManager();
+    // Isolated backends allow deterministic tests without republishing hardware
+    // state. A live backend must share the scheduler's platform monotonic epoch.
+    explicit TimeManager(const time_clock_backend_t& backend);
     uint64_t ReadClock(int clock, time_timespec_t* value);
     uint64_t ReadResolution(int clock, time_timespec_t* value);
     uint64_t CalculateSleepDeadline(int clock, bool absolute, const time_timespec_t& request, uint64_t* monotonicDeadline);
@@ -40,10 +50,13 @@ public:
     bool     ExpireCpuTimers(process_t* process);
 
 private:
+    bool     ReadMonotonic(uint64_t* nanoseconds) const;
     // Caller holds the process timer lock.
     void     SnapshotTimer(process_t* process, int which, uint64_t now, time_itimerval_t* value);
-    uint64_t RealtimeSeconds;
-    uint64_t ResolutionNanoseconds;
-    bool     ClockAvailable;
-    bool     RealtimeAvailable;
+
+    uint64_t             RealtimeSeconds;
+    uint64_t             ResolutionNanoseconds;
+    bool                 ClockAvailable;
+    bool                 RealtimeAvailable;
+    time_clock_backend_t Backend;
 };

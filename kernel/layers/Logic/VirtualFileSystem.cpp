@@ -12,10 +12,59 @@ extern "C"
 
 #include <klib/klib.h>
 
+spinlock_t VirtualFileSystem::ReadinessLock = 0;
+
+void VirtualFileSystem::ObserveFileLocked(file_t* file, file_close_observer_t* observer)
+{
+    observer->next           = file->readinessObservers;
+    file->readinessObservers = observer;
+}
+
+void VirtualFileSystem::UnobserveFileLocked(file_t* file, file_close_observer_t* observer)
+{
+    auto** link = &file->readinessObservers;
+    while (*link != nullptr && *link != observer)
+    {
+        link = &(*link)->next;
+    }
+    if (*link != nullptr)
+    {
+        *link          = observer->next;
+        observer->next = nullptr;
+    }
+}
+
+void VirtualFileSystem::NotifyReadiness(file_t* file, uint32_t events)
+{
+    // The producer owns a live file reference and publishes state before this
+    // call, outside its state lock. Future devices use the same contract.
+    if (EventObserver != nullptr)
+    {
+        EventObserver->NotifySource(file, events);
+    }
+}
+
 struct dentry_key_t
 {
     const dentry_t* parent;
     const char*     name;
+};
+
+class VfsNamespaceGuard
+{
+public:
+    explicit VfsNamespaceGuard(spinlock_t* lock) : Lock(lock)
+    {
+        spinlock_acquire_preempt(Lock);
+    }
+
+    ~VfsNamespaceGuard()
+    {
+        spinlock_release_preempt(Lock);
+    }
+
+private:
+    spinlock_t* Lock;
 };
 
 struct vfs_resource_filesystem_private_t
@@ -576,9 +625,9 @@ static int64_t vfs_resource_backing(file_t* file, VirtualMemoryManager* memory, 
         }
     }
 
-    object->write = vfs_resource_writeback;
+    object->write        = vfs_resource_writeback;
     file->inode->backing = object; // Inode owns the cache independently of open files.
-    *result = object;
+    *result              = object;
 
     return 0;
 }
@@ -1404,8 +1453,12 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
     return dentry;
 }
 
-bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result)
+bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result, uint64_t* accessError)
 {
+    if (accessError != nullptr)
+    {
+        *accessError = LINUX_ENOENT;
+    }
     // TODO: Enforce trailing '/' directory requirement once open/create semantics land.
 
     if (result == nullptr || path == nullptr)
@@ -1421,6 +1474,10 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
     if (pathLen == 0)
     {
         *result = start;
+        if (accessError != nullptr)
+        {
+            *accessError = 0;
+        }
         return true;
     }
 
@@ -1428,6 +1485,10 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
 
     if (work == nullptr)
     {
+        if (accessError != nullptr)
+        {
+            *accessError = LINUX_ENOMEM;
+        }
         return false;
     }
 
@@ -1480,6 +1541,17 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
         char saved = *p;
         *p         = '\0';
 
+        if (accessError != nullptr)
+        {
+            *accessError = cur.dentry->inode->type == INODE_DIRECTORY ? CheckInodeAccess(cur.dentry->inode, 1) : LINUX_ENOTDIR;
+            if (*accessError != 0)
+            {
+                kfree(work);
+                return false;
+            }
+            *accessError = LINUX_ENOENT;
+        }
+
         if (strcmp(component, ".") == 0)
         {
             *p = saved;
@@ -1523,6 +1595,10 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
         {
             if (symlinkFollows >= VFS_MAX_SYMLINK_FOLLOWS)
             {
+                if (accessError != nullptr)
+                {
+                    *accessError = (uint64_t) -40;
+                }
                 kfree(work);
                 return false;
             }
@@ -1594,6 +1670,10 @@ bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, v
 
     kfree(work);
     *result = cur;
+    if (accessError != nullptr)
+    {
+        *accessError = 0;
+    }
     return true;
 }
 
@@ -1604,7 +1684,7 @@ bool VirtualFileSystem::BuildAbsolutePath(const vfs_path_t& path, char* output, 
         return false;
     }
     const char* components[256];
-    size_t      count = 0, length = 1;
+    size_t      count   = 0, length = 1;
     vfs_path_t  current = path;
     spinlock_acquire_preempt(&MountLock);
     while (current.dentry != nullptr)
@@ -2053,7 +2133,12 @@ int64_t VirtualFileSystem::ResolveParent(const vfs_path_t& start, const char* pa
     {
         return VFS_ERR_INVAL;
     }
-    if (!ResolvePath(start, directory, parent) || parent->dentry == nullptr || parent->dentry->inode == nullptr)
+    uint64_t error = 0;
+    if (!ResolvePath(start, directory, parent, &error))
+    {
+        return (int64_t) error;
+    }
+    if (parent->dentry == nullptr || parent->dentry->inode == nullptr)
     {
         return VFS_ERR_NOENT;
     }
@@ -2154,6 +2239,25 @@ uint64_t VirtualFileSystem::CheckDirectoryMutation(const vfs_path_t& parent, con
     return result;
 }
 
+void VirtualFileSystem::RetireEntryLocked(dentry_t* entry, dentry_t* moved)
+{
+    // Open descriptions can refer to earlier cache entries or rename records.
+    // Match one linked entry, not all hard links to the inode or a rebound name.
+    spinlock_acquire_preempt(&DentryCacheLock);
+    for (auto* candidate = RetiredDentries; candidate != nullptr; candidate = candidate->retiredNext)
+    {
+        const bool sameParent = candidate->parent == entry->parent || (candidate->parent != nullptr && entry->parent != nullptr && candidate->parent->inode == entry->parent->inode);
+        if (!candidate->unlinked && candidate->renamedTo == nullptr && candidate->inode == entry->inode && sameParent && strcmp(candidate->name, entry->name) == 0)
+        {
+            candidate->unlinked  = moved == nullptr;
+            candidate->renamedTo = moved;
+        }
+    }
+    entry->unlinked  = moved == nullptr;
+    entry->renamedTo = moved;
+    spinlock_release_preempt(&DentryCacheLock);
+}
+
 void VirtualFileSystem::InvalidateDentry(dentry_t* parent, const char* name)
 {
     __atomic_add_fetch(&parent->inode->namespaceGeneration, 1ULL, __ATOMIC_RELEASE);
@@ -2184,7 +2288,7 @@ void VirtualFileSystem::InvalidateDentry(dentry_t* parent, const char* name)
 bool VirtualFileSystem::BuildBackendPath(const vfs_path_t& start, const char* path, char* output, size_t capacity)
 {
     char       directory[512] = {}, name[256] = {}, base[512] = {};
-    vfs_path_t parent = {};
+    vfs_path_t parent         = {};
     // Resolve mount crossings before constructing a path for the legacy boot
     // backend. Native filesystems receive parent inodes, never global paths.
     if (!vfs_split_parent_and_leaf(path, directory, sizeof(directory), name, sizeof(name)) || !ResolvePath(start, directory, &parent) || parent.dentry == nullptr)
@@ -2258,6 +2362,7 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
 
 int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, bool directory)
 {
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (path == nullptr)
     {
         return VFS_ERR_INVAL;
@@ -2295,6 +2400,10 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
         const int64_t result = node->inodeOps != nullptr && node->inodeOps->Unlink != nullptr ? node->inodeOps->Unlink(parent.dentry->inode, name, directory) : -95;
         if (result == 0)
         {
+            if (target != nullptr)
+            {
+                RetireEntryLocked(target);
+            }
             if (EventObserver != nullptr)
             {
                 EventObserver->NotifyVfs(target != nullptr ? target->inode : nullptr, 0x200, node, name);
@@ -2331,14 +2440,15 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
 
 int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath)
 {
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (oldPath == nullptr || newPath == nullptr)
     {
         return VFS_ERR_INVAL;
     }
 
-    vfs_path_t oldParent = {}, newParent = {};
+    vfs_path_t oldParent    = {}, newParent = {};
     char       oldName[256] = {}, newName[256] = {};
-    int64_t    status = ResolveParent(oldStart, oldPath, &oldParent, oldName, sizeof(oldName));
+    int64_t    status       = ResolveParent(oldStart, oldPath, &oldParent, oldName, sizeof(oldName));
     if (status == 0)
     {
         status = ResolveParent(newStart, newPath, &newParent, newName, sizeof(newName));
@@ -2373,6 +2483,10 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
         {
             return 0;
         }
+        if (replacement != nullptr && replacement->inode == target->inode)
+        {
+            return 0; // Renaming one hard link onto the same inode is a no-op.
+        }
         uint64_t permission = CheckDirectoryMutation(oldParent, target->inode);
         if (permission == 0)
         {
@@ -2382,9 +2496,35 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
         {
             return (int64_t) permission;
         }
-        const int64_t result = oldDirectory->inodeOps != nullptr && oldDirectory->inodeOps->Rename != nullptr ? oldDirectory->inodeOps->Rename(oldDirectory, oldName, newDirectory, newName) : -95;
+        // Allocate the forwarding identity before the backend commits. Event
+        // delivery must not depend on a successful cache allocation afterward.
+        auto* moved = static_cast<dentry_t*>(kzalloc(sizeof(dentry_t)));
+        if (moved == nullptr)
+        {
+            return -12;
+        }
+        moved->ownedName = kstrdup(newName);
+        if (moved->ownedName == nullptr)
+        {
+            kfree(moved);
+            return -12;
+        }
+        moved->name                 = moved->ownedName;
+        moved->parent               = newParent.dentry;
+        moved->inode                = target->inode;
+        moved->cacheOwnedAllocation = true;
+        const int64_t result        = oldDirectory->inodeOps != nullptr && oldDirectory->inodeOps->Rename != nullptr ? oldDirectory->inodeOps->Rename(oldDirectory, oldName, newDirectory, newName) : -95;
         if (result == 0)
         {
+            if (replacement != nullptr && replacement != target)
+            {
+                RetireEntryLocked(replacement);
+            }
+            RetireEntryLocked(target, moved);
+            spinlock_acquire_preempt(&DentryCacheLock);
+            moved->retiredNext = RetiredDentries;
+            RetiredDentries    = moved;
+            spinlock_release_preempt(&DentryCacheLock);
             if (EventObserver != nullptr)
             {
                 static uint32_t nextCookie = 0;
@@ -2399,6 +2539,11 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
             }
             InvalidateDentry(oldParent.dentry, oldName);
             InvalidateDentry(newParent.dentry, newName);
+        }
+        else
+        {
+            kfree(moved->ownedName);
+            kfree(moved);
         }
         return result;
     }
@@ -2429,14 +2574,15 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
 
 int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink)
 {
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (oldPath == nullptr || newPath == nullptr)
     {
         return VFS_ERR_INVAL;
     }
 
-    vfs_path_t oldParent = {}, newParent = {};
+    vfs_path_t oldParent    = {}, newParent = {};
     char       oldName[256] = {}, newName[256] = {};
-    int64_t    status = ResolveParent(oldStart, oldPath, &oldParent, oldName, sizeof(oldName));
+    int64_t    status       = ResolveParent(oldStart, oldPath, &oldParent, oldName, sizeof(oldName));
     if (status == 0)
     {
         status = ResolveParent(newStart, newPath, &newParent, newName, sizeof(newName));
@@ -2520,6 +2666,7 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
 
 int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device)
 {
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (path == nullptr)
     {
         return VFS_ERR_INVAL;
@@ -2573,6 +2720,139 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
     }
 
     return caps->Mknod(caps, effectivePath, mode, device);
+}
+
+int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** inode)
+{
+    if (path == nullptr || inode == nullptr)
+    {
+        return -22;
+    }
+    *inode = nullptr;
+    if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr)
+    {
+        return (int64_t) LINUX_ENOSYS;
+    }
+
+    process_t* process = ResourceLayerImportCaps->processManager->GetCurrentProcess();
+    if (process == nullptr)
+    {
+        return (int64_t) LINUX_ESRCH;
+    }
+
+    char                     absolute[512] = {};
+    WorkingDirectorySnapshot cwd(process);
+    if (!JoinPath(cwd.path, path, absolute, sizeof(absolute)))
+    {
+        return (int64_t) LINUX_ENAMETOOLONG;
+    }
+    const size_t pathLength = strlen(absolute);
+    if (pathLength == 0 || absolute[pathLength - 1] == '/')
+    {
+        return -20; // A socket pathname cannot name a directory.
+    }
+
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
+    vfs_path_t        parent             = {};
+    char              name[256]          = {};
+    char              directoryPath[512] = {};
+    uint64_t          accessError        = 0;
+    if (!vfs_split_parent_and_leaf(absolute, directoryPath, sizeof(directoryPath), name, sizeof(name)) || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+    {
+        return -22;
+    }
+    if (!ResolvePath({}, directoryPath, &parent, &accessError))
+    {
+        return (int64_t) accessError;
+    }
+
+    inode_t* directory = parent.dentry->inode;
+    if (directory->type != INODE_DIRECTORY)
+    {
+        return -20;
+    }
+    int64_t result = (int64_t) CheckInodeAccess(directory, 1);
+    if (result != 0)
+    {
+        return result;
+    }
+    if (create)
+    {
+        if (Lookup(parent.dentry, name) != nullptr)
+        {
+            return -98; // EADDRINUSE includes stale socket nodes and other file types.
+        }
+
+        result = (int64_t) CheckDirectoryMutation(parent);
+        if (result != 0)
+        {
+            return result;
+        }
+
+        // Boot cpio has no mutable namespace. Do not synthesize an invisible
+        // socket node when the selected filesystem cannot create one.
+        if (directory->filesystem == nullptr || directory->filesystem->type == nullptr)
+        {
+            return -30;
+        }
+        if (directory->inodeOps == nullptr || directory->inodeOps->Mknod == nullptr)
+        {
+            return -95;
+        }
+
+        inode_creation_attributes_t attributes = {};
+        result                                 = (int64_t) GetCreationAttributes(directory, 0140777, false, false, &attributes);
+        if (result != 0)
+        {
+            return result;
+        }
+
+        result = directory->inodeOps->Mknod(directory, name, &attributes, 0);
+        if (result != 0)
+        {
+            return result == -17 ? -98 : result;
+        }
+        InvalidateDentry(parent.dentry, name);
+    }
+
+    vfs_path_t resolved = {};
+    if (!ResolvePath({}, absolute, &resolved, &accessError) || resolved.dentry == nullptr)
+    {
+        return (int64_t) accessError;
+    }
+    inode_t* node = resolved.dentry->inode;
+    if (node == nullptr || node->type != INODE_SOCKET)
+    {
+        return -111;
+    }
+    if (!create)
+    {
+        result = (int64_t) CheckInodeAccess(node, 2);
+        if (result != 0)
+        {
+            return result;
+        }
+    }
+    else
+    {
+        __atomic_add_fetch(&node->openCount, 1ULL, __ATOMIC_ACQ_REL);
+        if (EventObserver != nullptr)
+        {
+            EventObserver->NotifyVfs(node, 0x100, directory, name);
+        }
+    }
+
+    // Backend inode identity remains stable through unlink, until unmount.
+    *inode = node;
+    return 0;
+}
+
+void VirtualFileSystem::ReleaseSocketNode(inode_t* inode)
+{
+    if (inode != nullptr && __atomic_sub_fetch(&inode->openCount, 1ULL, __ATOMIC_ACQ_REL) == 0 && inode->linkCount == 0 && EventObserver != nullptr)
+    {
+        EventObserver->NotifyVfs(inode, 0x400, nullptr, nullptr);
+    }
 }
 
 int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* path, uint64_t size)
@@ -3102,11 +3382,18 @@ bool VirtualFileSystem::Retain(file_t* file)
 uint32_t VirtualFileSystem::Poll(file_t* file)
 {
     if (file == nullptr)
+    {
         return 0x20; // POLLNVAL
+    }
 
     if (file->operations != nullptr && file->operations->Poll != nullptr)
     {
         return file->operations->Poll(file);
+    }
+
+    if (file->inode == nullptr || (file->inode->type != INODE_REGULAR && file->inode->type != INODE_DIRECTORY))
+    {
+        return 8; // POLLERR: no readiness provider for this device/special file.
     }
 
     // Linux's default readiness for synchronous files, including EOF.
@@ -3122,7 +3409,7 @@ int64_t VirtualFileSystem::Close(file_t* file)
 
     bool isLastReference = false;
 
-    if (!vfs_file_ref_release(file, &isLastReference))
+    if (!(file->operations != nullptr && file->operations->DropReference != nullptr ? file->operations->DropReference(file, &isLastReference) : vfs_file_ref_release(file, &isLastReference)))
     {
         return -1;
     }
@@ -3131,6 +3418,16 @@ int64_t VirtualFileSystem::Close(file_t* file)
     {
         return 0;
     }
+
+    spinlock_acquire_preempt(&ReadinessLock);
+    while (file->readinessObservers != nullptr)
+    {
+        auto* observer           = file->readinessObservers;
+        file->readinessObservers = observer->next;
+        observer->next           = nullptr;
+        observer->Closing(observer, file);
+    }
+    spinlock_release_preempt(&ReadinessLock);
 
     if (file->owner != nullptr)
     {
@@ -3242,7 +3539,7 @@ uint64_t VirtualFileSystem::ChangeMetadata(inode_t* inode, bool ownership, uint3
         }
         if (inode->filesystem != nullptr)
         {
-            const uint32_t mode = inode->mode, uid = inode->uid, gid = inode->gid;
+            const uint32_t mode  = inode->mode, uid = inode->uid, gid = inode->gid;
             inode->mode          = previousMode;
             inode->uid           = previousUid;
             inode->gid           = previousGid;
@@ -3459,8 +3756,14 @@ void VirtualFileSystem::NotifyFile(file_t* file, uint32_t mask)
     {
         return;
     }
-    dentry_t* dentry = file->path.dentry;
-    EventObserver->NotifyVfs(file->inode, mask, dentry != nullptr && dentry->parent != nullptr ? dentry->parent->inode : nullptr, dentry != nullptr ? dentry->name : nullptr);
+    VfsNamespaceGuard mutation(&NamespaceMutationLock);
+    dentry_t*         dentry = file->path.dentry;
+    while (dentry != nullptr && dentry->renamedTo != nullptr)
+    {
+        dentry = dentry->renamedTo;
+    }
+    EventObserver->NotifyVfs(file->inode, mask, dentry != nullptr && dentry->parent != nullptr ? dentry->parent->inode : nullptr, dentry != nullptr ? dentry->name : nullptr, 0,
+        dentry != nullptr && dentry->unlinked);
 }
 
 void VirtualFileSystem::InitializeAnonymousInode(inode_t* inode, inode_type_t type, uint32_t mode)

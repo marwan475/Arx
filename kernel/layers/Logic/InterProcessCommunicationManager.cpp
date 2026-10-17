@@ -30,6 +30,7 @@ struct pipe_state_t
     VirtualFileSystem* vfs;
     size_t             references;
     uint32_t           lastReadiness[2];
+    uint32_t           pendingReadiness[2];
     size_t             capacity;
     size_t             head;
     size_t             size;
@@ -37,6 +38,19 @@ struct pipe_state_t
     // Packet bits travel with bytes, so changing O_DIRECT affects future writes.
     uint8_t packet[PIPE_CAPACITY / 4];
 };
+
+void record_pipe_readiness_locked(pipe_state_t* pipe)
+{
+    const uint32_t masks[2] = {
+        (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0U) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0U),
+        (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0U) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0U),
+    };
+    for (size_t i = 0; i < 2; ++i)
+    {
+        pipe->pendingReadiness[i] |= masks[i] & ~pipe->lastReadiness[i];
+        pipe->lastReadiness[i] = masks[i];
+    }
+}
 
 uint8_t pipe_packet(const pipe_state_t* pipe, size_t index)
 {
@@ -145,23 +159,23 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     }
     process_t* process = Resources->processManager->GetCurrentProcess();
     Vfs->InitializeAnonymousInode(&pipe->inode, INODE_FIFO, 0600);
-    pipe->reader           = reader;
-    pipe->writer           = writer;
-    pipe->events           = Events;
-    pipe->signals          = Signals;
-    pipe->resources        = Resources;
-    pipe->vfs              = Vfs;
-    pipe->references       = 2;
-    pipe->lastReadiness[1] = EVENT_POLL_OUT | EVENT_POLL_WRNORM;
-    pipe->capacity         = PIPE_CAPACITY;
-    reader->inode = writer->inode = &pipe->inode;
-    reader->operations = writer->operations = &PipeOperations;
-    reader->privateData = writer->privateData = pipe;
-    reader->refCount = writer->refCount = 1;
-    reader->statusFlags                 = flags & (NONBLOCK | DIRECT);
-    writer->statusFlags                 = 1 | (flags & (NONBLOCK | DIRECT));
-    int32_t  descriptors[2]             = {-1, -1};
-    uint64_t result                     = 0;
+    pipe->reader            = reader;
+    pipe->writer            = writer;
+    pipe->events            = Events;
+    pipe->signals           = Signals;
+    pipe->resources         = Resources;
+    pipe->vfs               = Vfs;
+    pipe->references        = 2;
+    pipe->lastReadiness[1]  = EVENT_POLL_OUT | EVENT_POLL_WRNORM;
+    pipe->capacity          = PIPE_CAPACITY;
+    reader->inode           = writer->inode = &pipe->inode;
+    reader->operations      = writer->operations = &PipeOperations;
+    reader->privateData     = writer->privateData = pipe;
+    reader->refCount        = writer->refCount = 1;
+    reader->statusFlags     = flags & (NONBLOCK | DIRECT);
+    writer->statusFlags     = 1 | (flags & (NONBLOCK | DIRECT));
+    int32_t  descriptors[2] = {-1, -1};
+    uint64_t result         = 0;
     {
         FileDescriptorGuard guard(process);
         for (size_t i = 0; i < 2; ++i)
@@ -203,22 +217,19 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
     EventManager* events   = pipe->events;
     file_t*       files[2] = {};
     spinlock_acquire_preempt(&pipe->lock);
-    files[0]          = pipe->reader;
-    files[1]          = pipe->writer;
-    uint32_t masks[2] = {
-            (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0U) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0U),
-            (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0U) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0U),
-    };
+    files[0] = pipe->reader;
+    files[1] = pipe->writer;
+    record_pipe_readiness_locked(pipe);
+    uint32_t masks[2]         = {pipe->pendingReadiness[0], pipe->pendingReadiness[1]};
+    pipe->pendingReadiness[0] = pipe->pendingReadiness[1] = 0;
     for (size_t i = 0; i < 2; ++i)
     {
-        const uint32_t edges   = masks[i] & ~pipe->lastReadiness[i];
-        pipe->lastReadiness[i] = masks[i];
-        masks[i]               = edges;
-        if (files[i] != nullptr && (edges == 0 || !pipe->vfs->Retain(files[i])))
+        if (files[i] != nullptr && (masks[i] == 0 || !pipe->vfs->Retain(files[i])))
         {
             files[i] = nullptr;
         }
     }
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     for (size_t i = 0; i < 2; ++i)
     {
@@ -243,10 +254,12 @@ void InterProcessCommunicationManager::PipeRelease(file_t* file)
     {
         pipe->writer = nullptr;
     }
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     NotifyPipe(pipe);
     spinlock_acquire_preempt(&pipe->lock);
     const bool empty = --pipe->references == 0;
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     if (empty)
     {
@@ -260,6 +273,7 @@ uint32_t InterProcessCommunicationManager::PipePoll(file_t* file)
     spinlock_acquire_preempt(&pipe->lock);
     const uint32_t result
             = (file->statusFlags & 3) == 0 ? (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0) : (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0);
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     return result;
 }
@@ -284,6 +298,7 @@ int64_t InterProcessCommunicationManager::PipeIoctl(file_t* file, uint64_t reque
     spinlock_acquire_preempt(&pipe->lock);
     const int32_t  size   = (int32_t) pipe->size;
     const uint64_t result = safe_write_user_locked(&access, argument, &size, sizeof(size)) ? 0 : LINUX_EFAULT;
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     end_user_memory(&access);
     return (int64_t) result;
@@ -300,6 +315,7 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     {
         spinlock_acquire_preempt(&pipe->lock);
         const size_t capacity = pipe->capacity;
+        record_pipe_readiness_locked(pipe);
         spinlock_release_preempt(&pipe->lock);
         return capacity;
     }
@@ -335,6 +351,7 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
         pipe->capacity = capacity;
         result         = capacity;
     }
+    record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     kfree(staged);
     NotifyPipe(pipe);
@@ -466,6 +483,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                 result = 0;
             }
         }
+        record_pipe_readiness_locked(pipe);
         spinlock_release_preempt(&pipe->lock);
         end_user_memory(&access);
         if (result == 0)

@@ -16,10 +16,19 @@ static bool test_time_clock(process_t* process, uint64_t number)
     *fixture_bytes(process, output - 1)          = 0xa5;
     *fixture_bytes(process, output + outputSize) = 0xa5;
     time_timespec_t value                        = {};
+    const time_timespec_t unavailableSentinel     = {123, 456};
+    fixture_store(process, output, &unavailableSentinel, outputSize);
 
     uint64_t result = number == SYSCALL_time           ? syscall_call(number, output)
                       : number == SYSCALL_gettimeofday ? syscall_call(number, output, base + 64)
                                                        : syscall_call(number, 1, output);
+
+    if ((number == SYSCALL_time || number == SYSCALL_gettimeofday) && result == LINUX_ENOSYS)
+    {
+        fixture_load(process, output, &value, outputSize);
+        return expect(value.seconds == unavailableSentinel.seconds && (outputSize == 8 || value.nanoseconds == unavailableSentinel.nanoseconds) &&
+            *fixture_bytes(process, output - 1) == 0xa5 && *fixture_bytes(process, output + outputSize) == 0xa5, "missing RTC explicitly rejects realtime request without overwriting output");
+    }
 
     bool ok = expect(number == SYSCALL_time ? static_cast<int64_t>(result) >= 0 : result == 0, "time dispatcher success");
 
@@ -50,6 +59,8 @@ static bool test_time_clock(process_t* process, uint64_t number)
         else
         {
             ok &= expect(syscall_call(number, 2, output) == LINUX_EINVAL && syscall_call(number, UINT64_MAX, output) == LINUX_EINVAL, "unsupported clock IDs");
+            ok &= expect(syscall_call(number, 3, output) == LINUX_EINVAL && syscall_call(number, 7, output) == LINUX_EINVAL, "CPU and suspend clocks require underlying accounting");
+            ok &= expect(syscall_call(number, 4, base + 128) == 0, "raw hardware clock request supported");
 
             ok &= expect(syscall_call(number, 1, 0) == (number == SYSCALL_clock_getres ? 0 : LINUX_EFAULT), "clock nullable output semantics");
 
@@ -255,7 +266,9 @@ static bool test_time_sleep(process_t* process, uint64_t number)
 
     if (number == SYSCALL_clock_nanosleep)
     {
-        ok &= expect(call(input, 1, 1) == 0 && call(input, 0, 1) == 0, "absolute past deadlines return immediately");
+        const uint64_t realtimeResult = call(input, 0, 1);
+        ok &= expect(call(input, 1, 1) == 0 && (realtimeResult == 0 || realtimeResult == LINUX_ENOSYS), "past absolute deadlines return immediately or reject missing UTC");
+        ok &= expect(call(input, 0, 0) == 0, "relative realtime sleep remains usable without RTC");
 
         ok &= expect(call(input, 2) == LINUX_EINVAL && call(input, 1, 2) == LINUX_EINVAL, "sleep unsupported clock and flags");
 
@@ -428,6 +441,59 @@ static bool test_time_real_expiration(process_t* process, uint64_t base)
     syscall_call(SYSCALL_setitimer, 0, 0);
 
     __atomic_fetch_and(&process->signalPending, ~alarmBit, __ATOMIC_RELEASE);
+
+    // The timer is the real producer here: each sleep must park and then
+    // return EINTR. Absolute sleeps must leave even a valid remainder intact.
+    for (unsigned mode = 0; mode < 6; ++mode)
+    {
+        time_timespec_t       sleep    = {2, 0};
+        const time_timespec_t sentinel = {123, 456};
+
+        const bool absolute = mode == 2 || mode == 4 || mode == 5;
+        const int  clockId  = mode == 3 || mode == 4 ? 0 : 1;
+
+        if (absolute)
+        {
+            const uint64_t result = clock->ReadClock(clockId, &sleep);
+
+            if (clockId == 0 && result == LINUX_ENOSYS)
+            {
+                continue;
+            }
+
+            ok &= expect(result == 0, "absolute interruption start clock");
+            sleep.seconds += 2;
+        }
+
+        fixture_store(process, base + 64, &sleep, sizeof(sleep));
+        fixture_store(process, base + 96, &sentinel, sizeof(sentinel));
+        request = {{0, 0}, {0, 10000}};
+        fixture_store(process, base + 256, &request, sizeof(request));
+        const bool timerArmed = syscall_call(SYSCALL_setitimer, 0, base + 256) == 0;
+        ok &= expect(timerArmed, "interrupted sleep alarm producer");
+
+        if (timerArmed)
+        {
+            const uint64_t result = mode == 0 ? syscall_call(SYSCALL_nanosleep, base + 64, base + 96)
+                                            : syscall_call(SYSCALL_clock_nanosleep, clockId, absolute ? 1 : 0, base + 64, mode == 5 ? CANONICAL_KERNEL_BASE : base + 96);
+            ok &= expect(result == (uint64_t) -4, "alarm interrupts relative and absolute sleeps");
+            time_timespec_t remaining = {};
+            fixture_load(process, base + 96, &remaining, sizeof(remaining));
+
+            if (absolute)
+            {
+                ok &= expect(remaining.seconds == sentinel.seconds && remaining.nanoseconds == sentinel.nanoseconds, "absolute interrupted sleep leaves remainder untouched");
+            }
+            else
+            {
+                ok &= expect(remaining.seconds >= 0 && remaining.seconds <= 2 && remaining.nanoseconds >= 0 && remaining.nanoseconds < 1000000000 &&
+                    (remaining.seconds < 2 || remaining.nanoseconds == 0), "relative interrupted sleep returns normalized bounded remainder");
+            }
+        }
+
+        syscall_call(SYSCALL_setitimer, 0, 0);
+        __atomic_fetch_and(&process->signalPending, ~alarmBit, __ATOMIC_RELEASE);
+    }
 
     __atomic_store_n(&task->signalMask, oldMask, __ATOMIC_RELEASE);
 

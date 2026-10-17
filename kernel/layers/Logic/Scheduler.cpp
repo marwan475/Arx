@@ -1268,7 +1268,6 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     UnlockQueues();
-    NotifyProcessExit(process);
     void*   retiredStacks[TaskManager::MAX_TASKS];
     size_t  retiredCount = 0;
     task_t* iter         = process->tasks;
@@ -1315,7 +1314,6 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
 
     LockQueues();
     const bool tasksRetired = process->tasks == nullptr;
-    const bool reap         = tasksRetired && (!process->waitable || process->waitConsumed);
     UnlockQueues();
     // No scheduler lock spans unmapping or synchronous shootdown. CPUs in a
     // timer handler can finish their short queue transaction and accept IPIs.
@@ -1328,6 +1326,9 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     if (tasksRetired)
     {
         ProcessManager::ReleaseProcessResources(process);
+        // Publish waitability and notify the parent only after deferred task
+        // cleanup has released every child-owned file reference.
+        NotifyProcessExit(process);
 
         process_t* parent = process->hasParent ? processManager->AcquireProcess(process->parentId) : nullptr;
 
@@ -1340,6 +1341,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     LockQueues();
+    const bool reap = tasksRetired && (!process->waitable || process->waitConsumed);
     process->retirementActive = false;
     UnlockQueues();
     processManager->ReleaseProcess(process);

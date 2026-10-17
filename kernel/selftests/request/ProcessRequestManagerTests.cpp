@@ -369,6 +369,35 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
         return dispatcher_dispatch_syscall(&frame);
     };
 
+    // A dispatch claim keeps an exited child alive during the scheduler's
+    // deferred retirement window. Exit status must not become waitable until
+    // its task-owned descriptors and process resources have been released.
+    const uint64_t deferredChild = lifecycle_clone(fixture, number, 0);
+    TaskManager*   taskManager   = fixture.resources->taskManager;
+    task_t*        deferredTask  = static_cast<int64_t>(deferredChild) > 0 ? taskManager->FindTask(deferredChild) : nullptr;
+    const bool     retained      = deferredTask != nullptr && taskManager->RetainForDispatch(deferredTask);
+    bool           retirementWait = expect(retained, "retain child dispatch claim to defer exit cleanup");
+
+    if (retained)
+    {
+        fixture.logic->scheduler->KillProcess(deferredChild, 37);
+        int32_t reportedPid = -1;
+        retirementWait &= safe_write_user(lifecycle_fixture_t::DATA + 1024 + 16, &reportedPid, sizeof(reportedPid));
+        retirementWait &= expect(call(SYSCALL_waitid, 1, deferredChild, lifecycle_fixture_t::DATA + 1024, 5) == 0,
+            "waitid WEXITED|WNOHANG polls a child with deferred cleanup");
+        retirementWait &= safe_read_user(lifecycle_fixture_t::DATA + 1024 + 16, &reportedPid, sizeof(reportedPid));
+        retirementWait &= expect(reportedPid == 0, "waitid does not report exit status before child resources retire");
+        const uint64_t earlyWait = call(SYSCALL_wait4, deferredChild, lifecycle_fixture_t::DATA + 64, 1);
+        retirementWait &= expect(earlyWait == 0, "wait4 does not consume exit status before child resources retire");
+        taskManager->ReleaseDispatchClaim(deferredTask);
+
+        if (earlyWait == 0)
+        {
+            retirementWait &= fixture.Reap(deferredChild);
+        }
+        fixture.logic->scheduler->ReapExitedProcesses();
+    }
+
     const uint64_t realtimeChild = lifecycle_clone(fixture, number, 0, 0, 34);
     bool supportedExitSignal = expect(static_cast<int64_t>(realtimeChild) > 0, "RT child-exit notification reserves bounded queue capacity");
     if (supportedExitSignal)
@@ -396,7 +425,7 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
     // initramfs so cwd sharing is exercised without requiring a writable mount.
     vfs_path_t directoryPath = {};
 
-    bool passed = supportedExitSignal && expect(files->ResolvePath({}, directory, &directoryPath) && directoryPath.dentry != nullptr && directoryPath.dentry->inode != nullptr && directoryPath.dentry->inode->type == INODE_DIRECTORY, "clone matrix directory exists in initramfs");
+    bool passed = retirementWait && supportedExitSignal && expect(files->ResolvePath({}, directory, &directoryPath) && directoryPath.dentry != nullptr && directoryPath.dentry->inode != nullptr && directoryPath.dentry->inode->type == INODE_DIRECTORY, "clone matrix directory exists in initramfs");
 
     uint8_t originalCode[64] = {};
 

@@ -132,7 +132,7 @@ struct process_t
     int32_t                terminationSignal;
     bool                   waitable;
     bool                   waitConsumed;
-    bool                   exitNotified;
+    bool                   exitNotified; // Published after task and process resources retire; gates wait.
     bool                   stopped;
     bool                   stopPending;
     bool                   continuedPending;

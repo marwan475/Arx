@@ -696,7 +696,8 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
 
                 matching = true;
                 uint64_t unclaimed = 0;
-                const bool exited = __atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && !Resources->taskManager->HasRunningTasks(child) && (!waitid || (options & EXITED) != 0);
+                const bool exited = __atomic_load_n(&child->exited, __ATOMIC_ACQUIRE) && __atomic_load_n(&child->exitNotified, __ATOMIC_ACQUIRE) &&
+                                    !Resources->taskManager->HasRunningTasks(child) && (!waitid || (options & EXITED) != 0);
                 const bool stopped = !child->exited && child->stopPending && (options & 2) != 0;
                 const bool continued = !child->exited && child->continuedPending && (options & 8) != 0;
 

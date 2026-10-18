@@ -25,8 +25,13 @@ signal frames, executable instruction bytes, and page permissions. Shared tests
 keep resource ownership, policy assertions, and cleanup. The bundled
 `boot/limine.h` retains its upstream architecture conditionals.
 
+Initialization belongs in each target's `arch_init.c`; runtime operations and
+capability helpers belong in `arch_helper.c` or their existing specialized modules
+such as paging, syscalls, and signals.
+
 The implementations differ by target. AArch64 support is incomplete: its
-`arch_init.c` currently reports initialization and task switching as unsupported.
+`arch_init.c` reports initialization as unsupported, and its runtime task-switching
+stubs live in `arch_helper.c`.
 
 ## 2. Platform: prepare the machine
 

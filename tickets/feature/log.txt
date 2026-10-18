@@ -8,3 +8,4 @@ document_logic_layer.md
 document_request_layer.md
 document_resource_layer.md
 document_self_tests.md
+plan_gdb_extension_tickets.md

@@ -98,8 +98,8 @@ Owner requested work on all three debug tickets. Read TICKET.MD and the required
 and reviewed `update-kernel-docs`. Read kernel.cpp and relevant architecture,
 layer, platform and self-test guides. Priority remains P2.
 
-See [shared diagnosis, inventories, bounded batches, and verification plan](../analysis/readability_inventory.md).
-Reusable discovery commands are in [readability_audit.py](../analysis/readability_audit.py).
+See [shared diagnosis, inventories, bounded batches, and verification plan](improve_dense_kernel_code_spacing.md#readability-audit-inventory).
+Archived discovery script source is in [readability_audit.py](improve_dense_kernel_code_spacing.md#archived-readability-audit-script).
 This phase changes ticket records and analysis tooling only. Execution awaits
 the owner's explicit instruction after review, as required by TICKET.MD.
 
@@ -127,7 +127,7 @@ under /tmp/arx-readability-baseline and subsequent phase snapshots.
 ### 2026-10-18 — Ready for owner review
 
 Implemented the recorded scope and completed verification. See the shared
-[execution results](../analysis/readability_inventory.md#2026-10-18--execution-results-and-review)
+[execution results](improve_dense_kernel_code_spacing.md#2026-10-18--execution-results-and-review)
 for build commands, source-preservation checks, reviewed exclusions and evidence.
 All acceptance criteria below are satisfied; no implementation TODOs remain.
 
@@ -154,3 +154,9 @@ Owner confirmed “yes close” in response to the proposal to close all three
 tickets in tickets/closed/. Added explicit braced bodies at all 50 audited sites and verified that branch associations, loop coverage and declaration lifetimes are preserved. Required source-preservation checks,
 diff checks and debug/release kernel builds for x86_64 and AArch64 passed,
 as recorded above.
+
+### 2026-10-18 — Evidence reference cleanup
+
+Shared analysis references were consolidated into their owning tickets before
+removing `tickets/analysis/`. Current links point to the archived evidence; ticket
+scope, implementation authorization and verification requirements are preserved.

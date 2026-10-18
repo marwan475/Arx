@@ -100,7 +100,7 @@ so skills describe available behavior and label planned capabilities accurately.
 - [Current documentation](../../docs)
 - [Project structure documentation ticket](../closed/document_project_structure.md)
 - [Self-test documentation ticket](../closed/document_self_tests.md)
-- [GDB-extension investigation and ticket creation](plan_gdb_extension_tickets.md)
+- [Debug-framework design and ticket creation](../closed/plan_gdb_extension_tickets.md)
 
 Inspect the current instruction/skill locations and available skill catalog during
 analysis; their presence, layout, and tooling support must be verified then.
@@ -122,3 +122,12 @@ analysis; their presence, layout, and tooling support must be verified then.
 Assigned P2 as planned investigation and backlog creation for Arx agent skills.
 QEMU/GDB debugging and working with or adding self-tests are the owner's initial
 examples. Analysis and execution have not started.
+
+### 2026-10-18 — Debug authoring skill coordination
+
+The owner-approved debug framework backlog created
+[a stats/view-authoring skill ticket](create_debug_framework_authoring_skill.md).
+It covers manager-owned tracked records, rich-view adapters and post-investigation
+follow-up opportunities. Reuse/link that ticket instead of proposing a duplicate
+authoring skill here. This ticket's QEMU/GDB usage and self-test skill candidates
+remain distinct and open; this coordination update does not start their analysis.

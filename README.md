@@ -6,7 +6,11 @@ Targets:
 - x86_64 (currently supported)
 - aarch64 (experimental)
 
+Goal of this project is to explore Kernel design and large scale software managment/maintance
+
+
 ![Arx](docs/imgs/Arx_Arch.png)
+
 
 ## Documentation
 
@@ -17,6 +21,7 @@ Targets:
 - [Request layer](docs/architecture/layers/Request.md)
 - [Resource layer](docs/architecture/layers/Resource.md)
 - [Logic layer](docs/architecture/layers/Logic.md)
+- [Kernel self-tests](docs/architecture/selftests/SelfTests.md)
 
 ## Third Party
 

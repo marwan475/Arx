@@ -38,6 +38,26 @@ creating, analyzing, executing, updating, closing, or reopening a ticket.
 
 Normal lifecycle: `open → analyzed → in progress → closed`.
 
+## Ticket log
+
+Maintain [TICKET_LOG.md](TICKET_LOG.md) whenever creating, analyzing, executing,
+updating, moving, closing, or reopening a ticket. Before handing off, make sure
+every ticket appears exactly once with its current priority, title, type, status,
+and a working link to its current file. Ticket files are the source of truth.
+
+Use the Feature, Debug, In progress, and Closed sections. Feature and Debug list
+tickets in their respective directories; In progress lists tickets stored in
+`tickets/in_progress/`, including those paused for a revised plan; Closed lists
+closed tickets at their owner-approved destinations. Move the existing row when
+a ticket changes sections and update its link after moving the file. Show `None.`
+when a section is empty.
+
+Sort each section by priority from P0 through P3, then alphabetically by ticket
+filename within the same priority. Update the row and ordering when metadata
+changes. This current index supplements the dated work logs inside tickets and
+the filename-only closure histories in `log.txt`; keep those histories as required
+below.
+
 ## 1. Creating a ticket
 
 1. Choose the feature or debug directory and a unique filename.
@@ -54,6 +74,10 @@ Normal lifecycle: `open → analyzed → in progress → closed`.
    or implementation. Analysis begins when requested.
 
 ## 2. Working on a ticket
+
+Before analyzing, executing, or resuming a ticket, check [`docs/skills/`](../docs/skills/)
+for repository skills. Read and follow each applicable skill's `SKILL.md` alongside
+the ticket's required skill.
 
 ### Analyze first
 

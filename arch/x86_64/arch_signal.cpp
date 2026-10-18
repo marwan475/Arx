@@ -1,4 +1,4 @@
-#include "layers/Logic/SignalManager.hpp"
+#include <klib/signal_types.h>
 
 #include <arch/arch.h>
 #include <kernel/platform/memory/vmm.h>

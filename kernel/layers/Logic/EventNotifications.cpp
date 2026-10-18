@@ -1,4 +1,5 @@
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
@@ -168,7 +169,7 @@ uint64_t EventManager::InstallNotification(event_notification_t* notification, c
     {
         FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
         process_t*          process = Resources->processManager->GetCurrentProcess();
-        fd                          = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+        fd                          = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
     }
     if (fd < 0)
     {

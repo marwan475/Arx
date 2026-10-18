@@ -352,7 +352,7 @@ uint64_t SocketManager::Install(file_t* file, uint32_t flags)
 {
     FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
     process_t*          process = Resources->processManager->GetCurrentProcess();
-    return process != nullptr ? (uint64_t) Resources->processManager->AddFileDescriptor(process, file, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : LINUX_ESRCH;
+    return process != nullptr ? (uint64_t) Resources->processManager->AddFileDescriptor(process, file, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : LINUX_ESRCH;
 }
 
 void SocketManager::RecordReadinessLocked()
@@ -524,7 +524,7 @@ uint64_t SocketManager::ParseControl(const socket_message_t* header, socket_anci
                         result = LINUX_EBADF;
                         break;
                     }
-                    if (descriptor->release != VirtualFileSystem::ReleaseFileHandle)
+                    if (descriptor->operations != dispatcher_vfs_file_operations())
                     {
                         result = LINUX_EOPNOTSUPP;
                         break;
@@ -1812,7 +1812,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                             for (size_t i = 0; i < limit; ++i)
                             {
                                 file_t*       received   = packet->control->files[i];
-                                const int64_t descriptor = Resources->processManager->AddFileDescriptor(process, received, flags & MSG_CMSG_CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle);
+                                const int64_t descriptor = Resources->processManager->AddFileDescriptor(process, received, flags & MSG_CMSG_CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations());
                                 if (descriptor < 0)
                                 {
                                     if (descriptor != (int64_t) LINUX_EMFILE)

@@ -1,4 +1,5 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
+#include "layers/DispatcherRoutes.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -580,6 +581,8 @@ static void vfs_resource_backing_release(void* context)
     kfree(context);
 }
 
+static const dispatcher_backing_operations_t ResourceBackingOperations(vfs_resource_writeback, vfs_resource_backing_release);
+
 static int64_t vfs_resource_backing(file_t* file, VirtualMemoryManager* memory, uint32_t, bool, virt_backing_object_t** result, uint32_t*)
 {
     if (file->inode->backing != nullptr)
@@ -609,7 +612,7 @@ static int64_t vfs_resource_backing(file_t* file, VirtualMemoryManager* memory, 
 
     *context                = *backend;
     object->context         = context;
-    object->release_context = vfs_resource_backing_release;
+    object->operations      = &ResourceBackingOperations;
 
     for (uint64_t offset = 0; offset < object->size; offset += PAGE_SIZE)
     {
@@ -625,7 +628,6 @@ static int64_t vfs_resource_backing(file_t* file, VirtualMemoryManager* memory, 
         }
     }
 
-    object->write        = vfs_resource_writeback;
     file->inode->backing = object; // Inode owns the cache independently of open files.
     *result              = object;
 
@@ -3333,7 +3335,7 @@ int64_t VirtualFileSystem::AcquireMappingBacking(file_t* file, uint64_t offset, 
         status = -13;
     }
 
-    if (status == 0 && (candidate == nullptr || !candidate->file || candidate->size != file->inode->size || (shared && (maximum & 2) != 0 && !candidate->volatile_storage && candidate->write == nullptr)))
+    if (status == 0 && (candidate == nullptr || !candidate->file || candidate->size != file->inode->size || (shared && (maximum & 2) != 0 && !candidate->volatile_storage && !dispatcher_backing_can_write(candidate->operations))))
     {
         status = -95;
     }

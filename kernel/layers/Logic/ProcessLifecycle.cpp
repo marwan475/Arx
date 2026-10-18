@@ -3,6 +3,7 @@
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/SynchronizationManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -62,11 +63,6 @@ static void close_descriptors(process_t* process, VirtualFileSystem* files, bool
             (void) files->Close(file);
         }
     }
-}
-
-static bool retain_clone_file(void* context, file_handle_t handle)
-{
-    return static_cast<VirtualFileSystem*>(context)->Retain(static_cast<file_t*>(handle));
 }
 
 struct ExecResources
@@ -266,7 +262,7 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
     }
     else
     {
-        table = processes->CopyDescriptorTable(table, Logic->virtualFileSystem, retain_clone_file);
+        table = processes->CopyDescriptorTable(table);
     }
 
     if ((flags & CLONE_FS) != 0)
@@ -1269,7 +1265,7 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     }
 
     ExecResources replacement;
-    replacement.table        = processes->CopyDescriptorTable(current->Files(), files, retain_clone_file);
+    replacement.table        = processes->CopyDescriptorTable(current->Files());
     replacement.filesystem   = processes->CopyFilesystemContext(current->Fs());
     replacement.dispositions = processes->CopySignalDispositions(current->signalDispositions);
 

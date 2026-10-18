@@ -19,7 +19,8 @@ they are absent. It constructs components in this order:
 1. Scheduler, VirtualFileSystem, ElfMapper, and CredentialManager.
 2. EventManager, using Scheduler and VFS; register it with both consumers.
 3. SynchronizationManager, using Scheduler; register it as Scheduler's priority
-   manager. Its constructor also installs TaskManager's priority-cleanup hook.
+   manager. Its constructor also installs an opaque Dispatcher priority-cleanup
+   route in TaskManager.
 4. SignalManager, then ProcessController with both Resource and Logic capabilities.
 5. SocketManager, then InterProcessCommunicationManager, each using VFS, Event,
    and Signal services.
@@ -377,7 +378,7 @@ provide a live-kernel shutdown protocol.
 | `file_t` | Reference-counted open file; retained users release it through VFS close. |
 | `inode_t`, `dentry_t`, `mount_t` | VFS namespace/backing objects with lifetimes distinct from an open descriptor. |
 | `elf_metadata_t` | Parsed image metadata, separate from the backing retained by mapped segments. |
-| `signal_action_t`, `signal_stack_t` | Signal disposition and alternate-stack records; saved machine context remains architecture-specific. |
+| `signal_action_t`, `signal_stack_t` | Shared records defined in signal_types.h; Resource's SignalState.hpp owns queue storage, and saved machine context remains architecture-specific. |
 
 Descriptor entries hold file references. Readiness registrations are weak
 observers detached during final close, rather than owners of the file. Memory
@@ -400,8 +401,12 @@ CredentialManager; VFS and lifecycle code also enforce operation-specific rules.
 EventManager ties readiness changes to Scheduler waits and wakeups. SignalManager
 uses Scheduler to wake or stop affected tasks and architecture hooks to prepare
 or restore user signal frames. SynchronizationManager coordinates futex state and
-priority donation with Scheduler, and installs task cleanup callbacks for robust
-lists and child-TID state.
+priority donation with Scheduler, and supplies immutable Dispatcher cleanup
+routes for priority state, robust lists, and child-TID state. TaskManager holds
+opaque handles to these routes; only Dispatcher invokes the Logic providers.
+Descriptor tables likewise use Dispatcher file-operation routes for VFS retain
+and final close. VFS backing providers are entered from platform through
+Dispatcher and MemoryRequestManager, preserving failed-writeback retry.
 
 Components may also call Resource directly. Request.md describes syscall decoding;
 the component sections above describe the callable Logic interfaces.

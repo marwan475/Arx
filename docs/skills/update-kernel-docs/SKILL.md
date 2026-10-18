@@ -1,11 +1,13 @@
 ---
 name: update-kernel-docs
-description: When explicitly invoked by the owner, keep existing Arx documentation current after implementation changes or refresh a guide. Make only important, concise updates in the existing structure and style. Use write-kernel-docs for a new guide.
+description: Keep existing Arx documentation current after implementation changes through add-arx-code, or when explicitly invoked by the owner to refresh a guide. Make important, concise updates in the existing structure and style. Use write-kernel-docs for a new guide.
 ---
 
 # Update existing kernel documentation
 
-Use this skill only when explicitly invoked by the owner.
+Use this skill when explicitly invoked by the owner or as the documentation
+completion step required by [add-arx-code](../add-arx-code/SKILL.md). The owner
+has authorized relevant documentation maintenance as part of that code workflow.
 
 After implementation and required checks are finished, review the affected docs
 before the final handoff. Document the resulting feature or behavior where readers

@@ -44,7 +44,7 @@ void test_memory_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
             return;
         }
 
-        const int64_t fd = r->processManager->AddFileDescriptor(f.Process, file, 0, VirtualFileSystem::ReleaseFileHandle);
+        const int64_t fd = r->processManager->AddFileDescriptor(f.Process, file, 0, dispatcher_vfs_file_operations());
 
         if (!t.Check(fd >= 0, "install mapping descriptor"))
         {

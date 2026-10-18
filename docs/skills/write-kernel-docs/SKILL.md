@@ -9,8 +9,9 @@ Write for humans learning the implementation. Explain responsibilities, boundari
 and actual behavior in concise prose. The owner's current instructions override
 these project defaults.
 
-For concise maintenance of an existing guide after code changes, the owner can explicitly invoke
-[update-kernel-docs](../update-kernel-docs/SKILL.md).
+For concise maintenance of an existing guide after code changes, use
+[update-kernel-docs](../update-kernel-docs/SKILL.md) when the owner invokes it or
+when required by the `add-arx-code` completion workflow.
 
 ## Agree the scope
 

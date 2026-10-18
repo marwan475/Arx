@@ -449,7 +449,7 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
         return false;
     }
 
-    if (shared && (maximumProtection & 2) != 0 && !object->volatile_storage && object->write == nullptr)
+    if (shared && (maximumProtection & 2) != 0 && !object->volatile_storage && !dispatcher_backing_can_write(object->operations))
     {
         return false;
     }

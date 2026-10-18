@@ -1,6 +1,6 @@
 ---
 name: add-arx-code
-description: Follow Arx implementation rules when adding features, fixing bugs, or refactoring first-party code, covering layer dependencies, architecture helpers, readable formatting, and documentation impact.
+description: Follow Arx implementation rules when adding features, fixing bugs, or refactoring first-party code, covering layer dependencies, architecture helpers, readable formatting, and relevant documentation updates.
 ---
 
 # Add or change Arx code
@@ -19,14 +19,28 @@ Use them to establish responsibilities, interfaces, and dependency boundaries,
 then check the relevant implementation for current behavior. If no focused guide
 exists, use the closest documented section and inspect the affected interfaces.
 
-## Keep layer dependencies downward
+## Route necessary upward access through Dispatcher
 
 Within the layer stack, Request is above Logic, and Logic is above Resource.
 An upper layer may access any lower layer: Request may use both Logic and
 Resource directly. Passing through every intermediate layer is not required.
-Lower layers must not access or depend on layers above them. Keep dependencies
-downward through the implementation and its interfaces; introducing a callback
-or indirection does not make an upward dependency acceptable.
+Use downward dependencies for ordinary layer work. When a lower layer necessarily
+needs an upper-layer operation, it MUST go through Dispatcher. Dispatcher owns
+the lookup and invocation of the upper-layer manager; the lower layer uses a
+Dispatcher-facing interface instead of directly including or calling that
+manager. Explain why the upward operation is needed at the bridge contract.
+
+Direct calls, stored callbacks, or other indirection that invoke an upper layer
+without passing through Dispatcher violate this rule. A Dispatcher bridge must
+own the routing, rather than return an upper-layer manager for the lower layer
+to call. Keep shared data definitions in a common header that their consumers
+can include without depending on an upper-layer manager header.
+
+Platform and Klib are outside this layer-stack rule. They may interface with the
+stack through Dispatcher, which routes those incoming requests into Request.
+Necessary upward access from Resource or Logic may also use Dispatcher. For
+example, Resource's scheduling-accounting bridge may route through Dispatcher
+to Logic's Scheduler; this is permitted by the rule.
 
 ## Put architecture-specific operations behind arch.h
 
@@ -95,19 +109,24 @@ obvious steps.
 Before handing off, read every added or changed block against `kernel.cpp` and
 expand any code that remains difficult to follow.
 
-## Identify documentation impact
+## Update the affected documentation
 
-Review the relevant existing guides for claims affected by the change. Report
-which descriptions of behavior, interfaces, support, or architecture need an
-update, or state that no documentation impact was found.
+After implementation and its required checks, use
+[update-kernel-docs](../update-kernel-docs/SKILL.md) to review and update every
+relevant existing guide before reporting the change complete. This is the owner's
+standing instruction for code work using this skill; another request to update
+documentation is not required.
 
-Edit documentation only when explicitly instructed by the owner. When the owner
-invokes [update-kernel-docs](../update-kernel-docs/SKILL.md), follow that skill for
-concise maintenance of the affected guides.
+Correct descriptions of behavior, interfaces, support, architecture, and diagrams
+that the implementation makes inaccurate. Keep updates concise and in the existing
+structure. When the review finds no meaningful documentation change, report that
+finding instead of adding prose merely to record the work.
 
 ## Check the final change
 
-Review the diff for downward layer dependencies, use of architecture helpers,
+Review the diff for ordinary downward dependencies and necessary upward access
+routed through Dispatcher, use of architecture helpers,
 and compliance with `kernel.cpp` formatting. Correct violations before reporting
-the implementation complete, and include the documentation-impact finding in
-the handoff.
+the implementation complete. Finish relevant documentation updates using
+`update-kernel-docs`, and identify the guides updated or the finding that no
+meaningful documentation change was needed in the handoff.

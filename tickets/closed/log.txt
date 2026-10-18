@@ -7,3 +7,5 @@ document_logic_layer.md
 document_logic_layer.md
 document_request_layer.md
 document_resource_layer.md
+fix_resource_signal_type_dependency.md
+fix_resource_upward_runtime_calls.md

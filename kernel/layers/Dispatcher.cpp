@@ -1,4 +1,6 @@
 #include "layers/Dispatcher.hpp"
+#include "layers/DispatcherRoutes.hpp"
+#include "layers/Logic/VirtualFileSystem.hpp"
 
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
@@ -58,20 +60,7 @@ extern "C" uint64_t dispatcher_signal_return(arch_syscall_frame_t* frame, uint64
     Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
 
-    if (logic == nullptr || logic->signalManager == nullptr)
-    {
-        return result;
-    }
-
-    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0) || frame->syscall_number == SYSCALL_read || frame->syscall_number == SYSCALL_write || frame->syscall_number == SYSCALL_readv || frame->syscall_number == SYSCALL_writev || frame->syscall_number == SYSCALL_accept
-                             || frame->syscall_number == SYSCALL_accept4 || frame->syscall_number == SYSCALL_connect || frame->syscall_number == SYSCALL_recvfrom || frame->syscall_number == SYSCALL_recvmsg || frame->syscall_number == SYSCALL_sendto || frame->syscall_number == SYSCALL_sendmsg;
-    if (logic->scheduler != nullptr)
-    {
-        logic->scheduler->AccountCurrent(false);
-        logic->scheduler->ServicePendingReschedule(true);
-    }
-
-    return logic->signalManager->Deliver(frame, result, restartable);
+    return SignalRequestManager::HandleSignalReturn(logic, frame, result);
 }
 
 extern "C" void dispatcher_account_mode(bool userMode)
@@ -79,20 +68,12 @@ extern "C" void dispatcher_account_mode(bool userMode)
     Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
 
-    if (logic != nullptr && logic->scheduler != nullptr)
-    {
-        logic->scheduler->AccountCurrent(userMode);
-    }
+    SchedulerRequestManager::HandleAccountMode(logic, userMode);
 }
 
 extern "C" void dispatcher_account_minor_fault(virt_addr_space_t* space)
 {
-    task_t* task = TaskManager::GetActiveTask();
-
-    if (task != nullptr && task->process != nullptr && task->process->addressSpace == space)
-    {
-        __atomic_fetch_add(&task->process->minorFaults, 1ULL, __ATOMIC_RELAXED);
-    }
+    MemoryRequestManager::HandleMinorFault(space);
 }
 
 uint64_t Dispatcher::DispatchSyscall(const arch_syscall_frame_t* frame) const
@@ -530,59 +511,104 @@ extern "C" void dispatcher_handle_interrupt_request(uint64_t interrupt_number)
     dispatcher->DispatchInterruptRequest(interrupt_number);
 }
 
-// C bridge for klib: resolve the current process here, keeping process ownership
-// out of VirtualMemoryManager and keeping C++ classes out of klib.c.
+// Klib enters through Request; the handler pins current process memory without
+// exposing manager classes to the C caller.
 extern "C" bool begin_user_memory(user_memory_access_t* access)
 {
-    if (access == nullptr)
-    {
-        return false;
-    }
-
-    *access = {};
-    cpu_preemption_disable();
     Dispatcher*        dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     ResourceLayerCaps* caps       = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
-    ProcessManager*    manager    = caps != nullptr ? caps->processManager : nullptr;
-    process_t*         process    = manager != nullptr ? manager->AcquireCurrentMemoryProcess(false) : nullptr;
 
-    if (process == nullptr)
-    {
-        cpu_preemption_enable();
-        return false;
-    }
-
-    spinlock_acquire(&process->addressSpace->operation_lock);
-    access->process_manager = manager;
-    access->process         = process;
-    access->space           = process->addressSpace;
-    return true;
+    return MemoryRequestManager::BeginUserMemory(caps, access);
 }
 
 extern "C" void end_user_memory(user_memory_access_t* access)
 {
-    spinlock_release(&access->space->operation_lock);
-    static_cast<ProcessManager*>(access->process_manager)->ReleaseMemoryProcess(access->process);
-    *access = {};
-    cpu_preemption_enable();
+    MemoryRequestManager::EndUserMemory(access);
 }
 
 extern "C" void dispatcher_service_pending_reschedule(void)
 {
-    auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
-    if (logic != nullptr && logic->scheduler != nullptr)
-    {
-        logic->scheduler->ServicePendingReschedule();
-    }
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    SchedulerRequestManager::HandlePendingReschedule(logic);
 }
 
 extern "C" void dispatcher_account_scheduling(bool beginExecution)
 {
     auto dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    auto logic = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+    auto logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
     if (logic != nullptr && logic->scheduler != nullptr)
     {
         logic->scheduler->AccountSchedulingCurrent(beginExecution);
     }
+}
+
+namespace
+{
+bool retain_vfs_file(void*, void* handle)
+{
+    Dispatcher*     dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    LogicLayerCaps* logic      = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    if (logic == nullptr || logic->virtualFileSystem == nullptr)
+    {
+        return false;
+    }
+
+    return logic->virtualFileSystem->Retain(static_cast<file_t*>(handle));
+}
+
+void release_vfs_file(void*, void* handle)
+{
+    VirtualFileSystem::ReleaseFileHandle(handle);
+}
+
+const dispatcher_file_operations_t VfsFileOperations(nullptr, retain_vfs_file, release_vfs_file);
+} // namespace
+
+extern "C" void dispatcher_cleanup_task(const dispatcher_task_cleanup_t* route, task_t* task)
+{
+    if (route != nullptr && route->Cleanup != nullptr && task != nullptr)
+    {
+        route->Cleanup(route->Context, task);
+    }
+}
+
+extern "C" const dispatcher_file_operations_t* dispatcher_vfs_file_operations(void)
+{
+    return &VfsFileOperations;
+}
+
+extern "C" bool dispatcher_retain_file(const dispatcher_file_operations_t* route, void* file)
+{
+    if (route == nullptr || route->Retain == nullptr || route->Release == nullptr || file == nullptr)
+    {
+        return false;
+    }
+
+    return route->Retain(route->Context, file);
+}
+
+extern "C" void dispatcher_release_file(const dispatcher_file_operations_t* route, void* file)
+{
+    if (route != nullptr && route->Release != nullptr && file != nullptr)
+    {
+        route->Release(route->Context, file);
+    }
+}
+
+extern "C" bool dispatcher_backing_can_write(const dispatcher_backing_operations_t* route)
+{
+    return route != nullptr && route->Write != nullptr;
+}
+
+extern "C" int64_t dispatcher_write_backing(const dispatcher_backing_operations_t* route, void* context, uint64_t offset, const void* bytes, uint64_t size)
+{
+    return MemoryRequestManager::HandleBackingWrite(route, context, offset, bytes, size);
+}
+
+extern "C" void dispatcher_release_backing_context(const dispatcher_backing_operations_t* route, void* context)
+{
+    MemoryRequestManager::HandleBackingRelease(route, context);
 }

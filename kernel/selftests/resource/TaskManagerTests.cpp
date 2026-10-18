@@ -1,3 +1,5 @@
+#include "layers/DispatcherRoutes.hpp"
+
 #include <selftests/ManagerSuite.hpp>
 #include <selftests/TestFixture.hpp>
 
@@ -170,11 +172,12 @@ void test_TaskManager(ResourceLayerCaps* resources)
             return;
         }
         unsigned calls = 0;
-        task->retirementContext = &calls;
-        task->retirementCleanup = [](void* context, task_t*)
+        const dispatcher_task_cleanup_t route(&calls, [](void* context, task_t*)
         {
             ++*static_cast<unsigned*>(context);
-        };
+        });
+
+        task->retirementCleanup = &route;
         m->MarkDying(task);
         t.Check(m->CleanupRetiredTask(task), "cleanup outside scheduler lock");
         t.Check(task->priorityCleanupDone, "priority retirement completed before freeing");

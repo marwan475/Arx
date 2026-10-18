@@ -427,7 +427,8 @@ the saved frame through their collaborators; it is not an immutable snapshot.
 ## 5. User memory and synchronization
 
 Klib supplies `safe_read_user`, `safe_write_user`, and `safe_read_user_string` in
-`klib.c`. They acquire a current-process memory context through Dispatcher, check
+`klib.c`. They acquire a current-process memory context through Dispatcher and
+MemoryRequestManager's stateless kernel-service entry, check
 the canonical user range and page permissions, and copy through physical-page
 aliases. Writable copy-on-write pages are resolved as part of validation.
 The string helper requires a terminator within the supplied capacity.
@@ -446,6 +447,14 @@ disables preemption for its scope. Task lookups can use retained dispatch claims
 which must be released after use. Other synchronization belongs to the relevant
 Logic or Resource manager. Blocking operations must obey those services' calling
 constraints and cannot be treated as interrupt-safe entry points.
+
+Kernel-service ingress also uses typed Request entry methods without fabricating
+a syscall frame. MemoryRequestManager handles user-memory begin/end, minor-fault
+accounting, and routed backing write/release; SchedulerRequestManager handles
+mode accounting and pending reschedules; SignalRequestManager handles signal
+delivery on user return. These methods do not require factory-created Request
+instances, so Resource tests retain their early-boot access. A service needing
+Logic still checks that its published capabilities are available.
 
 ## 6. Interrupt requests
 

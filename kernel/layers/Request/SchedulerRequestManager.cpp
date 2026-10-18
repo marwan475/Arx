@@ -215,3 +215,20 @@ uint64_t SchedulerRequestManager::HandleSetpriorityRequest(const arch_syscall_fr
     const int32_t nice = requested < -20 ? -20 : requested > 19 ? 19 : requested;
     return LogicCaps->scheduler->UserPriority(frame->arg0, frame->arg1, true, nice);
 }
+
+void SchedulerRequestManager::HandleAccountMode(LogicLayerCaps* logic, bool userMode)
+{
+
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(userMode);
+    }
+}
+
+void SchedulerRequestManager::HandlePendingReschedule(LogicLayerCaps* logic)
+{
+    if (logic != nullptr && logic->scheduler != nullptr)
+    {
+        logic->scheduler->ServicePendingReschedule();
+    }
+}

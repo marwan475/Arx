@@ -290,7 +290,7 @@ uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
     {
         FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
         process_t*          process = Resources->processManager->GetCurrentProcess();
-        descriptor                  = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, (flags & CLOEXEC) ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+        descriptor                  = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, (flags & CLOEXEC) ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
     }
 
     if (descriptor < 0)
@@ -568,7 +568,7 @@ uint64_t EventManager::CreateEpoll(uint32_t flags)
     {
         process_t*          process = Resources->processManager->GetCurrentProcess();
         FileDescriptorGuard guard(process);
-        descriptor = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, (flags & CLOEXEC) ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+        descriptor = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, (flags & CLOEXEC) ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
     }
 
     if (descriptor < 0)

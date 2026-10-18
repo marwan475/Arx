@@ -1,4 +1,5 @@
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SignalManager.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SynchronizationManager.hpp"

@@ -51,7 +51,7 @@ which also touches vendor files and cannot supply logical blank-line grouping.
 Coordinate overlapping files with
 [brace insertion](expand_unbraced_first_party_control_flow.md),
 [lambda expansion](expand_compressed_selftest_lambdas.md), and the
-[runtime layering migration](fix_resource_upward_runtime_calls.md).
+[runtime layering migration](../closed/fix_resource_upward_runtime_calls.md).
 
 ## Acceptance criteria
 

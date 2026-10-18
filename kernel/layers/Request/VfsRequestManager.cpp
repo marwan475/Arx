@@ -570,7 +570,7 @@ static uint64_t duplicate_from_fd(ProcessManager* processManager, VirtualFileSys
         return LINUX_EIO;
     }
 
-    const int64_t fd = processManager->AddFileDescriptorFrom(process, descriptor->file, flags, minFd, descriptor->release);
+    const int64_t fd = processManager->AddFileDescriptorFrom(process, descriptor->file, flags, minFd, descriptor->operations);
 
     if (fd < 0)
     {
@@ -620,7 +620,7 @@ static uint64_t duplicate_to_fd(ProcessManager* processManager, VirtualFileSyste
 
     currentProcess->Files()->entries[newFd].file    = currentProcess->Files()->entries[oldFd].file;
     currentProcess->Files()->entries[newFd].flags   = newFlags;
-    currentProcess->Files()->entries[newFd].release = currentProcess->Files()->entries[oldFd].release;
+    currentProcess->Files()->entries[newFd].operations = currentProcess->Files()->entries[oldFd].operations;
     return newFd;
 }
 
@@ -686,7 +686,7 @@ uint64_t VfsRequestManager::HandleOpenatRequest(const arch_syscall_frame_t* fram
         return (uint64_t) openError;
     }
 
-    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), frame->arg2 & LINUX_O_CLOEXEC ? FD_FLAG_CLOEXEC : FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
+    int64_t fd = ResourceCaps->processManager->AddFileDescriptor(currentProcess, static_cast<file_handle_t>(file), frame->arg2 & LINUX_O_CLOEXEC ? FD_FLAG_CLOEXEC : FD_FLAG_NONE, dispatcher_vfs_file_operations());
 
     if (fd < 0)
     {

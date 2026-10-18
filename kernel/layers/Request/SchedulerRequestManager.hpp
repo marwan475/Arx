@@ -11,6 +11,9 @@ class SchedulerRequestManager
 public:
     SchedulerRequestManager(ResourceLayerCaps* resourceLayerCaps, LogicLayerCaps* logicLayerCaps);
 
+    static void HandleAccountMode(LogicLayerCaps* logic, bool userMode);
+    static void HandlePendingReschedule(LogicLayerCaps* logic);
+
     uint64_t HandleSchedulingPolicyRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleSched_yieldRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleSched_getaffinityRequest(const arch_syscall_frame_t* frame);

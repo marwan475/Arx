@@ -183,14 +183,53 @@ Reaching kernel startup alone does not mean all tests have finished.
 Arrows show the main service dependencies. Klib is available to every kernel area.
 
 Higher layers may access any lower layer. Request may use both Logic and Resource;
-Logic may use Resource. Lower layers must not depend on layers above them. Managers
-within the same layer can collaborate, and all kernel areas may use Klib.
+Logic may use Resource. Ordinary dependencies point downward. Necessary upward
+operations must pass through Dispatcher; lower layers must not directly call
+upper managers or invoke their callbacks. Managers within the same layer can
+collaborate, and all kernel areas may use Klib.
 
 Platform owns the hardware interface, with machine-specific operations implemented
 in Arch. Some managers call Arch directly, such as TaskManager for context
 switching and TimeManager for clock readings.
 
-These are design boundaries, not enforced isolation. The implementation also uses
-Dispatcher bridges and registered callbacks for scheduling, signals, user-memory
-access, and cleanup. These allow events to reach their handlers without making
-lower layers construct or own higher-layer managers.
+### Necessary upward routes through Dispatcher
+
+Some resource mechanisms need work owned by Logic. These are explicit exceptions
+to the ordinary downward direction, mediated by Dispatcher rather than direct
+access to an upper manager.
+
+| Origin and operation | Route | Why it is needed |
+| --- | --- | --- |
+| TaskManager scheduling accounting | TaskManager → Dispatcher → Scheduler | End the outgoing execution interval and begin the incoming interval at the context-switch boundary. |
+| Task priority and retirement cleanup | TaskManager → Dispatcher → SynchronizationManager, with Scheduler policy retirement where needed | Release priority-inheritance ownership, process robust lists, clear child-TID state, and wake affected waiters before task storage is reclaimed. |
+| Descriptor-table copying and final release | ProcessManager → Dispatcher → VFS file retain/release | Each copied table needs its own open-file references; the last table owner must close those references through their Logic owner. |
+
+DispatcherBridge.h exposes opaque route handles to Resource. DispatcherRoutes.hpp
+defines the immutable provider records used by Logic and self-test fixtures;
+their callable fields are private. Resource stores the handles and calls typed
+Dispatcher operations, never the upper callbacks themselves. A route and its
+context must outlive every task, descriptor table, or pending operation that uses
+them. Shared signal records live in signal_types.h; Resource queue storage lives
+in SignalState.hpp, so using signal data does not require a Logic manager header.
+
+TaskManager keeps its existing task claims while cleanup runs outside the manager
+lock. Descriptor copies retain their source-table protection, and failed copies
+release only references already acquired. Dispatcher adds no global routing lock
+and does not make these operations safe in a new execution context.
+
+Platform and Klib are outside the layer-stack direction rule. Their entry into
+the stack goes through Dispatcher and a Request handler:
+
+| Entry | Request handler and destination |
+| --- | --- |
+| Klib user-memory begin/end | MemoryRequestManager pins and releases Resource process memory while pairing the address-space lock and preemption guard. |
+| Platform pending reschedule | SchedulerRequestManager forwards to Scheduler. |
+| Platform minor-fault accounting | MemoryRequestManager updates the active Resource process when its address space matches. |
+| Platform file-backing writeback and context release | MemoryRequestManager invokes the backing provider through its opaque route; failures retain backing for retry. |
+
+These kernel-service Request entry methods are stateless and do not require the
+full Request factory output. Resource user-copy and backing tests can therefore
+run before Logic and ordinary syscall managers are constructed. Operations that
+need Logic use its published capabilities and retain their unavailable-service
+behavior. Architecture mode-accounting and signal-return bridges likewise route
+through the corresponding Scheduler and Signal Request handlers.

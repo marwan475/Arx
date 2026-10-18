@@ -9,6 +9,8 @@ class SignalRequestManager
 {
 public:
     SignalRequestManager(ResourceLayerCaps* resources, LogicLayerCaps* logic);
+    static uint64_t HandleSignalReturn(LogicLayerCaps* logic, arch_syscall_frame_t* frame, uint64_t result);
+
     uint64_t HandleRt_sigreturnRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleRt_sigprocmaskRequest(const arch_syscall_frame_t* frame);
     uint64_t HandleRt_sigactionRequest(const arch_syscall_frame_t* frame);

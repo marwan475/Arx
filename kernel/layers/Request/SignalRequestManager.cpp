@@ -2,6 +2,7 @@
 
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/SignalManager.hpp"
+#include "layers/Logic/Scheduler.hpp"
 #include "layers/Request/RequestLayerFactory.hpp"
 
 #include <klib/klib.h>
@@ -207,4 +208,33 @@ uint64_t SignalRequestManager::HandleQueuedSignalRequest(const arch_syscall_fram
         return LINUX_EOPNOTSUPP;
     }
     return Logic->signalManager->Send(pid, tid, signal, &sender);
+}
+
+uint64_t SignalRequestManager::HandleSignalReturn(LogicLayerCaps* logic, arch_syscall_frame_t* frame, uint64_t result)
+{
+    if (logic == nullptr || logic->signalManager == nullptr)
+    {
+        return result;
+    }
+
+    const bool restartable = (frame->syscall_number == SYSCALL_futex && frame->arg3 == 0)
+                             || frame->syscall_number == SYSCALL_read
+                             || frame->syscall_number == SYSCALL_write
+                             || frame->syscall_number == SYSCALL_readv
+                             || frame->syscall_number == SYSCALL_writev
+                             || frame->syscall_number == SYSCALL_accept
+                             || frame->syscall_number == SYSCALL_accept4
+                             || frame->syscall_number == SYSCALL_connect
+                             || frame->syscall_number == SYSCALL_recvfrom
+                             || frame->syscall_number == SYSCALL_recvmsg
+                             || frame->syscall_number == SYSCALL_sendto
+                             || frame->syscall_number == SYSCALL_sendmsg;
+
+    if (logic->scheduler != nullptr)
+    {
+        logic->scheduler->AccountCurrent(false);
+        logic->scheduler->ServicePendingReschedule(true);
+    }
+
+    return logic->signalManager->Deliver(frame, result, restartable);
 }

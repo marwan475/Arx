@@ -67,7 +67,7 @@ int64_t vmm_flush_object(virt_backing_object_t* object)
             continue;
         }
 
-        if (object->write == NULL)
+        if (!dispatcher_backing_can_write(object->operations))
         {
             result = -95;
             break;
@@ -80,7 +80,7 @@ int64_t vmm_flush_object(virt_backing_object_t* object)
             bytes = PAGE_SIZE;
         }
 
-        int64_t written = object->write(object->context, page->offset, page->pointer, bytes);
+        int64_t written = dispatcher_write_backing(object->operations, object->context, page->offset, page->pointer, bytes);
 
         if (written != (int64_t) bytes)
         {
@@ -125,10 +125,7 @@ void vmm_put_object(virt_backing_object_t* object)
         page = next;
     }
 
-    if (object->release_context != NULL)
-    {
-        object->release_context(object->context);
-    }
+    dispatcher_release_backing_context(object->operations, object->context);
 
     kfree(object);
 }

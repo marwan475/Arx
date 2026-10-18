@@ -180,7 +180,7 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
         FileDescriptorGuard guard(process);
         for (size_t i = 0; i < 2; ++i)
         {
-            const int64_t fd = process != nullptr ? Resources->processManager->AddFileDescriptor(process, i == 0 ? reader : writer, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+            const int64_t fd = process != nullptr ? Resources->processManager->AddFileDescriptor(process, i == 0 ? reader : writer, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
             if (fd < 0)
             {
                 result = (uint64_t) fd;
@@ -578,7 +578,7 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
     file->statusFlags                       = 2;
     FileDescriptorGuard guard(Resources->processManager->GetCurrentProcess());
     process_t*          process = Resources->processManager->GetCurrentProcess();
-    const int64_t       fd      = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & 1 ? FD_FLAG_CLOEXEC : 0, VirtualFileSystem::ReleaseFileHandle) : (int64_t) LINUX_ESRCH;
+    const int64_t       fd      = process != nullptr ? Resources->processManager->AddFileDescriptor(process, file, flags & 1 ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
     if (fd < 0)
     {
         Vfs->Close(file);

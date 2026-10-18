@@ -10,14 +10,12 @@ struct boot_info;
 #error Unsupported architecture
 #endif
 
+#include <klib/signal_types.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <uacpi/status.h>
 
 struct acpi_madt;
-typedef struct signal_action_t signal_action_t;
-typedef struct signal_stack_t signal_stack_t;
-typedef struct signal_sender_t signal_sender_t;
 
 #ifndef PHYS_ADDR_T_DEFINED
 #define PHYS_ADDR_T_DEFINED

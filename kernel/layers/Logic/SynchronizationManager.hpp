@@ -1,5 +1,7 @@
 #pragma once
 
+#include "layers/DispatcherRoutes.hpp"
+
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -84,6 +86,9 @@ private:
     size_t             WakeKeyLocked(void* identity, uint64_t offset, uint32_t count, uint32_t bits, const uint64_t** notify);
     void               NotifyWaiters(const uint64_t** notify, size_t count);
     static void        CleanupRobust(void* context, task_t* task);
+    const dispatcher_task_cleanup_t PriorityCleanupRoute;
+    const dispatcher_task_cleanup_t RobustCleanupRoute;
+
     ResourceLayerCaps* Resources;
     Scheduler*         SchedulerManager;
     spinlock_t         Lock;

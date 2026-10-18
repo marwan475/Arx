@@ -9,6 +9,12 @@ needs a kernel service without depending on the C++ manager classes.
 KernelArch.md explains the overall design, and x86_64.md describes machine entry
 and return. Dispatcher is separate from the global `platform` state.
 
+DispatcherBridge.h is the manager-independent interface used by Resource and
+platform for typed operations and opaque route handles. DispatcherRoutes.hpp
+defines immutable provider records with private callable fields. Providers keep
+their routes and contexts alive until the last task, file reference, or deferred
+backing operation has finished; the gateway does not extend those lifetimes.
+
 ## 1. Construction and startup
 
 In `kernel.cpp`, `kmain` creates Dispatcher and publishes its address in
@@ -97,37 +103,48 @@ sleepers, and uses Scheduler and ProcessManager to run ready work when schedulin
 is active. Interrupt acknowledgment, machine registers, and safe preemption points
 remain the responsibility of the architecture entry code.
 
-These are the two main request routes. The service bridges below also enter
-Logic or Resource directly, without passing through a Request manager.
+These are the two main request routes. The service bridges below also support
+kernel-service Request entries and necessary Resource-to-Logic operations.
 
 ## 5. C bridges for kernel services
 
-The bridges in `Dispatcher.cpp` connect C and architecture code to existing
-managers. They are part of the actual boundary wiring, beyond the syscall switch.
+The bridges in `Dispatcher.cpp` connect C and architecture code to Request entry
+methods and mediate necessary Resource-to-Logic work. They are part of the actual
+boundary wiring, beyond the syscall switch.
 
 | Bridge | Responsibility |
 | --- | --- |
-| `dispatcher_signal_return` | Accounts kernel execution, services pending rescheduling, and asks SignalManager to deliver pending signals. |
-| `dispatcher_account_mode` | Accounts current user/kernel execution through Scheduler. |
-| `dispatcher_account_scheduling` | Marks scheduling overhead and task-execution accounting boundaries. |
-| `dispatcher_account_minor_fault` | Increments the active process's minor-fault count when the address space matches. |
-| `dispatcher_service_pending_reschedule` | Lets platform preemption code service deferred scheduling through Scheduler. |
-| `begin_user_memory`, `end_user_memory` | Establish and release a stable current-process memory-access context for Klib. |
+| `dispatcher_signal_return` | Routes to SignalRequestManager for accounting, rescheduling, and pending signal delivery. |
+| `dispatcher_account_mode` | Routes current user/kernel accounting through SchedulerRequestManager. |
+| `dispatcher_account_scheduling` | Marks scheduling overhead and task-execution accounting boundaries through Scheduler. |
+| `dispatcher_cleanup_task` | Invokes an opaque priority/retirement route while TaskManager preserves the task claim. |
+| `dispatcher_vfs_file_operations` | Returns the stable opaque VFS retain/release route, without exposing its callbacks. |
+| `dispatcher_retain_file`, `dispatcher_release_file` | Retain or release file references through their provider routes, including descriptor-copy rollback. |
+| `dispatcher_account_minor_fault` | Routes to MemoryRequestManager to charge the active process when its address space matches. |
+| `dispatcher_service_pending_reschedule` | Routes platform preemption requests through SchedulerRequestManager to Scheduler. |
+| `begin_user_memory`, `end_user_memory` | Route to MemoryRequestManager to establish and release Klib's pinned process-memory context. |
+| `dispatcher_write_backing`, `dispatcher_release_backing_context` | Route platform backing I/O and provider-context release through MemoryRequestManager. |
+| `dispatcher_backing_can_write` | Inspect a route's write capability without exposing or invoking its provider. |
 
 Signal return receives a mutable saved frame and the syscall result. Dispatcher
-identifies which interrupted operations may be restarted; SignalManager and the
-architecture signal hooks decide delivery and frame changes. When the Logic
+routes to SignalRequestManager, which identifies restartable operations;
+SignalManager and the architecture signal hooks decide delivery and frame changes. When the Logic
 capabilities or SignalManager are unavailable, the bridge returns the original
 result.
 
 The accounting and rescheduling bridges are used by architecture entry code,
 `cpu.c`, and TaskManager. VMM calls the minor-fault bridge when resolving
-copy-on-write faults. These callbacks explain how lower-level mechanisms notify
-the layer stack while keeping process policy out of those mechanisms.
+copy-on-write faults. These routes let lower-level mechanisms reach the stack
+while keeping process policy out of those mechanisms. Necessary Resource
+operations go through Dispatcher directly to their Logic providers. Platform and
+Klib entry goes through Dispatcher into typed Request handlers. The kernel-service
+handlers are stateless and retain early Resource-test availability without
+requiring construction of the full Request factory output.
 
 ## 6. User-memory access and execution constraints
 
-`begin_user_memory` disables preemption, pins the current process through
+`begin_user_memory` delegates to MemoryRequestManager, which disables
+preemption, pins the current process through
 ProcessManager, and acquires its address-space operation lock. It fills the
 `user_memory_access_t` declared in `klib.h`. Klib can then validate mappings and
 copy data while process teardown and mapping changes are excluded.

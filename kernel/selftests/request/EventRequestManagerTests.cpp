@@ -47,7 +47,7 @@ static uint64_t create_readiness_source(process_t* process, file_t** output, uns
     {
         ++*static_cast<unsigned*>(context);
     };
-    const int64_t descriptor = resources->processManager->AddFileDescriptor(process, file, 0, VirtualFileSystem::ReleaseFileHandle);
+    const int64_t descriptor = resources->processManager->AddFileDescriptor(process, file, 0, dispatcher_vfs_file_operations());
     if (descriptor < 0)
     {
         vfs->Close(file);
@@ -474,7 +474,7 @@ static bool event_with_peer(process_t* process, uint64_t fd, bool peerReads, Wai
 
             spinlock_release_preempt(&file->refLock);
 
-            int64_t shared = resources->processManager->AddFileDescriptor(peer, file, 0, VirtualFileSystem::ReleaseFileHandle);
+            int64_t shared = resources->processManager->AddFileDescriptor(peer, file, 0, dispatcher_vfs_file_operations());
 
             if (shared < 0)
             {

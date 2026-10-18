@@ -190,7 +190,6 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
     task->clearChildTid        = 0;
     task->setChildTid          = 0;
     task->robustOwner          = nullptr;
-    task->retirementContext    = nullptr;
     task->descriptorTable      = nullptr;
     task->filesystemContext    = nullptr;
     task->retirementCleanup    = nullptr;
@@ -205,10 +204,10 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 TaskManager::TaskManager()
 {
     static_assert(sizeof(TaskManager) <= 131072, "TaskManager must fit the largest heap object");
-    PriorityCleanup        = nullptr;
-    PriorityCleanupContext = nullptr;
-    ManagerLock        = 0;
-    LoadEpoch          = 0;
+    PriorityCleanup = nullptr;
+    ManagerLock     = 0;
+    LoadEpoch       = 0;
+
     memset(LoadAverages, 0, sizeof(LoadAverages));
     contextTaskManager = this;
 
@@ -396,20 +395,22 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         const bool priorityCleanup = PriorityCleanup != nullptr && !task->priorityCleanupDone;
         task->priorityCleanupDone = true;
         auto  cleanup           = task->retirementCleanup;
-        void* context           = task->retirementContext;
         task->retirementCleanup = nullptr;
         task->dying             = true;
         task->state             = task_t::DYING;
         ++task->dispatchUsers;
         UnlockManager();
+
         if (priorityCleanup)
         {
-            PriorityCleanup(PriorityCleanupContext, task);
+            dispatcher_cleanup_task(PriorityCleanup, task);
         }
+
         if (cleanup != nullptr)
         {
-            cleanup(context, task);
+            dispatcher_cleanup_task(cleanup, task);
         }
+
         LockManager();
         --task->dispatchUsers;
     }
@@ -685,18 +686,18 @@ bool TaskManager::CleanupRetiredTask(task_t* task)
     const bool priorityCleanup = PriorityCleanup != nullptr && !task->priorityCleanupDone;
     task->priorityCleanupDone = true;
     auto  cleanup           = task->retirementCleanup;
-    void* context           = task->retirementContext;
     task->retirementCleanup = nullptr;
     ++task->dispatchUsers;
     UnlockManager();
 
     if (priorityCleanup)
     {
-        PriorityCleanup(PriorityCleanupContext, task);
+        dispatcher_cleanup_task(PriorityCleanup, task);
     }
+
     if (cleanup != nullptr)
     {
-        cleanup(context, task);
+        dispatcher_cleanup_task(cleanup, task);
     }
 
     LockManager();
@@ -705,10 +706,9 @@ bool TaskManager::CleanupRetiredTask(task_t* task)
     return true;
 }
 
-void TaskManager::SetPriorityCleanup(void* context, void (*cleanup)(void*, task_t*))
+void TaskManager::SetPriorityCleanup(const dispatcher_task_cleanup_t* cleanup)
 {
-    PriorityCleanupContext = context;
-    PriorityCleanup        = cleanup;
+    PriorityCleanup = cleanup;
 }
 
 void TaskManager::CleanupCurrentTask()
@@ -719,13 +719,14 @@ void TaskManager::CleanupCurrentTask()
     if (task != nullptr && PriorityCleanup != nullptr && !task->priorityCleanupDone)
     {
         task->priorityCleanupDone = task->dying;
-        PriorityCleanup(PriorityCleanupContext, task);
+        dispatcher_cleanup_task(PriorityCleanup, task);
     }
+
     if (task != nullptr && task->retirementCleanup != nullptr)
     {
         auto cleanup            = task->retirementCleanup;
         task->retirementCleanup = nullptr;
-        cleanup(task->retirementContext, task);
+        dispatcher_cleanup_task(cleanup, task);
     }
 
     cpu_preemption_enable();

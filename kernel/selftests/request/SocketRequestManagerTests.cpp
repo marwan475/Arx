@@ -886,7 +886,7 @@ static bool test_socket_sender_exit(process_t* process, uint64_t base)
     {
         return false;
     }
-    const int64_t fd = resources->processManager->AddFileDescriptor(process, receiver, 0, VirtualFileSystem::ReleaseFileHandle);
+    const int64_t fd = resources->processManager->AddFileDescriptor(process, receiver, 0, dispatcher_vfs_file_operations());
     if (fd < 0)
     {
         vfs->Close(receiver);

@@ -67,7 +67,7 @@ holds 64 process slots. Process exit policy belongs to ProcessController/Schedul
 | `SnapshotUsage(process, usage, descendants)` | Snapshot process accounting, optionally including reaped child usage. |
 | `ReapUsage(parent, child)` | Add a reaped child's accounting to its parent. |
 | `CreateDescriptorTable()` | Allocate a new, empty, reference-counted descriptor table. |
-| `CopyDescriptorTable(source, context, retain)` | Copy entries while retaining each referenced file through the supplied callback. |
+| `CopyDescriptorTable(source)` | Copy entries while Dispatcher retains each referenced file through its opaque operations route. |
 | `ReleaseDescriptorTable(table)` | Drop a table reference; final release closes entries and frees storage. |
 | `CopyFilesystemContext(source)` | Copy cwd/umask state, or create defaults when source is null. |
 | `ReleaseFilesystemContext(context)` | Drop a shared filesystem-context reference and free it on final release. |
@@ -79,8 +79,8 @@ holds 64 process slots. Process exit policy belongs to ProcessController/Schedul
 | `FreeProcess(process, onlyIfExited)` | Reclaim an eligible process and its owned resources; reject live claims or running use. |
 | `AddTask(process, task)` | Attach an allocated task to a live process. |
 | `RemoveTask(process, task)` | Unlink a task from the process's task list. |
-| `AddFileDescriptor(process, file, flags, release)` | Install a file handle in the first available descriptor slot. |
-| `AddFileDescriptorFrom(process, file, flags, minFd, release)` | Install a handle at or above a requested descriptor number. |
+| `AddFileDescriptor(process, file, flags, operations)` | Install a file handle and its borrowed Dispatcher operations route in the first available descriptor slot. |
+| `AddFileDescriptorFrom(process, file, flags, minFd, operations)` | Install a handle and its route at or above a requested descriptor number. |
 | `GetFileDescriptor(process, fd)` | Return a borrowed entry; use it within the descriptor-table guard. |
 | `EnsureFileDescriptorCapacity(process, requiredIndex)` | Grow the descriptor table within the process limit. |
 | `BuildUserInitialStack(process, layout, outUserRsp)` | Build the initial user stack from arguments, environment, and auxiliary values. |
@@ -140,8 +140,8 @@ Owns 128 task slots, stacks, saved machine contexts, and execution claims.
 | `CreateUserCloneTask(frame, id)` | Create an x86_64 child context from a saved syscall frame. |
 | `FreeTask(task, retiredStack, retiredResources)` | Free an eligible slot; optionally transfer stack/resource cleanup to the caller. |
 | `ReleaseTaskResources(resources)` | Drop detached task descriptor/filesystem references. |
-| `SetPriorityCleanup(context, cleanup)` | Register policy cleanup for task retirement. |
-| `CleanupCurrentTask()` | Run the current task's applicable priority/retirement cleanup callbacks. |
+| `SetPriorityCleanup(cleanup)` | Install a borrowed opaque Dispatcher route for policy cleanup. |
+| `CleanupCurrentTask()` | Ask Dispatcher to run the current task's applicable priority/retirement cleanup. |
 | `CleanupRetiredTask(task)` | Run cleanup for a dying, quiescent task while protecting it from reclamation. |
 | `ReleaseTaskStack(stack)` | Free a detached kernel stack after it is safe to reclaim. |
 | `ExecuteTask(task, releaseDispatchClaim)` | Validate and switch to a task, optionally consuming a dispatch claim. |
@@ -331,11 +331,18 @@ table rather than treating CPU pointers as device addresses. TimeManager's defau
 backend calls architecture clock hooks; its alternate backend supports isolated,
 deterministic tests.
 
-Upper layers may install explicit callbacks for resource events. TaskManager's
-priority and retirement cleanup hooks let policy owners release task-associated
-state. Dispatcher supplies accounting bridges used by execution machinery.
-These callback contracts are part of the current wiring; Resource does not
-construct the Logic managers that own that policy.
+Necessary upward work passes through Dispatcher. TaskManager stores opaque
+priority and retirement routes; Dispatcher invokes their policy providers while
+Resource keeps the task pinned. Descriptor entries similarly carry an opaque
+file-operations route, used by Dispatcher for retain and final release. Resource
+cannot access the providers' callable fields. The provider owns each immutable
+route and must keep it and its context alive until the last user releases them.
+Dispatcher also supplies the scheduling-accounting bridge used at context-switch
+boundaries. Resource does not construct the Logic managers that own that policy.
+
+signal_types.h holds shared signal ABI records and masks below both Arch and
+the layers. SignalState.hpp holds Resource's signal queue storage. TaskManager
+and ProcessManager use these definitions without including SignalManager.hpp.
 
 ## 5. Filesystem capabilities
 

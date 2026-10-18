@@ -79,7 +79,10 @@ reservation returns its range to the free list and merges adjacent ranges.
 Address-space locks protect region lists and page-table operations. On x86_64,
 paging changes also invalidate cached translations on affected CPUs; range
 operations batch the work. VirtualMemoryManager exposes these mechanisms to
-Resource consumers.
+Resource consumers. Backing writeback and context release enter through Dispatcher
+and MemoryRequestManager, which invoke the opaque backing provider. A failed
+writeback retains its object and provider context for retry; the route must stay
+alive until that retry completes.
 
 `metadata.c` supplies reusable records for VMM regions and heap slabs. Its pools
 grow using PMM, allowing these allocators to maintain bookkeeping without relying

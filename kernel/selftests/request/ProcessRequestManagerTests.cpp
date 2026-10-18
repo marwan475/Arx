@@ -416,7 +416,7 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
             break;
         }
 
-        const int64_t fd = processes->AddFileDescriptor(fixture.process, file, FD_FLAG_NONE, VirtualFileSystem::ReleaseFileHandle);
+        const int64_t fd = processes->AddFileDescriptor(fixture.process, file, FD_FLAG_NONE, dispatcher_vfs_file_operations());
 
         if (fd < 0)
         {
@@ -891,7 +891,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
             return false;
         }
 
-        const int64_t sharedFd = fixture.resources->processManager->AddFileDescriptor(fixture.process, sharedFile, FD_FLAG_CLOEXEC, VirtualFileSystem::ReleaseFileHandle);
+        const int64_t sharedFd = fixture.resources->processManager->AddFileDescriptor(fixture.process, sharedFile, FD_FLAG_CLOEXEC, dispatcher_vfs_file_operations());
 
         if (sharedFd < 0)
         {

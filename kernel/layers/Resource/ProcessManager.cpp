@@ -173,9 +173,9 @@ descriptor_table_t* ProcessManager::CreateDescriptorTable()
     return table;
 }
 
-descriptor_table_t* ProcessManager::CopyDescriptorTable(descriptor_table_t* source, void* context, bool (*retain)(void*, file_handle_t))
+descriptor_table_t* ProcessManager::CopyDescriptorTable(descriptor_table_t* source)
 {
-    if (source == nullptr || retain == nullptr)
+    if (source == nullptr)
     {
         return nullptr;
     }
@@ -199,7 +199,7 @@ descriptor_table_t* ProcessManager::CopyDescriptorTable(descriptor_table_t* sour
 
         if (entry.file != nullptr)
         {
-            copied = entry.release != nullptr && retain(context, entry.file);
+            copied = dispatcher_retain_file(entry.operations, entry.file);
 
             if (copied)
             {
@@ -230,9 +230,9 @@ void ProcessManager::ReleaseDescriptorTable(descriptor_table_t* table)
     {
         const file_descriptor_t& entry = table->entries[fd];
 
-        if (entry.file != nullptr && entry.release != nullptr)
+        if (entry.file != nullptr && entry.operations != nullptr)
         {
-            entry.release(entry.file);
+            dispatcher_release_file(entry.operations, entry.file);
         }
     }
 
@@ -806,9 +806,9 @@ void ProcessManager::RemoveTask(process_t* process, task_t* task)
     UnlockManager();
 }
 
-int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t))
+int64_t ProcessManager::AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, const dispatcher_file_operations_t* operations)
 {
-    return AddFileDescriptorFrom(process, file, flags, 0, release);
+    return AddFileDescriptorFrom(process, file, flags, 0, operations);
 }
 
 file_descriptor_t* ProcessManager::GetFileDescriptor(process_t* process, uint64_t fd)
@@ -890,7 +890,7 @@ bool ProcessManager::EnsureFileDescriptorCapacity(process_t* process, uint64_t r
     return true;
 }
 
-int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t))
+int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, const dispatcher_file_operations_t* operations)
 {
     FileDescriptorGuard descriptors(process);
 
@@ -908,9 +908,9 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
     {
         if (process->Files()->entries[i].file == nullptr)
         {
-            process->Files()->entries[i].file    = file;
-            process->Files()->entries[i].flags   = flags;
-            process->Files()->entries[i].release = release;
+            process->Files()->entries[i].file       = file;
+            process->Files()->entries[i].flags      = flags;
+            process->Files()->entries[i].operations = operations;
             return (int64_t) i;
         }
     }
@@ -931,9 +931,9 @@ int64_t ProcessManager::AddFileDescriptorFrom(process_t* process, file_handle_t 
     {
         if (process->Files()->entries[i].file == nullptr)
         {
-            process->Files()->entries[i].file    = file;
-            process->Files()->entries[i].flags   = flags;
-            process->Files()->entries[i].release = release;
+            process->Files()->entries[i].file       = file;
+            process->Files()->entries[i].flags      = flags;
+            process->Files()->entries[i].operations = operations;
             return (int64_t) i;
         }
     }

@@ -1,6 +1,7 @@
 #ifndef VMM_H
 #define VMM_H
 
+#include <layers/DispatcherBridge.h>
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <klib/klib.h>
@@ -50,9 +51,8 @@ typedef struct virt_backing_object
     bool                file;
     bool                volatile_storage; // Canonical RAM contents need no external writeback.
     virt_shared_page_t* pages;
-    int64_t (*write)(void*, uint64_t, const void*, uint64_t);
+    const dispatcher_backing_operations_t* operations;
     void* context;
-    void (*release_context)(void*);
     struct virt_backing_object* pending_next;
 } virt_backing_object_t;
 

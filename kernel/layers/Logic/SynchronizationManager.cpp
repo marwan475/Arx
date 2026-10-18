@@ -57,16 +57,26 @@ struct FutexKey
 };
 }
 
-SynchronizationManager::SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler) : Resources(resources), SchedulerManager(scheduler), Lock(0), Waiters{}, Head(NONE), Tail(NONE)
+SynchronizationManager::SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler)
+    : PriorityCleanupRoute(this, CleanupPriority),
+      RobustCleanupRoute(this, CleanupRobust),
+      Resources(resources),
+      SchedulerManager(scheduler),
+      Lock(0),
+      Waiters{},
+      Head(NONE),
+      Tail(NONE)
 {
     memset(PiStates, 0, sizeof(PiStates));
     memset(PiWaiters, 0, sizeof(PiWaiters));
-    PiOrder = 0;
+    PiOrder                = 0;
     PriorityRescheduleMask = 0;
+
     if (Resources != nullptr && Resources->taskManager != nullptr)
     {
-        Resources->taskManager->SetPriorityCleanup(this, CleanupPriority);
+        Resources->taskManager->SetPriorityCleanup(&PriorityCleanupRoute);
     }
+
     static_assert(CAPACITY == TaskManager::MAX_TASKS, "one futex waiter per task");
 }
 
@@ -681,8 +691,7 @@ uint64_t SynchronizationManager::SetRobustList(uint64_t head)
     }
 
     __atomic_store_n(&task->robustHead, head, __ATOMIC_RELEASE);
-    task->retirementContext = this;
-    task->retirementCleanup = head != 0 || task->clearChildTid != 0 ? CleanupRobust : nullptr;
+    task->retirementCleanup = head != 0 || task->clearChildTid != 0 ? &RobustCleanupRoute : nullptr;
 
     if (head == 0 && task->clearChildTid == 0 && task->robustOwner != nullptr)
     {
@@ -705,8 +714,7 @@ void SynchronizationManager::ConfigureChildTid(task_t* task, process_t* owner, u
 
     if (task->robustHead != 0 || address != 0)
     {
-        task->retirementContext = this;
-        task->retirementCleanup = CleanupRobust;
+        task->retirementCleanup = &RobustCleanupRoute;
     }
     else if (task->robustOwner != nullptr)
     {

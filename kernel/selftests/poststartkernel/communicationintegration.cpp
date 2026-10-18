@@ -63,7 +63,7 @@ void test_communication_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
             return;
         }
 
-        int64_t fd = r->processManager->AddFileDescriptor(reader.Process, input, 0, VirtualFileSystem::ReleaseFileHandle);
+        int64_t fd = r->processManager->AddFileDescriptor(reader.Process, input, 0, dispatcher_vfs_file_operations());
 
         if (!t.Check(fd >= 0, "install read handle into second process"))
         {
@@ -128,7 +128,7 @@ void test_communication_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
             return;
         }
 
-        int64_t fd = r->processManager->AddFileDescriptor(receiver.Process, endpoint, 0, VirtualFileSystem::ReleaseFileHandle);
+        int64_t fd = r->processManager->AddFileDescriptor(receiver.Process, endpoint, 0, dispatcher_vfs_file_operations());
 
         if (!t.Check(fd >= 0, "install endpoint into second process"))
         {

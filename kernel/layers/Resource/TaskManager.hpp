@@ -1,6 +1,7 @@
 #pragma once
 
-#include "layers/Logic/SignalManager.hpp"
+#include "layers/DispatcherBridge.h"
+#include "layers/Resource/SignalState.hpp"
 #include "layers/Resource/TaskScheduling.hpp"
 
 #include <arch/arch.h>
@@ -82,8 +83,9 @@ struct task_t
     uint64_t         clearChildTid;
     uint64_t         setChildTid;
     process_t*       robustOwner;
-    void*            retirementContext;
-    void (*retirementCleanup)(void*, task_t*);
+
+    const dispatcher_task_cleanup_t* retirementCleanup;
+
     struct arch_task_context taskContext;
     void*                    stack;
     task_t*                  next;
@@ -103,7 +105,7 @@ public:
     task_t*     CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id);
     bool        FreeTask(task_t* task, void** retiredStack = nullptr, retired_task_resources_t* retiredResources = nullptr);
     static void ReleaseTaskResources(const retired_task_resources_t& resources);
-    void        SetPriorityCleanup(void* context, void (*cleanup)(void*, task_t*));
+    void        SetPriorityCleanup(const dispatcher_task_cleanup_t* cleanup);
     void        CleanupCurrentTask();
     bool        CleanupRetiredTask(task_t* task);
     static void ReleaseTaskStack(void* stack);
@@ -143,8 +145,8 @@ private:
     void        LockManager() const;
     void        UnlockManager() const;
 
-    void* PriorityCleanupContext;
-    void (*PriorityCleanup)(void*, task_t*);
+    const dispatcher_task_cleanup_t* PriorityCleanup;
+
     mutable spinlock_t ManagerLock;
     uint64_t           LoadEpoch;
     uint64_t           LoadAverages[3];

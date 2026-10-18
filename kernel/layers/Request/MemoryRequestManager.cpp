@@ -1,9 +1,14 @@
 #include "layers/Request/MemoryRequestManager.hpp"
 
-#include "layers/Request/RequestLayerFactory.hpp"
-#include "layers/Logic/ProcessController.hpp"
+#include "layers/DispatcherRoutes.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
+#include "layers/Logic/ProcessController.hpp"
+#include "layers/Request/RequestLayerFactory.hpp"
+#include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/TaskManager.hpp"
 
+#include <cpu/cpu.h>
 #include <klib/klib.h>
 
 extern "C"
@@ -121,4 +126,65 @@ uint64_t MemoryRequestManager::HandleBrkRequest(const arch_syscall_frame_t* fram
     }
 
     return LogicCaps->processController->ResizeProcessBreak(frame != nullptr ? frame->arg0 : 0);
+}
+
+void MemoryRequestManager::HandleMinorFault(virt_addr_space* space)
+{
+    task_t* task = TaskManager::GetActiveTask();
+
+    if (task != nullptr && task->process != nullptr && task->process->addressSpace == space)
+    {
+        __atomic_fetch_add(&task->process->minorFaults, 1ULL, __ATOMIC_RELAXED);
+    }
+}
+
+bool MemoryRequestManager::BeginUserMemory(ResourceLayerCaps* caps, user_memory_access_t* access)
+{
+    if (access == nullptr)
+    {
+        return false;
+    }
+
+    *access = {};
+    cpu_preemption_disable();
+    ProcessManager* manager = caps != nullptr ? caps->processManager : nullptr;
+    process_t*      process = manager != nullptr ? manager->AcquireCurrentMemoryProcess(false) : nullptr;
+
+    if (process == nullptr)
+    {
+        cpu_preemption_enable();
+        return false;
+    }
+
+    spinlock_acquire(&process->addressSpace->operation_lock);
+    access->process_manager = manager;
+    access->process         = process;
+    access->space           = process->addressSpace;
+    return true;
+}
+
+void MemoryRequestManager::EndUserMemory(user_memory_access_t* access)
+{
+    spinlock_release(&access->space->operation_lock);
+    static_cast<ProcessManager*>(access->process_manager)->ReleaseMemoryProcess(access->process);
+    *access = {};
+    cpu_preemption_enable();
+}
+
+int64_t MemoryRequestManager::HandleBackingWrite(const dispatcher_backing_operations_t* route, void* context, uint64_t offset, const void* bytes, uint64_t size)
+{
+    if (route == nullptr || route->Write == nullptr)
+    {
+        return -95;
+    }
+
+    return route->Write(context, offset, bytes, size);
+}
+
+void MemoryRequestManager::HandleBackingRelease(const dispatcher_backing_operations_t* route, void* context)
+{
+    if (route != nullptr && route->Release != nullptr)
+    {
+        route->Release(context);
+    }
 }

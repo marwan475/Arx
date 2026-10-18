@@ -144,9 +144,9 @@ public:
             *entry = {};
         }
 
-        if (saved.release)
+        if (saved.operations != nullptr)
         {
-            saved.release(saved.file);
+            dispatcher_release_file(saved.operations, saved.file);
         }
 
         return true;

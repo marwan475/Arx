@@ -1,3 +1,5 @@
+#include "layers/DispatcherRoutes.hpp"
+
 #include <selftests/ManagerSuite.hpp>
 #include <selftests/TestFixture.hpp>
 
@@ -26,7 +28,7 @@ static bool retain_descriptor(void*, file_handle_t handle)
     return true;
 }
 
-static void release_descriptor(file_handle_t handle)
+static void release_descriptor(void*, file_handle_t handle)
 {
     CountedDescriptor* descriptor = static_cast<CountedDescriptor*>(handle);
     --descriptor->references;
@@ -36,6 +38,8 @@ static void release_descriptor(file_handle_t handle)
 
 void test_ProcessManager(ResourceLayerCaps* resources)
 {
+    const dispatcher_file_operations_t descriptorOperations(nullptr, retain_descriptor, release_descriptor);
+
     auto* m = resources ? resources->processManager : nullptr;
     ManagerSuite suite("resource/ProcessManager", m != nullptr);
     suite.Run("resource/ProcessManager/usage_aggregation", [&](TestCase& t)
@@ -93,13 +97,13 @@ void test_ProcessManager(ResourceLayerCaps* resources)
         task_t*           first   = resources->taskManager->AllocateTask();
         task_t*           second  = resources->taskManager->AllocateTask();
         CountedDescriptor file    = {1, 0, false};
-        const int64_t     fd      = m->AddFileDescriptor(process, &file, FD_FLAG_NONE, release_descriptor);
+        const int64_t     fd      = m->AddFileDescriptor(process, &file, FD_FLAG_NONE, &descriptorOperations);
         bool              ready   = first != nullptr && second != nullptr && fd >= 0;
 
         if (ready)
         {
             ready                     = m->AddTask(process, first);
-            second->descriptorTable   = m->CopyDescriptorTable(process->descriptorTable, nullptr, retain_descriptor);
+            second->descriptorTable   = m->CopyDescriptorTable(process->descriptorTable);
             second->filesystemContext = m->CopyFilesystemContext(process->filesystemContext);
             ready                     = ready && second->descriptorTable != nullptr && second->filesystemContext != nullptr && m->AddTask(process, second);
         }
@@ -146,8 +150,8 @@ void test_ProcessManager(ResourceLayerCaps* resources)
         }
 
         CountedDescriptor file     = {1, 0, false};
-        table->entries[0]          = {&file, FD_FLAG_CLOEXEC, release_descriptor};
-        descriptor_table_t* copied = m->CopyDescriptorTable(table, nullptr, retain_descriptor);
+        table->entries[0]          = {&file, FD_FLAG_CLOEXEC, &descriptorOperations};
+        descriptor_table_t* copied = m->CopyDescriptorTable(table);
 
         if (!t.Check(copied != nullptr, "copy retains open file descriptions"))
         {
@@ -179,9 +183,9 @@ void test_ProcessManager(ResourceLayerCaps* resources)
 
         CountedDescriptor first    = {1, 0, false};
         CountedDescriptor second   = {1, 0, true};
-        table->entries[0]          = {&first, FD_FLAG_NONE, release_descriptor};
-        table->entries[1]          = {&second, FD_FLAG_NONE, release_descriptor};
-        descriptor_table_t* copied = m->CopyDescriptorTable(table, nullptr, retain_descriptor);
+        table->entries[0]          = {&first, FD_FLAG_NONE, &descriptorOperations};
+        table->entries[1]          = {&second, FD_FLAG_NONE, &descriptorOperations};
+        descriptor_table_t* copied = m->CopyDescriptorTable(table);
         t.Check(copied == nullptr, "failed retain rejects the entire table copy");
         t.Equal(first.references, 1, "partial copy rolls back earlier retain");
         t.Equal(second.references, 1, "failed retain never releases unowned reference");

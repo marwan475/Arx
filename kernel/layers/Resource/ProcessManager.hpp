@@ -28,7 +28,8 @@ struct file_descriptor_t
 {
     file_handle_t file;
     uint32_t      flags;
-    void (*release)(file_handle_t);
+
+    const dispatcher_file_operations_t* operations;
 };
 
 struct descriptor_table_t
@@ -238,7 +239,7 @@ public:
     ProcessManager();
 
     static descriptor_table_t*    CreateDescriptorTable();
-    static descriptor_table_t*    CopyDescriptorTable(descriptor_table_t* source, void* context, bool (*retain)(void*, file_handle_t));
+    static descriptor_table_t*    CopyDescriptorTable(descriptor_table_t* source);
     static void                   ReleaseDescriptorTable(descriptor_table_t* table);
     static filesystem_context_t*  CopyFilesystemContext(filesystem_context_t* source);
     static void                   ReleaseFilesystemContext(filesystem_context_t* context);
@@ -251,8 +252,8 @@ public:
     bool                      FreeProcess(process_t* process, bool onlyIfExited = false);
     bool                      AddTask(process_t* process, task_t* task);
     void                      RemoveTask(process_t* process, task_t* task);
-    int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, void (*release)(file_handle_t) = nullptr);
-    int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, void (*release)(file_handle_t) = nullptr);
+    int64_t                   AddFileDescriptor(process_t* process, file_handle_t file, uint32_t flags, const dispatcher_file_operations_t* operations = nullptr);
+    int64_t                   AddFileDescriptorFrom(process_t* process, file_handle_t file, uint32_t flags, uint64_t minFd, const dispatcher_file_operations_t* operations = nullptr);
     static file_descriptor_t* GetFileDescriptor(process_t* process, uint64_t fd);
     bool                      EnsureFileDescriptorCapacity(process_t* process, uint64_t requiredIndex);
     bool                      BuildUserInitialStack(process_t* process, const process_user_stack_layout_t* layout, uint64_t* outUserRsp);

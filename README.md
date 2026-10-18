@@ -6,7 +6,7 @@ Targets:
 - x86_64 (currently supported)
 - aarch64 (experimental)
 
-Goal of this project is to explore Kernel design and large scale software managment/maintance
+Goal of this project is to explore Kernel design and large scale software management/maintenance
 
 
 ![Arx](docs/imgs/Arx_Arch.png)

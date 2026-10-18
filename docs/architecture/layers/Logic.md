@@ -24,8 +24,6 @@ they are absent. It constructs components in this order:
 5. SocketManager, then InterProcessCommunicationManager, each using VFS, Event,
    and Signal services.
 
-![Logic layer initialization](../../imgs/logic-initialization.svg)
-
 Scheduler construction establishes bootstrap process/task bookkeeping and prepares
 idle contexts. Scheduling starts inactive. VFS construction initializes namespace
 and cache state; creating it does not mount the root filesystem.
@@ -35,27 +33,333 @@ boot mounts the root and activates scheduling later in `kernel.cpp`. `GetCaps`
 returns null before creation; repeated `Create` calls return the existing
 capabilities without rewiring their dependencies.
 
-## 2. Components and responsibilities
+### LogicLayerFactory
 
-| Component | Responsibility |
+| Function | What it does |
 | --- | --- |
-| Scheduler | Choose runnable tasks and CPUs, apply scheduling policy, and coordinate sleeping, waking, accounting, and retirement. |
-| VirtualFileSystem | Own namespace, mounts, dentries/inodes, file operations, and filesystem-facing access rules. |
-| ElfMapper | Validate ELF images and map executable or shared-library segments into process memory. |
-| CredentialManager | Read and change process identities and supplementary groups under credential rules. |
-| EventManager | Coordinate readiness waits, event counters, epoll, and filesystem/signal notifications. |
-| SynchronizationManager | Implement futex waits/wakes, priority inheritance, robust-list cleanup, and child-TID wakeups. |
-| SignalManager | Manage actions, masks, pending signals, delivery, and restoration of signal contexts. |
-| ProcessController | Coordinate clone, exec, exit, wait, process groups, and process-memory policy. |
-| SocketManager | Implement local sockets, connections, message transfer, credentials, and descriptor passing. |
-| InterProcessCommunicationManager | Implement pipes and memory-backed files through VFS file operations. |
+| `LogicLayerFactory()` | Initialize empty factory-owned capability/component state. |
+| `~LogicLayerFactory()` | Delete owned components and capabilities; not a live-kernel shutdown protocol. |
+| `Create(resourceLayerCaps)` | Construct and wire Logic using Resource imports, or return existing capabilities; first creation rejects null imports. |
+| `GetCaps()` | Return borrowed capabilities, or null before creation. |
 
-These ten objects are exported through `LogicLayerCaps`. Most have matching
-`.hpp` and `.cpp` files. ProcessController is declared in `ProcessController.hpp`;
-its implementation is split between `ProcessLifecycle.cpp` and
-`ProcessMemoryManager.cpp`. The latter is not a separate factory-created manager.
-`SchedulerPolicies.cpp` and `EventNotifications.cpp` hold additional policy and
-notification implementations.
+## 2. Components and public APIs
+
+The sections follow factory construction order. Parameter names identify the
+inputs; the public headers give their types and defaults. Cross-component calls
+also follow the lifetime and locking rules later in this guide.
+
+### Scheduler
+
+Owns runnable-task selection, CPU placement, scheduling policy, sleeping/waking,
+and execution accounting. `Scheduler.hpp` declares the API; `Scheduler.cpp` and
+`SchedulerPolicies.cpp` implement it. `scheduling_attributes_t` describes requested
+policy; `task_scheduling_t` stores effective task policy in Resource-owned state.
+
+| Function | What it does |
+| --- | --- |
+| `Scheduler(resourceLayerCaps)` | Initialize queues, bootstrap bookkeeping, and idle task contexts; scheduling starts inactive. |
+| `~Scheduler()` | Default destructor; it is not a coordinated scheduler shutdown. |
+| `UserPriority(selector, who, modify, nice)` | Read/change priorities for the selected process, group, or user scope. |
+| `ConfigurePolicy(task, attributes)` | Validate and apply normal, realtime, or deadline scheduling attributes. |
+| `ReadPolicy(task, attributes)` | Copy a task's current configured policy attributes. |
+| `ValidateClonePolicy(parent)` | Reject cloning a deadline task without reset-on-fork. |
+| `InheritPolicy(parent, child)` | Initialize child policy, honoring reset-on-fork behavior. |
+| `ApplyPriorityDonation(task, nice, policy, priority, donor)` | Apply effective priority/policy inherited from a waiting donor. |
+| `RetirePolicy(task)` | Release scheduling reservations and clear policy references during retirement. |
+| `AccountSchedulingCurrent(beginExecution)` | Mark scheduling-overhead and task-execution accounting boundaries. |
+| `AcquireTask(tid, modify, target)` | Resolve an authorized target and retain its dispatch claim. |
+| `SetUserNice(task, nice)` | Check caller privilege before changing a task's nice value. |
+| `GetCpu(cpu, node)` | Report the calling CPU and optional NUMA node. |
+| `SetPriorityManager(manager)` | Connect synchronization/priority-inheritance coordination. |
+| `AvailableCpuMask()` | Build a CPU mask from the platform's configured CPU count. |
+| `SetAffinity(task, mask)` | Apply a usable CPU mask, respecting scheduling/priority constraints. |
+| `SetNice(task, nice)` | Update base nice and refresh effective priorities. |
+| `ActivateScheduling()` | Enable scheduling on the tracked CPUs. |
+| `SetEventManager(events)` | Connect event generation and wait coordination. |
+| `IsSchedulingActive()` | Report whether scheduling is enabled on the calling CPU. |
+| `RunSchedulingAlgorithm(cpuId, reason, publish, placement)` | Decide policy/placement and return a selected task claim without switching contexts. |
+| `RequestReschedule(cpus)` | Mark target CPUs for rescheduling and issue required architecture notifications. |
+| `ServicePendingReschedule(syscallBoundary)` | Service deferred scheduling at an allowed boundary. |
+| `ScheduleProcess(processId)` | Validate a process and arrange execution through the scheduler. |
+| `EnqueueProcess(cpuId, processId)` | Publish process work for policy/placement evaluation on a CPU. |
+| `PublishTask(process, task)` | Attach a new task and publish it, undoing attachment if publication fails. |
+| `RunNextReadyProcess(cpuId, reason)` | Select ready work and perform the corresponding scheduling transition. |
+| `KillProcess(processId, exitStatus, onlyIfExited, retired)` | Request termination/retirement and optionally report whether resource retirement finished. |
+| `SleepUntil(monotonicDeadline)` | Block the current task until a deadline or interruption. |
+| `WaitForEvent(sequence, expected, monotonicDeadline, uninterruptible)` | Sleep while a stable sequence address still has the expected value. |
+| `WakeEventWaiters(sequence)` | Wake tasks waiting on the supplied sequence address. |
+| `WakeSignalWaiters(process)` | Wake affected waits when process/task signals become pending. |
+| `WakeSleepingTasks(cpuId)` | Process expired sleeps and relevant timer work for a CPU. |
+| `AccountCurrent(userMode)` | Charge current execution to user or kernel time. |
+| `ExitCurrentTask()` | Retire the current task and switch away; never return. |
+| `ReapExitedProcesses()` | Retry reclamation of exited processes after tasks become quiescent. |
+| `NotifyProcessExit(process)` | Publish completed exit and wake/notify the parent once. |
+| `ChangeStoppedState(process, signal, stopped)` | Update stop/continue state and notify scheduling/waiting participants. |
+
+### VirtualFileSystem
+
+Owns namespace traversal, mount registration, dentries/inodes, file operations,
+and backend access rules. `VirtualFileSystem.hpp` defines the API and callback
+records; `VirtualFileSystem.cpp` implements them. Registered filesystem descriptors
+and backend identities must remain valid until teardown.
+
+| Function | What it does |
+| --- | --- |
+| `ObserveFileLocked(file, observer)` | Add a weak final-close/readiness observer while holding `ReadinessLock`. |
+| `UnobserveFileLocked(file, observer)` | Detach a weak observer under the same lock. |
+| `NotifyReadiness(file, events)` | Publish source-specific readiness after producer state changes, outside its state lock. |
+| `VirtualFileSystem(resourceLayerCaps)` | Initialize namespace, caches, locks, and Resource imports. |
+| `SetEventManager(events)` | Connect filesystem/readiness notifications to EventManager. |
+| `InitializeAnonymousInode(inode, type, mode)` | Initialize identity and metadata for an anonymous file's inode. |
+| `NotifyFile(file, mask)` | Publish a file's filesystem-notification event with current namespace context. |
+| `~VirtualFileSystem()` | Release owned cache/namespace state and registered mount state. |
+| `HashDentryKey(parent, name)` | Compute the parent/name cache key. |
+| `CacheDentry(dentry)` | Insert a dentry into the name cache. |
+| `FindDentry(parent, name)` | Find an already-cached child without backend lookup. |
+| `Lookup(parent, name)` | Find a child through the cache or backing filesystem. |
+| `SetRootMount(rootMount)` | Install a valid root mount in the namespace. |
+| `RegisterMount(mount)` | Add a mount to the tracked mount set. |
+| `RegisterFileSystemType(type)` | Register persistent backend mount/unmount/remount callbacks. |
+| `MountRootFileSystem(filesystemType, source)` | Build the root namespace from Resource filesystem capabilities. |
+| `ResolvePath(start, path, result, accessError)` | Resolve a path across namespace components/mounts and report access failure when requested. |
+| `BuildAbsolutePath(path, output, capacity)` | Reconstruct an absolute path from a mount/dentry pair. |
+| `BuildAbsolutePathFromDentry(dentry, outPath, outPathSize)` | Reconstruct a path from cached dentry ancestry. |
+| `JoinPath(base, path, outPath, outPathSize)` | Combine a base path and relative name within the output capacity. |
+| `StatNoFollow(start, path, outInode, resolvedPath)` | Resolve metadata without following the final symlink. |
+| `Symlink(start, target, linkPath)` | Create a symbolic link through the namespace/backend contract. |
+| `Readlink(start, path, buffer, bufferSize)` | Copy a symlink target into a kernel buffer. |
+| `Mkdir(start, path, mode)` | Create a directory with checked creation attributes. |
+| `Unlink(start, path, directory)` | Remove a file or directory entry according to the requested kind. |
+| `Rename(oldStart, oldPath, newStart, newPath)` | Rename/move an entry while updating namespace/cache state. |
+| `Link(oldStart, oldPath, newStart, newPath, followSymlink)` | Create a hard link with the requested source-symlink treatment. |
+| `Mknod(start, path, mode, device)` | Create a supported special node through its backend. |
+| `SocketNode(path, create, inode)` | Create or resolve a socket pathname; creation returns an owned open-count claim. |
+| `ReleaseSocketNode(inode)` | Release the pathname identity claim held by a bound endpoint. |
+| `TruncatePath(start, path, size)` | Resolve and resize a file by path. |
+| `TruncateFile(file, size)` | Resize an open file through its inode/backend. |
+| `ChangeMetadata(inode, ownership, first, second, mount, dentry)` | Check and apply ownership or mode changes, updating cached metadata after success. |
+| `Mount(source, target, type, flags, options)` | Perform a mount/remount/bind operation supported by the requested flags/backend. |
+| `Open(start, path, flags, error, mode)` | Resolve/create an accessible file and return an owned open-file reference. |
+| `Read(file, buffer, count)` | Read into kernel memory at the current file position. |
+| `Write(file, buffer, count)` | Write kernel-buffer data at the current file position. |
+| `ReadAt(file, buffer, count, offset)` | Perform positioned reading while preserving the shared file position. |
+| `WriteAt(file, buffer, count, offset)` | Perform positioned writing while preserving the shared file position. |
+| `Seek(file, offset, whence)` | Change the file position using backend seek rules. |
+| `ReadDirectory(file, entry)` | Advance an open directory's iteration state. |
+| `Ioctl(file, request, argument)` | Invoke a file's supported control operation. |
+| `Mmap(file, address, length, prot, flags, offset)` | Invoke the file's mapping callback; this is separate from process mapping policy. |
+| `AcquireMappingBacking(file, offset, length, protection, shared, object, maximumProtection)` | Acquire retained backing and mapping/protection reservations for a file range. |
+| `ReleaseMappingBacking(object, shared, maximumProtection)` | Release those backing/reservation claims. |
+| `Retain(file)` | Add a live open-file reference. |
+| `CheckExecutable(file)` | Check whether the current credentials/mount permit execution. |
+| `Poll(file)` | Return a nonblocking readiness snapshot. |
+| `Close(file)` | Drop a file reference; final close detaches observers and releases owned state. |
+| `ReleaseFileHandle(file)` | Adapt `Close` to the opaque descriptor release callback. |
+
+The public callback records extend this interface. Filesystem callbacks receive
+copied kernel strings; inode callbacks operate on stable backend identities.
+
+| Callback | What it does |
+| --- | --- |
+| `filesystem_type_t::Mount` | Initialize a backend filesystem from its mount request. |
+| `filesystem_type_t::Unmount` | Release backend state, including partially failed mount initialization. |
+| `filesystem_type_t::Remount` | Apply supported mount-option/flag changes. |
+| `inode_operations_t::Lookup` | Find one backend child inode. |
+| `inode_operations_t::SetMetadata` | Persist the requested mode/owner fields atomically under inode I/O protection. |
+| `inode_operations_t::Mkdir` | Create a backend directory with supplied creation attributes. |
+| `inode_operations_t::Unlink` | Remove the requested file/directory entry. |
+| `inode_operations_t::Rename` | Move/rename a backend entry between directories. |
+| `inode_operations_t::Link` | Add a hard link to a backend inode. |
+| `inode_operations_t::Mknod` | Create a backend special node. |
+| `inode_operations_t::Symlink` | Create a backend symbolic link. |
+| `inode_operations_t::Truncate` | Resize backend file storage. |
+| `file_operations_t::Open` | Initialize backend state for an opened file. |
+| `file_operations_t::Read` | Read bytes into a kernel buffer. |
+| `file_operations_t::Write` | Write bytes from a kernel buffer. |
+| `file_operations_t::Seek` | Change the backend file position. |
+| `file_operations_t::ReadDirectory` | Return the next backend directory entry. |
+| `file_operations_t::Ioctl` | Perform a supported device/file control request. |
+| `file_operations_t::Mmap` | Perform the backend's optional file-mapping operation. |
+| `file_operations_t::Release` | Release backend state on final file close. |
+| `file_operations_t::Poll` | Return a nonblocking readiness snapshot without publishing events. |
+| `file_operations_t::ReadUser` | Read directly into validated user memory using the file's transaction rules. |
+| `file_operations_t::WriteUser` | Write from validated user memory using the file's transaction rules. |
+| `file_operations_t::ReadVectorUser` | Read into user-address ranges described by kernel iovec records. |
+| `file_operations_t::WriteVectorUser` | Write from user-address ranges described by kernel iovec records. |
+| `file_operations_t::Truncate` | Resize an open backend file. |
+| `file_operations_t::Control` | Apply supported descriptor-control operations. |
+| `file_operations_t::GetBacking` | Return borrowed canonical backing and allowed mapping protections under the inode lock. |
+| `file_operations_t::DropReference` | Atomically drop a file reference within the backend's ownership graph. |
+| `file_close_observer_t::Closing` | Detach a weak observer during final close under readiness protection. |
+
+Kernel-buffer I/O and user-buffer anonymous-file callbacks have different locking
+contracts, as described below; these callbacks are not interchangeable. The
+`linuxErrors` flag tells Request that file-operation errors already use Linux errno
+values rather than the older backend's generic error convention.
+
+### ElfMapper
+
+Validates ELF headers/segments and maps images using Resource memory services.
+`ElfMapper.hpp` declares parsed metadata and the API; `ElfMapper.cpp` implements it.
+Mapped backing survives independently of metadata and the original file handle.
+
+| Function | What it does |
+| --- | --- |
+| `ElfMapper(resourceLayerCaps)` | Bind Resource memory services. |
+| `~ElfMapper()` | Default destructor; mapping/metadata ownership is handled by the callers. |
+| `ReadElf(file, metadata)` | Validate an ELF image and populate parsed program/segment metadata. |
+| `LoadExecutable(process, file, metadata)` | Map an executable image and initialize its process image/heap metadata. |
+| `LoadLibrary(process, file, metadata, requestedLoadBias)` | Map an ET_DYN image at a chosen/free bias without linking dependencies or changing the heap. |
+
+### CredentialManager
+
+Applies identity/group-change rules to Resource process credentials.
+`CredentialManager.hpp` defines change operations; `CredentialManager.cpp`
+implements credential acquisition, permission checks, and replacement.
+
+| Function | What it does |
+| --- | --- |
+| `CredentialManager(resourceLayerCaps)` | Bind ProcessManager for credential operations. |
+| `GetCredentials(credentials)` | Copy the caller's user/group identity state into kernel memory. |
+| `ChangeIdentity(group, change, real, effective, saved)` | Validate and apply the selected UID/GID identity change. |
+| `GetGroups(groups, capacity, count)` | Report group count and copy supplementary groups when capacity permits. |
+| `MaySetGroups()` | Check whether the caller may replace its supplementary groups. |
+| `SetGroups(groups, count)` | Validate and publish a new immutable supplementary-group list. |
+
+### EventManager
+
+Connects file readiness and notifications to Scheduler waits. `EventManager.hpp`
+defines poll/epoll records and the API; `EventManager.cpp` and
+`EventNotifications.cpp` implement events and notification descriptors.
+
+| Function | What it does |
+| --- | --- |
+| `EventManager(resources, scheduler, vfs)` | Bind collaborators and initialize event/observer state. |
+| `CreateCounter(initial, flags)` | Install an eventfd-style counter descriptor. |
+| `CreateInotify(flags)` | Install a filesystem-notification descriptor. |
+| `AddWatch(fd, path, mask)` | Add/update an inotify watch for a user-supplied path. |
+| `RemoveWatch(fd, watch)` | Remove a watch from its notification descriptor. |
+| `SignalDescriptor(fd, mask, flags)` | Create or update a signalfd-style descriptor's selected signals. |
+| `NotifyVfs(inode, mask, parent, name, cookie, unlinked)` | Publish a filesystem event to matching watches. |
+| `NotifySignals(process)` | Refresh signal-descriptor readiness for a process. |
+| `CreateEpoll(flags)` | Install an epoll descriptor. |
+| `ControlEpoll(epfd, operation, fd, event)` | Add, modify, or remove a watched descriptor. |
+| `WaitEpoll(epfd, address, count, deadline)` | Wait for ready events and copy them to user memory. |
+| `Poll(descriptors, count, deadline)` | Fill kernel poll records with readiness, blocking when required. |
+| `Notify()` | Advance the general event sequence and wake its waiters. |
+| `NotifySource(file, events)` | Publish source-specific readiness to observers, including edge-triggered watches. |
+| `Sequence()` | Read the current general event sequence. |
+| `Wait(expected, deadline)` | Wait while the general sequence remains unchanged. |
+
+### SynchronizationManager
+
+Implements futex state, priority inheritance, robust-list retirement, and child-TID
+wakeups. `SynchronizationManager.hpp` declares its bounded waiter/priority state;
+`SynchronizationManager.cpp` implements it using Scheduler and Resource lifetimes.
+
+| Function | What it does |
+| --- | --- |
+| `SynchronizationManager(resources, scheduler)` | Initialize waiter/priority tables and register task priority cleanup. |
+| `Wait(address, expected, bits, deadline, shared, priorityDestination)` | Atomically validate/enroll a futex wait, optionally preparing priority requeue. |
+| `Wake(address, count, bits, shared)` | Wake matching waiters on a private/shared futex key. |
+| `Requeue(address, destination, wakeCount, moveCount, compare, expected, shared)` | Wake some waiters and move others, optionally checking the source value. |
+| `WakeOperation(address, destination, wakeCount, secondCount, operation, shared)` | Apply an encoded atomic user-word operation and conditional wakeups. |
+| `PriorityFutex(address, command, deadline, shared)` | Perform a supported priority-inheritance futex operation. |
+| `RequeuePriority(address, destination, wakeCount, moveCount, expected, shared)` | Transfer eligible waiters toward a priority-inheritance futex. |
+| `LockSchedulingChange(task, affinity)` | Hold priority coordination while checking a task scheduling/affinity change. |
+| `UnlockSchedulingChange()` | Release successful scheduling-change coordination. |
+| `RefreshPriorities()` | Recompute inherited priorities and request necessary rescheduling. |
+| `SetRobustList(head)` | Register the current task's robust-list head and cleanup hook. |
+| `ConfigureChildTid(task, owner, address)` | Retain memory ownership and arrange clear-child-TID cleanup/wakeup. |
+| `GetRobustList(tid, head, length)` | Read an authorized task's robust-list registration. |
+
+### SignalManager
+
+Manages signal actions, masks, queues, and user delivery. `SignalManager.hpp`
+defines signal records and the API; `SignalManager.cpp` coordinates Resource state,
+Scheduler wakeups, and architecture signal frames. Queue helpers require the
+target's `SignalDispositionGuard`.
+
+| Function | What it does |
+| --- | --- |
+| `SignalManager(resources, scheduler)` | Bind process/task state and scheduling services. |
+| `Queue(process, task, signal, sender)` | Publish a process- or task-directed signal and sender record. |
+| `Peek(process, task, mask, sender)` | Select a pending signal permitted by the supplied selection mask without consuming it. |
+| `Consume(process, task, signal)` | Consume the selected pending signal/queued record. |
+| `Discard(pending, queue, signal)` | Remove a signal's pending bit and queued records. |
+| `ReserveExit(child, recipient)` | Reserve notification capacity and retain the recipient for a child's eventual exit. |
+| `ReleaseExit(resources, child, deliver)` | Release the reservation, optionally publishing its exit signal. |
+| `Action(signal, action, previous)` | Query or replace a validated signal disposition. |
+| `Mask(operation, mask, previous)` | Query/change the current task's mask, keeping SIGKILL and SIGSTOP unblocked. |
+| `BeginTemporaryMask(mask)` | Save and replace the task mask for an atomic masked wait. |
+| `FinishTemporaryMask(deferRestore)` | Restore the saved mask now, or leave restoration for signal delivery. |
+| `Stack(stack, previous, rsp)` | Query/change alternate-stack state using the current user stack pointer. |
+| `Send(pid, tid, signal, queued)` | Resolve targets, check permissions, enqueue signals, and notify affected waits. |
+| `Pause()` | Wait for signal interruption. |
+| `Deliver(frame, result, restartable)` | Apply pending signal behavior and prepare a user handler frame when needed. |
+| `Restore(frame)` | Validate/restore a user signal context, mask, and saved result. |
+
+### ProcessController
+
+Coordinates lifecycle and process-memory policy across Logic and Resource.
+`ProcessController.hpp` declares it; `ProcessLifecycle.cpp` and
+`ProcessMemoryManager.cpp` implement the same class. ProcessMemoryManager is not
+a separate component or factory export.
+
+| Function | What it does |
+| --- | --- |
+| `ProcessController(resources, logic)` | Bind lower-layer records and peer Logic services, initializing lifecycle serialization. |
+| `Clone(frame, arguments)` | Validate clone semantics and create/share process/task state before publishing child execution. |
+| `Execute(frame)` | Replace the calling process's image and saved user entry state. |
+| `Wait(selector, status, options, usage, waitid, type)` | Select/await child state and return wait status/accounting through the requested ABI. |
+| `Group(operation, pid, group)` | Perform supported process-group/session queries or changes. |
+| `SetTidAddress(address)` | Register clear-child-TID state and return current task identity. |
+| `Exit(status, group)` | Coordinate current-thread or whole-process exit and resource retirement. |
+| `MapProcessMemory(address, length, protection, flags, fd, offset)` | Apply anonymous/file-backed mapping policy and return the chosen user address. |
+| `UnmapProcessMemory(address, length)` | Release a user range and its mapping/backing claims. |
+| `ProtectProcessMemory(address, length, protection)` | Validate and change user-region access permissions. |
+| `QueryProcessMemoryResidency(address, length, vector)` | Report mapped-page residency to a user vector. |
+| `AdviseProcessMemory(address, length, advice)` | Apply supported memory advice to a user range. |
+| `ResizeProcessBreak(address)` | Adjust heap backing and return the resulting program break. |
+| `ResourceLimit(resources, pid, resource, proposed, previous)` | Read/change supported process CPU or descriptor limits with caller authorization. |
+
+### SocketManager
+
+Implements Unix-domain stream, datagram, and sequenced-packet sockets using VFS
+files. `SocketManager.hpp` defines address/message/control records and the API;
+`SocketManager.cpp` coordinates endpoints, readiness, credentials, and descriptor
+passing. User-address arguments are validated/copied by the manager.
+
+| Function | What it does |
+| --- | --- |
+| `SocketManager(resources, vfs, events, signals)` | Bind descriptor, namespace, readiness, and signal services. |
+| `Socket(domain, type, protocol)` | Create a supported local socket and return its descriptor. |
+| `Socketpair(domain, type, protocol, output)` | Create connected local endpoints and copy their descriptors to user memory. |
+| `Bind(fd, address, length)` | Bind an endpoint to a supported local address. |
+| `Connect(fd, address, length)` | Connect to a local peer, waiting or returning nonblocking status as required. |
+| `Listen(fd, backlog)` | Put a connection-oriented socket into listening state. |
+| `Accept(fd, address, length, flags)` | Accept a queued peer and optionally copy its address to user memory. |
+| `Sendto(fd, data, size, flags, address, length)` | Send user data to a connected or explicitly addressed peer. |
+| `Recvfrom(fd, data, size, flags, address, length)` | Receive user data and optionally report its source address. |
+| `Message(fd, message, flags, send)` | Transfer vectored messages and supported ancillary credentials/file descriptors. |
+| `Shutdown(fd, how)` | Disable the requested receive/send directions and notify peers/waiters. |
+| `GetOption(fd, level, option, value, length)` | Copy a supported socket option to user memory. |
+| `SetOption(fd, level, option, value, length)` | Read and apply a supported user-provided option. |
+| `Name(fd, address, length, peer)` | Copy the local or peer socket address to user memory. |
+
+### InterProcessCommunicationManager
+
+Creates pipes and anonymous memory files through VFS file operations.
+`InterProcessCommunicationManager.hpp` declares the API;
+`InterProcessCommunicationManager.cpp` implements buffering, readiness, and
+memory-file backing. Blocking pipe operations use Event and Signal services.
+
+| Function | What it does |
+| --- | --- |
+| `InterProcessCommunicationManager(resources, vfs, events, signals)` | Bind process descriptors, files, notifications, and signal services. |
+| `CreatePipe(output, flags)` | Create read/write pipe endpoints and copy both descriptors to user memory. |
+| `CreateMemoryFile(name, flags)` | Create a named anonymous memory-backed file and return its descriptor. |
+
 
 ## 3. Ownership and shared objects
 
@@ -99,11 +403,8 @@ or restore user signal frames. SynchronizationManager coordinates futex state an
 priority donation with Scheduler, and installs task cleanup callbacks for robust
 lists and child-TID state.
 
-![Selected Logic layer interactions](../../imgs/logic-interactions.svg)
-
-The diagram shows selected collaboration paths. Components may also call Resource
-directly; it is not an exhaustive call graph. Detailed syscall decoding belongs
-in Request.md and component internals belong in their focused guides.
+Components may also call Resource directly. Request.md describes syscall decoding;
+the component sections above describe the callable Logic interfaces.
 
 ## 5. Synchronization and execution constraints
 

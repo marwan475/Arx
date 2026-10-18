@@ -21,29 +21,273 @@ TimeManager initializes its clock backend. InitRamFileSystemManager indexes the
 boot archive using its platform address and size; ResourceFileSystem then wraps
 that manager and exports filesystem callbacks.
 
-![Resource layer initialization](../../imgs/resource-initialization.svg)
-
 `GetCaps` returns null before creation. Repeated `Create` calls return the existing
 capabilities without rebuilding components. Dispatcher runs Resource self-tests
 before creating Logic. A capability pointer does not certify that every service
 is available: clock and DMA support still depend on their backends.
 
-## 2. Components and responsibilities
+### ResourceLayerFactory
 
-| Component | Responsibility | Main consumers |
-| --- | --- | --- |
-| PhysicalMemoryManager | Allocate/free physical backing and report memory usage. | DMA, Logic memory and system services. |
-| ProcessManager | Own process slots, shared process resources, identities, and current-process associations. | Scheduler, ProcessController, credentials, Request handlers. |
-| TaskManager | Own task slots, stacks, execution contexts, and dispatch/retirement claims. | Scheduler, ProcessController, scheduling and signal services. |
-| VirtualMemoryManager | Manage address spaces, regions, mapped pages, backing objects, and writeback. | ProcessController, ElfMapper, VFS, DMA. |
-| DmaManager | Allocate, map, track, and release coherent device buffers. | Kernel DMA callers and future drivers. |
-| TimeManager | Read clocks, calculate deadlines, and manage process interval timers. | Scheduler, event/synchronization services, time/system requests. |
-| InitRamFileSystemManager | Index CPIO archive entries and expose their data and metadata. | ResourceFileSystem. |
-| ResourceFileSystem | Export filesystem operations over the indexed boot archive. | VirtualFileSystem through filesystem capabilities. |
+| Function | What it does |
+| --- | --- |
+| `ResourceLayerFactory()` | Initialize empty factory-owned capability/component state. |
+| `~ResourceLayerFactory()` | Delete owned components and capabilities; not a live-kernel shutdown protocol. |
+| `Create()` | Construct Resource managers and filesystem adapter once, or return existing capabilities. |
+| `GetCaps()` | Return borrowed capabilities, or null before creation. |
 
-Each component has matching `.hpp` and `.cpp` files named after it. The first seven
-are manager pointers in `ResourceLayerCaps`; ResourceFileSystem is separately
-owned by the factory and reached through `fileSystemCaps`.
+## 2. Components and public APIs
+
+The sections follow factory construction order. Function descriptions summarize
+the public headers; callers must also follow the ownership and locking rules below.
+
+### PhysicalMemoryManager
+
+Provides physical backing through the platform PMM. `PhysicalMemoryManager.hpp`
+declares the interface; `PhysicalMemoryManager.cpp` forwards allocation and gathers
+memory statistics.
+
+| Function | What it does |
+| --- | --- |
+| `Alloc(size)` | Allocate physical backing and return its kernel-accessible pointer, or null. |
+| `AllocDma(size, maximumAddress, physicalAddress)` | Allocate address-constrained backing and report its physical address. |
+| `Free(addr)` | Return a physical allocation to the PMM. |
+| `GetMemoryInfo(totalBytes, freeBytes)` | Sum total/free memory across normal and DMA NUMA zones. |
+| `GetSharedMemoryBytes()` | Report resident shared-memory backing tracked by VMM. |
+
+### ProcessManager
+
+Owns process records and their shared resource references. `ProcessManager.hpp`
+declares process state, descriptor/filesystem/credential structures, and guards;
+`ProcessManager.cpp` implements their storage and lifetime operations. The pool
+holds 64 process slots. Process exit policy belongs to ProcessController/Scheduler.
+
+| Function | What it does |
+| --- | --- |
+| `ProcessManager()` | Initialize the process table and per-CPU running-process pointers. |
+| `SnapshotUsage(process, usage, descendants)` | Snapshot process accounting, optionally including reaped child usage. |
+| `ReapUsage(parent, child)` | Add a reaped child's accounting to its parent. |
+| `CreateDescriptorTable()` | Allocate a new, empty, reference-counted descriptor table. |
+| `CopyDescriptorTable(source, context, retain)` | Copy entries while retaining each referenced file through the supplied callback. |
+| `ReleaseDescriptorTable(table)` | Drop a table reference; final release closes entries and frees storage. |
+| `CopyFilesystemContext(source)` | Copy cwd/umask state, or create defaults when source is null. |
+| `ReleaseFilesystemContext(context)` | Drop a shared filesystem-context reference and free it on final release. |
+| `CopySignalDispositions(source)` | Copy signal actions, or initialize default dispositions. |
+| `ReleaseSignalDispositions(dispositions)` | Drop a shared disposition reference and free it on final release. |
+| `ReleaseProcessResources(process)` | Detach and release descriptor, filesystem, and signal resources. |
+| `AllocateProcess()` | Reserve a process slot with default shared resources, without attaching an address space. |
+| `CreateProcess(addressSpace, preferredId)` | Create a process around an address space, optionally requesting a particular slot ID. |
+| `FreeProcess(process, onlyIfExited)` | Reclaim an eligible process and its owned resources; reject live claims or running use. |
+| `AddTask(process, task)` | Attach an allocated task to a live process. |
+| `RemoveTask(process, task)` | Unlink a task from the process's task list. |
+| `AddFileDescriptor(process, file, flags, release)` | Install a file handle in the first available descriptor slot. |
+| `AddFileDescriptorFrom(process, file, flags, minFd, release)` | Install a handle at or above a requested descriptor number. |
+| `GetFileDescriptor(process, fd)` | Return a borrowed entry; use it within the descriptor-table guard. |
+| `EnsureFileDescriptorCapacity(process, requiredIndex)` | Grow the descriptor table within the process limit. |
+| `BuildUserInitialStack(process, layout, outUserRsp)` | Build the initial user stack from arguments, environment, and auxiliary values. |
+| `ActivateProcessAddressSpace(process)` | Make the process/address space current on the calling CPU. |
+| `GetTasks(process)` | Return the borrowed head of a process's task list. |
+| `GetRunningProcess(cpuId)` | Return the process associated with a CPU. |
+| `SetRunningProcess(cpuId, process)` | Update that association and switch the address space when updating the local CPU. |
+| `GetCurrentProcess()` | Return the calling CPU's process. |
+| `AcquireCurrentMemoryProcess(requireExclusive)` | Pin current process memory, optionally rejecting an address space shared by another process. |
+| `AcquireProcess(id, requireRealTimer)` | Retain a process by ID, optionally requiring an armed real timer. |
+| `ReleaseProcess(process)` | Release a process-lifetime claim. |
+| `ReleaseMemoryProcess(process)` | Release a process-memory claim. |
+| `RetainMemoryProcess(process)` | Add a memory claim to an already-valid process. |
+| `GetCurrentProgramBreak()` | Return the current process's program break, or zero if unavailable. |
+| `GetProcesses()` | Expose the mutable process table for coordinated kernel inspection. |
+| `GetProcesses() const` | Expose the same table through a const view. |
+| `IsProcessRunning(process)` | Check whether any CPU currently associates the process with running execution. |
+| `TryReapExitedProcess(processId)` | Attempt reclamation of an exited, non-running process. |
+| `GetCapacity()` | Return the fixed process-table capacity. |
+| `ExchangeUmask(process, mask)` | Replace the shared filesystem creation mask and return its previous value. |
+| `ChangeFileLimit(process, proposed, previous)` | Read/update descriptor limits, validating changes and optionally reporting the old limits. |
+| `AcquireCurrentCredentials()` | Lock current credentials with preemption disabled; return the guarded process. |
+| `ReleaseCredentials(process)` | Unlock credentials and restore preemption nesting. |
+| `CreateGroupList(ids, count)` | Allocate an immutable, reference-counted supplementary-group list. |
+| `ReleaseGroupList(groups)` | Drop a group-list reference and free it on final release. |
+
+Public helpers in the same header support those contracts. Both guard types are
+noncopyable. Holding the credential guard forbids user copies and manager-lock calls.
+
+| Helper function | What it does |
+| --- | --- |
+| `process_t::Files()` | Select the descriptor table visible to the active task/process. |
+| `process_t::DescriptorLimit()` | Return the process's current descriptor limit. |
+| `process_t::Fs()` | Select the active filesystem context. |
+| `process_t::Signals()` | Return the process's shared signal dispositions. |
+| `WorkingDirectorySnapshot(process)` | Copy a coherent cwd path from the shared filesystem context. |
+| `pending_signals(process, task)` | Combine pending signals, excluding blocked and ignored signals while honoring unblockable ones. |
+| `SignalDispositionGuard(process)` | Acquire the target's shared signal-disposition protection. |
+| `~SignalDispositionGuard()` | Release protection if still held. |
+| `SignalDispositionGuard::Release()` | Release the guard early. |
+| `SignalDispositionGuard::Current(process)` | Return the active guard's dispositions, or the current/fallback dispositions when unguarded. |
+| `FileDescriptorGuard(process)` | Lock the selected descriptor table with preemption disabled. |
+| `~FileDescriptorGuard()` | Restore the prior guard context, unlock if owned, and restore preemption nesting. |
+
+### TaskManager
+
+Owns 128 task slots, stacks, saved machine contexts, and execution claims.
+`TaskManager.hpp` declares the API; `TaskManager.cpp` implements task transitions.
+`TaskScheduling.hpp` stores scheduling attributes/state; it exposes no functions.
+
+| Function | What it does |
+| --- | --- |
+| `TaskManager()` | Initialize task slots, running/switching records, and accounting state. |
+| `AllocateTask()` | Reserve and initialize a task slot without constructing its execution stack. |
+| `CreateKernelTask(entry, arg)` | Allocate a stack/context that begins at a kernel entry function. |
+| `CreateUserBootstrapTask(userRip, userRsp, arg0, arg1)` | Create a kernel bootstrap context that enters the supplied user state. |
+| `CreateUserCloneTask(frame, id)` | Create an x86_64 child context from a saved syscall frame. |
+| `FreeTask(task, retiredStack, retiredResources)` | Free an eligible slot; optionally transfer stack/resource cleanup to the caller. |
+| `ReleaseTaskResources(resources)` | Drop detached task descriptor/filesystem references. |
+| `SetPriorityCleanup(context, cleanup)` | Register policy cleanup for task retirement. |
+| `CleanupCurrentTask()` | Run the current task's applicable priority/retirement cleanup callbacks. |
+| `CleanupRetiredTask(task)` | Run cleanup for a dying, quiescent task while protecting it from reclamation. |
+| `ReleaseTaskStack(stack)` | Free a detached kernel stack after it is safe to reclaim. |
+| `ExecuteTask(task, releaseDispatchClaim)` | Validate and switch to a task, optionally consuming a dispatch claim. |
+| `RetainForDispatch(task)` | Claim an eligible task so selection cannot race retirement. |
+| `ReleaseDispatchClaim(task)` | Release a claim that was not consumed by execution. |
+| `MarkDying(task)` | Mark a task for retirement. |
+| `CompleteSwitch()` | Finalize the outgoing task's state after its context is saved on the incoming stack. |
+| `MarkSleeping(task)` | Mark the current task as enrolled in a pending sleep. |
+| `FinishSleeping(task)` | Clear pending/blocked/uninterruptible sleep state. |
+| `GetRunningTask(cpuId)` | Return a CPU's current task record. |
+| `SetRunningTask(cpuId, task)` | Update a CPU's running-task association after validation. |
+| `GetCurrentTask()` | Return the calling CPU's running task. |
+| `GetActiveTask()` | Resolve the active task without a manager instance. |
+| `AccountCurrent(userMode)` | Charge elapsed execution time to the current task/process. |
+| `AccountActive(userMode)` | Account the active task through the shared entry point. |
+| `HasRunningTasks(process)` | Check whether a process still has executing or switching tasks. |
+| `ReadSystemStatistics(now, loads, liveTasks)` | Update load averages and report live task count. |
+| `FindTask(id)` | Find a task by identity; callers needing stability must claim it. |
+| `SetCurrentIdentity(id)` | Set the current task's identity. |
+| `GetTasks()` | Expose the mutable task-slot array. |
+| `GetTasks() const` | Expose the array through a const view. |
+| `GetCapacity()` | Return the fixed task-slot capacity. |
+| `CountTasks()` | Count allocated task slots. |
+| `GetCurrentName(name)` | Copy the current task's fixed-size name. |
+| `SetCurrentName(name)` | Replace the current task's name. |
+| `GetCurrentTlsBase(gs, value)` | Read the current x86_64 FS/GS user TLS base; unsupported targets return false. |
+| `SetCurrentTlsBase(gs, value)` | Update the current x86_64 TLS base and saved task state. |
+
+### VirtualMemoryManager
+
+Provides address spaces, page mappings, and shared/file-backed storage.
+`VirtualMemoryManager.hpp` declares the interface; `VirtualMemoryManager.cpp`
+implements it over platform VMM. Mapping transaction primitives require the
+address-space operation lock; backing-page I/O must follow caller serialization.
+
+| Function | What it does |
+| --- | --- |
+| `CreateUserAddressSpace()` | Allocate an isolated user root and free-region metadata. |
+| `CloneUserAddressSpace(source)` | Clone user mappings using retained/shared or copy-on-write backing. |
+| `DestroyUserAddressSpace(space)` | Release an isolated address-space root after all process/CPU users have detached. |
+| `IsPageAvailable(space, address)` | Check that a user page is free in both region and mapping state. |
+| `AllocateAnonymousPage(space, address, protection, heap)` | Allocate zeroed page backing and install a user mapping. |
+| `CreateBacking(size, file)` | Create a reference-counted memory/file backing object. |
+| `RetainBacking(object)` | Add a backing-object reference. |
+| `ReleaseBacking(object)` | Drop a backing reference and reclaim it when eligible. |
+| `FlushBacking(object)` | Write dirty file-backed pages through their writeback contract. |
+| `RetryWriteback()` | Retry retained writeback work after earlier failures. |
+| `GetBackingPage(object, offset, create)` | Find a cached page, optionally creating/populating it. |
+| `ResizeVolatileBacking(object, size)` | Resize volatile storage; reject unsupported mapped shrink operations. |
+| `MapBackingPage(space, address, object, offset, protection, shared, maximumProtection)` | Retain backing and map or reserve its page with the permitted protections. |
+| `ReleaseAnonymousPage(space, address, force)` | Unmap/release owned backing; preserve a recoverable mapping on non-forced writeback failure. |
+| `ProtectAnonymousPage(space, address, protection)` | Change an owned user page's recorded protection and mapping permissions. |
+| `DiscardAnonymousPage(space, address)` | Discard private contents, restoring zero/file backing as appropriate. |
+| `ReleaseAnonymousPages(space)` | Lock an address space and force-release all owned user pages. |
+| `MapPage(va, pa, flags, space)` | Install one virtual-to-physical page mapping. |
+| `UnmapPage(va, space)` | Remove one page mapping. |
+| `MapRange(vaStart, paStart, size, flags, space)` | Install mappings across a range. |
+| `UnmapRange(vaStart, size, space)` | Remove mappings across a range. |
+| `ProtectPage(va, flags, space)` | Change one page's machine mapping flags. |
+| `ProtectRange(vaStart, size, flags, space)` | Change mapping flags across a range. |
+| `SwitchAddressSpace(space)` | Activate the selected address space. |
+| `VirtToPhys(va, space)` | Translate a virtual address through the selected page tables. |
+| `ReserveRegion(space, size, type)` | Reserve virtual address space without allocating physical backing. |
+| `FreeRegion(space, addr)` | Release virtual-region metadata/reservation. |
+| `FindRegion(space, addr)` | Return borrowed metadata for the region containing an address. |
+
+### DmaManager
+
+Owns tracked coherent DMA allocations using physical memory and platform DMA
+operations. `DmaManager.hpp` defines devices, status, and allocation handles;
+`DmaManager.cpp` implements validation, mapping, and rollback. It is noncopyable.
+
+| Function | What it does |
+| --- | --- |
+| `DmaManager(physical, virtualMemory, operations)` | Bind memory services and copy the platform DMA operation table. |
+| `~DmaManager()` | Enforce that no tracked allocations remain; live allocations cause a panic. |
+| `AllocateCoherent(device, size, alignment, boundary, allocation)` | Validate device constraints, allocate zeroed backing, and produce CPU/device addresses. |
+| `FreeCoherent(allocation)` | Unmap and release a tracked buffer; failures preserve a retryable handle. |
+| `WriteBarrier()` | Order descriptor stores before device publication/doorbells. |
+| `ReadBarrier()` | Order completion observation before reading device-written data. |
+| `CountAllocations()` | Return the current number of tracked allocations. |
+
+### TimeManager
+
+Provides clock readings, monotonic deadlines, and process timers.
+`TimeManager.hpp` defines time records and injectable clock callbacks;
+`TimeManager.cpp` implements clock conversion and timer state.
+
+| Function | What it does |
+| --- | --- |
+| `TimeManager()` | Initialize the live architecture clock backend and report its availability. |
+| `TimeManager(backend)` | Initialize an injected backend, used for isolated deterministic tests. |
+| `ReadClock(clock, value)` | Read realtime, monotonic, or monotonic-raw time; CPU clock queries are unsupported. |
+| `ReadResolution(clock, value)` | Report the supported clock's resolution. |
+| `CalculateSleepDeadline(clock, absolute, request, monotonicDeadline)` | Validate a duration/time and convert it to the scheduler's monotonic deadline. |
+| `GetTimer(which, destination)` | Copy the current process's selected interval timer to user memory. |
+| `SetTimer(which, source, previous)` | Replace an interval timer from user memory, optionally copying out its previous state. |
+| `CancelAlarm()` | Cancel the real-time alarm and return its previous remaining seconds. |
+| `SetAlarm(seconds)` | Replace the process's real-time alarm and return previous remaining seconds. |
+| `ExpireRealTimer(process, now)` | Detect expiry and publish pending SIGALRM for a retained process. |
+| `RestartRealTimer(process)` | Rearm an expired repeating real timer at its next future interval. |
+| `ExpireCpuTimers(process)` | Detect CPU-time timer expirations and publish their pending signals. |
+
+The injected `time_clock_backend_t` has two callbacks: `initialize` supplies the
+realtime epoch, availability, and resolution; `read` supplies elapsed monotonic
+nanoseconds. Live use must share Scheduler's monotonic epoch. CPU interval timers
+use execution accounting even though CPU clock queries are not yet supported.
+
+### InitRamFileSystemManager
+
+Indexes up to 256 CPIO entries without copying their file data out of the boot
+image. `InitRamFileSystemManager.hpp` declares the archive records;
+`InitRamFileSystemManager.cpp` parses and searches them.
+
+| Function | What it does |
+| --- | --- |
+| `InitRamFileSystemManager(initramfsSize, initramfsAddress)` | Parse the supplied CPIO image into the bounded archive index. |
+| `find(path)` | Return the mutable indexed entry matching a path, or null. |
+| `GetArchiveAt(index)` | Return a const indexed entry, or null when out of range. |
+| `GetArchiveCount()` | Return the number of indexed entries. |
+
+### ResourceFileSystem
+
+Adapts the archive index into the filesystem callback table consumed by VFS.
+`ResourceFileSystem.hpp` declares the class and table; `ResourceFileSystem.cpp`
+implements opaque filesystem/node handles. Every table operation forwards to
+the matching method below, passing the table as its context argument.
+
+| Function | What it does |
+| --- | --- |
+| `ResourceFileSystem(initRamFileSystemManager)` | Bind the archive manager and initialize callback thunks. |
+| `GetCaps()` | Return the borrowed embedded context/function-pointer table. |
+| `MountFilesystem(type, source)` | Create a CPIO filesystem handle using the supplied or default archive manager. |
+| `GetRootNode(filesystem)` | Create the backend root-directory handle. |
+| `GetNodeInfo(node, info)` | Report identity, size, type, permissions, and ownership. |
+| `Lookup(directory, name)` | Resolve one child component into a backend node. |
+| `ReadDirectory(directory, cursor, entry)` | Advance directory iteration: return one entry, end-of-directory, or an error. |
+| `Read(node, offset, buffer, size)` | Copy existing archive bytes into kernel memory. |
+| `Write(node, offset, buffer, size)` | Overwrite existing archive bytes without extending the file. |
+| `Mkdir(path, mode)` | Reject directory creation with `-EROFS`. |
+| `Unlink(path, directory)` | Reject removal with `-EROFS`. |
+| `Rename(oldPath, newPath)` | Reject renaming with `-EROFS`. |
+| `Link(oldPath, newPath, followSymlink)` | Reject hard-link creation with `-EROFS`. |
+| `Mknod(path, mode, device)` | Reject node creation with `-EROFS`. |
+| `Truncate(path, size)` | Shrink an existing file; reject growth or invalid paths. |
+
 
 ## 3. Ownership and lifetime
 
@@ -80,8 +324,6 @@ Resource manages storage and execution mechanisms. Logic decides scheduling,
 process lifecycle, mapping policy, and namespace behavior. TaskManager performs
 context transitions chosen by Scheduler; VirtualMemoryManager applies the mapping
 operations chosen by ProcessController and ElfMapper.
-
-![Resource layer interactions](../../imgs/resource-interactions.svg)
 
 PhysicalMemoryManager wraps platform PMM allocation; VirtualMemoryManager wraps
 VMM operations and manages user backing. DmaManager uses the platform DMA operation

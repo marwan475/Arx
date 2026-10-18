@@ -26,8 +26,6 @@ This order makes lower-layer services available before their consumers are
 constructed. `StartKernel` then returns to `kmain`, which mounts the root
 filesystem, queues post-init work, and activates scheduling.
 
-![Dispatcher construction](../../imgs/dispatcher-construction.svg)
-
 Construction happens during bootstrap. Request tests run later in scheduled
 post-init work, rather than immediately after Request construction.
 
@@ -98,8 +96,6 @@ request `1` means scheduling. That manager checks its per-CPU tick interval, wak
 sleepers, and uses Scheduler and ProcessManager to run ready work when scheduling
 is active. Interrupt acknowledgment, machine registers, and safe preemption points
 remain the responsibility of the architecture entry code.
-
-![Dispatcher runtime routing](../../imgs/dispatcher-runtime.svg)
 
 These are the two main request routes. The service bridges below also enter
 Logic or Resource directly, without passing through a Request manager.

@@ -21,37 +21,95 @@ Logic; System receives only Resource. Interrupt receives neither and looks up it
 services through the published Dispatcher when handling a scheduling request.
 Receiving a capability set does not mean a manager retains or uses every service.
 
-![Request layer initialization](../../imgs/request-initialization.svg)
-
 `GetCaps` returns null before creation. Later `Create` calls return the existing
 capabilities without rebuilding managers or replacing their dependencies. Request
 self-tests run later in scheduled post-init work on the bootstrap CPU.
 
-## 2. Managers and responsibilities
+### RequestLayerFactory
 
-Each manager's interface and implementation use its name followed by `.hpp` and
-`.cpp`. `SchedulerPolicyRequests.cpp` also implements scheduler policy requests.
-
-| Manager | Responsibility |
+| Function | What it does |
 | --- | --- |
-| ProcessRequestManager | Decode process creation, execution, exit, waiting, and identity requests. |
-| SchedulerRequestManager | Handle yielding, scheduling policy, priority, CPU affinity, and CPU queries. |
-| TimeRequestManager | Translate clock, sleep, interval-timer, and alarm requests. |
-| MemoryRequestManager | Validate mapping, protection, residency, advice, and program-break requests. |
-| VfsRequestManager | Handle paths, files, descriptors, metadata, mounts, pipes, and memory files. |
-| EventRequestManager | Decode readiness waits, event counters, epoll, and filesystem notifications. |
-| SyncRequestManager | Validate futex operations, deadlines, and robust-list requests. |
-| SignalRequestManager | Handle signal actions, masks, sending, alternate stacks, and signal return. |
-| CredentialRequestManager | Translate user/group identity and supplementary-group requests. |
-| SystemRequestManager | Handle system information, process controls, limits, and architecture controls. |
-| SocketRequestManager | Forward decoded socket, connection, message, and option requests to SocketManager. |
-| InterruptRequestManager | Turn common scheduling requests into sleeper wakeups and scheduler work. |
+| `RequestLayerFactory()` | Initialize empty factory-owned capability state. |
+| `~RequestLayerFactory()` | Delete the twelve managers and capability structure. |
+| `Create(resourceLayerCaps, logicLayerCaps)` | Construct handlers with lower-layer imports once, or return existing capabilities. |
+| `GetCaps()` | Return borrowed Request capabilities, or null before creation. |
 
-Request may call either lower layer directly. Process and Memory delegate process
-operations to ProcessController; Scheduler, Signal, Credential, Event, and Socket
-use their corresponding Logic managers. Vfs combines filesystem services with
-process descriptor state and IPC services. Time combines Resource's TimeManager
-with Logic's Scheduler. System uses Resource services directly.
+## 2. Managers and syscall families
+
+Each manager has matching `.hpp` and `.cpp` files named after it.
+`SchedulerPolicyRequests.cpp` also implements scheduler policy requests. The
+sections describe handled syscall families rather than listing individual handler
+APIs; support remains limited to the operations and flags actually implemented.
+
+### ProcessRequestManager
+
+Handles Linux process/thread lifecycle, execution, exit, waiting, process/task
+identity, and process-group/session syscalls. Delegates lifecycle policy to
+ProcessController and uses Resource records for identity queries.
+
+### SchedulerRequestManager
+
+Handles Linux yielding, scheduler policy/attributes, priority, CPU affinity, and
+CPU-location syscalls. Uses Scheduler for policy and placement, and Resource task
+claims for stable target access.
+
+### TimeRequestManager
+
+Handles Linux clock queries, sleeps, interval timers, and alarm syscalls. Uses
+TimeManager for time conversion/timer state and Scheduler for sleeping.
+
+### MemoryRequestManager
+
+Handles Linux user-memory mapping, unmapping, protection, residency, advice, and
+program-break syscalls. Validates ABI arguments before delegating process-memory
+policy to ProcessController.
+
+### VfsRequestManager
+
+Handles Linux path, file I/O, descriptor, directory, metadata, mount, pipe, and
+memory-file syscalls. Combines VFS operations, Resource descriptor/process state,
+and IPC services.
+
+### EventRequestManager
+
+Handles Linux readiness polling/select, epoll, eventfd, inotify, and signalfd
+syscalls. Uses EventManager and coordinates temporary signal masks for masked waits.
+
+### SyncRequestManager
+
+Handles Linux futex and robust-list syscalls. Decodes operations, alignment, and
+timeouts before calling SynchronizationManager and TimeManager.
+
+### SignalRequestManager
+
+Handles Linux signal actions, masks, sending/queuing, alternate stacks, pause,
+and signal-return syscalls. SignalManager owns queue/delivery policy and uses
+architecture hooks for saved user contexts.
+
+### CredentialRequestManager
+
+Handles Linux user/group identity and supplementary-group syscalls. Uses
+CredentialManager for credential rules and copies ABI results to user memory.
+
+### SystemRequestManager
+
+Handles Linux system information, process controls/names, resource limits, umask,
+architecture controls, and random-data requests. Uses Resource services and the
+shared resource-limit policy helper; random-data requests currently return
+`-ENOSYS`.
+
+### SocketRequestManager
+
+Handles Linux socket creation, binding, connection, listening/acceptance, message
+transfer, shutdown, address queries, and option syscalls. SocketManager validates
+user buffers and implements the supported local transport.
+
+### InterruptRequestManager
+
+Handles common kernel interrupt requests, not Linux syscalls. Scheduling request
+`1` coordinates sleeper wakeups and ready-task scheduling through the published
+Dispatcher; unknown requests are ignored. Hardware vectors and acknowledgment
+remain in architecture code.
 
 ## 3. Capabilities, structures, and ownership
 
@@ -84,8 +142,6 @@ optional pointers according to the operation. They reject unsupported inputs,
 prepare kernel-side records, and delegate work. Validation is shared with the
 lower-layer service: some handlers perform user copies themselves, while others
 pass user addresses to a collaborator that owns validation and copying.
-
-![General Request layer flow](../../imgs/request-flow.svg)
 
 Handlers usually forward the collaborator's status or result. Where needed, they
 convert internal records and copy outputs back to user memory. Return types are

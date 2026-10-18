@@ -2,14 +2,14 @@
 
 - Type: feature
 - Priority: P2
-- Status: closed
+- Status: in progress
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
 
 Create a detailed guide to Resource layer. Explain ResourceLayerFactory, ResourceLayerCaps and filesystem capabilities, construction and lifetime, resource ownership, and interaction with platform mechanisms. Map every Resource component to its responsibilities and consumers, including ResourceFileSystem. Describe general resource acquisition/release contracts; concrete examples and walkthroughs are deferred by owner agreement.
 
-Keep this guide focused on area-wide contracts and interactions; link component guides for internal detail.
+Keep layer-wide contracts and interactions, and document every manager/component in its own section within this guide.
 
 Write concise, human-readable documentation for humans learning Arx's implementation. Explain repository-specific
 mechanics and rationale supported by the code; distinguish verified behavior from
@@ -35,20 +35,17 @@ These are starting points; inspect callers, dependencies, and tests before makin
 
 ## Acceptance criteria
 
-- [x] Responsibilities, source map, public contracts, initialization order and dependencies are documented.
-- [x] Key structures, ownership/lifetimes, synchronization and execution-context constraints are explained with source evidence.
-- [x] General interactions connect the layer to its collaborators; concrete examples and walkthroughs are deferred.
-- [x] Failure modes, useful inspection locations, relevant self-tests, and existing debugging tools are described using plain source filenames, without clickable source links.
-- [x] Current limitations and architecture differences are explicit; documentation navigation and image paths resolve.
-
-- [x] `docs/architecture/layers/Resource.md` follows the established concise, initialization-first format, with a complete one-line component inventory.
-- [x] Initialization and general interaction SVGs are embedded; Mermaid sources remain in `docs/DIAGRAMS.md`.
-- [x] The root README links to the finished guide.
+- [x] Preserve the concise, human-readable, initialization-first guide and existing layer-wide contracts.
+- [x] Include a separate section for every factory-created manager/component.
+- [x] Each Resource/Logic component section explains its role and every callable public API function individually, including factory lifecycle and important ownership/error constraints.
+- [x] Verify API descriptions against public headers and implementations, including overloads and cleanup obligations.
+- [x] Remove layer diagram embeds, SVG assets, and their Mermaid source blocks for now.
+- [x] Preserve self-test coverage descriptions, limitations, plain source filenames, and working README navigation.
 
 ## Deferred TODOs
 
-- Add concrete examples and walkthroughs in a later owner-approved update. These
-  are not required for completion of this ticket.
+- Reintroduce layer diagrams later, after the expanded component/API documentation is settled.
+- Concrete examples and walkthroughs remain deferred.
 
 ## Work log
 
@@ -150,3 +147,53 @@ The owner authorized closure with “close” in response to the proposed move t
 `tickets/closed/`. Completed the layer guide, two verified SVGs with retained
 Mermaid sources, self-test documentation, and README navigation. Concrete
 examples and walkthroughs remain deferred as agreed.
+
+### 2026-10-17 — Reopened; owner-directed scope consolidation
+
+The owner explicitly requested reopening the layer tickets directly into in_progress,
+removing the separate manager/component tickets, removing layer diagrams for now,
+and expanding each layer guide with a section per manager/component. Resource and
+Logic sections must describe every public API function; Request sections describe
+Linux syscall families instead of listing their long handler APIs. This instruction
+authorizes the revised work and the requested status/destination directly.
+
+Updated plan: inventory public headers and verify implementations; add concise
+component sections and per-function API tables (Request family summaries only);
+remove the layer diagrams and their source blocks; check API/component coverage,
+filenames, navigation, and whitespace. Preserve existing guide content where useful,
+self-test sections, source filename style, and earlier work-log history. Record
+new diagrams and examples as deferred, not completion requirements. Keep tickets
+in progress for owner review; do not re-close without authorization.
+
+Consolidated and removed these separate tickets:
+- `document_dma_manager.md`
+- `document_init_ram_file_system_manager.md`
+- `document_physical_memory_manager.md`
+- `document_process_manager.md`
+- `document_resource_file_system.md`
+- `document_task_manager.md`
+- `document_time_manager.md`
+- `document_virtual_memory_manager.md`
+
+### 2026-10-17 — Progress and remaining work; revised guide ready for review
+
+Eight component sections with 160 callable public class declarations (including factory/guard APIs), overloaded getters/constructors, process helpers, filesystem callback correspondence, and clock backend contracts. Retained initialization order, ownership/locking rules, limitations,
+and self-test descriptions. Individual manager/component tickets are consolidated
+into this guide and removed. Removed all eight SVGs embedded across the layer
+guides (including Dispatcher), their embeds and exact Mermaid source blocks;
+retained kernel, platform, and architecture diagrams and the original README image.
+
+Verification: compared factory inventories to all 30 component/manager headings;
+checked public-header declarations against their own component API sections,
+including overload counts and excluding deleted copy operations. Reviewed relevant
+implementation bodies for semantics, failure/cleanup obligations, and supported
+paths. Verified public helpers and VFS callbacks, cited source filenames, README
+navigation, and local guide/ticket links. Confirmed all 30 removed ticket files
+are absent, all three layer tickets are in_progress, and no removed layer SVGs or
+source blocks remain. `git diff --check` passed. No implementation files changed;
+no kernel build/runtime tests were run for this documentation-only revision.
+
+All revised acceptance criteria are met. Per the owner's instruction, this ticket
+remains in progress; owner review is pending. Diagrams and concrete examples remain
+explicit deferred TODOs. Historical closure log entries are preserved as history
+of the previously authorized closure; this reopening adds no closure entries.

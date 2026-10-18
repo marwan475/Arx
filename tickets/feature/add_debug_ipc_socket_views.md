@@ -14,7 +14,7 @@ paths but do not decode these anonymous-file object graphs.
 
 Follow [the workflow](../TICKET.MD), required grilling and repository skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
-Depends on [foundations](build_debug_framework_foundation.md) and
+Depends on [foundations](../closed/build_debug_framework_foundation.md) and
 [task-aware descriptors](add_debug_process_resource_views.md). Reuse backing-page
 identities from [memory views](add_debug_virtual_memory_views.md) and readiness
 relationships from [signal/event views](add_debug_signal_event_views.md), without

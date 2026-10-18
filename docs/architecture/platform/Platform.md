@@ -17,6 +17,13 @@ The global `platform` object holds shared machine state. `platform.h` defines it
 CPU records, NUMA nodes, framebuffer, device inventory, DMA operations, and
 initramfs location. Its Dispatcher pointer is filled later by `kmain`.
 
+Debug builds also embed platform-owned boot, CPU-progress and PCI-enumeration
+records. `arx-debug status` can read early progress before Dispatcher exists;
+Dispatcher later publishes the platform, CPU and PCI providers. Runtime CPU
+flags and captured device fields are inspected from their existing RAM records.
+Release builds exclude the added records and tracking work. GdbCommands.md
+documents bounded inspection and the native-reader contracts.
+
 ![Platform CPU state](../../imgs/dispatcher-2026-04-15-070216.svg)
 
 The current CPU record is selected by `arch_cpu_id`. Dispatcher connects platform
@@ -149,7 +156,9 @@ The bootstrap CPU calls `arch_smp_init` after shared platform setup. On x86_64,
 Limine starts each other CPU at `smp_entry`, which calls `smp_platform_init` to
 perform its architecture setup.
 
-Each CPU publishes its initialized state. Atomic flags coordinate startup;
+Each CPU publishes its initialized state after architecture setup. Separately,
+`cpus_initialized` counts arrival on the permanent kernel stacks. Atomic flags
+coordinate startup;
 shared memory services are initialized once rather than rebuilt on each CPU.
 `cpu_init_stack` gives each CPU a kernel stack with an unmapped guard page before
 entering `platform_init_complete`.

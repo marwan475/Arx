@@ -5,7 +5,22 @@
 
 extern void dispatcher_service_pending_reschedule(void);
 
-platform_t platform;
+platform_t platform =
+{
+    ARX_DEBUG_ONLY(.debugStats =
+    {
+        .cpus =
+        {
+            .source = &platform,
+            .capacity = BOOT_SMP_MAX_CPUS
+        },
+        .pci =
+        {
+            .source = &platform,
+            .capacity = MAX_PCI_DEVICES
+        }
+    })
+};
 
 static cpu_info_t platform_cpus[BOOT_SMP_MAX_CPUS];
 
@@ -24,6 +39,9 @@ void cpus_init(size_t cpu_count)
 
     platform.cpu_count = bounded_cpu_count;
     arch_init_cpu_info();
+
+    ARX_DEBUG_STORE(platform.debugStats.cpus.tableReady, 1);
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_CPU_TABLE_READY);
 }
 
 __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg)

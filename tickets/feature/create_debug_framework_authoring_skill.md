@@ -17,7 +17,7 @@ Follow [the workflow](../TICKET.MD) and complete this ticket's own grilling and
 execution gate. Parent: [planning](../closed/plan_gdb_extension_tickets.md).
 Coordinate with [agent-skill planning](plan_kernel_agent_skill_tickets.md), whose
 QEMU/GDB usage skill is distinct from authoring providers/views. Dependencies:
-[foundations](build_debug_framework_foundation.md), at least one verified stats
+[foundations](../closed/build_debug_framework_foundation.md), at least one verified stats
 and rich-view provider, and the implemented portions of the
 [command/maintainer guide](migrate_debug_commands_and_document_framework.md).
 See [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment).

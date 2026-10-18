@@ -52,8 +52,7 @@ GDB_EXTENSION="$PWD/debug/gdb/arx.py" make x86_64-debug BUILD_DIR=build/framewor
 `x86_64-debug` forces a debug rebuild. Ordinary image targets do not track changed
 compiler flags, so reuse of its output directory for a subsequent release build
 can leave incompatible objects. Use separate directories or force a rebuild when
-switching DEBUG values. The headless verification harness below launches its own
-isolated snapshot QEMU/GDB session for automated checks.
+switching DEBUG values.
 
 The reader compares the loaded ELF's GNU build-id note with target RAM before
 using layouts, then checks the registry magic, format version and bounds.
@@ -68,6 +67,7 @@ was compiled out. A different ELF is rejected before reading records.
 
 | Command | Behavior |
 | --- | --- |
+| `arx-debug status` | Diagnose early platform progress, Dispatcher/registry roots, provider publication and record-type availability. |
 | `arx-debug list` | List reserved provider names, record types and availability. |
 | `arx-debug <provider> stats` | Render a custom record's scalars, enums, nested structs and arrays from matching ELF types. |
 | `arx-debug <provider> <view>` | Gather and render a named collection through an optional semantic adapter. |
@@ -99,8 +99,9 @@ All commands accept the following options. Raising one does not raise the others
 | `--bytes N` | 65,536 | 16 MiB | Payload bytes copied from target RAM, including view roots. |
 | `--depth N` | 8 | 32 | Struct expansion depth or graph depth. Graph roots have depth zero; depth 1 includes roots only. |
 
-Discovery has its own fixed budget of 65,536 bytes and 10,000 string/work entries.
-Reads copy only the Dispatcher pointer from the large platform structure. Target
+Registry discovery has its own fixed budget of 65,536 bytes and 10,000 string/work entries.
+It copies the Dispatcher pointer from the large platform structure. `status`
+uses the command budget for its staged diagnostic reads. Target
 records are copied into local GDB values before rendering; pretty-printers do not
 control traversal. A byte limit can reject a whole record before expansion.
 
@@ -212,6 +213,105 @@ expansion finish before presentation. New adapters reuse the shared bounded arra
 pointer-list, index-list, string, hash-bucket and graph algorithms. They must not
 print independently, invoke target methods, or invent an unbounded discovery pass.
 
+## Platform, CPU and PCI views
+
+```text
+arx-debug status
+arx-debug platform stats
+arx-debug cpus stats
+arx-debug cpus topology
+arx-debug cpus topology --cpu 1
+arx-debug cpus topology --slot 0
+arx-debug pci stats
+arx-debug pci devices --device 0000:00:01.0 --limit 20
+```
+
+`status` reads debug progress embedded in the global platform object before
+Dispatcher exists. It preserves readable progress when a later root or type is
+unavailable. A pre-Dispatcher result is partial because the registry is not yet
+available. After publication it reports registry addresses, provider states and
+whether each ready record's ELF type has the expected size. This checks type
+availability, not the validity of every payload or rich-view descriptor.
+
+The platform owns these records for the kernel lifetime. `PlatformStats.h` defines
+their layout and numeric stage/outcome vocabulary. The platform stage follows
+the BSP: not started, boot entered, CPU table ready, architecture initializing,
+devices enumerating, waiting for CPUs, platform tests, kernel-stack barrier,
+Dispatcher published, providers published and BSP handoff (values 0 through 10).
+Each CPU independently records not started, architecture initializing,
+architecture initialized and arrival on its permanent kernel stack (0 through 3).
+`architectureInitialized` and `stackArrivals` count those separate milestones.
+`bspHandoff` records reaching the scheduling handoff; it does not prove a task ran.
+Progress updates are debug-only atomic observations, not coherent snapshots.
+
+Dispatcher publishes the `platform`, `cpus` and `pci` providers during
+`StartKernel`, before creating Resource. Generic `stats` commands render their
+maintained records. CPU topology reads existing `cpu_info_t` state, including
+preemption depth, context switching, pending reschedule, syscall activity, stack
+bounds and mailbox payload/lock byte. It keeps array slot, logical ID, hardware
+ID and ACPI/LAPIC IDs distinct. `--cpu` selects a logical ID; `--slot` selects an
+array index. They are mutually exclusive. Shared IOAPIC state appears once;
+NUMA and address-space relationships group CPU slots by borrowed source address.
+Task correlation and richer address-space identities report unavailable until
+their providers supply correlation adapters. Local CPU state stays readable.
+
+A mailbox is a current observation. Scheduling IPIs can bypass it, so `NONE`
+does not mean no scheduling work is pending. A lock byte of 1 alone does not
+prove an unhandled request: a sender can hold it while checking completion.
+Only an `INVALIDATE_TLB` mailbox interprets the stored TLB payload; cleared
+mailboxes can retain stale bytes. TLB requests carry no address-space identity.
+The CPU's current address-space pointer is separate. These views report neither
+completed IPI history nor actual TLB contents, and do not discover saved frames.
+
+PCI output uses the captured inventory, including segment-qualified BDF, IDs,
+class/revision, command/status, header, interrupt and BAR fields. `--device`
+requires hexadecimal `ssss:bb:dd.f` with an exact segment and BDF. Selectors are
+valid only on their matching rich view and accept no expressions. Each entry
+also reports its inventory index and source address. BAR counts describe register
+slots (at most six), including absent entries and the empty upper slot of a
+64-bit BAR. Captured BAR bases/raw words do not provide probed resource sizes.
+PCI outcomes distinguish not started, enumerating, succeeded, no ECAM regions
+and failed (0 through 4); capacity exhaustion marks a possibly truncated inventory.
+No config-space, APIC, MSR, MMIO or device-register access is performed.
+
+### Explicit discovery roots
+
+`--platform <numeric-address>` resolves a typed platform's Dispatcher field;
+`--registry <numeric-address>` names DebugManager directly. Both are accepted by
+registry commands and `status`, apply to one command, and are mutually exclusive.
+They accept positive decimal/hexadecimal integers, retain stopped-target, ELF
+build-ID, type, format and bounds checks, and never persist across commands.
+`status --registry` explicitly reports that it has no platform root. A missing
+type cannot be repaired by guessing a member offset. `inspect` accepts its own
+numeric address and rejects these root options.
+
+### Native-reader contracts and migration
+
+| Semantic ID/version | Root and traversal contract |
+| --- | --- |
+| `arx.platform.cpus` / 1 | `arx_cpu_debug_stats_t`; descriptor count=0 denotes dynamic count, capacity=`BOOT_SMP_MAX_CPUS` (8). Validate root size/capacity, table readiness, `source->cpu_count` and `source->cpus` before reading contiguous `cpu_info_t` slots in array order. Progress stages use the same slot index. |
+| `arx.platform.pci` / 1 | `arx_pci_debug_stats_t`; descriptor count=0 denotes dynamic count, capacity=`MAX_PCI_DEVICES` (256). Validate root size/capacity, allocation/outcome and `source->pci_device_count` before reading contiguous `pci_device_t` entries in enumeration order. Validate BAR count against `MAX_PCI_BARS` (6). |
+
+Roots, CPU slots and captured inventory have kernel lifetime; these views do not
+define reuse generations. Pointer links are borrowed identities. Native readers
+need matching headers/build identity and must implement these semantics with
+bounded RAM reads. Never follow stored APIC, BAR or ECAM addresses. Unknown enums,
+invalid counts, null nonempty inventories, unreadable slots and interrupted
+publication produce explicit partial/unavailable results. Fixed capacities bound
+selector searches as well as display traversal; byte limits cover every copied
+slot. Each rich-view row consumes an entry; its field count is schema-bounded.
+No target locks or CPU helper calls are permitted.
+
+| Legacy coverage | Replacement | Preserved information and correction |
+| --- | --- | --- |
+| `arx-platform show/status/set/clear` | `status`, per-command `--platform` / `--registry` | Typed roots and availability; numeric overrides with no persistent state or expression evaluation. |
+| `arx-cpus` | `cpus topology`, `cpus stats`, `platform stats` | Counts/IDs, NUMA/address-space and stored APIC identities plus runtime/progress state; explicit slot versus logical-ID selectors. |
+| `arx-pci` | `pci devices`, `pci stats` | Captured BDF/vendor/device plus segment/class/BAR/configuration fields; actual allocation bounds replace the legacy 4096-entry guess. |
+| Resource/manager discovery diagnostics | `status`, `list` | Dispatcher/DebugManager roots, named providers, staged availability and record types; no manager-map slot guesses or getter calls. Production Resource providers arrive in their own tickets. |
+
+Legacy commands remain available until the cutover ticket changes launch defaults
+and removes them. Their unsafe fallback discovery is not part of this contract.
+
 ## Controlled foundation providers
 
 These providers demonstrate the contract; they are not PMM, scheduler or other
@@ -244,35 +344,3 @@ may be null only for length zero. Index walks accept -1 as empty; other negative
 or out-of-range indices are invalid. Reads can stop mid-mutation, so damaged links
 are evidence rather than proof of permanent corruption. The fixture adapter is
 in foundation.py; FoundationStats.hpp and FoundationCStats.h define the layouts.
-
-## Verification tools
-
-Run the host corruption/bounds tests and concurrent registry contract check:
-
-```sh
-python3 -m unittest discover -s debug/tests -p 'test_*.py' -v
-g++ -DDEBUG=1 -I. -pthread debug/tests/kernel_contract.cpp debug/kernel/DebugManager.cpp -o /tmp/arx-framework-contract
-/tmp/arx-framework-contract
-gcc -DDEBUG=0 -I. -O2 debug/tests/release_erasure.c -o /tmp/arx-framework-release-erasure
-/tmp/arx-framework-release-erasure
-objdump -d --disassemble=arx_release_probe /tmp/arx-framework-release-erasure
-g++ -DDEBUG=0 -I. -Ikernel -Ikernel/platform -Ikernel/platform/acpi/uACPI/include -c debug/tests/dispatcher_layout.cpp -o /tmp/arx-framework-layout-release.o
-nm -S /tmp/arx-framework-layout-release.o
-```
-
-For automated headless target checks, build both images without opening the
-interactive launcher:
-
-```sh
-make -j4 DEBUG=1 BUILD_DIR=build/framework-debug BIN_DIR=bin/framework-debug bin/framework-debug/arx-x86_64.img
-make -j4 DEBUG=0 BUILD_DIR=build/framework-release BIN_DIR=bin/framework-release bin/framework-release/arx-x86_64.img
-python3 debug/tests/run_target_checks.py
-python3 debug/tests/run_target_checks.py --release
-```
-
-The target harness starts an isolated snapshot QEMU, checks real boot stages and
-matching types through GDB, and terminates its VM even on failure. It deliberately
-mutates only controlled fixture/registry memory to verify corrupt and interrupted
-state handling, then restores it. The inspection commands themselves are read-only.
-Host checks do not substitute for runtime discovery checks. Real provider rollout,
-legacy-command parity and final launch integration remain separate work.

@@ -621,7 +621,7 @@ implementation is authorized.
 
 | # | Created ticket | Priority |
 | --- | --- | --- |
-| 1 | [Kernel and GDB framework foundations](../feature/build_debug_framework_foundation.md) | P1 |
+| 1 | [Kernel and GDB framework foundations](build_debug_framework_foundation.md) | P1 |
 | 2 | [Physical allocation, NUMA, heap and DMA](../feature/add_debug_physical_allocation_views.md) | P1 |
 | 3 | [Process tree, task ownership and shared resources](../feature/add_debug_process_resource_views.md) | P1 |
 | 4 | [Scheduling, blocked tasks, futexes and timers](../feature/add_debug_scheduling_wait_views.md) | P1 |
@@ -629,7 +629,7 @@ implementation is authorized.
 | 6 | [Initramfs and supported VFS namespace contents](../feature/add_debug_filesystem_views.md) | P1 |
 | 7 | [Pipes, memory files and UNIX sockets](../feature/add_debug_ipc_socket_views.md) | P2 |
 | 8 | [Signals, epoll and event notifications](../feature/add_debug_signal_event_views.md) | P2 |
-| 9 | [Platform, CPU, IPI and PCI](../feature/add_debug_platform_cpu_pci_views.md) | P1 |
+| 9 | [Platform, CPU, IPI and PCI](../in_progress/add_debug_platform_cpu_pci_views.md) | P1 |
 | 10 | [Self-test progress and boot-error records](../feature/add_debug_selftest_error_views.md) | P2 |
 | 11 | [Cutover and replacement command documentation](../feature/migrate_debug_commands_and_document_framework.md) | P1 |
 | 12 | [Agent stats/view-authoring skill](../feature/create_debug_framework_authoring_skill.md) | P2 |
@@ -708,8 +708,8 @@ Recommended sequential implementation order:
 
 | Order | Ticket | Reason |
 | --- | --- | --- |
-| 1 | [Framework foundations](../feature/build_debug_framework_foundation.md) | Establish the kernel/GDB interface, registration, publication and release exclusion before providers. |
-| 2 | [Platform, CPU, IPI and PCI](../feature/add_debug_platform_cpu_pci_views.md) | Validate real bootstrap discovery and CPU identities used by later correlations. |
+| 1 | [Framework foundations](build_debug_framework_foundation.md) | Establish the kernel/GDB interface, registration, publication and release exclusion before providers. |
+| 2 | [Platform, CPU, IPI and PCI](../in_progress/add_debug_platform_cpu_pci_views.md) | Validate real bootstrap discovery and CPU identities used by later correlations. |
 | 3 | [Physical allocation, NUMA, heap and DMA](../feature/add_debug_physical_allocation_views.md) | Exercise C platform records, maintained stats and bounded lists with useful allocation evidence. |
 | 4 | [Self-test and boot-error records](../feature/add_debug_selftest_error_views.md) | Small bounded diagnostic records improve evidence collection for the remaining work. |
 | 5 | [Process tree, task ownership and resources](../feature/add_debug_process_resource_views.md) | Establish shared process/task/file identities and lifecycle ownership. |

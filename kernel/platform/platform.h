@@ -2,6 +2,7 @@
 #define PLATFORM_H
 
 #include <arch/arch.h>
+#include <debug/kernel/stats/PlatformStats.h>
 #include <device/device.h>
 #include <dma/dma.h>
 #include <klib/spinlock.h>
@@ -40,6 +41,7 @@ typedef struct platform
     size_t                   pci_device_count;
     arch_platform_info_t     arch_info;
     platform_dma_ops_t       dma_ops;
+    ARX_DEBUG_ONLY(arx_platform_debug_stats_t debugStats;)
 } platform_t;
 
 extern platform_t platform;

@@ -16,7 +16,7 @@ visible mounted namespace without executing VFS enumeration methods.
 
 Follow [the workflow](../TICKET.MD), required grilling and repo skills. Parent:
 [planning](../closed/plan_gdb_extension_tickets.md). Depends on
-[foundations](build_debug_framework_foundation.md); use shared file identities
+[foundations](../closed/build_debug_framework_foundation.md); use shared file identities
 from [process/resource views](add_debug_process_resource_views.md) when available.
 See [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment) and
 [Logic documentation](../closed/document_logic_layer.md). This ticket starts open

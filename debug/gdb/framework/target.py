@@ -38,9 +38,20 @@ class Memory:
             raise ReadFailure("unreadable memory at %#x: %s" % (address, error)) from error
 
     def read(self, address, type_name, budget):
-        value_type = self.type(type_name)
+        value_type = self.type(type_name) if isinstance(type_name, str) else type_name
         data = self.read_bytes(address, value_type.sizeof, budget)
         return gdb.Value(data, value_type)
+
+    def field_address(self, address, type_name, name):
+        field = next((field for field in self.type(type_name).fields()
+                      if field.name == name), None)
+        if field is None or field.bitpos % 8:
+            raise ReadFailure("missing/mismatched ELF field %s.%s" % (type_name, name))
+        return address + field.bitpos // 8, field.type
+
+    def field(self, address, type_name, name, budget):
+        location, field_type = self.field_address(address, type_name, name)
+        return self.read(location, field_type, budget)
 
 
 def verify_elf(memory, budget):
@@ -93,8 +104,7 @@ def verify_elf(memory, budget):
     raise ReadFailure("missing ELF build-id: cannot verify target identity")
 
 
-def discover(memory, budget):
-    verify_elf(memory, budget)
+def require_debug(memory):
     # A minimal symbol survives even when release has no DWARF. This marker only
     # exists in debug ELFs, so missing debug types can be distinguished from release.
     marker = gdb.lookup_global_symbol("arx_debug_format_marker")
@@ -108,21 +118,34 @@ def discover(memory, budget):
     dispatcher_type = memory.type("Dispatcher")
     if not any(field.name == "debugManager" for field in dispatcher_type.fields()):
         raise ReadFailure("release kernel: DebugManager compiled out")
+
+
+def platform_address(memory, override=None):
+    if override is not None:
+        return override
     symbol = gdb.lookup_global_symbol("platform")
     if symbol is None:
         raise ReadFailure("missing symbols: platform")
-    platform_type = memory.type("platform_t")
-    dispatcher_field = next(field for field in platform_type.fields()
-                            if field.name == "dispacher")
-    pointer_address = int(symbol.value().address) + dispatcher_field.bitpos // 8
-    dispatcher_address = int(memory.read(pointer_address, "uintptr_t", budget))
-    if dispatcher_address == 0:
-        raise ReadFailure("unavailable: pre-Dispatcher")
-    field = next(field for field in dispatcher_type.fields() if field.name == "debugManager")
-    address = dispatcher_address + field.bitpos // 8
+    return int(symbol.value().address)
+
+
+def registry(memory, budget, address):
     manager = memory.read(address, "DebugManager", budget)
     if int(manager["magic"]) != MAGIC or int(manager["formatVersion"]) != VERSION:
         raise ReadFailure("mismatched/uninitialized registry format")
     if int(manager["capacity"]) != 64 or not 0 <= int(manager["reserved"]) <= 64:
         raise ReadFailure("invalid registry bounds")
     return address, manager
+
+
+def discover(memory, budget, platform_override=None, registry_override=None):
+    verify_elf(memory, budget)
+    require_debug(memory)
+    if registry_override is not None:
+        return registry(memory, budget, registry_override)
+    root = platform_address(memory, platform_override)
+    dispatcher_address = int(memory.field(root, "platform_t", "dispacher", budget))
+    if dispatcher_address == 0:
+        raise ReadFailure("unavailable: pre-Dispatcher")
+    address, _ = memory.field_address(dispatcher_address, "Dispatcher", "debugManager")
+    return registry(memory, budget, address)

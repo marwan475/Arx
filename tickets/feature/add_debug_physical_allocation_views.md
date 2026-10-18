@@ -16,7 +16,7 @@ DMA-zone/address details.
 
 Follow [the workflow](../TICKET.MD), required grilling and repository code skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
-Depends on [foundations](build_debug_framework_foundation.md). This ticket is
+Depends on [foundations](../closed/build_debug_framework_foundation.md). This ticket is
 open and does not authorize implementation. See the [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment).
 
 ### Scope and internal milestones

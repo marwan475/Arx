@@ -9,7 +9,6 @@ filename. Ticket files contain the authoritative details and work history.
 | --- | --- | --- | --- |
 | P1 | [Add initramfs and complete supported VFS namespace debug views](feature/add_debug_filesystem_views.md) | feature | open |
 | P1 | [Add physical allocation, NUMA, heap and DMA debug views](feature/add_debug_physical_allocation_views.md) | feature | open |
-| P1 | [Add platform, CPU, IPI and PCI framework views](feature/add_debug_platform_cpu_pci_views.md) | feature | open |
 | P1 | [Track the process tree, task ownership and shared open resources](feature/add_debug_process_resource_views.md) | feature | open |
 | P1 | [Add scheduling, blocked-task, futex and timer debug views](feature/add_debug_scheduling_wait_views.md) | feature | open |
 | P1 | [Add virtual-memory ownership, backing and x86_64 translation debug views](feature/add_debug_virtual_memory_views.md) | feature | open |
@@ -30,12 +29,13 @@ filename. Ticket files contain the authoritative details and work history.
 
 | Priority | Ticket | Type | Status |
 | --- | --- | --- | --- |
-| P1 | [Build the debug-only kernel and GDB framework foundations](in_progress/build_debug_framework_foundation.md) | feature | in progress |
+| P1 | [Add platform, CPU, IPI and PCI framework views](in_progress/add_debug_platform_cpu_pci_views.md) | feature | in progress |
 
 ## Closed
 
 | Priority | Ticket | Type | Status |
 | --- | --- | --- | --- |
+| P1 | [Build the debug-only kernel and GDB framework foundations](closed/build_debug_framework_foundation.md) | feature | closed |
 | P1 | [Document overall kernel architecture and responsibilities](closed/document_project_structure.md) | feature | closed |
 | P1 | [Remove Resource's dependency on Logic-owned signal definitions](closed/fix_resource_signal_type_dependency.md) | debug | closed |
 | P1 | [Route necessary upward calls through Dispatcher](closed/fix_resource_upward_runtime_calls.md) | debug | closed |

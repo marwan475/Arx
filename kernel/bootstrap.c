@@ -25,6 +25,8 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     bool status = true;
 
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_BOOT_ENTERED);
+
     kprintf("Arx kernel: platform_init entered\n");
 
     if (boot_info == 0 || boot_info->limine_present == 0)
@@ -127,6 +129,8 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("<- acpi_init done\n");
 
     KDEBUG("-> arch_init\n");
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_ARCH_INITIALIZING);
+    ARX_DEBUG_STORE(platform.debugStats.cpus.stages[arch_cpu_id()], ARX_CPU_ARCH_INITIALIZING);
     status = arch_init();
     KDEBUG("<- arch_init done\n");
 
@@ -138,6 +142,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     }
 
     KDEBUG("-> enumerate_devices\n");
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_DEVICES_ENUMERATING);
     enumerate_devices();
     KDEBUG("<- enumerate_devices done\n");
 
@@ -146,8 +151,12 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     arch_init_platform_dma();
 
     __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
+    ARX_DEBUG_STORE(platform.debugStats.cpus.stages[arch_cpu_id()], ARX_CPU_ARCH_INITIALIZED);
+    ARX_DEBUG_ADD(platform.debugStats.cpus.architectureInitialized, 1);
 
     arch_smp_init(boot_info);
+
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_WAITING_FOR_CPUS);
 
     bool waiting_for_other_cpus = true;
 
@@ -166,11 +175,13 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     }
 
     KDEBUG("-> platform_selftests\n");
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_SELFTESTS);
     platform_selftests();
     KDEBUG("<- platform_selftests done\n");
 
     kterm_printf("Arx kernel: kernel bootstrap done\n");
 
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_STACK_BARRIER);
     cpu_init_stack(platform_init_complete, 0);
 }
 
@@ -178,11 +189,14 @@ void smp_platform_init(void)
 {
     kprintf("Arx kernel: cpu %d entered smp_platform_init\n", arch_cpu_id());
 
+    ARX_DEBUG_STORE(platform.debugStats.cpus.stages[arch_cpu_id()], ARX_CPU_ARCH_INITIALIZING);
     arch_init();
 
     kterm_printf("Arx kernel: cpu %u smp_platform_init initialization complete\n", (unsigned) arch_cpu_id());
 
     __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
+    ARX_DEBUG_STORE(platform.debugStats.cpus.stages[arch_cpu_id()], ARX_CPU_ARCH_INITIALIZED);
+    ARX_DEBUG_ADD(platform.debugStats.cpus.architectureInitialized, 1);
 
     cpu_init_stack(platform_init_complete, 0);
 }
@@ -191,6 +205,8 @@ void platform_init_complete(void* arg)
 {
     // Platform initialization complete
 
+    ARX_DEBUG_STORE(platform.debugStats.cpus.stages[arch_cpu_id()], ARX_CPU_STACK_ARRIVED);
+    ARX_DEBUG_ADD(platform.debugStats.cpus.stackArrivals, 1);
     __atomic_fetch_add(&platform.cpus_initialized, 1, __ATOMIC_ACQ_REL);
 
     while (__atomic_load_n(&platform.cpus_initialized, __ATOMIC_ACQUIRE) < platform.cpu_count)

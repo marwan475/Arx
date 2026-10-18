@@ -16,7 +16,7 @@ backing objects, dirty pages and hardware table entries.
 
 Follow [the workflow](../TICKET.MD), required grilling and repo skills. Parent:
 [planning](../closed/plan_gdb_extension_tickets.md). Depends on
-[foundations](build_debug_framework_foundation.md); use process identities from
+[foundations](../closed/build_debug_framework_foundation.md); use process identities from
 [process/resource views](add_debug_process_resource_views.md). Related:
 [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment),
 [architecture documentation](../closed/document_architecture_layer.md).

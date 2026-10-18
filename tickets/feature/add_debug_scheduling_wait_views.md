@@ -14,7 +14,7 @@ requires manually finding task slots, sleep indices, futex keys and clock domain
 
 Follow [the workflow](../TICKET.MD), required grilling and applicable repo skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
-Depends on [foundations](build_debug_framework_foundation.md) and shared identities
+Depends on [foundations](../closed/build_debug_framework_foundation.md) and shared identities
 from [process/resource views](add_debug_process_resource_views.md).
 See [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment). This ticket starts open;
 analysis and implementation each retain their owner gate.

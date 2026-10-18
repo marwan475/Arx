@@ -224,6 +224,7 @@ static bool pci_scan_function(const pci_ecam_region_t* region, uint8_t bus, uint
 
     if (*inout_device_count >= MAX_PCI_DEVICES)
     {
+        ARX_DEBUG_STORE(platform.debugStats.pci.capacityExhausted, 1);
         kprintf("PCI: device table full (%u), stopping enumeration\n", (unsigned) MAX_PCI_DEVICES);
         return false;
     }
@@ -348,6 +349,7 @@ static bool pci_get_device_info(void)
         return false;
     }
 
+    ARX_DEBUG_STORE(platform.debugStats.pci.allocated, 1);
     device_count = 0;
 
     for (size_t region_index = 0; region_index < platform.arch_info.pci_region_count; region_index++)
@@ -490,6 +492,7 @@ bool pci_init(void)
     {
         platform.arch_info.pci_regions      = NULL;
         platform.arch_info.pci_region_count = 0;
+        ARX_DEBUG_STORE(platform.debugStats.pci.outcome, ARX_PCI_NO_REGIONS);
         kprintf("PCI: no ECAM regions present\n");
         return true;
     }

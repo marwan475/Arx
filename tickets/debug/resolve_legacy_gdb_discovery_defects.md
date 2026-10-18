@@ -16,7 +16,7 @@ to repair all old commands immediately.
 Follow [the workflow](../TICKET.MD), the required diagnosing-bugs skill during
 analysis, and applicable repository skills. Parent:
 [framework planning](../closed/plan_gdb_extension_tickets.md).
-Related: [foundations](../feature/build_debug_framework_foundation.md),
+Related: [foundations](../closed/build_debug_framework_foundation.md),
 [cutover](../feature/migrate_debug_commands_and_document_framework.md),
 [legacy inventory](../feature/migrate_debug_commands_and_document_framework.md#legacy-command-inventory).
 This ticket starts open; diagnosis/implementation retains its own owner gate.

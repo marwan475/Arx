@@ -3,6 +3,7 @@ import gdb
 
 from .results import Budget, ReadFailure, Result
 from .target import Memory, discover, verify_elf
+from .status import gather_status
 from . import readers, render
 from views import ADAPTERS
 
@@ -31,39 +32,69 @@ def pointer_text(memory, address, budget):
 
 def parse(arguments):
     words = gdb.string_to_argv(arguments)
-    options = {"--limit": 100, "--bytes": 65536, "--depth": 8}
+    limits = {"--limit": 100, "--bytes": 65536, "--depth": 8}
+    maxima = {"--limit": 10000, "--bytes": 16 * 1024 * 1024, "--depth": 32,
+              "--cpu": 255, "--slot": 255,
+              "--platform": (1 << 64) - 1, "--registry": (1 << 64) - 1}
+    options = {}
     positional = []
     index = 0
     while index < len(words):
         word = words[index]
         if word.startswith("--"):
-            if word not in options or index + 1 >= len(words):
+            if word not in maxima and word != "--device":
                 raise ReadFailure("invalid option: " + word)
+            if word in options or index + 1 >= len(words):
+                raise ReadFailure("missing or duplicate option: " + word)
             index += 1
-            try:
-                value = int(words[index], 0)
-            except ValueError as error:
-                raise ReadFailure("limits must be integers") from error
-            maxima = {"--limit": 10000, "--bytes": 16 * 1024 * 1024, "--depth": 32}
-            if not 1 <= value <= maxima[word]:
-                raise ReadFailure("limit out of range: " + word)
+            value = words[index]
+            if word == "--device":
+                if not re.fullmatch(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]", value):
+                    raise ReadFailure("device requires ssss:bb:dd.f")
+                segment, bus, devfun = value.split(":")
+                device, function = devfun.split(".")
+                value = tuple(int(part, 16) for part in (segment, bus, device, function))
+                if value[2] > 31:
+                    raise ReadFailure("device number out of range")
+            else:
+                if not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", value):
+                    raise ReadFailure("option requires a numeric value; expressions forbidden")
+                value = int(value, 16 if value.lower().startswith("0x") else 10)
+                minimum = 0 if word in ("--cpu", "--slot") else 1
+                if not minimum <= value <= maxima[word]:
+                    raise ReadFailure("limit out of range: " + word)
             options[word] = value
         else:
             positional.append(word)
         index += 1
-    return positional, Budget(options["--limit"], options["--bytes"], options["--depth"])
+    if "--cpu" in options and "--slot" in options:
+        raise ReadFailure("--cpu and --slot are mutually exclusive")
+    if "--platform" in options and "--registry" in options:
+        raise ReadFailure("--platform and --registry are mutually exclusive")
+    for name in limits:
+        if name in options:
+            limits[name] = options.pop(name)
+    return positional, Budget(limits["--limit"], limits["--bytes"], limits["--depth"]), options
 
 
 def gather(arguments):
-    words, budget = parse(arguments)
+    words, budget, options = parse(arguments)
+    selectors = {name: value for name, value in options.items()
+                 if name in ("--cpu", "--slot", "--device")}
     if not words:
-        raise ReadFailure("usage: arx-debug list | <provider> stats | <provider> <view> | "
+        raise ReadFailure("usage: arx-debug status | list | <provider> stats | <provider> <view> | "
                           "inspect <type> <numeric-address> [--limit N --bytes N --depth N]")
     memory = Memory()
     # Discovery metadata has a separate fixed ceiling so --limit 1 still finds
     # records. Payload readers share the user-selected budget end to end.
     metadata = Budget(10000, 65536, 8)
+    if words == ["status"]:
+        if selectors:
+            raise ReadFailure("selectors are not valid for status")
+        return gather_status(memory, budget, options), budget
     if words[0] == "inspect":
+        if options:
+            raise ReadFailure("inspect does not accept roots or selectors")
         if len(words) != 3 or not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", words[2]):
             raise ReadFailure("inspect requires a quoted type and numeric address; expressions forbidden")
         verify_elf(memory, metadata)
@@ -71,7 +102,10 @@ def gather(arguments):
         value = memory.read(address, words[1], budget)
         return render.gather(value, budget, address), budget
 
-    registry_address, manager = discover(memory, metadata)
+    if selectors and (len(words) != 2 or words[1] == "stats"):
+        raise ReadFailure("selectors require a matching rich view")
+    registry_address, manager = discover(memory, metadata, options.get("--platform"),
+                                         options.get("--registry"))
     count = int(manager["reserved"])
     records = manager["records"]
     if words == ["list"]:
@@ -148,7 +182,12 @@ def gather(arguments):
             expected_type, gather_view = adapter
             if root_type != expected_type:
                 raise ReadFailure("mismatched view root type")
-            result = gather_view(words[1], memory, descriptor, budget)
+            if selectors.keys() - set(getattr(gather_view, "selectors", ())):
+                raise ReadFailure("selector not supported by this view")
+            if selectors:
+                result = gather_view(words[1], memory, descriptor, budget, selectors)
+            else:
+                result = gather_view(words[1], memory, descriptor, budget)
             break
         if result is None:
             raise ReadFailure("view absent")

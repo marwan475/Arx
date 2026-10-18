@@ -15,7 +15,7 @@ SelfTestManager private tables or the static boot error buffer.
 
 Follow [the workflow](../TICKET.MD), required grilling and repo skills. Parent:
 [planning](../closed/plan_gdb_extension_tickets.md). Depends on
-[foundations](build_debug_framework_foundation.md). Reference:
+[foundations](../closed/build_debug_framework_foundation.md). Reference:
 [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment) and
 [self-test documentation ticket](../closed/document_self_tests.md).
 This ticket starts open and requires its own analysis/execution gate.

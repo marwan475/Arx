@@ -16,7 +16,7 @@ require manual cross-layer structure inspection.
 
 Follow [the workflow](../TICKET.MD), required grilling and repository skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
-Depends on [foundations](build_debug_framework_foundation.md).
+Depends on [foundations](../closed/build_debug_framework_foundation.md).
 Related: [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment),
 [Logic documentation](../closed/document_logic_layer.md),
 [Resource documentation](../closed/document_resource_layer.md).

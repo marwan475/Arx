@@ -8,6 +8,7 @@
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 #include <debug/kernel/Foundation.hpp>
+#include <debug/kernel/Platform.hpp>
 #include <platform.h>
 
 #include <selftests/SelfTestManager.hpp>
@@ -32,6 +33,7 @@ void Dispatcher::StartKernel()
 {
     ARX_DEBUG_RUN(DebugFoundationDeclare(debugManager));
     ARX_DEBUG_RUN(DebugFoundationPublishC(debugManager));
+    ARX_DEBUG_RUN(DebugPlatformPublish(debugManager));
 
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
 

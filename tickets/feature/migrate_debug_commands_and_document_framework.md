@@ -22,12 +22,12 @@ requires its own analysis/execution gate. Old-tool defects are tracked in
 
 ### Dependencies and scope
 
-Depends on [foundations](build_debug_framework_foundation.md) and the old-coverage
+Depends on [foundations](../closed/build_debug_framework_foundation.md) and the old-coverage
 parts of [physical allocation](add_debug_physical_allocation_views.md),
 [process/resources](add_debug_process_resource_views.md),
 [memory](add_debug_virtual_memory_views.md),
 [filesystems](add_debug_filesystem_views.md) and
-[platform/CPU/PCI](add_debug_platform_cpu_pci_views.md).
+[platform/CPU/PCI](../in_progress/add_debug_platform_cpu_pci_views.md).
 Do not require unrelated new signal/socket/event enhancements before removing
 legacy commands once all required migrated coverage passes. Provider tickets
 update the common guide as they land; this ticket owns final integration and
@@ -149,17 +149,17 @@ in a live session. No kernel build/boot was performed for this planning task.
 
 | Current command | Arguments and output | Source roots and replacement owner |
 | --- | --- | --- |
-| `arx-platform` | No argument defaults to show; `show`/`status`, `set <address_expr>`, `clear`. Reports override/resolution and CPU pointer/count. Override changes host-side state, not the kernel. | `ArxPlatform` resolves `platform`; replace through [foundation](../feature/build_debug_framework_foundation.md) bootstrap/status plus [platform views](../feature/add_debug_platform_cpu_pci_views.md). |
+| `arx-platform` | No argument defaults to show; `show`/`status`, `set <address_expr>`, `clear`. Reports override/resolution and CPU pointer/count. Override changes host-side state, not the kernel. | `ArxPlatform` resolves `platform`; replace through [foundation](../closed/build_debug_framework_foundation.md) bootstrap/status plus [platform views](../in_progress/add_debug_platform_cpu_pci_views.md). |
 | `arx-pmm` | Optional CPU expression; regular-zone region/page/byte/PFN/HHDM accounting, per-order free blocks/pages and list-derived totals. | `platform.cpus[] -> numa_node.zone`, buddy free lists; [physical allocation](../feature/add_debug_physical_allocation_views.md). |
 | `arx-vmm` | Optional CPU expression; address-space pointer/type/PT/lock, all four region lists with bounds/size/type, metadata counts. | `platform.cpus[].address_space`; [memory views](../feature/add_debug_virtual_memory_views.md). |
-| `arx-cpus` | Optional CPU expression; count/slots/arch, platform IOAPIC details and CPU ID, NUMA/address space and LAPIC/ACPI identity. | `platform`, `cpu_info_t`, `arch_info_t`; [platform views](../feature/add_debug_platform_cpu_pci_views.md). |
-| `arx-pci` | No supported selector; arguments are ignored. Arch/count/array pointer, x86 BDF/vendor/device summary. | `platform.pci_devices`, `pci_device_count`; [platform views](../feature/add_debug_platform_cpu_pci_views.md). |
+| `arx-cpus` | Optional CPU expression; count/slots/arch, platform IOAPIC details and CPU ID, NUMA/address space and LAPIC/ACPI identity. | `platform`, `cpu_info_t`, `arch_info_t`; [platform views](../in_progress/add_debug_platform_cpu_pci_views.md). |
+| `arx-pci` | No supported selector; arguments are ignored. Arch/count/array pointer, x86 BDF/vendor/device summary. | `platform.pci_devices`, `pci_device_count`; [platform views](../in_progress/add_debug_platform_cpu_pci_views.md). |
 | `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../feature/add_debug_physical_allocation_views.md). |
 | `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../feature/add_debug_filesystem_views.md). |
 | `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../feature/add_debug_filesystem_views.md). |
 | `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../feature/add_debug_process_resource_views.md). |
 | `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../feature/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../feature/add_debug_scheduling_wait_views.md). |
-| `arx-rsrc` | Arguments ignored. Dispatcher/factory/caps and labeled manager addresses plus type availability. | Unconditional raw Resource slot reads; preserve useful discovery/type diagnostics in [foundation](../feature/build_debug_framework_foundation.md)/[platform](../feature/add_debug_platform_cpu_pci_views.md), not wrong slot values. |
+| `arx-rsrc` | Arguments ignored. Dispatcher/factory/caps and labeled manager addresses plus type availability. | Unconditional raw Resource slot reads; preserve useful discovery/type diagnostics in [foundation](../closed/build_debug_framework_foundation.md)/[platform](../in_progress/add_debug_platform_cpu_pci_views.md), not wrong slot values. |
 
 For PMM/VMM/CPU/heap, an omitted selector means all inferred CPU slots. A provided
 selector first matches logical `cpu.id`, then falls back to an array slot.

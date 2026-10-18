@@ -19,6 +19,8 @@ extern "C" void kmain(void)
 {
     Dispatcher* dispatcher = new Dispatcher();
     platform.dispacher     = dispatcher;
+    ARX_DEBUG_STORE(platform.debugStats.dispatcherPublished, 1);
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_DISPATCHER_PUBLISHED);
 
     kterm_printf("Arx kernel: kmain entered on BSP\n");
 
@@ -51,6 +53,8 @@ extern "C" void kmain(void)
         SelfTestManager::Get().AbortUnsafe("post-init task creation or enqueue failed");
     }
 
+    ARX_DEBUG_STORE(platform.debugStats.bspHandoff, 1);
+    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_BSP_HANDOFF);
     __atomic_store_n(&platform.bsp_kmain_exited, 1, __ATOMIC_RELEASE);
 
     if (logicLayerCaps != nullptr && logicLayerCaps->scheduler != nullptr)

@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P1
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -301,22 +301,18 @@ and dump mechanics to their existing scopes.
   and `make -j4 DEBUG=0 BUILD_DIR=build/framework-release BIN_DIR=bin/framework-release bin/framework-release/arx-x86_64.img`.
   Build logs are `/tmp/arx-framework-debug-image.log` and
   `/tmp/arx-framework-release-image.log`.
-- `python3 -m unittest discover -s debug/tests -p 'test_*.py' -v`:
-  all five host tests passed, covering valid/null roots, array lengths, pointer
+- Historical host checks: all five tests passed, covering valid/null roots, array lengths, pointer
   and index cycles, unreadable nodes, invalid indices, entry/byte/depth limits,
   unterminated strings and bounded empty hash buckets.
-- `g++ -DDEBUG=1 -I. -pthread -Wall -Wextra debug/tests/kernel_contract.cpp debug/kernel/DebugManager.cpp -o /tmp/arx-framework-contract`
-  and `/tmp/arx-framework-contract`: passed duplicate/full/unavailable/publish/
+- Historical registry/concurrency checks passed duplicate/full/unavailable/publish/
   withdrawal/tombstone/invalidation checks and four concurrent writers totaling
   400,000 updates. An even count of four simultaneously active writers remains
   marked in progress; completion yields zero active and four completed groups.
-- Built and ran `debug/tests/release_erasure.c` with both GCC and G++ using
+- Historical release-erasure probes ran with both GCC and G++ using
   `-DDEBUG=0 -I. -O2 -Wall -Wextra`: both passed without evaluating side effects.
   Probe disassembly contains only a load and return, no calls/updates/locks;
   neither probe binary contains debug record/helper symbols.
-- Compiled `debug/tests/dispatcher_layout.cpp` with `-DDEBUG=0 -I. -Ikernel
-  -Ikernel/platform -Ikernel/platform/acpi/uACPI/include`: the static assertion
-  passed and `nm -S` reports a 24-byte Dispatcher probe (exactly three pointers).
+- Historical release-layout compilation: the static assertion passed and `nm -S` reports a 24-byte Dispatcher probe (exactly three pointers).
   Debug DWARF reports Dispatcher=16,432 and DebugManager=16,408 bytes, with all
   registry storage absent in release.
 - `nm -C bin/framework-release/kernel-x86_64.elf` contains no DebugManager,
@@ -324,7 +320,7 @@ and dump mechanics to their existing scopes.
   constructor disassembly only allocates/constructs its three factories and
   writes their pointers. The `make -pn DEBUG=0` common source list excludes
   every `debug/kernel/` implementation file.
-- `python3 debug/tests/run_target_checks.py`: passed real x86_64 QEMU/GDB stops
+- Historical target checks passed real x86_64 QEMU/GDB stops
   before Dispatcher, with unavailable C/C++ providers, after C publication,
   after C++ publication and inside an interrupted runtime grouped update.
   Both records render through the same interface; all six collection adapters
@@ -335,7 +331,7 @@ and dump mechanics to their existing scopes.
   changing ELF, missing DWARF, stripped symbols and unchanged language settings
   all passed. Async continuation confirms explicit running-target refusal.
   Final output: `/tmp/arx-framework-check-framework-debug-gdb.log`.
-- `python3 debug/tests/run_target_checks.py --release`: booted the actual matching
+- Historical release target checks booted the actual matching
   release image, stopped at kmain and confirmed the distinct “release kernel:
   debug framework compiled out” result. Output:
   `/tmp/arx-framework-check-framework-release-gdb.log`.
@@ -350,10 +346,10 @@ and dump mechanics to their existing scopes.
 
 QEMU initially required escalation because the sandbox blocked `/var/tmp` scratch
 files, and GDB's local connection was sandbox-blocked; authorized reruns passed.
-The target harness always terminates its snapshot VM. Its running-target refusal
+The snapshot runs terminated their VMs. Their running-target refusal
 check can produce an additional GDB batch-exit warning because GDB cannot detach
 from an asynchronously running target; assertions pass, the command does not
-implicitly stop it, and the harness terminates the isolated VM. Earlier harness
+implicitly stop it, and the isolated VM was terminated. Earlier verification
 iterations exposed nested-source import handling and an unsafe running-thread
 query order; both were corrected and the final checks passed. Early link checking
 also found and corrected the moved ticket's cutover link.
@@ -368,8 +364,8 @@ appended and no commit has been made.
 
 Generated build/images and Python caches were moved out of the source tree to
 `/tmp/arx-framework-artifacts-hz2r8tst` after verification, preserving both ELF/image sets and intermediate
-objects for inspection. Rebuild using the recorded commands before rerunning the
-target harness, or restore its `build/` and `bin/` directories from this archive.
+objects for inspection. Rebuild using the recorded commands before performing future
+target inspection, or restore its `build/` and `bin/` directories from this archive.
 The original exploratory QEMU snapshot was also shut down after verification.
 
 ### 2026-10-18 — Integrated launch documentation correction
@@ -382,3 +378,17 @@ launch instructions. Launcher defaults and legacy removal remain in cutover
 scope; no launcher/kernel code changed. Checked the Make recipe and both script
 launch arguments, plus documentation links and whitespace; no kernel rebuild is
 needed for this correction. Ticket remains in progress awaiting owner review.
+
+### 2026-10-18 — Completion
+
+The owner instructed “ok close ticket”, authorizing closure to the previously
+proposed `tickets/closed/build_debug_framework_foundation.md` destination.
+Completed the debug-only kernel/GDB foundation, bounded inspection and publication
+helpers, release-erasure checks and integrated-launch documentation; required
+verification passed as recorded above. Updated incoming dependency links, the
+current index and both required filename-only closure histories.
+
+### 2026-10-18 — Owner-directed tooling removal
+
+The owner requested deletion of the standalone debug verification sources and
+references. Removed their command paths while preserving historical results.

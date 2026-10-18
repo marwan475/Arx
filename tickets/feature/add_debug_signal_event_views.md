@@ -14,7 +14,7 @@ bitmasks, disposition tables, weak file observers and several private queue type
 
 Follow [the workflow](../TICKET.MD), required grilling and repository skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
-Depends on [foundations](build_debug_framework_foundation.md) and shared task/
+Depends on [foundations](../closed/build_debug_framework_foundation.md) and shared task/
 descriptor identities from [process/resource work](add_debug_process_resource_views.md).
 Correlate waits with [scheduler/sync work](add_debug_scheduling_wait_views.md)
 and producers with [IPC/socket work](add_debug_ipc_socket_views.md); missing optional

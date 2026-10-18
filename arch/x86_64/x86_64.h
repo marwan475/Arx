@@ -5,6 +5,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Layout matches the boot protocol SMP record.
+struct boot_smp_cpu_info
+{
+    uint32_t  processor_id;
+    uint32_t  lapic_id;
+    uint64_t  reserved;
+    uintptr_t goto_address;
+    uint64_t  extra_argument;
+};
+
 #define NUM_IDT_ENTRIES 256
 
 #define GDT_CODE_SEGMENT 0x08

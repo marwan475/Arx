@@ -17,26 +17,13 @@ void cpus_init(size_t cpu_count)
     memset(&platform.arch_info, 0, sizeof(platform.arch_info));
     memset(platform.cpus, 0, sizeof(platform_cpus));
 
-#if defined(__x86_64__)
-    platform.arch = ARCH_X86_64;
-#elif defined(__aarch64__)
-    platform.arch = ARCH_AARCH64;
-#else
-#error Unsupported architecture
-#endif
-
     for (size_t i = 0; i < bounded_cpu_count; i++)
     {
         platform.cpus[i].id = i;
     }
 
     platform.cpu_count = bounded_cpu_count;
-#if defined(__x86_64__)
-    // Also support the single-CPU fallback when Limine has no SMP response.
-    uint32_t eax = 1, ebx, ecx, edx;
-    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
-    platform.cpus[0].hardware_id = ebx >> 24;
-#endif
+    arch_init_cpu_info();
 }
 
 __attribute__((noreturn)) void cpu_init_stack(arch_stack_entry_t entry, void* arg)
@@ -79,16 +66,10 @@ void cpu_preemption_enable(void)
         if (__atomic_load_n(&cpu->preemption_depth, __ATOMIC_RELAXED) != 0)
         {
             const uint32_t remaining = __atomic_sub_fetch(&cpu->preemption_depth, 1, __ATOMIC_RELAXED);
-#if defined(__x86_64__)
-            uint64_t flags;
-            __asm__ volatile("pushfq; popq %0" : "=r"(flags));
-            if (remaining == 0 && (flags & (1ULL << 9)) && !cpu->switching_context && __atomic_load_n(&cpu->reschedule_pending, __ATOMIC_ACQUIRE))
+            if (remaining == 0 && arch_task_context_supported() && arch_interrupts_enabled() && !cpu->switching_context && __atomic_load_n(&cpu->reschedule_pending, __ATOMIC_ACQUIRE))
             {
                 dispatcher_service_pending_reschedule();
             }
-#else
-            (void) remaining;
-#endif
         }
     }
 }

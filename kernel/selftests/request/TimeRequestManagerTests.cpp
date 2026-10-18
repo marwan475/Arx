@@ -385,38 +385,16 @@ static bool test_time_real_expiration(process_t* process, uint64_t base)
 
         ok &= expect(clock->ExpireRealTimer(process, deadline) && !process->realTimerArmed && process->realTimerExpired, "periodic timer waits for pending signal consumption");
 
-#if defined(__x86_64__)
-        alignas(16) uint8_t floating[512] = {};
+        if (arch_task_context_supported())
+        {
+            ok &= arch_selftest_timer_signal(process, task, signals, base, oldMask, alarmBit);
+        }
+        else
+        {
+            clock->RestartRealTimer(process);
 
-        const uint32_t mxcsr     = 0x1f80;
-        const uint32_t mxcsrMask = 0xffbf;
-
-        memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
-
-        memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
-
-        arch_syscall_frame_t frame = {};
-
-        frame.syscall_number = SYSCALL_getitimer;
-        frame.user_cs        = USER_CS;
-        frame.user_ss        = USER_SS;
-        frame.user_rflags    = 0x202;
-        frame.user_rip       = base + 1024;
-        frame.user_rsp       = base + 2 * PAGE_SIZE - 16;
-        frame.fxstate        = (uint64_t) floating;
-
-        __atomic_store_n(&task->signalMask, oldMask & ~alarmBit, __ATOMIC_RELEASE);
-
-        ok &= expect(signals->Deliver(&frame, 0) == 0 && frame.arg0 == 14 && process->realTimerArmed && !process->realTimerExpired, "SIGALRM delivery rearms periodic timer");
-
-        frame.user_rsp += 8;
-
-        ok &= expect(signals->Restore(&frame) == 0, "real timer signal frame restores context");
-#else
-        clock->RestartRealTimer(process);
-
-        ok &= expect(process->realTimerArmed, "periodic timer rearm");
-#endif
+            ok &= expect(process->realTimerArmed, "periodic timer rearm");
+        }
 
         syscall_call(SYSCALL_setitimer, 0, 0);
 

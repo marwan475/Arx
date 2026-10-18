@@ -302,3 +302,66 @@ bool arch_task_context_supported(void)
 {
     return true;
 }
+
+void arch_init_cpu_info(void)
+{
+    platform.arch = ARCH_X86_64;
+    // Support the single-CPU fallback when Limine has no SMP response.
+    uint32_t eax = 1, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    platform.cpus[0].hardware_id = ebx >> 24;
+}
+
+void arch_boot_cpu_hardware_ids(const struct boot_info* boot)
+{
+    struct boot_smp_cpu_info** cpus = (struct boot_smp_cpu_info**) boot->smp.cpus;
+    for (size_t i = 0; i < platform.cpu_count; ++i)
+    {
+        platform.cpus[i].hardware_id = cpus[i]->lapic_id;
+    }
+}
+
+bool arch_boot_numa_supported(void)
+{
+    return true;
+}
+
+uint16_t arch_elf_machine(void)
+{
+    return 62; // EM_X86_64
+}
+
+void arch_calibrate_scheduler_timer(void)
+{
+    (void) lapic_timer_calibrate();
+}
+
+uint64_t arch_save_and_disable_interrupts(void)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+void arch_restore_interrupts(uint64_t flags)
+{
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+bool arch_interrupts_enabled(void)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    return (flags & (1ULL << 9)) != 0;
+}
+
+void arch_idle_wait(void)
+{
+    // STI's interrupt shadow closes the wakeup race before HLT.
+    __asm__ volatile("sti; hlt" : : : "memory");
+}
+
+void arch_init_platform_dma(void)
+{
+    platform_dma_init();
+}

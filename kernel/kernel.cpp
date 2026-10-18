@@ -65,9 +65,7 @@ extern "C" void kmain(void)
 
 static void KernelPostInit(void)
 {
-#if defined(__x86_64__)
-    (void) lapic_timer_calibrate();
-#endif
+    arch_calibrate_scheduler_timer();
     SelfTestManager::Get().RunPostInitTests();
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());

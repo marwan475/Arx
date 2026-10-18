@@ -12,7 +12,18 @@ switching, and transitions between user and kernel execution.
 
 Startup begins in `arch_entry.c`, which converts Limine boot information into
 Arx's boot structures and calls platform initialization. Later, platform and the
-layers use the common operations declared in `arch.h`.
+layers use the common operations declared in `arch.h`. Reuse those operations
+before adding a helper. Interrupt state, idle waits, TLS, syscall state, clone and
+exec frame preparation, CPU identifiers, ELF machine selection, and platform
+capabilities belong behind this interface. Process and scheduling policy remains
+in the layers; unsupported targets report capabilities or unsupported results.
+
+The selected architecture header owns the boot SMP record layout. Compile-time
+checks in each architecture's `arch_selftest.cpp` compare it with Limine's ABI.
+`arch/selftest.hpp` exposes independent test fixtures for register layouts,
+signal frames, executable instruction bytes, and page permissions. Shared tests
+keep resource ownership, policy assertions, and cleanup. The bundled
+`boot/limine.h` retains its upstream architecture conditionals.
 
 The implementations differ by target. AArch64 support is incomplete: its
 `arch_init.c` currently reports initialization and task switching as unsupported.

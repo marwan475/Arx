@@ -1,10 +1,11 @@
-#include <selftests/ManagerSuite.hpp>
-#include <selftests/TestFixture.hpp>
-#include <selftests/MemoryFileFixture.hpp>
-
-#include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/ElfMapper.hpp"
+#include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
+
+#include <arch/selftest.hpp>
+#include <selftests/ManagerSuite.hpp>
+#include <selftests/MemoryFileFixture.hpp>
+#include <selftests/TestFixture.hpp>
 
 namespace
 {
@@ -45,11 +46,7 @@ void initialize_elf(MemoryFileFixture& backend)
     test_elf_header_t header = {};
     memcpy(header.ident, "\177ELF\002\001\001", 7);
     header.type = 2;
-#if defined(__x86_64__)
-    header.machine = 62;
-#else
-    header.machine = 183;
-#endif
+    header.machine       = arch_selftest_elf_machine();
     header.version       = 1;
     header.entry         = 0x400080;
     header.programOffset = sizeof(header);

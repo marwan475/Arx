@@ -34,76 +34,6 @@ static bool validate_umask(const syscall_case_t* ctx)
     return REQUEST_EXPECT(previousSecond == firstMask && previousRestore == secondMask);
 }
 
-static bool test_system_tls(process_t* process)
-{
-#if defined(__x86_64__)
-    uint64_t base = fixture_map(2);
-
-    if ((int64_t) base < 0)
-    {
-        return false;
-    }
-
-    Dispatcher*  dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-    TaskManager* tasks      = dispatcher->GetResourceLayerCaps()->taskManager;
-    uint64_t     savedFs = 0, savedGs = 0;
-
-    if (!tasks->GetCurrentTlsBase(false, &savedFs) || !tasks->GetCurrentTlsBase(true, &savedGs))
-    {
-        return false;
-    }
-
-    bool ok = true;
-
-    for (uint64_t gs = 0; gs < 2; ++gs)
-    {
-        const uint64_t set   = gs ? 0x1001 : 0x1002;
-        const uint64_t get   = gs ? 0x1004 : 0x1003;
-        const uint64_t value = base + 128 + gs * 8;
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, set, value) == 0, "arch_prctl sets TLS base");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, get, base + PAGE_SIZE - 4) == 0, "arch_prctl cross-page output");
-
-        uint64_t actual = 0;
-
-        fixture_load(process, base + PAGE_SIZE - 4, &actual, sizeof(actual));
-
-        ok &= expect(actual == value, "arch_prctl TLS roundtrip");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, set, 1ULL << 47) == (uint64_t) -1, "arch_prctl rejects non-user bases");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, get, base) == 0, "arch_prctl reads after failed set");
-
-        fixture_load(process, base, &actual, sizeof(actual));
-
-        ok &= expect(actual == value, "arch_prctl failed set preserves hardware state");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, get, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "arch_prctl rejects kernel output");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, get, 0) == LINUX_EFAULT, "arch_prctl rejects null output");
-
-        ok &= expect(syscall_call(SYSCALL_arch_prctl, set, 0) == 0, "arch_prctl permits zero base");
-    }
-
-    ok &= expect(syscall_call(SYSCALL_arch_prctl, 0) == LINUX_EINVAL, "arch_prctl invalid operation");
-
-    syscall_call(SYSCALL_mprotect, base, PAGE_SIZE, 1);
-
-    ok &= expect(syscall_call(SYSCALL_arch_prctl, 0x1003, base) == LINUX_EFAULT, "arch_prctl readonly output");
-
-    require_cleanup(tasks->SetCurrentTlsBase(false, savedFs), "restore caller FS base");
-
-    require_cleanup(tasks->SetCurrentTlsBase(true, savedGs), "restore caller GS base");
-
-    return ok;
-#else
-    (void) process;
-
-    return expect(syscall_call(SYSCALL_arch_prctl) == LINUX_ENOSYS, "arch_prctl x86-only");
-#endif
-}
-
 static bool test_system_name(process_t* process)
 {
     uint64_t base = fixture_map(2);
@@ -392,11 +322,7 @@ static bool test_system_info(process_t* process, uint64_t number)
             ok &= expect(data[field * 65 + 64] == 0, "uname fields are NUL terminated");
         }
 
-#if defined(__x86_64__)
-        ok &= expect(strcmp((char*) data + 4 * 65, "x86_64") == 0, "uname target architecture");
-#else
-        ok &= expect(strcmp((char*) data + 4 * 65, "aarch64") == 0, "uname target architecture");
-#endif
+        ok &= expect(strcmp((char*) data + 4 * 65, arch_selftest_machine_name()) == 0, "uname target architecture");
     }
     else
     {
@@ -444,7 +370,7 @@ static bool validate_system(const syscall_case_t*)
     {
         if (Number == SYSCALL_arch_prctl)
         {
-            return test_system_tls(process);
+            return arch_selftest_tls(process);
         }
 
         if (Number == SYSCALL_prctl)
@@ -473,16 +399,11 @@ static bool validate_system(const syscall_case_t*)
     });
 }
 
-#if defined(__x86_64__)
-static constexpr auto        native_coverage = syscall_coverage_t::Tested;
-static constexpr const char* native_reason   = nullptr;
-#else
-static constexpr auto        native_coverage = syscall_coverage_t::Unsupported;
-static constexpr const char* native_reason   = "arch_prctl is x86-64 specific";
-#endif
-
 void test_system_manager(RequestLayerCaps* caps)
 {
+    const auto  native_coverage = arch_user_tls_supported() ? syscall_coverage_t::Tested : syscall_coverage_t::Unsupported;
+    const char* native_reason   = arch_user_tls_supported() ? nullptr : "arch_prctl is x86-64 specific";
+
     static const syscall_test_t<SystemRequestManager> tests[] = {
         {"HandleArch_prctlRequest", &SystemRequestManager::HandleArch_prctlRequest, SYSCALL_arch_prctl, validate_system<SYSCALL_arch_prctl>, native_coverage, native_reason},
         {"HandleUmaskRequest", &SystemRequestManager::HandleUmaskRequest, SYSCALL_umask, validate_umask},

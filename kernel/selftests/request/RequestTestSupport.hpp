@@ -1,5 +1,7 @@
 #pragma once
 
+#include <arch/selftest.hpp>
+
 // Preserve the exact expectation in diagnostics for compact ABI contracts.
 #define REQUEST_EXPECT(expression) ::request_selftest::expect((expression), #expression)
 

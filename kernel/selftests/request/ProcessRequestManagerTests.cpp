@@ -173,43 +173,7 @@ struct lifecycle_fixture_t
             return;
         }
 
-#if defined(__x86_64__)
-        // Child writes its private/shared data page, then exits with status 37.
-        // All addresses are fixture constants, independent of kernel pointers.
-        const uint8_t code[] = {
-            0x48,
-            0xbb,
-            0x00,
-            0x00,
-            0x41,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0xc7,
-            0x03,
-            0x78,
-            0x56,
-            0x00,
-            0x00,
-            0xb8,
-            0x3c,
-            0x00,
-            0x00,
-            0x00,
-            0xbf,
-            0x25,
-            0x00,
-            0x00,
-            0x00,
-            0x0f,
-            0x05,
-            0x0f,
-            0x0b,
-        };
-        ready = copy_to_process_virtual(space, CODE, code, sizeof(code));
-#endif
+        ready                  = arch_selftest_load_child(process, CODE);
         const uint32_t initial = 0x1234;
 
         ready = ready && safe_write_user(DATA, &initial, sizeof(initial));
@@ -269,13 +233,7 @@ struct lifecycle_fixture_t
         arch_syscall_frame_t frame = {};
 
         frame.syscall_number = number;
-#if defined(__x86_64__)
-        frame.user_cs     = 0x1b;
-        frame.user_ss     = 0x23;
-        frame.user_rflags = 0x202;
-        frame.user_rip    = CODE;
-        frame.user_rsp    = STACK + PAGE_SIZE;
-#endif
+        arch_selftest_user_frame(&frame, CODE, STACK + PAGE_SIZE);
         return frame;
     }
 
@@ -322,7 +280,6 @@ struct lifecycle_fixture_t
     }
 };
 
-#if defined(__x86_64__)
 static uint64_t lifecycle_clone(lifecycle_fixture_t& fixture, uint64_t number, uint64_t flags, uint64_t childTid = 0, uint64_t exitSignal = 17)
 {
     process_clone_arguments_t arguments = {};
@@ -485,77 +442,7 @@ static bool lifecycle_resource_matrix(lifecycle_fixture_t& fixture, uint64_t num
 
         // Run real child syscalls so private thread accessors are exercised,
         // rather than merely inspecting the resource pointers from the parent.
-        uint8_t resourceCode[] = {
-            0xb8,
-            0x5f,
-            0,
-            0,
-            0,
-            0xbf,
-            2,
-            0,
-            0,
-            0,
-            0x0f,
-            0x05,
-            0x48,
-            0xbb,
-            0x28,
-            0,
-            0x41,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0x48,
-            0x89,
-            0x03,
-            0xb8,
-            3,
-            0,
-            0,
-            0,
-            0xbf,
-            0,
-            0,
-            0,
-            0,
-            0x0f,
-            0x05,
-            0x48,
-            0xbb,
-            0x20,
-            0,
-            0x41,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0x48,
-            0x89,
-            0x03,
-            0xb8,
-            0x3c,
-            0,
-            0,
-            0,
-            0xbf,
-            0x25,
-            0,
-            0,
-            0,
-            0x0f,
-            0x05,
-            0x0f,
-            0x0b,
-        };
-        const uint32_t childFd = static_cast<uint32_t>(fd);
-
-        memcpy(resourceCode + 31, &childFd, sizeof(childFd));
-
-        passed &= copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE, resourceCode, sizeof(resourceCode));
+        passed &= arch_selftest_load_resource_child(fixture.process, lifecycle_fixture_t::CODE, static_cast<uint32_t>(fd));
 
         const uint64_t originalAffinity  = fixture.caller->affinityMask;
         const int32_t  originalNice      = fixture.caller->baseNice;
@@ -764,11 +651,13 @@ struct lifecycle_shared_observer_t
         }
     }
 };
-#endif
 
 static bool validate_process_lifecycle(const syscall_case_t* context)
 {
-#if defined(__x86_64__)
+    if (!arch_task_context_supported())
+    {
+        return false;
+    }
     lifecycle_fixture_t fixture;
 
     if (!fixture.ready)
@@ -784,10 +673,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
     {
         // Run the non-returning syscall in a disposable user child. The harness
         // must stay live, and wait4 must observe the child's exit status.
-        // The immediate in the fixture's mov eax, syscall instruction starts at byte 17.
-        const uint32_t exitNumber = static_cast<uint32_t>(number);
-
-        if (!copy_to_process_virtual(fixture.process->addressSpace, lifecycle_fixture_t::CODE + 17, &exitNumber, sizeof(exitNumber)))
+        if (!arch_selftest_load_child(fixture.process, lifecycle_fixture_t::CODE, static_cast<uint32_t>(number)))
         {
             return false;
         }
@@ -892,7 +778,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
         bool     passed  = safe_read_user(arguments.parentTid, &written, sizeof(written)) && written == tid;
         task_t*  child   = fixture.resources->taskManager->FindTask(tid);
 
-        passed = passed && child != nullptr && child->process == fixture.process && child->taskContext.fsBase == arguments.tls;
+        passed = passed && child != nullptr && child->process == fixture.process && arch_selftest_context_tls_matches(&child->taskContext, arguments.tls);
 
         const uint64_t sequence = __atomic_load_n(&fixture.process->childSequence, __ATOMIC_ACQUIRE);
         const uint64_t waited   = fixture.logic->scheduler->WaitForEvent(&fixture.process->childSequence, sequence, coordination_deadline(), true);
@@ -1081,8 +967,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
 
         fixture.caller->isUserTask = false;
 
-        if (!expect(result == 0, "exec succeeds") || !expect(fixture.process->addressSpace->pt != oldRoot, "exec replaces address space") ||
-            !expect((frame.user_rsp & 15) == 0 && frame.user_rip != lifecycle_fixture_t::CODE, "exec entry and stack layout"))
+        if (!expect(result == 0, "exec succeeds") || !expect(fixture.process->addressSpace->pt != oldRoot, "exec replaces address space") || !expect((arch_signal_stack_pointer(&frame) & 15) == 0 && arch_frame_instruction_pointer(&frame) != lifecycle_fixture_t::CODE, "exec entry and stack layout"))
         {
             return false;
         }
@@ -1110,7 +995,7 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
 
         uint64_t words[4] = {};
 
-        if (!safe_read_user(frame.user_rsp, words, sizeof(words)) || words[0] != 1 || words[2] != 0 || words[3] != 0)
+        if (!safe_read_user(arch_signal_stack_pointer(&frame), words, sizeof(words)) || words[0] != 1 || words[2] != 0 || words[3] != 0)
         {
             return false;
         }
@@ -1161,23 +1046,13 @@ static bool validate_process_lifecycle(const syscall_case_t* context)
     }
 
     return false;
-#else
-    (void) context;
-
-    return false; // Registration explicitly skips this fixture on other architectures.
-#endif
 }
-
-#if defined(__x86_64__)
-static constexpr auto        lifecycle_coverage = syscall_coverage_t::Tested;
-static constexpr const char* lifecycle_reason   = nullptr;
-#else
-static constexpr auto        lifecycle_coverage = syscall_coverage_t::Unsupported;
-static constexpr const char* lifecycle_reason   = "user lifecycle fixture requires x86-64 machine code";
-#endif
 
 void test_process_manager(RequestLayerCaps* caps)
 {
+    const auto  lifecycle_coverage = arch_task_context_supported() ? syscall_coverage_t::Tested : syscall_coverage_t::Unsupported;
+    const char* lifecycle_reason   = arch_task_context_supported() ? nullptr : "user lifecycle fixture requires x86-64 machine code";
+
     static const syscall_test_t<ProcessRequestManager> exitTests[] = {
         {"HandleExitRequest", &ProcessRequestManager::HandleExitRequest, SYSCALL_exit, validate_process_lifecycle, lifecycle_coverage, lifecycle_reason},
         {"HandleExit_groupRequest", &ProcessRequestManager::HandleExit_groupRequest, SYSCALL_exit_group, validate_process_lifecycle, lifecycle_coverage, lifecycle_reason},

@@ -173,11 +173,7 @@ static bool test_signal_case(process_t* process, uint64_t number)
 
         active.syscall_number = number;
         active.arg0           = input;
-#if defined(__x86_64__)
-        active.user_rsp = stack.sp + 64;
-#else
-        active.user_sp = stack.sp + 64;
-#endif
+        arch_frame_set_stack_pointer(&active, stack.sp + 64);
         ok &= expect(dispatcher_dispatch_syscall(&active) == (uint64_t) -1, "alternate stack cannot change while active");
 
         stack.size = 1024;
@@ -272,139 +268,38 @@ static bool test_signal_case(process_t* process, uint64_t number)
     }
     else if (number == SYSCALL_rt_sigreturn)
     {
-#if defined(__x86_64__)
-        alignas(16) uint8_t floating[512] = {};
-
-        uint32_t mxcsr = 0x1f80, mask = 0xffbf;
-
-        memcpy(floating + 24, &mxcsr, 4);
-
-        memcpy(floating + 28, &mask, 4);
-
-        floating[160] = 0x5a;
-
-        arch_syscall_frame_t f = {};
-
-        f.syscall_number = SYSCALL_futex;
-        f.user_cs        = USER_CS;
-        f.user_ss        = USER_SS;
-        f.user_rflags    = 0x202;
-        f.user_rip       = base + 514;
-        f.user_rsp       = base + 6 * PAGE_SIZE - 16;
-        f.rbx            = 0x123456789abcdef0ULL;
-        f.r13            = 0xaabbccdd;
-        f.fxstate        = (uint64_t) floating;
-
-        const uint16_t syscallInstruction = 0x050f;
-
-        fixture_store(process, base + 512, &syscallInstruction, 2);
-
-        uint8_t queuedInfo[128] = {};
-        const int32_t queuedCode = -1;
-        const int32_t queuedPid = process->id;
-        const uint64_t queuedPayload = 0x1122334455667788ULL;
-        memcpy(queuedInfo + 8, &queuedCode, 4);
-        memcpy(queuedInfo + 16, &queuedPid, 4);
-        memcpy(queuedInfo + 24, &queuedPayload, 8);
-        fixture_store(process, input, queuedInfo, sizeof(queuedInfo));
-        ok &= expect(syscall_call(SYSCALL_rt_sigqueueinfo, process->id, 10, input) == 0, "signal return queued payload fixture");
-
-        ok &= expect(signals->Deliver(&f, (uint64_t) -4, true) == 0 && f.user_rip == action.handler && f.arg0 == 10, "signal frame delivery");
-
-        const uint64_t         frameAddress = f.user_rsp;
-        signal_frame_fixture_t saved        = {};
-
-        fixture_load(process, frameAddress, &saved, sizeof(saved));
-        uint64_t deliveredPayload = 0;
-        memcpy(&deliveredPayload, saved.info + 24, 8);
-        ok &= expect(deliveredPayload == queuedPayload, "SA_SIGINFO handler receives full queued payload");
-
-        ok &= expect(saved.uc.context.ax == SYSCALL_futex && saved.uc.context.ip == base + 512 && saved.uc.context.bx == 0x123456789abcdef0ULL && (frameAddress & 15) == 8,
-            "SA_RESTART rewind and full register context");
-
-        f.syscall_number = SYSCALL_rt_sigreturn;
-        f.user_rsp       = frameAddress + 8;
-
-        const uint64_t goodIp = saved.uc.context.ip;
-
-        saved.uc.context.ip = CANONICAL_KERNEL_BASE;
-
-        fixture_store(process, frameAddress, &saved, sizeof(saved));
-
-        ok &= expect(dispatcher_dispatch_syscall(&f) == LINUX_EINVAL && f.user_rsp == frameAddress + 8 && resources->taskManager->GetCurrentTask()->signalDepth == 1,
-            "sigreturn rejects kernel instruction pointer without consuming frame");
-
-        saved.uc.context.ip    = goodIp;
-        saved.uc.context.flags = UINT64_MAX;
-
-        fixture_store(process, frameAddress, &saved, sizeof(saved));
-
-        uint32_t invalidMxcsr = UINT32_MAX;
-
-        fixture_store(process, saved.uc.context.fpstate + 24, &invalidMxcsr, 4);
-
-        ok &= expect(dispatcher_dispatch_syscall(&f) == LINUX_EINVAL, "sigreturn rejects reserved MXCSR bits");
-
-        fixture_store(process, saved.uc.context.fpstate + 24, &mxcsr, 4);
-
-        floating[160] = 0;
-
-        ok &= expect(dispatcher_dispatch_syscall(&f) == SYSCALL_futex && f.rbx == 0x123456789abcdef0ULL && f.r13 == 0xaabbccdd && floating[160] == 0x5a &&
-                         (f.user_rflags & 0x27000) == 0,
-            "sigreturn GP/FP restoration and privilege flag sanitization");
-
-        // Negative user return values must not be confused with restore errors.
-        saved.uc.context.ax = (uint64_t) -4;
-        saved.uc.mask       = UINT64_MAX;
-
-        fixture_store(process, frameAddress, &saved, sizeof(saved));
-
-        task_t* restoredTask = resources->taskManager->GetCurrentTask();
-
-        restoredTask->signalDepth = 1;
-        f.user_rsp                = frameAddress + 8;
-
-        ok &= expect(dispatcher_dispatch_syscall(&f) == (uint64_t) -4 && restoredTask->signalDepth == 0 && restoredTask->signalMask == (UINT64_MAX & ~SIGNAL_UNBLOCKABLE),
-            "sigreturn restores negative result and sanitizes mask");
-
-        restoredTask->signalMask = 0;
-
-        uint32_t word = 7;
-
-        fixture_store(process, base + 64, &word, 4);
-
-        ok &= signal_with_peer(process, 0, 0,
-            [&](uint64_t)
+        if (arch_task_context_supported())
         {
-            return expect(syscall_call(SYSCALL_futex, base + 64, 128, 7) == (uint64_t) -4, "futex interrupted by real pending signal");
-        });
-        ok &= expect(syscall_call(SYSCALL_futex, base + 64, 129, 1) == 0, "interrupted futex dequeues waiter");
+            ok &= arch_selftest_signal_return(process, resources, signals, action, base, input);
+            uint32_t word = 7;
 
-        __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
+            fixture_store(process, base + 64, &word, 4);
 
-        struct
-        {
-            uint64_t next;
-            int64_t  offset;
-            uint64_t pending;
-        } robust = {base + 256, 8, 0};
+            ok &= signal_with_peer(process, 0, 0, [&](uint64_t) { return expect(syscall_call(SYSCALL_futex, base + 64, 128, 7) == (uint64_t) -4, "futex interrupted by real pending signal"); });
+            ok &= expect(syscall_call(SYSCALL_futex, base + 64, 129, 1) == 0, "interrupted futex dequeues waiter");
 
-        uint64_t next = base + 128;
+            __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
 
-        fixture_store(process, base + 128, &robust, sizeof(robust));
+            struct
+            {
+                uint64_t next;
+                int64_t  offset;
+                uint64_t pending;
+            } robust = {base + 256, 8, 0};
 
-        fixture_store(process, base + 256, &next, 8);
+            uint64_t next = base + 128;
 
-        ok &= signal_with_peer(process, base + 128, base + 264, [&](uint64_t owner)
-        {
-            return expect(syscall_call(SYSCALL_futex, base + 264, 128, 0x80000000U | (uint32_t) owner) == 0, "robust task exit wakes futex waiter");
-        });
-        uint32_t died = 0;
+            fixture_store(process, base + 128, &robust, sizeof(robust));
 
-        fixture_load(process, base + 264, &died, 4);
+            fixture_store(process, base + 256, &next, 8);
 
-        ok &= expect(died == 0xc0000000U, "robust exit publishes OWNER_DIED with WAITERS preserved");
-#endif
+            ok &= signal_with_peer(process, base + 128, base + 264, [&](uint64_t owner) { return expect(syscall_call(SYSCALL_futex, base + 264, 128, 0x80000000U | (uint32_t) owner) == 0, "robust task exit wakes futex waiter"); });
+            uint32_t died = 0;
+
+            fixture_load(process, base + 264, &died, 4);
+
+            ok &= expect(died == 0xc0000000U, "robust exit publishes OWNER_DIED with WAITERS preserved");
+        }
     }
 
     return ok;
@@ -431,16 +326,11 @@ static bool validate_signal(const syscall_case_t*)
     });
 }
 
-#if defined(__x86_64__)
-static constexpr auto        native_coverage = syscall_coverage_t::Tested;
-static constexpr const char* native_reason   = nullptr;
-#else
-static constexpr auto        native_coverage = syscall_coverage_t::Unsupported;
-static constexpr const char* native_reason   = "signal frame fixture requires x86-64 ABI";
-#endif
-
 void test_signal_manager(RequestLayerCaps* caps)
 {
+    const auto  native_coverage = arch_task_context_supported() ? syscall_coverage_t::Tested : syscall_coverage_t::Unsupported;
+    const char* native_reason   = arch_task_context_supported() ? nullptr : "signal frame fixture requires x86-64 ABI";
+
     static const syscall_test_t<SignalRequestManager> tests[] = {
         {"HandleRt_sigreturnRequest", &SignalRequestManager::HandleRt_sigreturnRequest, SYSCALL_rt_sigreturn, validate_signal<SYSCALL_rt_sigreturn>, native_coverage,
             native_reason},

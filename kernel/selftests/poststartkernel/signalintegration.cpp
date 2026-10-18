@@ -5,16 +5,17 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/TimeManager.hpp"
 
+#include <arch/selftest.hpp>
 #include <selftests/TestFixture.hpp>
 
 void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
 {
     TestCase t("poststartkernel/signals/user_frame_roundtrip");
-#if !defined(__x86_64__)
-    (void) r;
-    (void) l;
-    t.Skip("architecture has no user signal contexts");
-#else
+    if (!arch_task_context_supported())
+    {
+        t.Skip("architecture has no user signal contexts");
+        return;
+    }
     if (!l || !l->signalManager)
     {
         t.Block("signal manager unavailable");
@@ -28,15 +29,10 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
         return;
     }
 
-    alignas(16) uint8_t floating[512] = {};
-    arch_syscall_frame_t frame = {};
-    frame.fxstate              = reinterpret_cast<uint64_t>(floating);
-    frame.user_rip             = TestFixture::Buffer + 128;
-    frame.user_rsp             = TestFixture::Buffer + PAGE_SIZE;
-    frame.user_cs              = USER_CS;
-    frame.user_ss              = USER_SS;
-    frame.user_rflags          = 0x202;
-    signal_action_t action     = {TestFixture::Buffer + 256, 0x04000000, TestFixture::Buffer + 512, 0};
+    arch_selftest_floating_state_t floating = {};
+    arch_syscall_frame_t          frame    = {};
+    arch_selftest_user_frame(&frame, TestFixture::Buffer + 128, TestFixture::Buffer + PAGE_SIZE, &floating);
+    signal_action_t action = {TestFixture::Buffer + 256, 0x04000000, TestFixture::Buffer + 512, 0};
 
     if (!t.Equal(l->signalManager->Action(10, &action, nullptr), 0, "install owned user action"))
     {
@@ -49,14 +45,14 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
     }
 
     t.Equal(l->signalManager->Deliver(&frame, 0x9876), 0, "prepare handler return frame");
-    t.Equal(frame.user_rip, action.handler, "delivery selects handler");
+    t.Equal(arch_frame_instruction_pointer(&frame), action.handler, "delivery selects handler");
     t.Equal(frame.arg0, 10, "delivery supplies signal number");
     t.Equal(f.Task->signalDepth, 1, "signal frame owns one nesting level");
-    frame.user_rsp += 8;
+    arch_selftest_signal_restorer(&frame);
     // The handler's RET consumes the restorer address.
     t.Equal(l->signalManager->Restore(&frame), 0x9876, "restore interrupted result");
-    t.Equal(frame.user_rip, TestFixture::Buffer + 128, "restore interrupted instruction pointer");
-    t.Equal(frame.user_rsp, TestFixture::Buffer + PAGE_SIZE, "restore interrupted stack");
+    t.Equal(arch_frame_instruction_pointer(&frame), TestFixture::Buffer + 128, "restore interrupted instruction pointer");
+    t.Equal(arch_signal_stack_pointer(&frame), TestFixture::Buffer + PAGE_SIZE, "restore interrupted stack");
     t.Equal(f.Task->signalDepth, 0, "signal nesting restored");
 
     t.Equal(l->signalManager->Action(34, &action, nullptr), 0, "install real-time user handler");
@@ -71,29 +67,30 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
         t.Equal(l->signalManager->Deliver(&frame, 88), 0, "deliver one repeated real-time handler");
         t.Equal(frame.arg0, 34, "real-time handler receives signal number");
         t.Equal(f.Process->signalQueue->count, 1 - index, "handler consumes exactly one real-time record");
-        frame.user_rsp += 8;
+        arch_selftest_signal_restorer(&frame);
         t.Equal(l->signalManager->Restore(&frame), 88, "real-time handler restores interrupted context");
     }
     t.Equal(f.Process->signalPending, 0, "repeated handlers clear final pending bit");
 
-    const uint16_t instruction = 0x050f;
-    t.Check(safe_write_user(TestFixture::Buffer + 126, &instruction, sizeof(instruction)), "write interrupted syscall instruction");
+    size_t         instructionSize = 0;
+    const uint8_t* instruction     = arch_selftest_syscall_instruction(&instructionSize);
+    t.Check(safe_write_user(TestFixture::Buffer + 126, instruction, instructionSize), "write interrupted syscall instruction");
     action.flags |= 0x10000000;
     t.Equal(l->signalManager->Action(34, &action, nullptr), 0, "install restarting real-time handler");
     t.Equal(l->signalManager->Send(f.Process->id, -1, 34), 0, "queue restarting real-time signal");
     frame.syscall_number = 0;
     t.Equal(l->signalManager->Deliver(&frame, static_cast<uint64_t>(-4), true), 0, "real-time handler prepares restart context");
-    frame.user_rsp += 8;
+    arch_selftest_signal_restorer(&frame);
     t.Equal(l->signalManager->Restore(&frame), 0, "real-time restart restores syscall number");
-    t.Equal(frame.user_rip, TestFixture::Buffer + 126, "real-time SA_RESTART rewinds syscall instruction");
-    frame.user_rip = TestFixture::Buffer + 128;
+    t.Equal(arch_frame_instruction_pointer(&frame), TestFixture::Buffer + 126, "real-time SA_RESTART rewinds syscall instruction");
+    arch_selftest_set_instruction_pointer(&frame, TestFixture::Buffer + 128);
     action.flags &= ~0x10000000ULL;
     t.Equal(l->signalManager->Action(34, &action, nullptr), 0, "install non-restarting real-time handler");
     t.Equal(l->signalManager->Send(f.Process->id, -1, 34), 0, "queue non-restarting real-time signal");
     t.Equal(l->signalManager->Deliver(&frame, static_cast<uint64_t>(-4), true), 0, "real-time handler prepares interruption context");
-    frame.user_rsp += 8;
+    arch_selftest_signal_restorer(&frame);
     t.Equal(l->signalManager->Restore(&frame), static_cast<uint64_t>(-4), "real-time handler preserves EINTR without SA_RESTART");
-    t.Equal(frame.user_rip, TestFixture::Buffer + 128, "non-restarting real-time handler preserves return instruction");
+    t.Equal(arch_frame_instruction_pointer(&frame), TestFixture::Buffer + 128, "non-restarting real-time handler preserves return instruction");
 
     const uint64_t descriptor = l->eventManager->SignalDescriptor(-1, 1ULL << 33, 04000);
     if (t.Check(static_cast<int64_t>(descriptor) >= 0, "create shared handler/signalfd consumption fixture"))
@@ -101,7 +98,7 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
         t.Equal(l->signalManager->Send(f.Process->id, -1, 34), 0, "queue handler-owned real-time record");
         t.Equal(l->signalManager->Send(f.Process->id, -1, 34), 0, "queue descriptor-owned real-time record");
         t.Equal(l->signalManager->Deliver(&frame, 99), 0, "handler consumes first shared pending record");
-        frame.user_rsp += 8;
+        arch_selftest_signal_restorer(&frame);
         t.Equal(l->signalManager->Restore(&frame), 99, "return from shared-consumption handler");
         file_t* file = static_cast<file_t*>(f.Process->Files()->entries[descriptor].file);
         t.Equal(file->operations->ReadUser(file, TestFixture::Buffer, 128), 128, "signalfd consumes remaining shared pending record");
@@ -134,10 +131,9 @@ void test_signal_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
         f.Task->signalMask = 0;
         t.Equal(l->signalManager->Deliver(&frame, 77), 0, "unblocked CPU signal prepares user handler");
         t.Equal(frame.arg0, signal, "CPU handler receives SIGVTALRM, SIGPROF or SIGXCPU");
-        t.Equal(frame.user_rip, action.handler, "CPU expiration selects installed handler");
-        frame.user_rsp += 8;
+        t.Equal(arch_frame_instruction_pointer(&frame), action.handler, "CPU expiration selects installed handler");
+        arch_selftest_signal_restorer(&frame);
         t.Equal(l->signalManager->Restore(&frame), 77, "CPU handler restores interrupted result");
         t.Equal(f.Task->signalDepth, 0, "CPU handler restores signal nesting");
     }
-#endif
 }

@@ -28,27 +28,22 @@ static task_test_context_t g_task_test_ctx;
 
 static bool task_test_tls_matches(TaskManager* manager, uint64_t fs, uint64_t gs)
 {
-#if defined(__x86_64__)
+    if (!arch_user_tls_supported())
+    {
+        return true;
+    }
     uint64_t actualFs = 0, actualGs = 0;
     return manager->GetCurrentTlsBase(false, &actualFs) && manager->GetCurrentTlsBase(true, &actualGs) && actualFs == fs && actualGs == gs;
-#else
-    (void) manager;
-    (void) fs;
-    (void) gs;
-    return true;
-#endif
 }
 
 static void task_test_set_tls(TaskManager* manager, uint64_t fs, uint64_t gs)
 {
-#if defined(__x86_64__)
+    if (!arch_user_tls_supported())
+    {
+        return;
+    }
     manager->SetCurrentTlsBase(false, fs);
     manager->SetCurrentTlsBase(true, gs);
-#else
-    (void) manager;
-    (void) fs;
-    (void) gs;
-#endif
 }
 
 static void task_entry_a(void* arg)
@@ -168,9 +163,10 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
     g_task_test_ctx.bspTask    = bspTask;
     g_task_test_ctx.step       = 0;
     g_task_test_ctx.tlsCorrect = true;
-#if defined(__x86_64__)
-    g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs) && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
-#endif
+    if (arch_user_tls_supported())
+    {
+        g_task_test_ctx.tlsCorrect = manager->GetCurrentTlsBase(false, &g_task_test_ctx.originalFs) && manager->GetCurrentTlsBase(true, &g_task_test_ctx.originalGs);
+    }
 
     taskA                 = manager->CreateKernelTask(task_entry_a, &g_task_test_ctx);
     taskB                 = manager->CreateKernelTask(task_entry_b, &g_task_test_ctx);

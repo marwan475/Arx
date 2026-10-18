@@ -38,6 +38,9 @@ extern "C"
 {
 #endif
 
+    typedef void (*arch_stack_entry_t)(void* arg);
+    typedef void (*arch_task_entry_t)(void* arg);
+
     bool arch_task_context_supported(void);
     void arch_request_reschedule(uint8_t cpu);
     bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t length);
@@ -110,17 +113,39 @@ extern "C"
     // deadline queues and accounting consume the same monotonic epoch. RTC
     // availability is independent; unsupported platforms return false.
     bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t* resolutionNanoseconds);
-    bool arch_time_read_monotonic(uint64_t* nanoseconds);
-#if defined(__x86_64__)
+    bool     arch_time_read_monotonic(uint64_t* nanoseconds);
     uint64_t arch_read_user_tls_base(bool gs);
     void     arch_write_user_tls_base(bool gs, uint64_t value);
-#endif
+    bool     arch_user_tls_supported(void);
+    void     arch_context_set_tls(struct arch_task_context* context, bool gs, uint64_t value);
+    uint64_t arch_decode_tls_request(uint64_t operation, bool* gs, bool* write);
+    bool     arch_user_tls_base_valid(uint64_t value);
+    uint64_t arch_frame_instruction_pointer(const arch_syscall_frame_t* frame);
+
+    void     arch_init_cpu_info(void);
+    void     arch_init_platform_dma(void);
+    void     arch_boot_cpu_hardware_ids(const struct boot_info* boot);
+    bool     arch_boot_numa_supported(void);
+    uint16_t arch_elf_machine(void);
+    void     arch_calibrate_scheduler_timer(void);
+
+    // The saved interrupt state is opaque to callers and must be restored on return.
+    uint64_t arch_save_and_disable_interrupts(void);
+    void     arch_restore_interrupts(uint64_t state);
+    bool     arch_interrupts_enabled(void);
+    void     arch_idle_wait(void);
+    uint64_t arch_current_syscall_active(void);
+    void     arch_set_current_syscall_active(uint64_t active);
+
+    const arch_syscall_frame_t*    arch_clone_frame(void* stack_top);
+    void                           arch_frame_set_stack_pointer(arch_syscall_frame_t* frame, uint64_t stack);
+    void                           arch_prepare_exec_frame(arch_syscall_frame_t* frame, uint64_t entry, uint64_t stack);
+    void                           arch_prepare_clone_context(struct arch_task_context* context, const arch_syscall_frame_t* frame, void* stack_top, arch_task_entry_t entry, void* arg);
+    __attribute__((noreturn)) void arch_resume_user_frame(const arch_syscall_frame_t* frame);
     // Isolated user roots share only kernel-half tables. Destroy after removing user leaves.
     phys_addr_t arch_create_user_page_table(void);
     void        arch_destroy_user_page_table(phys_addr_t page_table);
 
-    typedef void (*arch_stack_entry_t)(void* arg);
-    typedef void (*arch_task_entry_t)(void* arg);
     __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg);
     __attribute__((noreturn)) void arch_enter_user_mode(uint64_t user_rip, uint64_t user_rsp, uint64_t arg0, uint64_t arg1);
     bool arch_user_random_seed(uint64_t seed[2]);

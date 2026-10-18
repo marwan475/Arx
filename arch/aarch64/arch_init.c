@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <klib/klib.h>
+#include <platform.h>
 
 __attribute__((noreturn)) void arch_set_stack(void* stack_top, arch_stack_entry_t entry, void* arg)
 {
@@ -87,4 +88,162 @@ bool arch_program_scheduler_timer(uint64_t nanoseconds)
 {
     (void) nanoseconds;
     return false;
+}
+
+void arch_init_cpu_info(void)
+{
+    platform.arch = ARCH_AARCH64;
+}
+
+void arch_boot_cpu_hardware_ids(const struct boot_info* boot)
+{
+    (void) boot;
+}
+
+bool arch_boot_numa_supported(void)
+{
+    return false;
+}
+
+uint16_t arch_elf_machine(void)
+{
+    return 183; // EM_AARCH64
+}
+
+void arch_calibrate_scheduler_timer(void)
+{
+}
+
+uint64_t arch_save_and_disable_interrupts(void)
+{
+    uint64_t state;
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(state) : : "memory");
+    return state;
+}
+
+void arch_restore_interrupts(uint64_t state)
+{
+    __asm__ volatile("msr daif, %0" : : "r"(state) : "memory");
+}
+
+bool arch_interrupts_enabled(void)
+{
+    uint64_t state;
+    __asm__ volatile("mrs %0, daif" : "=r"(state));
+    return (state & (1ULL << 7)) == 0;
+}
+
+void arch_idle_wait(void)
+{
+    arch_enable_interrupts();
+    arch_halt();
+}
+
+bool arch_user_tls_supported(void)
+{
+    return false;
+}
+
+bool arch_user_tls_base_valid(uint64_t value)
+{
+    (void) value;
+    return false;
+}
+
+uint64_t arch_decode_tls_request(uint64_t operation, bool* gs, bool* write)
+{
+    (void) operation;
+    (void) gs;
+    (void) write;
+    return LINUX_ENOSYS;
+}
+
+uint64_t arch_read_user_tls_base(bool gs)
+{
+    (void) gs;
+    return 0;
+}
+
+void arch_write_user_tls_base(bool gs, uint64_t value)
+{
+    (void) gs;
+    (void) value;
+}
+
+void arch_context_set_tls(struct arch_task_context* context, bool gs, uint64_t value)
+{
+    (void) context;
+    (void) gs;
+    (void) value;
+}
+
+uint64_t arch_current_syscall_active(void)
+{
+    return 0;
+}
+
+void arch_set_current_syscall_active(uint64_t active)
+{
+    (void) active;
+}
+
+uint64_t arch_frame_instruction_pointer(const arch_syscall_frame_t* frame)
+{
+    return frame->user_elr;
+}
+
+void arch_frame_set_stack_pointer(arch_syscall_frame_t* frame, uint64_t stack)
+{
+    frame->user_sp = stack;
+}
+
+void arch_prepare_exec_frame(arch_syscall_frame_t* frame, uint64_t entry, uint64_t stack)
+{
+    (void) frame;
+    (void) entry;
+    (void) stack;
+}
+
+void arch_prepare_clone_context(struct arch_task_context* context, const arch_syscall_frame_t* frame, void* stack_top, arch_task_entry_t entry, void* arg)
+{
+    (void) context;
+    (void) frame;
+    (void) stack_top;
+    (void) entry;
+    (void) arg;
+}
+
+__attribute__((noreturn)) void arch_resume_user_frame(const arch_syscall_frame_t* frame)
+{
+    (void) frame;
+    for (;;)
+    {
+        arch_halt();
+    }
+}
+
+void arch_init_platform_dma(void)
+{
+}
+
+const arch_syscall_frame_t* arch_clone_frame(void* stack_top)
+{
+    (void) stack_top;
+    return NULL;
+}
+
+// This target has no coherent DMA platform backend yet.
+bool arch_dma_coherent_memory_supported(void)
+{
+    return false;
+}
+
+void arch_dma_write_barrier(void)
+{
+    __asm__ volatile("dmb oshst" : : : "memory");
+}
+
+void arch_dma_read_barrier(void)
+{
+    __asm__ volatile("dmb oshld" : : : "memory");
 }

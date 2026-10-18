@@ -76,28 +76,6 @@ static bool test_memory_lifetime(process_t* process)
     return ok;
 }
 
-static uint64_t memory_pte(process_t* process, uint64_t address)
-{
-#if defined(__x86_64__)
-    uint64_t table = process->addressSpace->pt;
-
-    for (int shift = 39; shift >= 12; shift -= 9)
-    {
-        uint64_t* entries = reinterpret_cast<uint64_t*>(pa_to_hhdm(table, platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset));
-        uint64_t  entry   = entries[(address >> shift) & 511];
-
-        if ((entry & 1) == 0 || shift == 12)
-        {
-            return entry;
-        }
-
-        table = entry & 0x000ffffffffff000ULL;
-    }
-
-#endif
-    return 0;
-}
-
 static bool test_memory_mmap(process_t* process)
 {
     bool     ok = true;
@@ -314,16 +292,14 @@ static bool test_memory_mprotect(process_t* process)
 
     bool ok = expect(syscall_call(SYSCALL_mprotect, a + PAGE_SIZE, PAGE_SIZE, 1) == 0, "mprotect read-only subrange");
 
-    ok &= expect(fixture_region(process, a)->protection == 3 && fixture_region(process, a + PAGE_SIZE)->protection == 1 && !(memory_pte(process, a + PAGE_SIZE) & 2),
-        "mprotect metadata and readonly PTE");
+    ok &= expect(fixture_region(process, a)->protection == 3 && fixture_region(process, a + PAGE_SIZE)->protection == 1 && !arch_selftest_page_permissions(process->addressSpace->pt, a + PAGE_SIZE).writable, "mprotect metadata and readonly PTE");
 
-    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 5) == 0 && !(memory_pte(process, a) & (1ULL << 63)), "mprotect executable PTE");
+    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 5) == 0 && arch_selftest_page_permissions(process->addressSpace->pt, a).executable, "mprotect executable PTE");
 
-    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 0) == 0 && !(memory_pte(process, a) & 4) && fixture_region(process, a)->backing,
-        "mprotect none denies user access retains backing");
+    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 0) == 0 && !arch_selftest_page_permissions(process->addressSpace->pt, a).user && fixture_region(process, a)->backing, "mprotect none denies user access retains backing");
 
-    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 3) == 0 && (memory_pte(process, a) & 6) == 6 && (memory_pte(process, a) & (1ULL << 63)),
-        "mprotect restores write and NX");
+    ok &= expect(syscall_call(SYSCALL_mprotect, a, PAGE_SIZE, 3) == 0 && (arch_selftest_page_permissions(process->addressSpace->pt, a).writable && arch_selftest_page_permissions(process->addressSpace->pt, a).user) && !arch_selftest_page_permissions(process->addressSpace->pt, a).executable,
+                 "mprotect restores write and NX");
 
     for (uint32_t protection = 0; protection < 8; ++protection)
     {

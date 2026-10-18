@@ -60,7 +60,10 @@ bool TaskManager::SetCurrentName(const char* name)
 
 bool TaskManager::GetCurrentTlsBase(bool gs, uint64_t* value)
 {
-#if defined(__x86_64__)
+    if (!arch_user_tls_supported())
+    {
+        return false;
+    }
     cpu_preemption_disable();
     bool found = GetCurrentTask() != nullptr;
 
@@ -71,63 +74,31 @@ bool TaskManager::GetCurrentTlsBase(bool gs, uint64_t* value)
 
     cpu_preemption_enable();
     return found;
-#else
-    (void) gs;
-    (void) value;
-    return false;
-#endif
 }
 
 bool TaskManager::SetCurrentTlsBase(bool gs, uint64_t value)
 {
-#if defined(__x86_64__)
+    if (!arch_user_tls_supported())
+    {
+        return false;
+    }
     cpu_preemption_disable();
     task_t* task = GetCurrentTask();
 
     if (task != nullptr)
     {
-        if (gs)
-        {
-            task->taskContext.userGsBase = value;
-        }
-        else
-            task->taskContext.fsBase = value;
+        arch_context_set_tls(&task->taskContext, gs, value);
         arch_write_user_tls_base(gs, value);
     }
 
     cpu_preemption_enable();
     return task != nullptr;
-#else
-    (void) gs;
-    (void) value;
-    return false;
-#endif
 }
 
 extern "C" void task_context_switch_complete(void)
 {
     contextTaskManager->CompleteSwitch();
     dispatcher_account_scheduling(true);
-}
-
-static uint64_t task_save_and_disable_interrupts()
-{
-    uint64_t flags = 0;
-#if defined(__x86_64__)
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
-#elif defined(__aarch64__)
-    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) : : "memory");
-#endif
-    return flags;
-}
-
-static void task_restore_interrupts(uint64_t flags)
-{
-#if defined(__x86_64__)
-    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
-#elif defined(__aarch64__)
-    __asm__ volatile("msr daif, %0" : : "r"(flags) : "memory");
-#endif
 }
 
 static void user_task_bootstrap_entry(void* arg)
@@ -339,9 +310,6 @@ task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp,
     return CreateTask(user_task_bootstrap_entry, nullptr, &launch);
 }
 
-#if defined(__x86_64__)
-extern "C" [[noreturn]] void arch_resume_user_frame(const arch_syscall_frame_t* frame);
-
 static void cloned_user_entry(void* argument)
 {
     task_t* task = static_cast<task_t*>(argument);
@@ -353,16 +321,14 @@ static void cloned_user_entry(void* argument)
         task->setChildTid = 0;
     }
 
-    auto* frame = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(arch_syscall_frame_t));
+    const auto* frame = arch_clone_frame(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE);
     contextTaskManager->AccountCurrent(true);
     arch_resume_user_frame(frame);
 }
-#endif
 
 task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id)
 {
-#if defined(__x86_64__)
-    if (frame == nullptr || id >= MAX_TASKS)
+    if (!arch_task_context_supported() || frame == nullptr || id >= MAX_TASKS)
     {
         return nullptr;
     }
@@ -394,32 +360,10 @@ task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint
     }
     task->stack      = static_cast<uint8_t*>(allocation) + PAGE_SIZE;
     task->isUserTask = true;
-    auto* saved     = reinterpret_cast<arch_syscall_frame_t*>(static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE - sizeof(*frame));
-    *saved          = *frame;
-    void* floating = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(saved) - 512);
-    memset(floating, 0, 512);
-
-    if (frame->fxstate != 0)
-    {
-        memcpy(floating, reinterpret_cast<void*>(frame->fxstate), 512);
-    }
-    else
-    {
-        *static_cast<uint16_t*>(floating) = 0x37f;
-        *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(floating) + 24) = 0x1f80;
-    }
-
-    saved->fxstate = reinterpret_cast<uintptr_t>(floating);
-    arch_init_context(&task->taskContext, floating, cloned_user_entry, task);
-    task->taskContext.fsBase     = arch_read_user_tls_base(false);
-    task->taskContext.userGsBase = arch_read_user_tls_base(true);
+    void* stack_top  = static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE;
+    arch_prepare_clone_context(&task->taskContext, frame, stack_top, cloned_user_entry, task);
     UnlockManager();
     return task;
-#else
-    (void) frame;
-    (void) id;
-    return nullptr;
-#endif
 }
 
 bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resources_t* retiredResources)
@@ -620,7 +564,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
         return true;
     }
 
-    const uint64_t interruptState = task_save_and_disable_interrupts();
+    const uint64_t interruptState = arch_save_and_disable_interrupts();
     AccountCurrent(current->accountingUser);
     current->accountingRunning    = false;
     task->accountingRunning       = arch_time_read_monotonic(&task->accountingStamp);
@@ -634,10 +578,8 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     cpu_info_t* cpu_info       = &platform.cpus[cpuId];
     current->preemptionDepth   = cpu_info->preemption_depth;
     cpu_info->preemption_depth = task->preemptionDepth;
-#if defined(__x86_64__)
-    current->syscallActive                 = cpu_info->arch_info.syscall_ctx.active;
-    cpu_info->arch_info.syscall_ctx.active = task->syscallActive;
-#endif
+    current->syscallActive     = arch_current_syscall_active();
+    arch_set_current_syscall_active(task->syscallActive);
 
     if (task->isUserTask)
     {
@@ -655,9 +597,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
     // per-CPU pointer after restoring the task context.
     cpu_info                   = &platform.cpus[arch_cpu_id()];
     cpu_info->preemption_depth = current->preemptionDepth;
-#if defined(__x86_64__)
-    cpu_info->arch_info.syscall_ctx.active = current->syscallActive;
-#endif
+    arch_set_current_syscall_active(current->syscallActive);
 
     if (current->isUserTask)
     {
@@ -669,7 +609,7 @@ bool TaskManager::ExecuteTask(task_t* task, bool releaseDispatchClaim)
         }
     }
 
-    task_restore_interrupts(interruptState);
+    arch_restore_interrupts(interruptState);
     return true;
 }
 
@@ -842,7 +782,7 @@ void TaskManager::AccountActive(bool userMode)
 
 void TaskManager::AccountCurrent(bool userMode)
 {
-    const uint64_t flags = task_save_and_disable_interrupts();
+    const uint64_t flags = arch_save_and_disable_interrupts();
     task_t*        task  = GetCurrentTask();
     uint64_t       now   = 0;
 
@@ -859,7 +799,7 @@ void TaskManager::AccountCurrent(bool userMode)
         task->accountingUser    = userMode;
     }
 
-    task_restore_interrupts(flags);
+    arch_restore_interrupts(flags);
 }
 
 bool TaskManager::HasRunningTasks(const process_t* process) const

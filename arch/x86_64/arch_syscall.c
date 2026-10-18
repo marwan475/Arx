@@ -140,3 +140,101 @@ uint64_t arch_syscall_dispatch(const arch_syscall_frame_t* frame)
     dispatcher_account_mode(true);
     return result;
 }
+
+bool arch_user_tls_supported(void)
+{
+    return true;
+}
+
+bool arch_user_tls_base_valid(uint64_t value)
+{
+    return value < (1ULL << 47);
+}
+
+uint64_t arch_decode_tls_request(uint64_t operation, bool* gs, bool* write)
+{
+    const int32_t op = (int32_t) operation;
+    if (op < 0x1001 || op > 0x1004)
+    {
+        return LINUX_EINVAL;
+    }
+    *gs    = op == 0x1001 || op == 0x1004;
+    *write = op == 0x1001 || op == 0x1002;
+    return 0;
+}
+
+void arch_context_set_tls(struct arch_task_context* context, bool gs, uint64_t value)
+{
+    if (gs)
+    {
+        context->userGsBase = value;
+    }
+    else
+    {
+        context->fsBase = value;
+    }
+}
+
+uint64_t arch_current_syscall_active(void)
+{
+    return platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active;
+}
+
+void arch_set_current_syscall_active(uint64_t active)
+{
+    platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active = active;
+}
+
+uint64_t arch_frame_instruction_pointer(const arch_syscall_frame_t* frame)
+{
+    return frame->user_rip;
+}
+
+void arch_frame_set_stack_pointer(arch_syscall_frame_t* frame, uint64_t stack)
+{
+    frame->user_rsp = stack;
+}
+
+void arch_prepare_exec_frame(arch_syscall_frame_t* frame, uint64_t entry, uint64_t stack)
+{
+    const uint64_t floating = frame->fxstate;
+    memset(frame, 0, sizeof(*frame));
+    frame->fxstate     = floating;
+    frame->user_rip    = entry;
+    frame->user_rsp    = stack;
+    frame->user_cs     = USER_CS;
+    frame->user_ss     = USER_SS;
+    frame->user_rflags = 0x202;
+    if (floating != 0)
+    {
+        memset((void*) floating, 0, 512);
+        *(uint16_t*) floating        = 0x37f;
+        *(uint32_t*) (floating + 24) = 0x1f80;
+    }
+}
+
+void arch_prepare_clone_context(struct arch_task_context* context, const arch_syscall_frame_t* frame, void* stack_top, arch_task_entry_t entry, void* arg)
+{
+    arch_syscall_frame_t* saved = (arch_syscall_frame_t*) arch_clone_frame(stack_top);
+    *saved                      = *frame;
+    void* floating              = (uint8_t*) saved - 512;
+    memset(floating, 0, 512);
+    if (frame->fxstate != 0)
+    {
+        memcpy(floating, (void*) frame->fxstate, 512);
+    }
+    else
+    {
+        *(uint16_t*) floating                   = 0x37f;
+        *(uint32_t*) ((uint8_t*) floating + 24) = 0x1f80;
+    }
+    saved->fxstate = (uintptr_t) floating;
+    arch_init_context(context, floating, entry, arg);
+    arch_context_set_tls(context, false, arch_read_user_tls_base(false));
+    arch_context_set_tls(context, true, arch_read_user_tls_base(true));
+}
+
+const arch_syscall_frame_t* arch_clone_frame(void* stack_top)
+{
+    return (const arch_syscall_frame_t*) ((uint8_t*) stack_top - sizeof(arch_syscall_frame_t));
+}

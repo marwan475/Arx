@@ -103,15 +103,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     if (boot_info->smp.cpu_count > 0 && boot_info->smp.cpus != 0)
     {
         platform.bsp_id = 0;
-#if defined(__x86_64__)
-        struct boot_smp_cpu_info** cpus = (struct boot_smp_cpu_info**) boot_info->smp.cpus;
-
-        for (size_t i = 0; i < platform.cpu_count; ++i)
-        {
-            platform.cpus[i].hardware_id = cpus[i]->lapic_id;
-        }
-
-#endif
+        arch_boot_cpu_hardware_ids(boot_info);
     }
     else
     {
@@ -151,9 +143,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
 
     debug_pci_devices();
 
-#if defined(__x86_64__)
-    platform_dma_init();
-#endif
+    arch_init_platform_dma();
 
     __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);
 

@@ -3,6 +3,17 @@
 
 #include <stdint.h>
 
+// Layout matches the boot protocol SMP record.
+struct boot_smp_cpu_info
+{
+    uint32_t  processor_id;
+    uint32_t  reserved1;
+    uint64_t  mpidr;
+    uint64_t  reserved;
+    uintptr_t goto_address;
+    uint64_t  extra_argument;
+};
+
 struct arch_task_context
 {
     uint64_t x19;

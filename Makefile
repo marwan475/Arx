@@ -18,8 +18,8 @@ IMG_SECTORS = $(shell echo $$(( ($(ESP_SIZE_MB) + 2) * 2048 )))
 KERNEL_SRC ?= kernel/bootstrap.c
 KERNEL_X86_64_SRC ?= $(ARCH_DIR)/x86_64/arch_entry.c
 KERNEL_AARCH64_SRC ?= $(ARCH_DIR)/aarch64/arch_entry.c
-KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_signal.cpp $(ARCH_DIR)/x86_64/arch_time.c $(ARCH_DIR)/x86_64/arch_dma.c $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/arch_syscall.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
-KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_signal.cpp $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
+KERNEL_X86_64_ARCH_SRC ?= $(ARCH_DIR)/x86_64/arch_selftest.cpp $(ARCH_DIR)/x86_64/arch_signal.cpp $(ARCH_DIR)/x86_64/arch_time.c $(ARCH_DIR)/x86_64/arch_dma.c $(ARCH_DIR)/x86_64/arch_paging.c $(ARCH_DIR)/x86_64/arch_init.c $(ARCH_DIR)/x86_64/arch_syscall.c $(ARCH_DIR)/x86_64/interrupt_handler.c $(ARCH_DIR)/x86_64/lapic.c $(ARCH_DIR)/x86_64/ioapic.c $(ARCH_DIR)/x86_64/arch_acpi.c $(ARCH_DIR)/x86_64/pci.c
+KERNEL_AARCH64_ARCH_SRC ?= $(ARCH_DIR)/aarch64/arch_selftest.cpp $(ARCH_DIR)/aarch64/arch_signal.cpp $(ARCH_DIR)/aarch64/arch_paging.c $(ARCH_DIR)/aarch64/arch_init.c $(ARCH_DIR)/aarch64/arch_acpi.c
 KERNEL_X86_64 ?= $(BIN_DIR)/kernel-x86_64.elf
 KERNEL_AARCH64 ?= $(BIN_DIR)/kernel-aarch64.elf
 

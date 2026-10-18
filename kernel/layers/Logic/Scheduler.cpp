@@ -82,12 +82,7 @@ void Scheduler::IdleEntry(void* argument)
         if (!scheduler->RunNextReadyProcess(cpuId))
         {
             // Periodic timer interrupts recheck deadlines even with no ready task.
-#if defined(__x86_64__)
-            __asm__ volatile("sti; hlt" : : : "memory");
-#else
-            arch_enable_interrupts();
-            arch_halt();
-#endif
+            arch_idle_wait();
         }
     }
 }
@@ -1171,12 +1166,10 @@ void Scheduler::RequestReschedule(uint64_t cpus)
             continue;
         }
         __atomic_store_n(&platform.cpus[cpu].reschedule_pending, true, __ATOMIC_RELEASE);
-#if defined(__x86_64__)
         if (cpu != arch_cpu_id() && platform.cpus[cpu].initialized)
         {
             arch_request_reschedule(cpu);
         }
-#endif
     }
 }
 
@@ -1192,14 +1185,10 @@ void Scheduler::ServicePendingReschedule(bool syscallBoundary)
     {
         return;
     }
-#if defined(__x86_64__)
-    if (!syscallBoundary && platform.cpus[cpu].arch_info.syscall_ctx.active != 0)
+    if (!syscallBoundary && arch_current_syscall_active() != 0)
     {
         return;
     }
-#else
-    (void) syscallBoundary;
-#endif
     if (__atomic_exchange_n(&platform.cpus[cpu].reschedule_pending, false, __ATOMIC_ACQ_REL))
     {
         current->schedulingBusy = true;

@@ -104,7 +104,10 @@ ProcessController::ProcessController(ResourceLayerCaps* resources, LogicLayerCap
 
 uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const process_clone_arguments_t& arguments)
 {
-#if defined(__x86_64__)
+    if (!arch_task_context_supported())
+    {
+        return LINUX_ENOSYS;
+    }
     if (frame == nullptr || (arguments.flags & ~CLONE_SUPPORTED) != 0 || arguments.pidfd != 0 || arguments.setTidSize != 0 || arguments.cgroup != 0)
     {
         return LINUX_EOPNOTSUPP;
@@ -118,7 +121,8 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         return LINUX_EINVAL;
     }
 
-    if ((frame->user_cs & 3) != 3 || frame->user_rip > CANONICAL_USER_END || frame->user_rsp > CANONICAL_USER_END || arguments.stack > CANONICAL_USER_END || ((flags & CLONE_SETTLS) != 0 && arguments.tls > CANONICAL_USER_END) || (thread && arguments.stack == 0))
+    if (!arch_signal_user_return(frame) || arch_frame_instruction_pointer(frame) > CANONICAL_USER_END || arch_signal_stack_pointer(frame) > CANONICAL_USER_END || arguments.stack > CANONICAL_USER_END || ((flags & CLONE_SETTLS) != 0 && arguments.tls > CANONICAL_USER_END)
+        || (thread && arguments.stack == 0))
     {
         return LINUX_EINVAL;
     }
@@ -154,7 +158,7 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
 
     if (arguments.stack != 0)
     {
-        childFrame.user_rsp = arguments.stack;
+        arch_frame_set_stack_pointer(&childFrame, arguments.stack);
     }
 
     task_t* task = nullptr;
@@ -329,7 +333,7 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
 
     if ((flags & CLONE_SETTLS) != 0)
     {
-        task->taskContext.fsBase = arguments.tls;
+        arch_context_set_tls(&task->taskContext, false, arguments.tls);
     }
 
     task->setChildTid = (flags & CLONE_CHILD_SETTID) != 0 ? arguments.childTid : 0;
@@ -390,11 +394,6 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
     }
 
     return id;
-#else
-    (void) frame;
-    (void) arguments;
-    return LINUX_ENOSYS;
-#endif
 }
 
 uint64_t ProcessController::ResourceLimit(ResourceLayerCaps* resources, int32_t pid, uint32_t resource, const process_file_limit_t* proposed, process_file_limit_t* previous)
@@ -944,7 +943,10 @@ struct ExecImage
 
 uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
 {
-#if defined(__x86_64__)
+    if (!arch_task_context_supported())
+    {
+        return LINUX_ENOSYS;
+    }
     if (frame == nullptr)
     {
         return LINUX_EINVAL;
@@ -972,7 +974,7 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
         return LINUX_ENOENT;
     }
 
-    if (!caller->isUserTask || (frame->user_cs & 3) != 3)
+    if (!caller->isUserTask || !arch_signal_user_return(frame))
     {
         return LINUX_EINVAL;
     }
@@ -1410,27 +1412,9 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
         Resources->virtualMemoryManager->DestroyUserAddressSpace(oldSpace);
     }
 
-    const uint64_t floating = frame->fxstate;
-    memset(frame, 0, sizeof(*frame));
-    frame->fxstate     = floating;
-    frame->user_rip    = entry;
-    frame->user_rsp    = stackPointer;
-    frame->user_cs     = 0x1b;
-    frame->user_ss     = 0x23;
-    frame->user_rflags = 0x202;
-
-    if (floating != 0)
-    {
-        memset(reinterpret_cast<void*>(floating), 0, 512);
-        *reinterpret_cast<uint16_t*>(floating) = 0x37f;
-        *reinterpret_cast<uint32_t*>(floating + 24) = 0x1f80;
-    }
+    arch_prepare_exec_frame(frame, entry, stackPointer);
 
     __atomic_add_fetch(&current->execSequence, 1ULL, __ATOMIC_RELEASE);
     Logic->scheduler->WakeEventWaiters(&current->execSequence);
     return 0;
-#else
-    (void) frame;
-    return LINUX_ENOSYS;
-#endif
 }

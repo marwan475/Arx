@@ -177,7 +177,10 @@ static const struct acpi_sdt_hdr* boot_table(const struct boot_info* boot, uint6
 
 bool numa_boot_topology(const struct boot_info* boot, numa_topology_t* topology)
 {
-#if defined(__x86_64__)
+    if (!arch_boot_numa_supported())
+    {
+        return false;
+    }
     uint64_t rsdp_address = boot->rsdp_address;
     if (boot->hhdm_present && rsdp_address >= boot->hhdm_offset)
     {
@@ -219,6 +222,5 @@ bool numa_boot_topology(const struct boot_info* boot, numa_topology_t* topology)
             return numa_parse_srat(table, table->length, ids, platform.cpu_count, topology);
         }
     }
-#endif
     return false;
 }

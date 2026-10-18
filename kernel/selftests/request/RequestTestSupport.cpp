@@ -1,21 +1,5 @@
 #include "RequestTestSupport.hpp"
 
-#if defined(__x86_64__)
-static_assert(sizeof(arch_syscall_frame_t) == 176, "x86-64 syscall frame size must match entry assembly");
-
-static_assert(offsetof(arch_syscall_frame_t, arg0) == 8, "RDI syscall argument offset");
-
-static_assert(offsetof(arch_syscall_frame_t, arg1) == 16, "RSI syscall argument offset");
-
-static_assert(offsetof(arch_syscall_frame_t, arg2) == 24, "RDX syscall argument offset");
-
-static_assert(offsetof(arch_syscall_frame_t, arg3) == 32, "R10 syscall argument offset");
-
-static_assert(offsetof(arch_syscall_frame_t, arg4) == 40, "R8 syscall argument offset");
-
-static_assert(offsetof(arch_syscall_frame_t, arg5) == 48, "R9 syscall argument offset");
-#endif
-
 namespace request_selftest
 {
 request_user_fixture_t* request_user_fixtures[BOOT_SMP_MAX_CPUS];

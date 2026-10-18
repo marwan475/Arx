@@ -134,14 +134,7 @@ bool ElfMapper::ReadExactAt(file_t* file, uint64_t offset, void* buffer, uint64_
 
 bool ElfMapper::IsSupportedMachine(uint16_t machine) const
 {
-#if defined(__x86_64__)
-    return machine == ELF_MACHINE_X86_64;
-#elif defined(__aarch64__)
-    return machine == ELF_MACHINE_AARCH64;
-#else
-    (void) machine;
-    return false;
-#endif
+    return machine == arch_elf_machine();
 }
 
 bool ElfMapper::ValidateUserspaceRange(uint64_t virtualAddress, uint64_t memorySize) const

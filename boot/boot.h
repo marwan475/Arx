@@ -1,6 +1,7 @@
 #ifndef ARX_BOOT_H
 #define ARX_BOOT_H
 
+#include <arch/arch.h>
 #include <stdint.h>
 
 #define PAGE_SIZE 4096
@@ -27,23 +28,6 @@ struct boot_memmap_entry
     uint64_t base;
     uint64_t length;
     uint64_t type;
-};
-
-struct boot_smp_cpu_info
-{
-#if defined(__x86_64__) || defined(__i386__)
-    uint32_t processor_id;
-    uint32_t lapic_id;
-#elif defined(__aarch64__)
-    uint32_t processor_id;
-    uint32_t reserved1;
-    uint64_t mpidr;
-#else
-#error Unsupported architecture for boot_smp_cpu_info
-#endif
-    uint64_t  reserved;
-    uintptr_t goto_address;
-    uint64_t  extra_argument;
 };
 
 struct boot_smp_info

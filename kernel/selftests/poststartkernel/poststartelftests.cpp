@@ -1,7 +1,3 @@
-#include <selftests/SelfTestManager.hpp>
-#include <selftests/ManagerSuite.hpp>
-#include <selftests/TestFixture.hpp>
-
 #include "layers/Logic/ElfMapper.hpp"
 #include "layers/Logic/LogicLayerFactory.hpp"
 #include "layers/Logic/Scheduler.hpp"
@@ -11,6 +7,11 @@
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/TaskManager.hpp"
 #include "layers/Resource/VirtualMemoryManager.hpp"
+
+#include <arch/selftest.hpp>
+#include <selftests/ManagerSuite.hpp>
+#include <selftests/SelfTestManager.hpp>
+#include <selftests/TestFixture.hpp>
 
 extern "C"
 {
@@ -183,7 +184,6 @@ static void teardown_elf_segments(ResourceLayerCaps* resourceCaps, process_t* pr
 
 } // namespace
 
-#if defined(__x86_64__)
 extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame, bool* handled)
 {
     if (handled == nullptr)
@@ -208,14 +208,7 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     if (frame->syscall_number == SELFTEST_SYSCALL_PROBE)
     {
-        uint64_t flags = 0;
-        uint32_t mxcsr = 0;
-        __asm__ volatile("pushfq; popq %0" : "=r"(flags));
-        __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
-        g_poststart_elf_ctx.syscallAbiValid = frame->arg0 == 0xA11E && frame->arg1 == 0xBEEF && frame->arg2 == 0xCDEF && frame->arg3 == 0xDEAD && frame->arg4 == 0xBABE && frame->arg5 == 0xFEED && (flags & (1ULL << 9)) != 0 && (flags & (1ULL << 10)) == 0 && mxcsr == 0x1f80
-                                              && platform.cpus[arch_cpu_id()].arch_info.syscall_ctx.active == 1;
-        // Raw syscalls preserve user SIMD state even when kernel C clobbers it.
-        __asm__ volatile("pxor %%xmm0, %%xmm0; pxor %%xmm7, %%xmm7; pxor %%xmm15, %%xmm15" : : : "xmm0", "xmm7", "xmm15");
+        g_poststart_elf_ctx.syscallAbiValid  = arch_selftest_syscall_probe(frame);
         g_poststart_elf_ctx.syscallProbeSeen = 1;
         kprintf("Arx kernel: poststart_elf_selftest syscall probe hit (nr=%llu arg0=0x%llx)\n", (unsigned long long) frame->syscall_number, (unsigned long long) frame->arg0);
         *handled = true;
@@ -240,8 +233,6 @@ extern "C" uint64_t selftest_syscall_dispatch(const arch_syscall_frame_t* frame,
 
     return 0;
 }
-
-#endif
 
 static void run_elf_execution_selftest(void* resourceLayerCaps, void* logicLayerCaps, bool dynamic)
 {
@@ -273,11 +264,12 @@ static void run_elf_execution_selftest(void* resourceLayerCaps, void* logicLayer
 
     SelfTestManager::Get().CaseBegin(caseName);
 
-#if !defined(__x86_64__)
-    kprintf("Arx kernel: poststart_elf_selftest SKIP: currently x86_64-only syscall fixture\n");
-    SelfTestManager::Get().CaseFinish(caseName, 0, 0, SELFTEST_SKIP);
-    return;
-#else
+    if (!arch_task_context_supported())
+    {
+        kprintf("Arx kernel: poststart_elf_selftest SKIP: currently x86_64-only syscall fixture\n");
+        SelfTestManager::Get().CaseFinish(caseName, 0, 0, SELFTEST_SKIP);
+        return;
+    }
     ResourceLayerCaps* resourceCaps = static_cast<ResourceLayerCaps*>(resourceLayerCaps);
     LogicLayerCaps*    logicCaps    = static_cast<LogicLayerCaps*>(logicLayerCaps);
 
@@ -547,7 +539,6 @@ cleanup:
     }
 
     SelfTestManager::Get().CaseEnd(caseName, passes, fails);
-#endif
 }
 
 extern "C" void run_poststart_elf_selftests(void* resourceLayerCaps, void* logicLayerCaps)

@@ -920,48 +920,10 @@ static bool test_event_temporary_mask(process_t* process, uint64_t number, uint6
 
         ok &= expect(task->signalMask == blockedMask && !task->signalRestoreMask, "kernel event caller restores mask after EINTR");
 
-#if defined(__x86_64__)
-        alignas(16) uint8_t floating[512] = {};
-
-        const uint32_t mxcsr     = 0x1f80;
-        const uint32_t mxcsrMask = 0xffbf;
-
-        memcpy(floating + 24, &mxcsr, sizeof(mxcsr));
-
-        memcpy(floating + 28, &mxcsrMask, sizeof(mxcsrMask));
-
-        frame.user_cs     = USER_CS;
-        frame.user_ss     = USER_SS;
-        frame.user_rflags = 0x202;
-        frame.user_rip    = base + 1792;
-        frame.user_rsp    = base + 2 * PAGE_SIZE - 16;
-        frame.fxstate     = (uint64_t) floating;
-
-        const uint64_t interrupted = dispatcher_dispatch_syscall(&frame);
-
-        ok &= expect(interrupted == (uint64_t) -4 && task->signalRestoreMask && task->signalMask == 0, "user event caller defers mask restoration until signal delivery");
-
-        ok &= expect(signals->Deliver(&frame, interrupted) == 0 && frame.user_rip == action.handler, "event EINTR delivers handler under temporary mask");
-
-        signal_frame_fixture_t saved = {};
-
-        fixture_load(process, frame.user_rsp, &saved, sizeof(saved));
-
-        ok &= expect(saved.uc.mask == blockedMask && saved.uc.context.ax == (uint64_t) -4, "event signal frame saves original mask and EINTR");
-
-        ok &= expect(!task->signalRestoreMask && task->signalMask == (1ULL << 9), "handler mask derives from temporary mask");
-
-        frame.user_rsp += 8;
-
-        ok &= expect(signals->Restore(&frame) == (uint64_t) -4 && task->signalMask == blockedMask, "event sigreturn restores original mask");
-
-        ok &= expect(signals->BeginTemporaryMask(0) == 0, "event no-pending restoration fixture");
-
-        signals->FinishTemporaryMask(true);
-
-        ok &= expect(signals->Deliver(&frame, (uint64_t) -4) == (uint64_t) -4 && task->signalMask == blockedMask && !task->signalRestoreMask,
-            "signal return restores deferred mask when pending signal disappears");
-#endif
+        if (arch_task_context_supported())
+        {
+            ok &= arch_selftest_event_signal(process, task, signals, frame, action, base, blockedMask);
+        }
     }
 
     (void) signals->Action(10, &previous, nullptr);

@@ -84,12 +84,11 @@ uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_
         return LINUX_EINVAL;
     }
 
-#if defined(__x86_64__)
-    const int32_t operation = (int32_t) frame->arg0;
-
-    if (operation < 0x1001 || operation > 0x1004)
+    bool           gs, write;
+    const uint64_t status = arch_decode_tls_request(frame->arg0, &gs, &write);
+    if (status != 0)
     {
-        return LINUX_EINVAL;
+        return status;
     }
 
     if (ResourceCaps == nullptr || ResourceCaps->taskManager == nullptr)
@@ -97,14 +96,12 @@ uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_
         return LINUX_ENOSYS;
     }
 
-    const bool gs = operation == 0x1001 || operation == 0x1004;
-
-    if (operation == 0x1001 || operation == 0x1002)
+    if (write)
     {
-        // The kernel uses four-level paging; reject noncanonical and kernel bases.
-
-        if (frame->arg1 >= (1ULL << 47))
+        if (!arch_user_tls_base_valid(frame->arg1))
+        {
             return (uint64_t) -1; // EPERM
+        }
         return ResourceCaps->taskManager->SetCurrentTlsBase(gs, frame->arg1) ? 0 : LINUX_ESRCH;
     }
 
@@ -116,9 +113,6 @@ uint64_t SystemRequestManager::HandleArch_prctlRequest(const arch_syscall_frame_
     }
 
     return safe_write_user(frame->arg1, &value, sizeof(value)) ? 0 : LINUX_EFAULT;
-#else
-    return LINUX_ENOSYS;
-#endif
 }
 
 uint64_t SystemRequestManager::HandleUmaskRequest(const arch_syscall_frame_t* frame)

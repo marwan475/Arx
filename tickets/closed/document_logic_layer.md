@@ -1,13 +1,13 @@
-# Document Resource layer
+# Document Logic layer
 
 - Type: feature
 - Priority: P2
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
 
-Create a detailed guide to Resource layer. Explain ResourceLayerFactory, ResourceLayerCaps and filesystem capabilities, construction and lifetime, resource ownership, and interaction with platform mechanisms. Map every Resource component to its responsibilities and consumers, including ResourceFileSystem. Describe general resource acquisition/release contracts; concrete examples and walkthroughs are deferred by owner agreement.
+Create a detailed guide to Logic layer. Explain LogicLayerFactory/LogicLayerCaps, construction and cross-component wiring, and how Resource mechanisms support policy. Map scheduling, process control/memory, VFS, ELF, credentials, events, synchronization, signals, sockets and IPC. Describe general cross-manager interactions and identify ownership/synchronization boundaries; concrete examples and walkthroughs are deferred by owner agreement.
 
 Keep layer-wide contracts and interactions, and document every manager/component in its own section within this guide.
 
@@ -27,9 +27,9 @@ Coordinate structure and navigation with [the project overview](../closed/docume
 
 ## Source entry points
 
-- [kernel/layers/Resource](../../kernel/layers/Resource)
+- [kernel/layers/Logic](../../kernel/layers/Logic)
 - [kernel/layers/Dispatcher.cpp](../../kernel/layers/Dispatcher.cpp)
-- [kernel/selftests/resource](../../kernel/selftests/resource)
+- [kernel/selftests/logic](../../kernel/selftests/logic)
 
 These are starting points; inspect callers, dependencies, and tests before making claims.
 
@@ -57,7 +57,7 @@ Assigned P2 as planned documentation work in the codebase understanding backlog.
 
 Used `mattpocock-skills:grilling` and
 `docs/skills/write-kernel-docs/SKILL.md`. The owner confirmed analyzing Resource
-and Logic together, with separate `Resource.md` guides beside Request and Dispatcher,
+and Logic together, with separate `Logic.md` guides beside Request and Dispatcher,
 README links, concise human-readable prose, initialization-first structure,
 one-line component responsibilities, ownership/contracts, limitations, and
 self-tests. Each guide will have initialization and general interaction SVGs with
@@ -68,23 +68,25 @@ Inspected both factories and capability headers, `ResourceFileSystem.hpp`,
 Dispatcher construction/test calls, SelfTestManager test-phase wiring, and the
 Resource/Logic self-test inventories.
 
-The factory creates seven managers in this order: PhysicalMemoryManager,
-ProcessManager, TaskManager, VirtualMemoryManager, DmaManager, TimeManager, and
-InitRamFileSystemManager. It then creates ResourceFileSystem and exports its
-embedded filesystem capability table. DMA receives the physical/virtual memory
-managers and platform DMA operations; initramfs receives platform boot-image
-metadata. ResourceFileSystem exports opaque filesystem/node handles and a context
-plus function-pointer interface. Repeated Create calls return the existing caps.
-Dispatcher runs Resource self-tests before constructing Logic.
+The factory exports ten components: Scheduler, VirtualFileSystem, ElfMapper,
+CredentialManager, EventManager, SynchronizationManager, SignalManager,
+ProcessController, SocketManager, and InterProcessCommunicationManager. Create
+requires Resource capabilities and returns null if they are absent. EventManager
+is wired back into Scheduler and VirtualFileSystem; SynchronizationManager is
+registered as Scheduler's priority manager. ProcessController receives both
+Resource and Logic capabilities. Socket and IPC receive VFS, Event, and Signal
+services. Repeated Create calls return existing caps. Dispatcher runs Logic tests
+before constructing Request.
 
 Plan:
 
-1. Explain the seven managers and ResourceFileSystem with one-line responsibilities;
-cover platform dependencies, resource ownership, allocation/release contracts,
-filesystem capability context and handles, and consumers in both upper layers.
-Inspect implementations, callers, and tests to establish actual lifetimes,
-locking, execution constraints, errors, and support limits before writing claims.
-2. Write `docs/architecture/layers/Resource.md` using the agreed format. Keep
+1. Explain all ten exported components with one-line responsibilities, construction
+and cross-component wiring, Resource imports, policy/mechanism boundaries,
+process-memory ownership within process control, and interactions between
+scheduling, VFS/ELF, credentials, events, synchronization, signals, sockets, and IPC.
+Inspect implementations, callers, and tests for actual lifetimes, locking,
+execution constraints, errors, and support limits before writing claims.
+2. Write `docs/architecture/layers/Logic.md` using the agreed format. Keep
    component internals in their dedicated guides, and use plain source filenames
    without clickable source links. Coordinate terminology with the companion layer
    guide and avoid repeating Dispatcher or platform explanations.
@@ -113,7 +115,7 @@ guide, two SVGs, and README navigation. Concrete examples remain deferred.
 
 ### 2026-10-17 — Ready for owner review
 
-Created `docs/architecture/layers/Resource.md` in the agreed concise,
+Created `docs/architecture/layers/Logic.md` in the agreed concise,
 initialization-first format. Covers the complete component inventory,
 capabilities/dependencies, ownership and lifetime, general interactions,
 synchronization/execution constraints, failures, support limits, and self-tests.
@@ -123,7 +125,7 @@ and added the root README link. Concrete examples and walkthroughs remain deferr
 Verified claims against both factories, Resource component contracts and relevant
 implementations, Logic construction/callback wiring and collaborators, Dispatcher,
 architecture support boundaries, and self-test group wiring. Confirmed all
-8 component rows and corresponding self-test suites, 15 explicit filename
+10 component rows and corresponding self-test suites, 22 explicit filename
 references, and local document/image/ticket links after moving the ticket.
 Parsed the SVGs, verified accessibility metadata and preserved native text spacing,
 and confirmed retained Mermaid sources exactly match render inputs. Rendered and
@@ -132,14 +134,9 @@ visually inspected both SVGs for readable text, clipping, spacing, and arrows.
 omits skill/AArch64 guide links as requested. No implementation files changed;
 no kernel build or runtime self-tests were run for this documentation-only work.
 
-Existing implementation limitation recorded separately from documentation scope:
-Resource filesystem capabilities expose no backend unmount or node-release
-callbacks. The guide states this boundary; implementing a reclamation protocol
-would require separate implementation work and is not part of this ticket.
-
 All agreed acceptance criteria are met. Status remains in progress while awaiting
 owner review and explicit closure/destination authorization. Proposed destination:
-`tickets/closed/document_resource_layer.md`. Closure logs are unchanged for this ticket.
+`tickets/closed/document_logic_layer.md`. Closure logs are unchanged for this ticket.
 
 ### 2026-10-17 — Completion
 
@@ -166,18 +163,20 @@ new diagrams and examples as deferred, not completion requirements. Keep tickets
 in progress for owner review; do not re-close without authorization.
 
 Consolidated and removed these separate tickets:
-- `document_dma_manager.md`
-- `document_init_ram_file_system_manager.md`
-- `document_physical_memory_manager.md`
-- `document_process_manager.md`
-- `document_resource_file_system.md`
-- `document_task_manager.md`
-- `document_time_manager.md`
-- `document_virtual_memory_manager.md`
+- `document_credential_manager.md`
+- `document_elf_mapper.md`
+- `document_event_manager.md`
+- `document_inter_process_communication_manager.md`
+- `document_process_controller.md`
+- `document_scheduler.md`
+- `document_signal_manager.md`
+- `document_socket_manager.md`
+- `document_synchronization_manager.md`
+- `document_virtual_file_system.md`
 
 ### 2026-10-17 — Progress and remaining work; revised guide ready for review
 
-Eight component sections with 160 callable public class declarations (including factory/guard APIs), overloaded getters/constructors, process helpers, filesystem callback correspondence, and clock backend contracts. Retained initialization order, ownership/locking rules, limitations,
+Ten component sections with 179 callable public class declarations (including factory APIs), plus all 30 VFS public callbacks individually described. Retained initialization order, ownership/locking rules, limitations,
 and self-test descriptions. Individual manager/component tickets are consolidated
 into this guide and removed. Removed all eight SVGs embedded across the layer
 guides (including Dispatcher), their embeds and exact Mermaid source blocks;
@@ -197,3 +196,12 @@ All revised acceptance criteria are met. Per the owner's instruction, this ticke
 remains in progress; owner review is pending. Diagrams and concrete examples remain
 explicit deferred TODOs. Historical closure log entries are preserved as history
 of the previously authorized closure; this reopening adds no closure entries.
+
+### 2026-10-17 — Completion after consolidated layer review
+
+The owner approved the revised documentation and explicitly authorized closing all
+layer tickets, accepting the usual tickets/closed destination. The layer guide now
+contains individual component sections and public API descriptions, with Request
+syscall behavior documented. Manager tickets were consolidated and removed; layer
+diagrams and examples remain deferred as agreed. Required documentation checks
+passed as recorded above.

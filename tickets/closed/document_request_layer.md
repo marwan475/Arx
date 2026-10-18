@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P2
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -230,3 +230,12 @@ Linux semantics. No implementation fixes or new manager tickets were introduced.
 
 All current acceptance criteria are met. Ticket remains in progress as previously
 requested, awaiting owner review; diagrams and examples remain deferred.
+
+### 2026-10-17 — Completion after consolidated layer review
+
+The owner approved the revised documentation and explicitly authorized closing all
+layer tickets, accepting the usual tickets/closed destination. The layer guide now
+contains individual component sections and public API descriptions, with Request
+syscall behavior documented. Manager tickets were consolidated and removed; layer
+diagrams and examples remain deferred as agreed. Required documentation checks
+passed as recorded above.

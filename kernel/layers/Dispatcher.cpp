@@ -7,6 +7,7 @@
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
+#include <debug/kernel/Foundation.hpp>
 #include <platform.h>
 
 #include <selftests/SelfTestManager.hpp>
@@ -20,6 +21,8 @@ Dispatcher::Dispatcher()
 
 Dispatcher::~Dispatcher()
 {
+    ARX_DEBUG_RUN(debugManager.InvalidateAll());
+
     delete resourceLayerFactory;
     delete logicLayerFactory;
     delete requestLayerFactory;
@@ -27,9 +30,14 @@ Dispatcher::~Dispatcher()
 
 void Dispatcher::StartKernel()
 {
+    ARX_DEBUG_RUN(DebugFoundationDeclare(debugManager));
+    ARX_DEBUG_RUN(DebugFoundationPublishC(debugManager));
+
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
 
     SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
+
+    ARX_DEBUG_RUN(DebugFoundationPublishCpp(debugManager));
 
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 

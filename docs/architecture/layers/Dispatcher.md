@@ -20,7 +20,11 @@ backing operation has finished; the gateway does not extend those lifetimes.
 In `kernel.cpp`, `kmain` creates Dispatcher and publishes its address in
 `platform.dispacher`. That field's spelling follows the current source.
 The constructor creates three factory objects; their managers are created later
-by `StartKernel`.
+by `StartKernel`. In debug builds Dispatcher also embeds a fixed-capacity
+DebugManager registry for borrowed, typed statistics records and rich-view roots.
+Controlled C/C++ foundation records publish at staged startup points; production
+provider rollout is separate. GdbCommands.md documents discovery and authoring.
+Release builds exclude the registry, its initialization and all tracking work.
 
 `StartKernel` performs these steps:
 
@@ -57,7 +61,8 @@ they do not enforce memory isolation. Request may use either lower layer, and
 Logic may use Resource. Managers can also collaborate within their own layer.
 
 Normal startup keeps Dispatcher and its factories for the kernel lifetime.
-Its destructor deletes the Resource, Logic, and Request factories in that order.
+Its destructor invalidates debug registrations before deleting the Resource,
+Logic, and Request factories in that order.
 The code does not provide a coordinated running-kernel shutdown protocol, and
 factory teardown should not be treated as one.
 

@@ -6,6 +6,7 @@
 
 #include <arch/arch.h>
 #include <klib/klib.h>
+#include <debug/kernel/Foundation.hpp>
 #include <platform.h>
 
 #include <selftests/SelfTestManager.hpp>
@@ -80,6 +81,7 @@ static void KernelPostInit(void)
 static void KernelPostInitTask(void* arg)
 {
     (void) arg;
+    ARX_DEBUG_RUN(DebugFoundationRuntimeUpdate());
     KernelPostInit();
 }
 

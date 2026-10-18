@@ -13,7 +13,6 @@ filename. Ticket files contain the authoritative details and work history.
 | P1 | [Track the process tree, task ownership and shared open resources](feature/add_debug_process_resource_views.md) | feature | open |
 | P1 | [Add scheduling, blocked-task, futex and timer debug views](feature/add_debug_scheduling_wait_views.md) | feature | open |
 | P1 | [Add virtual-memory ownership, backing and x86_64 translation debug views](feature/add_debug_virtual_memory_views.md) | feature | open |
-| P1 | [Build the debug-only kernel and GDB framework foundations](feature/build_debug_framework_foundation.md) | feature | open |
 | P1 | [Cut over to the debug framework and document the replacement commands](feature/migrate_debug_commands_and_document_framework.md) | feature | open |
 | P2 | [Add pipe, memory-file and UNIX socket debug views](feature/add_debug_ipc_socket_views.md) | feature | open |
 | P2 | [Add self-test progress and recorded boot-error debug views](feature/add_debug_selftest_error_views.md) | feature | open |
@@ -29,7 +28,9 @@ filename. Ticket files contain the authoritative details and work history.
 
 ## In progress
 
-None.
+| Priority | Ticket | Type | Status |
+| --- | --- | --- | --- |
+| P1 | [Build the debug-only kernel and GDB framework foundations](in_progress/build_debug_framework_foundation.md) | feature | in progress |
 
 ## Closed
 

@@ -69,6 +69,11 @@ the appropriate handlers.
 2. Logic, using Resource services, followed by its tests.
 3. Request, using both Resource and Logic services.
 
+Debug builds also embed DebugManager in Dispatcher for typed, borrowed statistics
+records and bounded read-only GDB views. Providers maintain debug-only runtime
+records; release builds exclude this storage and tracking work. The debugging
+guide describes the foundation interface and current controlled providers.
+
 Each layer's factory creates its managers and publishes a capability structure:
 references to the services that other parts of the kernel can use.
 

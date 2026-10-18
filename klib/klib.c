@@ -22,7 +22,9 @@ static void error_logger_format(char* message, const char* format, va_list args)
         memcpy(message, "error formatting diagnostic", sizeof("error formatting diagnostic"));
     }
     else if ((size_t) length >= ERROR_LOGGER_MESSAGE_SIZE)
+    {
         memcpy(message + ERROR_LOGGER_MESSAGE_SIZE - sizeof(" [truncated]"), " [truncated]", sizeof(" [truncated]"));
+    }
 }
 
 static bool error_logger_publish(error_log_buffer_t* buffer, const char* message)
@@ -259,7 +261,10 @@ static bool copy_user_locked(const user_memory_access_t* access, uint64_t addres
             memcpy(page + offset, bytes, chunk);
         }
         else
+        {
             memcpy(bytes, page + offset, chunk);
+        }
+
         bytes += chunk;
         address += chunk;
         length -= chunk;

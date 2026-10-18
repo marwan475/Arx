@@ -163,26 +163,33 @@ uint64_t SchedulerRequestManager::HandleSched_setaffinityRequest(const arch_sysc
     {
         return LINUX_EINVAL;
     }
+
     if (LogicCaps == nullptr || LogicCaps->scheduler == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     if (frame->arg1 == 0)
     {
         return LINUX_EINVAL;
     }
+
     uint64_t     mask = 0;
     const size_t size = frame->arg1 < sizeof(mask) ? frame->arg1 : sizeof(mask);
+
     if (!safe_read_user(frame->arg2, &mask, size))
     {
         return LINUX_EFAULT;
     }
+
     task_t*        task   = nullptr;
     const uint64_t status = LogicCaps->scheduler->AcquireTask((int64_t) frame->arg0, true, &task);
+
     if (status != 0)
     {
         return status;
     }
+
     const uint64_t result = LogicCaps->scheduler->SetAffinity(task, mask);
     ResourceCaps->taskManager->ReleaseDispatchClaim(task);
     return result;

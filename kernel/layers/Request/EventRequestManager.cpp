@@ -248,11 +248,12 @@ uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame,
             }
 
             for (uint32_t i = 0; i < nfds; ++i)
-
+            {
                 if (!safe_write_user(frame->arg0 + (uint64_t) i * sizeof(event_pollfd_t) + offsetof(event_pollfd_t, revents), &descriptors[i].revents, sizeof(uint16_t)))
                 {
                     return LINUX_EFAULT;
                 }
+            }
 
             return ready;
         }
@@ -271,11 +272,12 @@ uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame,
             memset(sets, 0, setBytes * 6);
 
             for (size_t set = 0; set < 3; ++set)
-
+            {
                 if (userSets[set] != 0 && !safe_read_user(userSets[set], sets + set * words, setBytes))
                 {
                     return LINUX_EFAULT;
                 }
+            }
         }
 
         size_t count = 0;
@@ -355,20 +357,22 @@ uint64_t EventRequestManager::WaitRequestBody(const arch_syscall_frame_t* frame,
             };
 
             for (size_t set = 0; set < 3; ++set)
-
+            {
                 if ((sets[set * words + fd / 64] & bit) && (descriptor.revents & masks[set]))
                 {
                     sets[(set + 3) * words + fd / 64] |= bit;
                     ++bitsReady;
                 }
+            }
         }
 
         for (size_t set = 0; set < 3; ++set)
-
+        {
             if (userSets[set] != 0 && setBytes != 0 && !safe_write_user(userSets[set], sets + (set + 3) * words, setBytes))
             {
                 return LINUX_EFAULT;
             }
+        }
 
         return bitsReady;
     }();

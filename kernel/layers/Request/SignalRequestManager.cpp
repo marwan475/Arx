@@ -179,34 +179,42 @@ uint64_t SignalRequestManager::HandleQueuedSignalRequest(const arch_syscall_fram
     {
         return LINUX_EINVAL;
     }
+
     if (Logic == nullptr || Logic->signalManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     const bool thread = frame->syscall_number == SYSCALL_rt_tgsigqueueinfo;
     const int32_t pid = static_cast<int32_t>(frame->arg0);
     const int32_t tid = thread ? static_cast<int32_t>(frame->arg1) : -1;
     const int32_t signal = static_cast<int32_t>(thread ? frame->arg2 : frame->arg1);
+
     if (pid <= 0 || (thread && tid <= 0))
     {
         return LINUX_EINVAL;
     }
+
     uint8_t info[128];
+
     if (!safe_read_user(thread ? frame->arg3 : frame->arg2, info, sizeof(info)))
     {
         return LINUX_EFAULT;
     }
+
     signal_sender_t sender = {};
     memcpy(&sender.code, info + 8, 4);
     memcpy(&sender.pid, info + 16, 4);
     memcpy(&sender.uid, info + 20, 4);
     memcpy(&sender.value, info + 24, 8);
+
     // Only the kill/queue union is implemented. Timer, poll and fault records
     // have different layouts and must not be silently converted.
     if (sender.code != -1 && sender.code != 0 && sender.code != -6)
     {
         return LINUX_EOPNOTSUPP;
     }
+
     return Logic->signalManager->Send(pid, tid, signal, &sender);
 }
 

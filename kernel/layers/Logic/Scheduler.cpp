@@ -151,7 +151,9 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
             __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
         }
         else
+        {
             link = &entry.next;
+        }
     }
 
     UnlockQueues();
@@ -370,7 +372,9 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
             }
             else
+            {
                 link = &entry.next;
+            }
         }
     }
 
@@ -751,7 +755,9 @@ bool Scheduler::ScheduleTask(process_t* process, task_t* task, bool dispatchClai
             (void) processManager->ActivateProcessAddressSpace(previousProcess);
         }
         else
+        {
             (void) processManager->SetRunningProcess(cpuId, nullptr);
+        }
     }
 
     if (platform.cpus[cpuId].address_space != previousAddressSpace)
@@ -812,24 +818,31 @@ uint64_t Scheduler::SetAffinity(task_t* task, uint64_t mask)
     {
         return static_cast<uint64_t>(-16);
     }
+
     LockQueues();
     auto& policy = *task->scheduling;
     int reservation = policy.reservationCpu;
+
     if (policy.policy == SCHEDULING_DEADLINE)
     {
         const uint64_t utilization = ReservationUtilization(policy.deadlineRuntime, policy.deadlinePeriod);
+
         if (reservation < 0 || !(mask & (1ULL << reservation)))
         {
             reservation = FindReservationCpuLocked(task, mask, utilization);
+
             if (reservation < 0)
             {
                 UnlockQueues();
+
                 if (PriorityManager != nullptr)
                 {
                     PriorityManager->UnlockSchedulingChange();
                 }
+
                 return static_cast<uint64_t>(-16);
             }
+
             DeadlineUtilization[policy.reservationCpu] -= utilization;
             DeadlineUtilization[reservation] += utilization;
             policy.reservationCpu = reservation;
@@ -838,25 +851,32 @@ uint64_t Scheduler::SetAffinity(task_t* task, uint64_t mask)
     else if (policy.effectivePolicy == SCHEDULING_DEADLINE && policy.deadlineDonor != nullptr && !(mask & (1ULL << policy.deadlineDonor->scheduling->reservationCpu)))
     {
         UnlockQueues();
+
         if (PriorityManager != nullptr)
         {
             PriorityManager->UnlockSchedulingChange();
         }
+
         return static_cast<uint64_t>(-16);
     }
+
     __atomic_store_n(&task->affinityMask, mask, __ATOMIC_RELEASE);
     __atomic_store_n(&task->migrationEnabled, true, __ATOMIC_RELEASE);
     UnlockQueues();
+
     if (PriorityManager != nullptr)
     {
         PriorityManager->UnlockSchedulingChange();
     }
+
     (void) RunSchedulingAlgorithm(arch_cpu_id(), scheduling_reason_t::AFFINITY, nullptr, task);
     uint64_t reschedule = 1ULL << task->placementCpu;
+
     if (task->ownerCpu >= 0)
     {
         reschedule |= 1ULL << task->ownerCpu;
     }
+
     RequestReschedule(reschedule);
 
     // A running task must pass through a completed switch before another CPU
@@ -931,10 +951,12 @@ bool Scheduler::PublishTask(process_t* process, task_t* task)
 Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId, scheduling_reason_t reason, process_t* publish, task_t* placement)
 {
     scheduling_decision_t decision = {nullptr, nullptr, UINT64_MAX, cpuId, false, false};
+
     if (cpuId >= platform.cpu_count)
     {
         return decision;
     }
+
     if (placement != nullptr)
     {
         LockQueues();
@@ -942,6 +964,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
         const auto& policy = *placement->scheduling;
         task_t* donor = policy.deadlineDonor != nullptr ? policy.deadlineDonor : placement;
         const int reserved = policy.effectivePolicy == SCHEDULING_DEADLINE ? donor->scheduling->reservationCpu : -1;
+
         if (placement->allocated && !placement->dying && mask != 0 && (reserved < 0 || (mask & (1ULL << reserved))))
         {
             placement->placementCpu = reserved >= 0 ? reserved : placement->placementCpu >= 0 && (mask & (1ULL << placement->placementCpu)) ? placement->placementCpu : (mask & (1ULL << cpuId)) ? cpuId : __builtin_ctzll(mask);
@@ -950,13 +973,16 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
             decision.accepted = true;
             decision.local = decision.cpu == cpuId;
         }
+
         UnlockQueues();
         return decision;
     }
+
     if (publish != nullptr)
     {
         uint64_t remote = 0;
         LockQueues();
+
         if (publish->allocated && !publish->exited && publish->ownerCpu < static_cast<int16_t>(platform.cpu_count))
         {
             for (task_t* task = publish->tasks; task != nullptr; task = task->next)
@@ -965,94 +991,118 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
                 {
                     continue;
                 }
+
                 const uint64_t mask = task->affinityMask & AvailableCpuMask();
+
                 if (mask == 0)
                 {
                     continue;
                 }
+
                 if (task->placementCpu < 0 || !(mask & (1ULL << task->placementCpu)))
                 {
                     task->placementCpu = (mask & (1ULL << cpuId)) ? cpuId : __builtin_ctzll(mask);
                 }
+
                 task->schedulerQueued = true;
+
                 if (task->scheduling->readyOrder == 0)
                 {
                     task->scheduling->readyOrder = ++ReadySequence;
                 }
+
                 decision.accepted = true;
                 decision.local |= task->placementCpu == cpuId;
+
                 if (task->placementCpu != cpuId)
                 {
                     remote |= 1ULL << task->placementCpu;
                 }
             }
         }
+
         UnlockQueues();
         RequestReschedule(remote);
         return decision;
     }
+
     LockQueues();
     uint64_t now = 0;
     arch_time_read_monotonic(&now);
     AccountSchedulingLocked(cpuId, now);
     ReplenishReservationsLocked(now);
     task_t* current = ResourceLayerImportCaps->taskManager->GetRunningTask(cpuId);
+
     if (current != nullptr && ResourceLayerImportCaps->processManager->GetRunningProcess(cpuId) != nullptr && !current->dying && !current->sleepPending)
     {
         current->schedulerQueued = true;
+
         if (current->placementCpu < 0)
         {
             current->placementCpu = cpuId;
         }
+
         auto& policy = *current->scheduling;
+
         if (reason == scheduling_reason_t::YIELD)
         {
             policy.readyOrder = ++ReadySequence;
             policy.roundRobinRemaining = SCHEDULING_RR_QUANTUM;
+
             if (policy.policy == SCHEDULING_DEADLINE)
             {
                 policy.deadlineRemaining = 0;
             }
         }
+
         if (policy.policy == SCHEDULING_RR && policy.roundRobinRemaining == 0)
         {
             policy.roundRobinRemaining = SCHEDULING_RR_QUANTUM;
             policy.readyOrder = ++ReadySequence;
         }
     }
+
     TaskManager*   tasks    = ResourceLayerImportCaps->taskManager;
     task_t*        selected = nullptr;
     sleep_entry_t* sleeper  = nullptr;
+
     for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
     {
         task_t*        task  = &tasks->GetTasks()[i];
         sleep_entry_t& entry = SleepQueue[i];
+
         if (!tasks->RetainForDispatch(task))
         {
             continue;
         }
+
         const bool awakened = entry.task == task && !entry.waiting && !entry.dispatched;
+
         if (!task->allocated || task->state == task_t::SWITCHING || (task->dying && !awakened) || (!task->schedulerQueued && !awakened) || (task->sleepPending && !awakened) || !(task->affinityMask & (1ULL << cpuId)) || (task->placementCpu >= 0 && task->placementCpu != cpuId)
             || (task->state == task_t::RUNNING && tasks->GetRunningTask(cpuId) != task) || task->process == nullptr || (task->process->stopped && !task->process->exited))
         {
             tasks->ReleaseDispatchClaim(task);
             continue;
         }
+
         if (!PolicyEligible(task, cpuId))
         {
             tasks->ReleaseDispatchClaim(task);
             continue;
         }
+
         if (task->scheduling->readyOrder == 0)
         {
             task->scheduling->readyOrder = ++ReadySequence;
         }
+
         if (MoreUrgent(task, selected, cpuId))
         {
             if (selected != nullptr)
             {
                 tasks->ReleaseDispatchClaim(selected);
             }
+
             selected = task;
             sleeper  = awakened ? &entry : nullptr;
         }
@@ -1061,6 +1111,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
             tasks->ReleaseDispatchClaim(task);
         }
     }
+
     if (selected == nullptr)
     {
         if (current != nullptr && ResourceLayerImportCaps->processManager->GetRunningProcess(cpuId) != nullptr && !PolicyEligible(current, cpuId) && tasks->RetainForDispatch(IdleTasks[cpuId]))
@@ -1068,6 +1119,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
             decision.task = IdleTasks[cpuId];
             decision.accepted = true;
         }
+
         decision.nextEvent = NextSchedulingEventLocked(nullptr, cpuId, now);
         UnlockQueues();
         return decision;
@@ -1076,10 +1128,12 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
     // takes precedence while an owner is blocking a higher-priority waiter.
     selected->scheduleRuntime += 1ULL << ((selected->baseNice + 20) / 4);
     selected->schedulerQueued = false;
+
     if (sleeper != nullptr)
     {
         sleeper->dispatched = true;
     }
+
     decision.task = selected;
     decision.process = sleeper != nullptr ? sleeper->process : selected == current ? ResourceLayerImportCaps->processManager->GetRunningProcess(cpuId) : selected->process;
     decision.nextEvent = NextSchedulingEventLocked(selected, cpuId, now);
@@ -1095,18 +1149,24 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
     {
         return false;
     }
+
     TaskManager* tasks = ResourceLayerImportCaps->taskManager;
     task_t* current = tasks->GetCurrentTask();
+
     if (current != nullptr && current->schedulingBusy)
     {
         return false;
     }
+
     cpu_preemption_disable();
+
     if (current != nullptr)
     {
         current->schedulingBusy = true;
     }
+
     bool executed = false;
+
     if (current != nullptr && (!(current->affinityMask & (1ULL << cpuId)) || (current->placementCpu >= 0 && current->placementCpu != cpuId)))
     {
         ResourceLayerImportCaps->processManager->SetRunningProcess(cpuId, nullptr);
@@ -1119,11 +1179,13 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
     {
         const auto decision = RunSchedulingAlgorithm(cpuId, reason);
         uint64_t now = 0;
+
         if (arch_time_read_monotonic(&now))
         {
             const uint64_t delay = decision.nextEvent > now ? decision.nextEvent - now : 1000;
             arch_program_scheduler_timer(delay);
         }
+
         if (decision.task == IdleTasks[cpuId])
         {
             ResourceLayerImportCaps->processManager->SetRunningProcess(cpuId, nullptr);
@@ -1134,26 +1196,33 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
         else if (decision.task != nullptr)
         {
             executed = ScheduleTask(decision.process, decision.task, true);
+
             if (!executed)
             {
                 LockQueues();
+
                 if (decision.task->allocated && !decision.task->dying && decision.task->process == decision.process)
                 {
                     decision.task->schedulerQueued = true;
                 }
+
                 sleep_entry_t& sleeper = SleepQueue[decision.task - tasks->GetTasks()];
+
                 if (sleeper.task == decision.task)
                 {
                     sleeper.dispatched = false;
                 }
+
                 UnlockQueues();
             }
         }
     }
+
     if (current != nullptr)
     {
         current->schedulingBusy = false;
     }
+
     cpu_preemption_enable();
     return executed;
 }
@@ -1177,27 +1246,34 @@ void Scheduler::RequestReschedule(uint64_t cpus)
 void Scheduler::ServicePendingReschedule(bool syscallBoundary)
 {
     const uint8_t cpu = arch_cpu_id();
+
     if (!IsSchedulingActive() || platform.cpus[cpu].switching_context || platform.cpus[cpu].preemption_depth != 0)
     {
         return;
     }
+
     task_t* current = ResourceLayerImportCaps->taskManager->GetCurrentTask();
+
     if (current == nullptr || current->schedulingBusy)
     {
         return;
     }
+
     if (!syscallBoundary && arch_current_syscall_active() != 0)
     {
         return;
     }
+
     if (__atomic_exchange_n(&platform.cpus[cpu].reschedule_pending, false, __ATOMIC_ACQ_REL))
     {
         current->schedulingBusy = true;
         process_t* process = ResourceLayerImportCaps->processManager->GetCurrentProcess();
+
         if (process != nullptr)
         {
             EnqueueProcess(cpu, process->id);
         }
+
         current->schedulingBusy = false;
         RunNextReadyProcess(cpu, scheduling_reason_t::RESCHEDULE);
     }
@@ -1494,18 +1570,23 @@ void Scheduler::SetEventManager(EventManager* events)
 uint64_t Scheduler::AcquireTask(int64_t tid, bool modify, task_t** target)
 {
     ResourceLayerCaps* resources = ResourceLayerImportCaps;
+
     if (resources == nullptr || resources->taskManager == nullptr || resources->processManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     task_t* task = tid == 0 ? resources->taskManager->GetCurrentTask() : tid > 0 ? resources->taskManager->FindTask(tid) : nullptr;
+
     if (!resources->taskManager->RetainForDispatch(task))
     {
         return LINUX_ESRCH;
     }
+
     process_t* source = resources->processManager->GetCurrentProcess();
     process_t* owner  = task->process;
     uint64_t   result = 0;
+
     if (source == nullptr || owner == nullptr)
     {
         result = LINUX_ESRCH;
@@ -1518,11 +1599,13 @@ uint64_t Scheduler::AcquireTask(int64_t tid, bool modify, task_t** target)
         spinlock_acquire_preempt(&owner->credentialLock);
         const auto receiver = owner->credentials.user;
         spinlock_release_preempt(&owner->credentialLock);
+
         if (caller.effective != 0 && caller.effective != receiver.real && caller.effective != receiver.effective)
         {
             result = static_cast<uint64_t>(-1);
         }
     }
+
     if (result != 0)
     {
         resources->taskManager->ReleaseDispatchClaim(task);
@@ -1531,6 +1614,7 @@ uint64_t Scheduler::AcquireTask(int64_t tid, bool modify, task_t** target)
     {
         *target = task;
     }
+
     return result;
 }
 

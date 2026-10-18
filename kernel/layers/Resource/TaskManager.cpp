@@ -19,11 +19,12 @@ size_t TaskManager::CountTasks() const
     size_t count = 0;
 
     for (size_t i = 0; i < MAX_TASKS; ++i)
-
+    {
         if (Tasks[i].allocated)
         {
             ++count;
         }
+    }
 
     UnlockManager();
     return count;
@@ -496,7 +497,9 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         *retiredStack = stackToFree;
     }
     else
+    {
         ReleaseTaskStack(stackToFree);
+    }
 
     return true;
 }

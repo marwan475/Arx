@@ -727,12 +727,15 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
                     uint64_t times[2];
                     uint8_t reserved[80];
                 } info = {};
+
                 static_assert(sizeof(info) == 128, "Linux x86-64 siginfo ABI");
+
                 info.signal = 17;
                 info.code   = event == 2 ? 5 : event == 3 ? 6 : selected->terminationSignal != 0 ? 2 : 1;
                 info.pid    = static_cast<int32_t>(pid);
                 info.uid    = selected->credentials.user.real;
                 info.status = event == 2 ? stopSignal : event == 3 ? 18 : selected->terminationSignal != 0 ? selected->terminationSignal : selected->exitStatus & 255;
+
                 copied      = status == 0 || safe_write_user(status, &info, sizeof(info));
             }
             else
@@ -1305,41 +1308,52 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
     }
 
     tasks->CleanupCurrentTask();
+
     // Siblings have retired. Publish private contexts before CLOEXEC and
     // disposition reset so surviving external sharers keep their old state.
     descriptor_table_t*   oldTaskTable         = caller->descriptorTable;
     descriptor_table_t*   oldProcessTable      = current->descriptorTable;
     filesystem_context_t* oldTaskFilesystem    = caller->filesystemContext;
     filesystem_context_t* oldProcessFilesystem = current->filesystemContext;
+
     current->descriptorTable                   = replacement.table;
     current->filesystemContext                 = replacement.filesystem;
     caller->descriptorTable                    = replacement.table;
     caller->filesystemContext                  = replacement.filesystem;
     __atomic_add_fetch(&replacement.table->references, 1U, __ATOMIC_RELAXED);
     __atomic_add_fetch(&replacement.filesystem->references, 1U, __ATOMIC_RELAXED);
+
     spinlock_acquire_preempt(&current->resourceLock);
     signal_dispositions_t* oldDispositions = current->signalDispositions;
     current->signalDispositions            = replacement.dispositions;
     spinlock_release_preempt(&current->resourceLock);
+
     processes->ReleaseSignalDispositions(oldDispositions);
+
     replacement.table        = nullptr;
     replacement.filesystem   = nullptr;
     replacement.dispositions = nullptr;
+
     processes->ReleaseDescriptorTable(oldTaskTable);
     processes->ReleaseDescriptorTable(oldProcessTable);
     processes->ReleaseFilesystemContext(oldTaskFilesystem);
     processes->ReleaseFilesystemContext(oldProcessFilesystem);
+
     close_descriptors(current, files, true);
+
     virt_addr_space_t* oldSpace = current->addressSpace;
     const bool oldOwned        = current->ownsAddressSpace;
+
     current->addressSpace          = space;
     current->ownsAddressSpace      = true;
     image.process->addressSpace    = nullptr;
     image.process->ownsAddressSpace = false;
+
     current->breakBase             = breakBase;
     current->programBreak          = breakBase;
     current->elfMetadata           = nullptr;
     current->credentials           = credentials;
+
     SignalManager::ReleaseExit(Resources, current, false);
     current->exitSignal            = 17;
 

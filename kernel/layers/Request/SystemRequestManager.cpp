@@ -241,7 +241,9 @@ uint64_t SystemRequestManager::HandlePrctlRequest(const arch_syscall_frame_t* fr
     const int32_t operation = (int32_t) frame->arg0;
 
     if (operation != 15 && operation != 16) // PR_SET_NAME, PR_GET_NAME
+    {
         return LINUX_EOPNOTSUPP;
+    }
 
     if (ResourceCaps == nullptr || ResourceCaps->taskManager == nullptr)
     {

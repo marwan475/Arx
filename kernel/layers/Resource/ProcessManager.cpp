@@ -546,12 +546,13 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
     bool hasAnonymousPages = false;
 
     for (virt_region_t* r = addressSpace->user_used_regions; r; r = r->next)
-
+    {
         if (r->backing)
         {
             hasAnonymousPages = true;
             break;
         }
+    }
 
     spinlock_release_preempt(&addressSpace->operation_lock);
 
@@ -672,17 +673,22 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     process_t* exitRecipient = process->exitRecipient;
     process->exitRecipient = nullptr;
     UnlockManager();
+
     if (exitRecipient != nullptr)
     {
         SignalDispositionGuard guard(exitRecipient);
+
         if (exitRecipient->signalQueue != nullptr && exitRecipient->signalQueue->reserved != 0)
         {
             --exitRecipient->signalQueue->reserved;
         }
+
         guard.Release();
         ReleaseProcess(exitRecipient);
     }
+
     VirtualMemoryManager memory;
+
     if (process->ownsAddressSpace)
     {
         memory.DestroyUserAddressSpace(addressSpace);
@@ -691,6 +697,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     {
         memory.ReleaseAnonymousPages(addressSpace);
     }
+
     LockManager();
     process->memoryUsers = 0;
     process->exited      = wasExited;
@@ -1509,12 +1516,13 @@ process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)
     if (process && process->allocated && !process->exited && process->addressSpace)
     {
         for (size_t i = 0; requireExclusive && i < MAX_PROCESSES; ++i)
-
+        {
             if (&Processes[i] != process && Processes[i].allocated && Processes[i].addressSpace == process->addressSpace)
             {
                 process = nullptr;
                 break;
             }
+        }
 
         if (process)
         {
@@ -1522,7 +1530,10 @@ process_t* ProcessManager::AcquireCurrentMemoryProcess(bool requireExclusive)
         }
     }
     else
+    {
         process = nullptr;
+    }
+
     UnlockManager();
     return process;
 }

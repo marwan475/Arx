@@ -197,58 +197,73 @@ uint64_t EventManager::Poll(event_pollfd_t* descriptors, size_t count, uint64_t 
         {
             return LINUX_ESRCH;
         }
+
         for (;;)
         {
             const uint64_t sequence = Sequence();
             uint64_t       ready    = 0;
+
             for (size_t i = 0; i < count; ++i)
             {
                 auto& descriptor   = descriptors[i];
                 descriptor.revents = 0;
+
                 if (descriptor.fd < 0)
                 {
                     continue;
                 }
+
                 const uint32_t mask = files[i] != nullptr ? Vfs->Poll(files[i]) : EVENT_POLL_NVAL;
                 descriptor.revents  = (uint16_t) (mask & (descriptor.events | EVENT_POLL_ERR | EVENT_POLL_HUP | EVENT_POLL_NVAL));
                 ready += descriptor.revents != 0;
             }
+
             if (ready != 0 || deadline == 0)
             {
                 return ready;
             }
+
             if (deadline != UINT64_MAX)
             {
                 time_timespec_t time;
+
                 if (Resources->timeManager == nullptr)
                 {
                     return LINUX_ENOSYS;
                 }
+
                 const uint64_t status = Resources->timeManager->ReadClock(1, &time);
+
                 if (status != 0)
                 {
                     return status;
                 }
+
                 if ((uint64_t) time.seconds * 1000000000 + time.nanoseconds >= deadline)
                 {
                     return 0;
                 }
             }
+
             const uint64_t status = Wait(sequence, deadline);
+
             if (status != 0)
             {
                 return status;
             }
         }
     }();
+
     for (size_t i = 0; i < count; ++i)
     {
         Vfs->Close(files[i]);
     }
+
     if (files != nullptr)
     {
         vfree(files);
     }
+
     return result;
 }
 

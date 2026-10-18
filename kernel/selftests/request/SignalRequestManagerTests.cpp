@@ -275,7 +275,10 @@ static bool test_signal_case(process_t* process, uint64_t number)
 
             fixture_store(process, base + 64, &word, 4);
 
-            ok &= signal_with_peer(process, 0, 0, [&](uint64_t) { return expect(syscall_call(SYSCALL_futex, base + 64, 128, 7) == (uint64_t) -4, "futex interrupted by real pending signal"); });
+            ok &= signal_with_peer(process, 0, 0, [&](uint64_t)
+            {
+                return expect(syscall_call(SYSCALL_futex, base + 64, 128, 7) == (uint64_t) -4, "futex interrupted by real pending signal");
+            });
             ok &= expect(syscall_call(SYSCALL_futex, base + 64, 129, 1) == 0, "interrupted futex dequeues waiter");
 
             __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
@@ -293,7 +296,10 @@ static bool test_signal_case(process_t* process, uint64_t number)
 
             fixture_store(process, base + 256, &next, 8);
 
-            ok &= signal_with_peer(process, base + 128, base + 264, [&](uint64_t owner) { return expect(syscall_call(SYSCALL_futex, base + 264, 128, 0x80000000U | (uint32_t) owner) == 0, "robust task exit wakes futex waiter"); });
+            ok &= signal_with_peer(process, base + 128, base + 264, [&](uint64_t owner)
+            {
+                return expect(syscall_call(SYSCALL_futex, base + 264, 128, 0x80000000U | (uint32_t) owner) == 0, "robust task exit wakes futex waiter");
+            });
             uint32_t died = 0;
 
             fixture_load(process, base + 264, &died, 4);

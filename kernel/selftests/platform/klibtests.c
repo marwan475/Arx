@@ -251,7 +251,10 @@ static void sort_u32_test(size_t* passes, size_t* failures)
         klib_test_log_fail("sort_u32 empty/single element changed data", failures);
     }
     else
+    {
         (*passes)++;
+    }
+
     sort_u32(values, sizeof(values) / sizeof(values[0]));
 
     if (memcmp(values, expected, sizeof(values)) != 0)
@@ -259,7 +262,10 @@ static void sort_u32_test(size_t* passes, size_t* failures)
         klib_test_log_fail("sort_u32 ordering, duplicates and uint32 bounds", failures);
     }
     else
+    {
         (*passes)++;
+    }
+
     sort_u32(values, sizeof(values) / sizeof(values[0]));
 
     if (memcmp(values, expected, sizeof(values)) != 0)
@@ -267,7 +273,9 @@ static void sort_u32_test(size_t* passes, size_t* failures)
         klib_test_log_fail("sort_u32 sorted input", failures);
     }
     else
+    {
         (*passes)++;
+    }
 }
 
 static void counter32_test(size_t* passes, size_t* failures)
@@ -316,14 +324,18 @@ static void error_logger_test(size_t* passes, size_t* failures)
     memset(&buffer, 0, sizeof(buffer));
 
     if (error_logger_read(&buffer, 0, output, sizeof(output)) || error_logger_append(NULL, "bad") || error_logger_append(&buffer, NULL) || error_logger_append(&buffer, "") || buffer.reserved != 0)
+    {
         klib_test_log_fail("error logger empty/invalid inputs", failures);
+    }
     else
     {
         (*passes)++;
     }
 
     if (!error_logger_append(&buffer, "clock %s status=%u address=0x%llx", "HPET", 3U, 0x123456789abcdef0ULL) || !error_logger_read(&buffer, 0, output, sizeof(output)) || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0)
+    {
         klib_test_log_fail("error logger formatted diagnostic", failures);
+    }
     else
     {
         (*passes)++;
@@ -333,7 +345,9 @@ static void error_logger_test(size_t* passes, size_t* failures)
 
     if (!error_logger_read(&buffer, 0, small, 4) || strcmp(small, "clo") != 0 || small[4] != '!' || error_logger_read(&buffer, 0, output, 0) || error_logger_read(NULL, 0, output, sizeof(output)) || error_logger_read(&buffer, 0, NULL, sizeof(output))
         || error_logger_read(&buffer, ERROR_LOGGER_CAPACITY, output, sizeof(output)))
+    {
         klib_test_log_fail("error logger bounded reads", failures);
+    }
     else
     {
         (*passes)++;
@@ -344,7 +358,9 @@ static void error_logger_test(size_t* passes, size_t* failures)
     longMessage[sizeof(longMessage) - 1] = '\0';
 
     if (!error_logger_append(&buffer, "%s", longMessage) || !error_logger_read(&buffer, 1, output, sizeof(output)) || strlen(output) != ERROR_LOGGER_MESSAGE_SIZE - 1 || strcmp(output + ERROR_LOGGER_MESSAGE_SIZE - sizeof(" [truncated]"), " [truncated]") != 0)
+    {
         klib_test_log_fail("error logger marks truncated diagnostics", failures);
+    }
     else
     {
         (*passes)++;
@@ -359,7 +375,9 @@ static void error_logger_test(size_t* passes, size_t* failures)
 
     if (!filled || error_logger_append(&buffer, "overflow") || buffer.reserved != ERROR_LOGGER_CAPACITY + 1 || !error_logger_read(&buffer, 0, output, sizeof(output)) || strcmp(output, "clock HPET status=3 address=0x123456789abcdef0") != 0
         || !error_logger_read(&buffer, ERROR_LOGGER_CAPACITY - 1, output, sizeof(output)))
+    {
         klib_test_log_fail("error logger full buffer preserves earliest diagnostics", failures);
+    }
     else
     {
         (*passes)++;

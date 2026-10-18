@@ -244,6 +244,7 @@ void pmm_init(struct boot_info* boot_info)
     numa_topology_t topology;
     bool topology_valid = numa_boot_topology(boot_info, &topology);
     const struct boot_memmap_entry* memmap = (const void*) boot_info->memmap_entries;
+
     // Reject incomplete firmware topology as a whole. Every usable byte must
     // have exactly one owner before any allocator state is published.
     for (size_t i = 0; topology_valid && i < boot_info->memmap_entry_count; ++i)
@@ -252,63 +253,79 @@ void pmm_init(struct boot_info* boot_info)
         {
             continue;
         }
+
         uint64_t start = align_up(memmap[i].base, PAGE_SIZE);
         const uint64_t end = align_down(memmap[i].base + memmap[i].length, PAGE_SIZE);
+
         while (start < end)
         {
             const numa_memory_range_t* range = memory_range(&topology, start);
+
             if (range == NULL)
             {
                 topology_valid = false;
                 break;
             }
+
             start = range->end < end ? range->end : end;
         }
     }
+
     memset(platform.numa_nodes, 0, sizeof(platform.numa_nodes));
     platform.numa_node_count = topology_valid ? topology.node_count : 1;
     size_t maximum_pfn = 0;
+
     for (size_t i = 0; i < boot_info->memmap_entry_count; ++i)
     {
         if (memmap[i].type != BOOT_MEMMAP_USABLE)
         {
             continue;
         }
+
         uint64_t start = align_up(memmap[i].base, PAGE_SIZE);
         const uint64_t end = align_down(memmap[i].base + memmap[i].length, PAGE_SIZE);
+
         while (start < end)
         {
             const numa_memory_range_t* range = topology_valid ? memory_range(&topology, start) : NULL;
             const uint64_t last = range != NULL && range->end < end ? range->end : end;
             zone_t* zone = &platform.numa_nodes[range != NULL ? range->node : 0].zone;
             add_usable_region(zone, start, last);
+
             if (zone->max_pfn > maximum_pfn)
             {
                 maximum_pfn = zone->max_pfn;
             }
+
             start = last;
         }
     }
+
     const size_t metadata_size = align_up(maximum_pfn * sizeof(page_t), PAGE_SIZE);
     const size_t metadata_pages = metadata_size / PAGE_SIZE;
     uint64_t metadata_pfn = PMM_INVALID_PFN;
+
     for (size_t i = 0; i < platform.numa_node_count; ++i)
     {
         zone_t* zone = &platform.numa_nodes[i].zone;
         metadata_pfn = pmm_alloc_from_region(zone, metadata_pages);
+
         if (metadata_pfn != PMM_INVALID_PFN)
         {
             zone->total_pages -= metadata_pages;
             break;
         }
     }
+
     if (metadata_pfn == PMM_INVALID_PFN)
     {
         error_logger("Arx kernel: cannot allocate NUMA page metadata\n");
         panic();
     }
+
     page_t* metadata = (void*) (uintptr_t) pa_to_hhdm(pfn_to_pa(metadata_pfn), boot_info->hhdm_present, boot_info->hhdm_offset);
     memset(metadata, 0, metadata_size);
+
     for (size_t i = 0; i < platform.numa_node_count; ++i)
     {
         numa_node_t* node = &platform.numa_nodes[i];
@@ -321,12 +338,14 @@ void pmm_init(struct boot_info* boot_info)
         buddy_allocator_init(zone);
         kprintf("Arx kernel: NUMA node %u domain %u Normal=%llu DMA=%llu bytes\n", (unsigned) i, node->proximity_domain, (unsigned long long) zone->total_memory, (unsigned long long) node->dma_zone.total_memory);
     }
+
     for (size_t i = 0; i < platform.cpu_count; ++i)
     {
         const size_t node = topology_valid ? topology.cpu_nodes[i] : 0;
         platform.cpus[i].numa_node = &platform.numa_nodes[node];
         ++platform.numa_nodes[node].cpu_count;
     }
+
     kprintf("Arx kernel: NUMA topology %s, %u nodes\n", topology_valid ? "validated" : "unavailable (uniform fallback)", (unsigned) platform.numa_node_count);
 }
 

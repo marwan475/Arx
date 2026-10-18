@@ -177,9 +177,13 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             status = LINUX_EINVAL;
         }
         else if (!safe_atomic_load_user32_locked(&access, address, &actual))
+        {
             status = LINUX_EFAULT;
+        }
         else if (actual != expected)
+        {
             status = (uint64_t) -11; // EAGAIN
+        }
 
         if (status == 0)
         {
@@ -231,9 +235,13 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
                 status = 0;
             }
             else if (!clock)
+            {
                 status = LINUX_ENOSYS;
+            }
             else if (deadline != UINT64_MAX && now >= deadline)
+            {
                 status = (uint64_t) -110; // ETIMEDOUT
+            }
             else
             {
                 spinlock_release_preempt(&Lock);
@@ -914,19 +922,23 @@ size_t SynchronizationManager::BestPiWaiter(size_t state) const
     {
         return policy == SCHEDULING_DEADLINE ? 2 : policy == SCHEDULING_FIFO || policy == SCHEDULING_RR ? 1 : 0;
     };
+
     auto better = [&](const pi_waiter_t& candidate, const pi_waiter_t& previous)
     {
         const auto& first = *candidate.task->scheduling;
         const auto& second = *previous.task->scheduling;
         const unsigned firstClass = rank(first.effectivePolicy), secondClass = rank(second.effectivePolicy);
+
         if (firstClass != secondClass)
         {
             return firstClass > secondClass;
         }
+
         if (firstClass == 2)
         {
             const auto donor = first.deadlineDonor != nullptr ? first.deadlineDonor : candidate.task;
             const auto other = second.deadlineDonor != nullptr ? second.deadlineDonor : previous.task;
+
             if (donor->scheduling->deadlineAbsolute != other->scheduling->deadlineAbsolute)
             {
                 return donor->scheduling->deadlineAbsolute < other->scheduling->deadlineAbsolute;
@@ -940,17 +952,22 @@ size_t SynchronizationManager::BestPiWaiter(size_t state) const
         {
             return candidate.task->effectiveNice < previous.task->effectiveNice;
         }
+
         return candidate.order < previous.order;
     };
+
     size_t best = NONE;
+
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         const auto& waiter = PiWaiters[i];
+
         if (waiter.used && waiter.state == state && !waiter.task->dying && (best == NONE || better(waiter, PiWaiters[best])))
         {
             best = i;
         }
     }
+
     return best;
 }
 
@@ -966,6 +983,7 @@ void SynchronizationManager::RefreshPrioritiesLocked()
     {
         return policy == SCHEDULING_DEADLINE ? 2 : policy == SCHEDULING_FIFO || policy == SCHEDULING_RR ? 1 : 0;
     };
+
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         retained[i] = Resources->taskManager->RetainForDispatch(&tasks[i]);
@@ -975,24 +993,31 @@ void SynchronizationManager::RefreshPrioritiesLocked()
         priorities[i] = state != nullptr ? state->priority : 0;
         donors[i] = policies[i] == SCHEDULING_DEADLINE ? &tasks[i] : nullptr;
     }
+
     for (size_t pass = 0; pass < CAPACITY; ++pass)
     {
         bool changed = false;
+
         for (const auto& waiter : PiWaiters)
         {
             task_t* owner = waiter.used ? PiStates[waiter.state].owner : nullptr;
+
             if (owner == nullptr || !retained[owner - tasks] || !retained[waiter.task - tasks] || waiter.task->dying)
             {
                 continue;
             }
+
             const size_t destination = owner - tasks;
             const size_t source = waiter.task - tasks;
+
             if (nice[destination] > nice[source])
             {
                 nice[destination] = nice[source];
                 changed = true;
             }
+
             bool better = rank(policies[source]) > rank(policies[destination]);
+
             if (rank(policies[source]) == rank(policies[destination]))
             {
                 if (rank(policies[source]) == 2 && donors[source] != nullptr)
@@ -1004,6 +1029,7 @@ void SynchronizationManager::RefreshPrioritiesLocked()
                     better |= priorities[source] > priorities[destination];
                 }
             }
+
             if (better)
             {
                 policies[destination] = policies[source];
@@ -1012,26 +1038,32 @@ void SynchronizationManager::RefreshPrioritiesLocked()
                 changed = true;
             }
         }
+
         if (!changed)
         {
             break;
         }
     }
+
     uint64_t reschedule = 0;
+
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         if (!retained[i])
         {
             continue;
         }
+
         auto& state = *tasks[i].scheduling;
         const bool changed = tasks[i].effectiveNice != nice[i] || state.effectivePolicy != policies[i] || state.effectivePriority != priorities[i] || state.deadlineDonor != (donors[i] == &tasks[i] ? nullptr : donors[i]);
         SchedulerManager->ApplyPriorityDonation(&tasks[i], nice[i], policies[i], priorities[i], donors[i]);
+
         if (changed)
         {
             reschedule |= Scheduler::AvailableCpuMask();
         }
     }
+
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         if (retained[i])
@@ -1039,6 +1071,7 @@ void SynchronizationManager::RefreshPrioritiesLocked()
             Resources->taskManager->ReleaseDispatchClaim(&tasks[i]);
         }
     }
+
     __atomic_fetch_or(&PriorityRescheduleMask, reschedule, __ATOMIC_RELEASE);
 }
 
@@ -1056,66 +1089,83 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
     {
         return LINUX_EOPNOTSUPP;
     }
+
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     if ((address & 3) != 0 || (command != 6 && command != 7 && command != 8 && command != 13))
     {
         return LINUX_EINVAL;
     }
+
     auto       processes = Resources->processManager;
     auto       tasks     = Resources->taskManager;
     process_t* process   = processes->AcquireCurrentMemoryProcess(false);
     task_t*    task      = tasks->GetCurrentTask();
+
     if (process == nullptr || task == nullptr || task->id == 0 || task->id > 0x3fffffffU)
     {
         if (process != nullptr)
         {
             processes->ReleaseMemoryProcess(process);
         }
+
         return LINUX_ESRCH;
     }
+
     const size_t slot   = task - tasks->GetTasks();
     pi_waiter_t& waiter = PiWaiters[slot];
     uint64_t     result = 0;
+
     for (;;)
     {
         user_memory_access_t access;
+
         if (!begin_user_memory(&access))
         {
             result = LINUX_ESRCH;
             break;
         }
+
         FutexKey key;
         result = key.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
+
         spinlock_acquire_preempt(&Lock);
         size_t stateIndex = NONE;
         size_t freeIndex  = NONE;
+
         for (size_t i = 0; i < CAPACITY; ++i)
         {
             if (PiStates[i].used && PiStates[i].identity == key.identity && PiStates[i].offset == key.offset)
             {
                 stateIndex = i;
             }
+
             if (!PiStates[i].used && freeIndex == NONE)
             {
                 freeIndex = i;
             }
+
             if (Waiters[i].used && Waiters[i].identity == key.identity && Waiters[i].offset == key.offset)
             {
                 result = LINUX_EINVAL;
             }
         }
+
         if (waiter.used && (stateIndex == NONE || waiter.state != stateIndex))
         {
             result = LINUX_EINVAL;
         }
+
         uint32_t word = 0;
+
         if (result == 0 && !safe_atomic_load_user32_locked(&access, address, &word))
         {
             result = LINUX_EFAULT;
         }
+
         const uint32_t         tid            = word & 0x3fffffffU;
         process_t*             releaseProcess = nullptr;
         virt_backing_object_t* releaseObject  = nullptr;
@@ -1124,6 +1174,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
         bool                   wait           = false;
         const uint64_t*        notify[CAPACITY];
         size_t                 notifyCount = 0;
+
         // An uncontended userspace CAS may have released and reacquired the
         // word without entering the kernel. Reconcile only when no queued
         // waiter depends on the recorded owner; contended ownership is strict.
@@ -1134,9 +1185,11 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
             state.memoryOwner = nullptr;
             state.owner       = nullptr;
             state.dead        = (word & 0x40000000U) != 0;
+
             if (tid != 0)
             {
                 task_t* owner = tasks->FindTask(tid);
+
                 if (!tasks->RetainForDispatch(owner))
                 {
                     result = LINUX_ESRCH;
@@ -1151,10 +1204,12 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                     {
                         state.owner = owner;
                     }
+
                     tasks->ReleaseDispatchClaim(owner);
                 }
             }
         }
+
         if (result == 0 && command == 7)
         {
             if (tid != task->id || (stateIndex != NONE && PiStates[stateIndex].owner != task))
@@ -1168,6 +1223,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                 // An uncontended userspace CAS must not steal the lock while
                 // the selected kernel waiter is resuming.
                 const uint32_t replacement = stateIndex != NONE && HasPiWaiters(stateIndex) ? 0x80000000U : 0;
+
                 if (!safe_atomic_compare_exchange_user32_locked(&access, address, &word, replacement))
                 {
                     result = LINUX_EFAULT;
@@ -1179,12 +1235,15 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                 else if (stateIndex != NONE)
                 {
                     pi_state_t& state = PiStates[stateIndex];
+
                     if (state.memoryOwner != nullptr)
                     {
                         releaseProcess = state.memoryOwner;
                     }
+
                     state.memoryOwner = nullptr;
                     state.owner       = nullptr;
+
                     for (auto& pending : PiWaiters)
                     {
                         if (pending.used && pending.state == stateIndex)
@@ -1193,6 +1252,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                             notify[notifyCount++] = &pending.sequence;
                         }
                     }
+
                     if (!HasPiWaiters(stateIndex))
                     {
                         state.used    = false;
@@ -1221,9 +1281,11 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                     state.object      = key.object;
                     VirtualMemoryManager::RetainBacking(state.object);
                     state.dead = (word & 0x40000000U) != 0;
+
                     if (tid != 0)
                     {
                         task_t* owner = tasks->FindTask(tid);
+
                         if (!tasks->RetainForDispatch(owner))
                         {
                             result = LINUX_ESRCH;
@@ -1238,24 +1300,31 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                             {
                                 state.owner = owner;
                             }
+
                             tasks->ReleaseDispatchClaim(owner);
                         }
                     }
                 }
+
                 pi_state_t& state = PiStates[stateIndex];
+
                 if (result == 0 && state.owner == task)
                 {
                     result = static_cast<uint64_t>(-35); // EDEADLK
                 }
+
                 if (result == 0 && ((state.owner != nullptr && tid != state.owner->id) || (state.owner == nullptr && tid != 0 && !state.dead)))
                 {
                     result = LINUX_EINVAL;
                 }
+
                 const size_t best = BestPiWaiter(stateIndex);
+
                 if (result == 0 && state.owner == nullptr && (best == NONE || best == slot))
                 {
                     const uint32_t expected    = word;
                     const uint32_t replacement = static_cast<uint32_t>(task->id) | ((state.dead || (word & 0x40000000U)) ? 0x40000000U : 0) | (best != NONE ? 0x80000000U : 0);
+
                     if (!safe_atomic_compare_exchange_user32_locked(&access, address, &word, replacement))
                     {
                         result = LINUX_EFAULT;
@@ -1282,29 +1351,35 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                 else if (result == 0)
                 {
                     task_t* owner = state.owner;
+
                     for (size_t depth = 0; owner != nullptr && depth < CAPACITY; ++depth)
                     {
                         if (task->scheduling->effectivePolicy == SCHEDULING_DEADLINE)
                         {
                             task_t* donor = task->scheduling->deadlineDonor != nullptr ? task->scheduling->deadlineDonor : task;
                             const int16_t cpu = donor->scheduling->reservationCpu;
+
                             if (cpu < 0 || !(owner->affinityMask & (1ULL << cpu)))
                             {
                                 result = LINUX_EOPNOTSUPP;
                                 break;
                             }
                         }
+
                         if (owner == task)
                         {
                             result = static_cast<uint64_t>(-35);
                             break;
                         }
+
                         pi_waiter_t& edge = PiWaiters[owner - tasks->GetTasks()];
                         owner             = edge.used ? PiStates[edge.state].owner : nullptr;
                     }
+
                     if (result == 0)
                     {
                         const uint32_t expected = word;
+
                         if (!safe_atomic_compare_exchange_user32_locked(&access, address, &word, word | 0x80000000U))
                         {
                             result = LINUX_EFAULT;
@@ -1322,10 +1397,12 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                                 waiter.task  = task;
                                 waiter.order = ++PiOrder;
                             }
+
                             wait = true;
                         }
                     }
                 }
+
                 if (result != 0 && state.owner == nullptr && !HasPiWaiters(stateIndex))
                 {
                     state.used    = false;
@@ -1334,53 +1411,66 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                 }
             }
         }
+
         if (result != 0 && stateIndex != NONE && PiStates[stateIndex].used && PiStates[stateIndex].owner == nullptr && !HasPiWaiters(stateIndex))
         {
             PiStates[stateIndex].used   = false;
             releaseObject               = PiStates[stateIndex].object;
             PiStates[stateIndex].object = nullptr;
         }
+
         RefreshPrioritiesLocked();
         const uint64_t sequence = __atomic_load_n(&waiter.sequence, __ATOMIC_ACQUIRE);
         spinlock_release_preempt(&Lock);
         end_user_memory(&access);
+
         if (releaseProcess != nullptr)
         {
             processes->ReleaseMemoryProcess(releaseProcess);
         }
+
         VirtualMemoryManager::ReleaseBacking(releaseObject);
         NotifyWaiters(notify, notifyCount);
+
         if (result != 0 || command == 7 || acquired)
         {
             break;
         }
+
         if (retry)
         {
             continue;
         }
+
         uint64_t now = 0;
+
         if (deadline != UINT64_MAX && (!arch_time_read_monotonic(&now) || now >= deadline))
         {
             result = static_cast<uint64_t>(-110);
             break;
         }
+
         if (wait)
         {
             result = SchedulerManager->WaitForEvent(&waiter.sequence, sequence, deadline);
+
             if (result != 0)
             {
                 break;
             }
         }
     }
+
     spinlock_acquire_preempt(&Lock);
     size_t     stateIndex = waiter.state;
     const bool cancelled  = waiter.used;
     waiter.used           = false;
     RefreshPrioritiesLocked();
+
     const uint64_t*        notify[CAPACITY];
     size_t                 notifyCount   = 0;
     virt_backing_object_t* releaseObject = nullptr;
+
     if (cancelled)
     {
         for (auto& pending : PiWaiters)
@@ -1391,7 +1481,9 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
                 notify[notifyCount++] = &pending.sequence;
             }
         }
+
         pi_state_t& state = PiStates[stateIndex];
+
         if (state.owner == nullptr && !HasPiWaiters(stateIndex))
         {
             state.used    = false;
@@ -1399,29 +1491,35 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
             state.object  = nullptr;
         }
     }
+
     spinlock_release_preempt(&Lock);
     VirtualMemoryManager::ReleaseBacking(releaseObject);
     NotifyWaiters(notify, notifyCount);
     processes->ReleaseMemoryProcess(process);
+
     return result;
 }
 
 void SynchronizationManager::CleanupPriority(void* context, task_t* task)
 {
     auto manager = static_cast<SynchronizationManager*>(context);
+
     if (task->dying)
     {
         manager->SchedulerManager->RetirePolicy(task);
     }
+
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         spinlock_acquire_preempt(&manager->Lock);
         pi_state_t& state = manager->PiStates[i];
+
         if (!state.used || state.owner != task)
         {
             spinlock_release_preempt(&manager->Lock);
             continue;
         }
+
         process_t*     process = state.memoryOwner;
         const uint64_t address = state.address;
         state.memoryOwner      = nullptr;
@@ -1429,6 +1527,7 @@ void SynchronizationManager::CleanupPriority(void* context, task_t* task)
         state.dead             = true;
         const uint64_t* notify[CAPACITY];
         size_t          count = 0;
+
         for (auto& waiter : manager->PiWaiters)
         {
             if (waiter.used && waiter.state == i)
@@ -1437,36 +1536,44 @@ void SynchronizationManager::CleanupPriority(void* context, task_t* task)
                 notify[count++] = &waiter.sequence;
             }
         }
+
         virt_backing_object_t* object = nullptr;
+
         if (!manager->HasPiWaiters(i))
         {
             state.used   = false;
             object       = state.object;
             state.object = nullptr;
         }
+
         manager->RefreshPrioritiesLocked();
         spinlock_release_preempt(&manager->Lock);
+
         if (process != nullptr)
         {
             cpu_preemption_disable();
             spinlock_acquire(&process->addressSpace->operation_lock);
             user_memory_access_t access = {manager->Resources->processManager, process, process->addressSpace};
             uint32_t             word;
+
             if (safe_atomic_load_user32_locked(&access, address, &word))
             {
                 for (size_t attempt = 0; attempt < 128 && (word & 0x3fffffffU) == task->id; ++attempt)
                 {
                     const uint32_t previous = word;
+
                     if (!safe_atomic_compare_exchange_user32_locked(&access, address, &word, (word & 0x80000000U) | 0x40000000U) || word == previous)
                     {
                         break;
                     }
                 }
             }
+
             spinlock_release(&process->addressSpace->operation_lock);
             cpu_preemption_enable();
             manager->Resources->processManager->ReleaseMemoryProcess(process);
         }
+
         VirtualMemoryManager::ReleaseBacking(object);
         manager->NotifyWaiters(notify, count);
     }
@@ -1514,70 +1621,89 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
     {
         return LINUX_EOPNOTSUPP;
     }
+
     if ((address & 3) != 0 || (destination & 3) != 0 || wakeCount != 1 || moveCount < 0)
     {
         return LINUX_EINVAL;
     }
+
     user_memory_access_t access;
+
     if (!begin_user_memory(&access))
     {
         return LINUX_ESRCH;
     }
+
     FutexKey sourceKey, destinationKey;
     uint64_t result = sourceKey.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
+
     if (result == 0)
     {
         result = destinationKey.Resolve(Resources->virtualMemoryManager, access.space, destination, shared);
     }
+
     const uint64_t* notify[CAPACITY];
     size_t count = 0;
     spinlock_acquire_preempt(&Lock);
     uint32_t source = 0, word = 0;
     size_t stateIndex = NONE, freeIndex = NONE;
+
     if (result == 0 && (sourceKey.identity == destinationKey.identity && sourceKey.offset == destinationKey.offset))
     {
         result = LINUX_EINVAL;
     }
+
     if (result == 0 && (!safe_atomic_load_user32_locked(&access, address, &source) || !safe_atomic_load_user32_locked(&access, destination, &word)))
     {
         result = LINUX_EFAULT;
     }
+
     if (result == 0 && source != expected)
     {
         result = LINUX_EAGAIN;
     }
+
     for (size_t i = 0; result == 0 && i < CAPACITY; ++i)
     {
         const auto& state = PiStates[i];
+
         if (!state.used && freeIndex == NONE)
         {
             freeIndex = i;
         }
+
         if (state.used && state.identity == destinationKey.identity && state.offset == destinationKey.offset)
         {
             stateIndex = i;
         }
+
         const auto& waiter = Waiters[i];
+
         if (waiter.used && waiter.identity == destinationKey.identity && waiter.offset == destinationKey.offset)
         {
             result = LINUX_EINVAL;
         }
+
         if (waiter.queued && waiter.identity == sourceKey.identity && waiter.offset == sourceKey.offset && (!waiter.requeuePriority || waiter.destinationIdentity != destinationKey.identity || waiter.destinationOffset != destinationKey.offset))
         {
             result = LINUX_EINVAL;
         }
     }
+
     if (result == 0 && IsPriorityKeyLocked(sourceKey.identity, sourceKey.offset))
     {
         result = LINUX_EINVAL;
     }
+
     task_t* owner = nullptr;
     bool ownerClaim = false;
     const uint32_t tid = word & 0x3fffffffU;
+
     if (result == 0 && tid != 0)
     {
         owner = Resources->taskManager->FindTask(tid);
         ownerClaim = Resources->taskManager->RetainForDispatch(owner);
+
         if (!ownerClaim)
         {
             result = LINUX_ESRCH;
@@ -1587,19 +1713,24 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
             result = LINUX_EINVAL;
         }
     }
+
     if (result == 0 && stateIndex != NONE && PiStates[stateIndex].owner != owner)
     {
         result = LINUX_EINVAL;
     }
+
     // Validate every edge before changing either queue.
     for (size_t i = Head; result == 0 && i != NONE; i = Waiters[i].next)
     {
         auto& waiter = Waiters[i];
+
         if (waiter.identity != sourceKey.identity || waiter.offset != sourceKey.offset)
         {
             continue;
         }
+
         task_t* ancestor = owner;
+
         for (size_t depth = 0; ancestor != nullptr && depth < CAPACITY; ++depth)
         {
             if (ancestor == waiter.task)
@@ -1607,25 +1738,31 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
                 result = static_cast<uint64_t>(-35);
                 break;
             }
+
             if (waiter.task->scheduling->effectivePolicy == SCHEDULING_DEADLINE)
             {
                 task_t* donor = waiter.task->scheduling->deadlineDonor != nullptr ? waiter.task->scheduling->deadlineDonor : waiter.task;
                 const int cpu = donor->scheduling->reservationCpu;
+
                 if (cpu < 0 || !(ancestor->affinityMask & (1ULL << cpu)))
                 {
                     result = LINUX_EOPNOTSUPP;
                     break;
                 }
             }
+
             const auto& edge = PiWaiters[ancestor - Resources->taskManager->GetTasks()];
             ancestor = edge.used ? PiStates[edge.state].owner : nullptr;
         }
+
         ++count;
+
         if (count >= static_cast<uint64_t>(moveCount) + 1)
         {
             break;
         }
     }
+
     if (result == 0 && count != 0)
     {
         if (stateIndex == NONE && freeIndex == NONE)
@@ -1635,6 +1772,7 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
         else
         {
             const uint32_t previous = word;
+
             if (!safe_atomic_compare_exchange_user32_locked(&access, destination, &word, word | 0x80000000U))
             {
                 result = LINUX_EFAULT;
@@ -1645,7 +1783,9 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
             }
         }
     }
+
     size_t moved = 0;
+
     if (result == 0 && count != 0)
     {
         if (stateIndex == NONE)
@@ -1661,10 +1801,12 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
             state.owner = owner;
             VirtualMemoryManager::RetainBacking(state.object);
         }
+
         for (size_t index = Head; index != NONE && moved < count;)
         {
             auto& waiter = Waiters[index];
             const size_t next = waiter.next;
+
             if (waiter.identity == sourceKey.identity && waiter.offset == sourceKey.offset)
             {
                 Remove(index);
@@ -1677,14 +1819,18 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
                 __atomic_add_fetch(&waiter.sequence, 1ULL, __ATOMIC_RELEASE);
                 notify[moved++] = &waiter.sequence;
             }
+
             index = next;
         }
+
         RefreshPrioritiesLocked();
     }
+
     if (ownerClaim)
     {
         Resources->taskManager->ReleaseDispatchClaim(owner);
     }
+
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     NotifyWaiters(notify, moved);
@@ -1695,28 +1841,34 @@ bool SynchronizationManager::LockSchedulingChange(task_t* task, uint64_t affinit
 {
     spinlock_acquire_preempt(&Lock);
     bool participant = PiWaiters[task - Resources->taskManager->GetTasks()].used;
+
     for (const auto& state : PiStates)
     {
         participant |= state.used && state.owner == task;
     }
+
     const auto& policy = *task->scheduling;
     bool blocked = affinity == 0 && participant;
+
     if (affinity != 0 && policy.effectivePolicy == SCHEDULING_DEADLINE)
     {
         task_t* donor = policy.deadlineDonor != nullptr ? policy.deadlineDonor : task;
         const int cpu = donor->scheduling->reservationCpu;
         blocked |= cpu < 0 || !(affinity & (1ULL << cpu));
+
         // A nonparticipating reservation can be re-admitted on another CPU.
         if (!participant && donor == task)
         {
             blocked = false;
         }
     }
+
     if (blocked)
     {
         spinlock_release_preempt(&Lock);
         return false;
     }
+
     return true;
 }
 

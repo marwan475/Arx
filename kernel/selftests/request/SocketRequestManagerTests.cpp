@@ -424,8 +424,10 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
         {
             return false;
         }
+
         rights.descriptors[0] = rights.descriptors[1] = pair[0];
         fixture_store(process, base + 512, &rights, sizeof(rights));
+
         if (type == 1)
         {
             ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 2 && syscall_call(SYSCALL_write, pair[0], base + 128, 1) == 1,
@@ -436,15 +438,18 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
             fixture_store(process, base + 1536, &receive, sizeof(receive));
             ok &= expect(syscall_call(SYSCALL_recvmsg, pair[1], base + 1536, 0x100) == 2, "WAITALL stops at a stream ancillary boundary");
             fixture_load(process, base + 1024, &delivered, sizeof(delivered));
+
             if (descriptor_count(process) == 4)
             {
                 syscall_call(SYSCALL_close, delivered.descriptors[0]);
                 syscall_call(SYSCALL_close, delivered.descriptors[1]);
             }
+
             ok &= expect(syscall_call(SYSCALL_read, pair[1], base + 2048, 1) == 1, "stream bytes after ancillary remain queued");
             vector = {base + 2048, 1};
             fixture_store(process, base + 2304, &vector, sizeof(vector));
         }
+
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 2, "descriptor exhaustion queue fixture");
         receive.controlLength = 24;
         fixture_store(process, base + 1536, &receive, sizeof(receive));
@@ -455,6 +460,7 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
         fixture_load(process, base + 1536, &receive, sizeof(receive));
         ok &= expect(exhausted == 1 && (receive.flags & 8) != 0 && receive.controlLength == 0 && descriptor_count(process) == 2,
             "RLIMIT_NOFILE discards excess rights without a misleading descriptor result");
+
         if (type == 1)
         {
             syscall_call(SYSCALL_read, pair[1], base + 2048, 1);
@@ -470,10 +476,12 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
         fixture_load(process, base + 1024, &delivered, sizeof(delivered));
         ok &= expect(partial == 1 && (receive.flags & 8) != 0 && delivered.header.length == 20 && descriptor_count(process) == 3,
             "receiver with one descriptor slot installs a prefix and releases the excess");
+
         if (descriptor_count(process) == 3)
         {
             syscall_call(SYSCALL_close, delivered.descriptors[0]);
         }
+
         if (type == 1)
         {
             syscall_call(SYSCALL_read, pair[1], base + 2048, 1);
@@ -489,11 +497,13 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
                 "zero-length datagram and sequenced packet messages can carry rights");
             fixture_load(process, base + 1024, &delivered, sizeof(delivered));
             ok &= expect(descriptor_count(process) == 4, "zero-length message allocates receiver rights");
+
             if (descriptor_count(process) == 4)
             {
                 syscall_call(SYSCALL_close, delivered.descriptors[0]);
                 syscall_call(SYSCALL_close, delivered.descriptors[1]);
             }
+
             vector = {base + 128, 2};
             fixture_store(process, base + 256, &vector, sizeof(vector));
             vector = {base + 2048, 1};
@@ -505,18 +515,23 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == LINUX_EBADF &&
                          syscall_call(SYSCALL_recvfrom, pair[1], base + 2048, 1, 0x40) == LINUX_EAGAIN,
             "invalid later SCM_RIGHTS descriptor rolls back earlier retained references without enqueue");
+
         rights.header.length = 15;
         fixture_store(process, base + 512, &rights, sizeof(rights));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == LINUX_EINVAL, "cmsghdr length smaller than header is rejected");
+
         rights.header = {25, 1, 1};
         fixture_store(process, base + 512, &rights, sizeof(rights));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == LINUX_EINVAL, "cmsghdr cannot extend past supplied control buffer");
+
         rights.header = {21, 1, 1};
         fixture_store(process, base + 512, &rights, sizeof(rights));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == LINUX_EINVAL, "SCM_RIGHTS requires whole descriptor integers");
+
         rights.header = {24, 1, 99};
         fixture_store(process, base + 512, &rights, sizeof(rights));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == LINUX_EOPNOTSUPP, "unknown ancillary type is explicitly unsupported");
+
         rights.header = {24, 1, 1};
         rights.descriptors[1] = pair[0];
         fixture_store(process, base + 512, &rights, sizeof(rights));
@@ -524,20 +539,24 @@ static bool test_socket_ancillary(process_t* process, uint64_t base)
         const uint64_t inflight = syscall_call(SYSCALL_sendmsg, pair[0], base + 768);
         process->fileLimit.current = limit;
         ok &= expect(inflight == (uint64_t) -109, "sender descriptor limit bounds in-flight rights");
+
         file_t* retained = static_cast<file_t*>(ProcessManager::GetFileDescriptor(process, pair[0])->file);
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 2 && retained->refCount == 3,
             "queued duplicate rights own two independent references");
         ok &= expect(syscall_call(SYSCALL_read, pair[1], base + 2048, 1) == 1 && retained->refCount == 1,
             "ordinary read discards ancillary and releases every queued reference");
+
         if (type == 1)
         {
             syscall_call(SYSCALL_read, pair[1], base + 2048, 1);
         }
+
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 2 && syscall_call(SYSCALL_shutdown, pair[1], 0) == 0 && retained->refCount == 1,
             "read shutdown releases queued ancillary references");
         syscall_call(SYSCALL_close, pair[0]);
         syscall_call(SYSCALL_close, pair[1]);
     }
+
     return ok;
 }
 
@@ -545,23 +564,29 @@ static bool test_socket_credentials(process_t* process, uint64_t base)
 {
     bool           ok      = true;
     const uint32_t types[] = {1, 2, 5};
+
     for (uint32_t type : types)
     {
         int32_t pair[2];
+
         if (!socket_pair(process, base, type | 04000, pair))
         {
             return false;
         }
+
         const int32_t enabled = 1;
         fixture_store(process, base + 64, &enabled, sizeof(enabled));
         ok &= expect(syscall_call(SYSCALL_setsockopt, pair[1], 1, 16, base + 64, 4) == 0, "SO_PASSCRED enables credential delivery");
+
         file_iovec_t vector = {base + 128, 1};
         fixture_store(process, base + 256, &vector, sizeof(vector));
+
         socket_message_t send = {};
         send.vectors          = base + 256;
         send.vectorCount      = 1;
         send.control          = base + 512;
         send.controlLength    = 32;
+
         struct
         {
             socket_control_t     header;
@@ -572,27 +597,33 @@ static bool test_socket_credentials(process_t* process, uint64_t base)
         fixture_store(process, base + 512, &control, sizeof(control));
         fixture_store(process, base + 768, &send, sizeof(send));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 1, "SCM_CREDENTIALS accepts validated sender identity");
+
         socket_message_t receive = send;
         receive.control          = base + 1024;
         fixture_store(process, base + 1536, &receive, sizeof(receive));
         ok &= expect(syscall_call(SYSCALL_recvmsg, pair[1], base + 1536) == 1, "SO_PASSCRED returns explicit credentials");
+
         decltype(control) actual = {};
         fixture_load(process, base + 1024, &actual, sizeof(actual));
         ok &= expect(actual.header.length == 28 && actual.header.type == 2 && memcmp(&actual.value, &expected, sizeof(expected)) == 0,
             "credential ancillary layout and identity are preserved");
+
         ++control.value.pid;
         fixture_store(process, base + 512, &control, sizeof(control));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == (uint64_t) -1, "forged PID rejected even for root");
+
         control.value     = expected;
         control.value.uid = UINT32_MAX;
         fixture_store(process, base + 512, &control, sizeof(control));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == (uint64_t) -1, "foreign UID rejected even for root");
+
         control.value     = expected;
         control.value.gid = UINT32_MAX;
         fixture_store(process, base + 512, &control, sizeof(control));
         ok &= expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == (uint64_t) -1, "foreign GID rejected even for root");
 
         ok &= expect(syscall_call(SYSCALL_write, pair[0], base + 128, 1) == 1, "ordinary write snapshots default sender credentials");
+
         const process_credentials_t saved = process->credentials;
         spinlock_acquire_preempt(&process->credentialLock);
         process->credentials.user.real  = 1234;
@@ -629,14 +660,17 @@ static bool test_socket_reference_cycles(process_t* process, uint64_t base)
     message.control          = base + 512;
     message.controlLength    = 24;
     fixture_store(process, base + 768, &message, sizeof(message));
+
     // More iterations than the global endpoint ceiling detect leaked cycles.
     for (size_t iteration = 0; iteration < 140; ++iteration)
     {
         int32_t pair[2];
+
         if (!socket_pair(process, base, 2 | 04000, pair))
         {
             return false;
         }
+
         struct
         {
             socket_control_t header;
@@ -645,19 +679,23 @@ static bool test_socket_reference_cycles(process_t* process, uint64_t base)
         } rights = {{20, 1, 1}, (iteration & 1) != 0 ? pair[0] : pair[1], 0};
         fixture_store(process, base + 512, &rights, sizeof(rights));
         bool ok = expect(syscall_call(SYSCALL_sendmsg, pair[0], base + 768) == 1, "enqueue self-referential socket right");
+
         if ((iteration & 1) != 0)
         {
             rights.descriptor = pair[1];
             fixture_store(process, base + 512, &rights, sizeof(rights));
             ok &= expect(syscall_call(SYSCALL_sendmsg, pair[1], base + 768) == 1, "enqueue mutual socket reference cycle");
         }
+
         syscall_call(SYSCALL_close, pair[0]);
         syscall_call(SYSCALL_close, pair[1]);
+
         if (!ok)
         {
             return false;
         }
     }
+
     return expect(descriptor_count(process) == 0, "unreachable socket graphs reclaim all descriptor owners");
 }
 
@@ -683,25 +721,30 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
         socket_address_t address = {};
         address.family           = 1;
         const uint32_t types[]   = {1, 2, 5};
+
         for (uint32_t type : types)
         {
             const int64_t server      = (int64_t) sockets.Socket(1, type | 04000, 0);
             const int64_t client      = (int64_t) sockets.Socket(1, type | 04000, 0);
             const int64_t replacement = (int64_t) sockets.Socket(1, type | 04000, 0);
+
             if (server < 0 || client < 0 || replacement < 0)
             {
                 if (server >= 0)
                 {
                     syscall_call(SYSCALL_close, server);
                 }
+
                 if (client >= 0)
                 {
                     syscall_call(SYSCALL_close, client);
                 }
+
                 if (replacement >= 0)
                 {
                     syscall_call(SYSCALL_close, replacement);
                 }
+
                 ok &= expect(false, "pathname socket descriptors");
                 break;
             }
@@ -735,10 +778,12 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
             ok &= expect(request.HandleBindRequest(&frame) == 0, "unlinked pathname can bind a new endpoint");
             inode_t* rebound = nullptr;
             ok &= expect(vfs.StatNoFollow({}, "/service", &rebound) == 0 && rebound != original, "rebind creates independent inode identity");
+
             if (type != 2)
             {
                 sockets.Listen(replacement, 4);
             }
+
             const char payload = 'x';
             fixture_store(process, base + 256, &payload, 1);
             ok &= expect(sockets.Sendto(client, base + 256, 1, 0x4000, 0, 0) == 1 && accepted >= 0 &&
@@ -747,6 +792,7 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
                 "existing connection remains attached to unlinked endpoint after rebind");
             const int64_t newcomer = (int64_t) sockets.Socket(1, type | 04000, 0);
             ok &= expect(newcomer >= 0, "replacement client descriptor");
+
             if (newcomer >= 0)
             {
                 if (type == 2)
@@ -765,20 +811,25 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
                     ok &= expect(request.HandleConnectRequest(&frame) == 0, "relative pathname resolves through the caller cwd");
                     const int64_t incoming = (int64_t) sockets.Accept(replacement, 0, 0, 04000);
                     ok &= expect(incoming >= 0, "new connection reaches the replacement listener");
+
                     if (incoming >= 0)
                     {
                         syscall_call(SYSCALL_close, incoming);
                     }
+
                     memcpy(address.path, "/service", 9);
                     fixture_store(process, base + 128, &address, sizeof(address));
                     frame.arg2 = 11;
                 }
+
                 syscall_call(SYSCALL_close, newcomer);
             }
+
             if (type != 2 && accepted >= 0)
             {
                 syscall_call(SYSCALL_close, accepted);
             }
+
             syscall_call(SYSCALL_close, server);
             ok &= expect(original != nullptr && original->openCount == 0 && original->linkCount == 0, "final endpoint close releases its unlinked VFS node reference");
             syscall_call(SYSCALL_close, client);
@@ -798,6 +849,7 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
 
         const int64_t server = (int64_t) sockets.Socket(1, 2 | 04000, 0);
         const int64_t client = (int64_t) sockets.Socket(1, 2 | 04000, 0);
+
         if (server >= 0 && client >= 0)
         {
             memcpy(address.path, "/policy", 8);
@@ -812,10 +864,12 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
             process->credentials.user.filesystem  = 1001;
             process->credentials.group.filesystem = 1001;
             spinlock_release_preempt(&process->credentialLock);
+
             if (node != nullptr)
             {
                 node->mode = 0600;
             }
+
             ok &= expect(sockets.Connect(client, base + 128, 10) == LINUX_EACCES, "pathname connect requires socket write permission");
             backend->root.mode = 0700;
             ok &= expect(sockets.Connect(client, base + 128, 10) == LINUX_EACCES, "pathname lookup requires directory search permission");
@@ -831,15 +885,18 @@ static bool test_socket_pathnames(process_t* process, uint64_t base)
             backend->root.mode = 0777;
             ok &= expect(vfs.Unlink({}, "/policy", false) == 0, "owner removes permission test node");
         }
+
         if (server >= 0)
         {
             syscall_call(SYSCALL_close, server);
         }
+
         if (client >= 0)
         {
             syscall_call(SYSCALL_close, client);
         }
     }
+
     delete backend;
     return ok;
 }
@@ -854,16 +911,20 @@ static bool test_socket_sender_exit(process_t* process, uint64_t base)
     {
         const uint64_t memory = fixture_map(4);
         int32_t        pair[2];
+
         if (memory == 0 || !socket_pair(sender, memory, 2 | 04000, pair))
         {
             return false;
         }
+
         receiver = static_cast<file_t*>(resources->processManager->GetFileDescriptor(sender, pair[1])->file);
+
         if (!vfs->Retain(receiver))
         {
             receiver = nullptr;
             return false;
         }
+
         const uint64_t event = syscall_call(SYSCALL_eventfd2, 19, 04000);
         struct
         {
@@ -882,16 +943,20 @@ static bool test_socket_sender_exit(process_t* process, uint64_t base)
         fixture_store(sender, memory + 768, &message, sizeof(message));
         return expect(syscall_call(SYSCALL_sendmsg, pair[0], memory + 768) == 1, "sender exit queued rights fixture");
     });
+
     if (receiver == nullptr)
     {
         return false;
     }
+
     const int64_t fd = resources->processManager->AddFileDescriptor(process, receiver, 0, dispatcher_vfs_file_operations());
+
     if (fd < 0)
     {
         vfs->Close(receiver);
         return false;
     }
+
     file_iovec_t     vector  = {base + 128, 1};
     socket_message_t message = {};
     message.vectors          = base + 256;
@@ -907,10 +972,12 @@ static bool test_socket_sender_exit(process_t* process, uint64_t base)
     ok &= expect(received >= 0 && syscall_call(SYSCALL_read, received, base + 1024, 8) == 8, "received file remains usable after sender exit");
     fixture_load(process, base + 1024, &value, sizeof(value));
     ok &= expect(value == 19, "sender exit retained the original eventfd object");
+
     if (received >= 0)
     {
         syscall_call(SYSCALL_close, received);
     }
+
     syscall_call(SYSCALL_close, fd);
     return ok;
 }

@@ -540,7 +540,9 @@ static x86_64_walk_level_result_t x86_64_walk_next_level(x86_64_walk_next_level_
             }
         }
         else if (old & (1ULL << 12))
+        {
             flags |= (1ULL << 12);
+        }
 
         for (uint64_t i = 0; i < X86_64_PT_ENTRIES; ++i)
         {
@@ -738,11 +740,12 @@ static bool prune_empty_tables(phys_addr_t table, unsigned depth, virt_addr_t fa
     }
 
     for (unsigned i = 0; i < 512; ++i)
-
+    {
         if (words[i] & X86_64_PTE_PRESENT)
         {
             return false;
         }
+    }
 
     return true;
 }
@@ -1081,13 +1084,15 @@ static void destroy_empty_user_tables(phys_addr_t table, unsigned depth, unsigne
     uint64_t* words = x86_64_table_from_pa(table);
 
     if (depth > 1)
-
+    {
         for (unsigned i = 0; i < entries; ++i)
-
+        {
             if ((words[i] & X86_64_PTE_PRESENT) && !(words[i] & (1ULL << 7)))
             {
                 destroy_empty_user_tables(words[i] & X86_64_PTE_ADDR_MASK, depth - 1, 512);
             }
+        }
+    }
 
     pmm_free(words);
 }
@@ -1141,15 +1146,19 @@ bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t le
     {
         return false;
     }
+
     uint64_t first = physical & ~(PAGE_SIZE - 1ULL);
     const uint64_t end = align_up(physical + length, PAGE_SIZE);
+
     for (uint64_t page = first; page < end; page += PAGE_SIZE)
     {
         const uint64_t address = page + boot->hhdm_offset;
         uint64_t* table = (void*) (uintptr_t) (arch_get_pt() + boot->hhdm_offset);
+
         for (unsigned shift = 39; shift >= 12; shift -= 9)
         {
             uint64_t* entry = &table[(address >> shift) & 511];
+
             if ((*entry & 1) != 0)
             {
                 if (shift == 12 || (*entry & 128) != 0)
@@ -1167,6 +1176,7 @@ bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t le
             {
                 uint64_t reserved = 0;
                 struct boot_memmap_entry* entries = (void*) boot->memmap_entries;
+
                 for (size_t i = 0; i < boot->memmap_entry_count; ++i)
                 {
                     if (entries[i].type == BOOT_MEMMAP_USABLE && entries[i].length >= 2 * PAGE_SIZE)
@@ -1177,15 +1187,19 @@ bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t le
                         break;
                     }
                 }
+
                 if (reserved == 0)
                 {
                     return false;
                 }
+
                 memset((void*) (uintptr_t) (reserved + boot->hhdm_offset), 0, PAGE_SIZE);
                 *entry = reserved | 3;
             }
+
             table = (void*) (uintptr_t) ((*entry & X86_64_PTE_ADDR_MASK) + boot->hhdm_offset);
         }
     }
+
     return true;
 }

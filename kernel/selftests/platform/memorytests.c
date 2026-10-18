@@ -157,7 +157,9 @@ static void vmm_test(void)
             vmm_test_log_fail("accepted a noncanonical address", &failures);
         }
         else
+        {
             passes++;
+        }
     }
 
     vmm_map_page(test_va, page_a_pa, map_flags, platform.cpus[arch_cpu_id()].address_space);

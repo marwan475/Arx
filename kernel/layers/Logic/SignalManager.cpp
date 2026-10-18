@@ -600,27 +600,35 @@ uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, cons
     {
         return LINUX_EINVAL;
     }
+
     const uint64_t bit = 1ULL << (signal - 1);
+
     if (process->Signals()->ignored & bit)
     {
         return 0;
     }
+
     uint64_t* pending = task != nullptr ? &task->signalPending : &process->signalPending;
+
     if (signal >= 32)
     {
         signal_queue_t*& queue = task != nullptr ? task->signalQueue : process->signalQueue;
+
         if (queue == nullptr)
         {
             queue = static_cast<signal_queue_t*>(kzalloc(sizeof(signal_queue_t)));
+
             if (queue == nullptr)
             {
                 return LINUX_ENOMEM;
             }
         }
+
         if (queue->count + queue->reserved == signal_queue_t::CAPACITY)
         {
             return static_cast<uint64_t>(-11);
         }
+
         queue->records[queue->count++] = {static_cast<uint32_t>(signal), sender};
     }
     else if (!(*pending & bit))
@@ -628,13 +636,16 @@ uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, cons
         if (task != nullptr && task->signalSenders == nullptr)
         {
             task->signalSenders = static_cast<signal_sender_t*>(kzalloc(32 * sizeof(signal_sender_t)));
+
             if (task->signalSenders == nullptr)
             {
                 return LINUX_ENOMEM;
             }
         }
+
         (task != nullptr ? task->signalSenders : process->signalSenders)[signal - 1] = sender;
     }
+
     __atomic_fetch_or(pending, bit, __ATOMIC_RELEASE);
     return 0;
 }
@@ -643,29 +654,37 @@ int SignalManager::Peek(process_t* process, task_t* task, uint64_t mask, signal_
 {
     uint64_t   available = task->signalPending & mask;
     const bool thread    = available != 0;
+
     if (!thread)
     {
         available = process->signalPending & mask;
     }
+
     const uint64_t standard = (task->signalPending | process->signalPending) & mask & 0x7fffffffULL;
+
     if (standard != 0)
     {
         available = standard;
     }
+
     // SIGKILL cannot be delayed by a lower-numbered thread-directed signal.
     if ((task->signalPending | process->signalPending) & mask & (1ULL << 8))
     {
         available = 1ULL << 8;
     }
+
     if (available == 0)
     {
         return 0;
     }
+
     const int  signal     = __builtin_ctzll(available) + 1;
     const bool fromThread = (task->signalPending & (1ULL << (signal - 1))) != 0;
+
     if (signal >= 32)
     {
         signal_queue_t* queue = fromThread ? task->signalQueue : process->signalQueue;
+
         for (size_t i = 0; queue != nullptr && i < queue->count; ++i)
         {
             if (queue->records[i].number == static_cast<uint32_t>(signal))
@@ -679,6 +698,7 @@ int SignalManager::Peek(process_t* process, task_t* task, uint64_t mask, signal_
     {
         *sender = fromThread && task->signalSenders != nullptr ? task->signalSenders[signal - 1] : process->signalSenders[signal - 1];
     }
+
     return signal;
 }
 
@@ -690,22 +710,28 @@ void SignalManager::Consume(process_t* process, task_t* task, int signal)
     signal_queue_t* queue     = thread ? task->signalQueue : process->signalQueue;
     bool            remaining = false;
     bool            removed   = false;
+
     if (signal >= 32 && queue != nullptr)
     {
         size_t count = 0;
+
         for (size_t i = 0; i < queue->count; ++i)
         {
             const auto record = queue->records[i];
+
             if (!removed && record.number == static_cast<uint32_t>(signal))
             {
                 removed = true;
                 continue;
             }
+
             queue->records[count++] = record;
             remaining |= record.number == static_cast<uint32_t>(signal);
         }
+
         queue->count = count;
     }
+
     if (!remaining)
     {
         __atomic_fetch_and(pending, ~bit, __ATOMIC_RELEASE);
@@ -732,13 +758,16 @@ void SignalManager::Discard(uint64_t* pending, signal_queue_t* queue, int signal
 uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
 {
     process_t* retained = recipient != nullptr ? Resources->processManager->AcquireProcess(recipient->id) : nullptr;
+
     if (retained == nullptr)
     {
         return LINUX_ESRCH;
     }
+
     uint64_t result = 0;
     {
         SignalDispositionGuard guard(retained);
+
         if (retained->exited)
         {
             result = LINUX_ESRCH;
@@ -749,7 +778,9 @@ uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
             {
                 retained->signalQueue = static_cast<signal_queue_t*>(kzalloc(sizeof(signal_queue_t)));
             }
+
             signal_queue_t* queue = retained->signalQueue;
+
             if (queue == nullptr)
             {
                 result = LINUX_ENOMEM;
@@ -765,10 +796,12 @@ uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
             }
         }
     }
+
     if (result != 0)
     {
         Resources->processManager->ReleaseProcess(retained);
     }
+
     return result;
 }
 

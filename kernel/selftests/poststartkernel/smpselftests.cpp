@@ -445,7 +445,10 @@ extern "C" void smp_selftests(void)
             {
                 // Unlink before the task slot can be reused on another CPU.
                 if (process != nullptr && task->process == process)
+                {
                     processManager->RemoveTask(process, task);
+                }
+
                 if (!taskManager->FreeTask(task))
                 {
                     __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);

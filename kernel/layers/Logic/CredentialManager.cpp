@@ -72,7 +72,10 @@ uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t
                 next.real = next.saved = real;
             }
             else if (real != old.real && real != old.saved)
+            {
                 result = CREDENTIAL_EPERM;
+            }
+
             next.effective = next.filesystem = real;
             break;
         case SET_RE_ID:
@@ -177,7 +180,9 @@ uint64_t CredentialManager::GetGroups(uint32_t* groups, uint32_t capacity, uint3
             result = LINUX_EINVAL;
         }
         else if (*count != 0)
+        {
             memcpy(groups, list->ids, *count * sizeof(uint32_t));
+        }
     }
 
     Processes->ReleaseCredentials(process);
@@ -211,11 +216,12 @@ uint64_t CredentialManager::SetGroups(const uint32_t* groups, uint32_t count)
     }
 
     for (uint32_t i = 0; i < count; ++i)
-
+    {
         if (groups[i] == UINT32_MAX)
         {
             return LINUX_EINVAL;
         }
+    }
 
     process_group_list_t* next = count != 0 ? Processes->CreateGroupList(groups, count) : nullptr;
 

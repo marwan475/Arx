@@ -153,13 +153,15 @@ uint8_t arch_cpu_id(void)
     const uint32_t hardware_id = (ebx >> 24) & 0xff;
 
     if (platform.cpus != NULL)
-
+    {
         for (uint8_t i = 0; i < platform.cpu_count; ++i)
-
+        {
             if (platform.cpus[i].hardware_id == hardware_id)
             {
                 return i;
             }
+        }
+    }
 
     // Before platform initialization only the BSP executes.
     return 0;
@@ -372,7 +374,7 @@ static void gather_boot_info(struct boot_info* boot_info)
         uint64_t count = 0;
 
         for (uint64_t i = 0; i < smp_request.response->cpu_count; ++i)
-
+        {
             if (smp_request.response->cpus[i]->lapic_id == smp_request.response->bsp_lapic_id)
             {
                 if (count != 0)
@@ -382,6 +384,7 @@ static void gather_boot_info(struct boot_info* boot_info)
 
                 selected_cpus[count++] = smp_request.response->cpus[i];
             }
+        }
 
         if (count != 1)
         {
@@ -405,11 +408,12 @@ static void gather_boot_info(struct boot_info* boot_info)
             if (cpu->lapic_id != smp_request.response->bsp_lapic_id)
             {
                 for (uint64_t selected = 0; selected < count; ++selected)
-
+                {
                     if (selected_cpus[selected]->lapic_id == cpu->lapic_id)
                     {
                         panic();
                     }
+                }
 
                 selected_cpus[count++] = cpu;
             }

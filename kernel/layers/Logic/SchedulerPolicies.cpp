@@ -57,45 +57,59 @@ uint64_t Scheduler::ConfigurePolicy(task_t* task, const scheduling_attributes_t&
     {
         return LINUX_EOPNOTSUPP;
     }
+
     if (task == nullptr || task->scheduling == nullptr || (attributes.flags & ~1ULL) != 0 || attributes.utilizationMin != 0 || attributes.utilizationMax != 0)
     {
         return LINUX_EINVAL;
     }
+
     const uint32_t policy = attributes.policy;
+
     if (policy != SCHEDULING_OTHER && policy != SCHEDULING_FIFO && policy != SCHEDULING_RR && policy != SCHEDULING_DEADLINE)
     {
         return LINUX_EOPNOTSUPP;
     }
+
     const bool realtime = policy == SCHEDULING_FIFO || policy == SCHEDULING_RR;
+
     if ((realtime && (attributes.priority < 1 || attributes.priority > 99)) || (!realtime && attributes.priority != 0) || attributes.nice < -20 || attributes.nice > 19)
     {
         return LINUX_EINVAL;
     }
+
     if (policy == SCHEDULING_DEADLINE && (attributes.runtime < 100000ULL || attributes.period < 1000000ULL || attributes.period > 1000000000000ULL || attributes.deadline != attributes.period || attributes.runtime > attributes.period))
     {
         return LINUX_EINVAL;
     }
+
     if (policy != SCHEDULING_DEADLINE && (attributes.runtime != 0 || attributes.deadline != 0 || attributes.period != 0))
     {
         return LINUX_EINVAL;
     }
+
     process_t* process = ResourceLayerImportCaps->processManager->GetCurrentProcess();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
+
     spinlock_acquire_preempt(&process->credentialLock);
     const bool privileged = process->credentials.user.effective == 0;
     spinlock_release_preempt(&process->credentialLock);
+
     if (!privileged && (policy != SCHEDULING_OTHER || task->scheduling->policy != SCHEDULING_OTHER || attributes.nice < task->baseNice || task->scheduling->resetOnFork != ((attributes.flags & 1) != 0)))
     {
         return static_cast<uint64_t>(-1);
     }
+
     uint64_t now = 0;
+
     if (!arch_time_read_monotonic(&now) && policy != SCHEDULING_OTHER)
     {
         return LINUX_EOPNOTSUPP;
     }
+
     if (realtime)
     {
         for (uint8_t cpu = 0; cpu < platform.cpu_count; ++cpu)
@@ -106,64 +120,82 @@ uint64_t Scheduler::ConfigurePolicy(task_t* task, const scheduling_attributes_t&
             }
         }
     }
+
     if (PriorityManager != nullptr && !PriorityManager->LockSchedulingChange(task))
     {
         return static_cast<uint64_t>(-16);
     }
+
     LockQueues();
     AccountSchedulingLocked(arch_cpu_id(), now);
     int reservation = -1;
     uint64_t utilization = 0;
+
     if (policy == SCHEDULING_DEADLINE)
     {
         utilization = ReservationUtilization(attributes.runtime, attributes.period);
         reservation = FindReservationCpuLocked(task, task->affinityMask, utilization);
+
         if (reservation < 0)
         {
             bool clock = false;
+
             for (uint8_t cpu = 0; cpu < platform.cpu_count; ++cpu)
             {
                 clock |= (task->affinityMask & (1ULL << cpu)) && arch_scheduler_timer_ready(cpu);
             }
+
             UnlockQueues();
+
             if (PriorityManager != nullptr)
             {
                 PriorityManager->UnlockSchedulingChange();
             }
+
             return clock ? static_cast<uint64_t>(-16) : LINUX_EOPNOTSUPP;
         }
     }
+
     auto& state = *task->scheduling;
+
     if (state.policy == SCHEDULING_DEADLINE && state.reservationCpu >= 0)
     {
         DeadlineUtilization[state.reservationCpu] -= ReservationUtilization(state.deadlineRuntime, state.deadlinePeriod);
     }
+
     state.policy = state.effectivePolicy = policy;
     state.effectivePriority = attributes.priority;
     state.deadlineDonor = nullptr;
     state.priority = attributes.priority;
     state.resetOnFork = (attributes.flags & 1) != 0;
+
     state.readyOrder = ++ReadySequence;
     state.roundRobinRemaining = SCHEDULING_RR_QUANTUM;
+
     state.deadlineRuntime = attributes.runtime;
     state.deadlinePeriod = attributes.period;
     state.deadlineRemaining = attributes.runtime;
     state.deadlineRelease = policy == SCHEDULING_DEADLINE ? now + attributes.period : 0;
     state.deadlineAbsolute = state.deadlineRelease;
     state.reservationCpu = reservation;
+
     if (reservation >= 0)
     {
         DeadlineUtilization[reservation] += utilization;
         __atomic_store_n(&task->migrationEnabled, true, __ATOMIC_RELEASE);
     }
+
     __atomic_store_n(&task->baseNice, attributes.nice, __ATOMIC_RELEASE);
     UnlockQueues();
+
     if (PriorityManager != nullptr)
     {
         PriorityManager->UnlockSchedulingChange();
         PriorityManager->RefreshPriorities();
     }
+
     RequestReschedule(AvailableCpuMask());
+
     // A reservation changing CPUs must take effect before returning success.
     return reservation >= 0 ? SetAffinity(task, task->affinityMask) : 0;
 }
@@ -265,6 +297,7 @@ void Scheduler::ReplenishReservationsLocked(uint64_t now)
 void Scheduler::AccountSchedulingLocked(uint8_t cpu, uint64_t now)
 {
     task_t* current = ResourceLayerImportCaps->taskManager->GetRunningTask(cpu);
+
     if (RealtimeWindow[cpu] == 0)
     {
         RealtimeWindow[cpu] = now;
@@ -274,14 +307,17 @@ void Scheduler::AccountSchedulingLocked(uint8_t cpu, uint64_t now)
         RealtimeWindow[cpu] += ((now - RealtimeWindow[cpu]) / SCHEDULING_RT_WINDOW) * SCHEDULING_RT_WINDOW;
         RealtimeConsumed[cpu] = 0;
     }
+
     if (current != nullptr && current == ExecutionTask[cpu] && now >= ExecutionStamp[cpu] && current->scheduling != nullptr)
     {
         const uint64_t elapsed = now - ExecutionStamp[cpu];
         auto& state = *current->scheduling;
+
         if (state.effectivePolicy == SCHEDULING_DEADLINE)
         {
             auto& budget = *deadline_account(current)->scheduling;
             uint64_t charged = elapsed;
+
             if (now >= budget.deadlineRelease)
             {
                 const uint64_t periods = (now - budget.deadlineRelease) / budget.deadlinePeriod + 1;
@@ -291,6 +327,7 @@ void Scheduler::AccountSchedulingLocked(uint8_t cpu, uint64_t now)
                 const uint64_t start = budget.deadlineRelease - budget.deadlinePeriod;
                 charged = now - (ExecutionStamp[cpu] > start ? ExecutionStamp[cpu] : start);
             }
+
             budget.deadlineRemaining = charged < budget.deadlineRemaining ? budget.deadlineRemaining - charged : 0;
         }
         else if (scheduling_class(state.effectivePolicy) == 1)
@@ -298,15 +335,18 @@ void Scheduler::AccountSchedulingLocked(uint8_t cpu, uint64_t now)
             const uint64_t start = ExecutionStamp[cpu] > RealtimeWindow[cpu] ? ExecutionStamp[cpu] : RealtimeWindow[cpu];
             RealtimeConsumed[cpu] += now - start;
         }
+
         if (state.policy == SCHEDULING_RR)
         {
             state.roundRobinRemaining = elapsed < state.roundRobinRemaining ? state.roundRobinRemaining - elapsed : 0;
         }
+
         if (state.policy == SCHEDULING_OTHER)
         {
             current->scheduleRuntime += (elapsed / 1000000ULL) * (1ULL << ((current->baseNice + 20) / 4));
         }
     }
+
     ExecutionStamp[cpu] = now;
     ExecutionTask[cpu] = current;
 }
@@ -351,38 +391,47 @@ bool Scheduler::PolicyEligible(task_t* task, uint8_t cpu) const
 bool Scheduler::MoreUrgent(task_t* task, task_t* selected, uint8_t cpu) const
 {
     (void) cpu;
+
     if (selected == nullptr)
     {
         return true;
     }
+
     const auto& candidate = *task->scheduling;
     const auto& previous = *selected->scheduling;
     const unsigned candidateClass = scheduling_class(candidate.effectivePolicy);
     const unsigned previousClass = scheduling_class(previous.effectivePolicy);
+
     if (candidateClass != previousClass)
     {
         return candidateClass > previousClass;
     }
+
     if (candidateClass == 2)
     {
         const uint64_t deadline = deadline_account(task)->scheduling->deadlineAbsolute;
         const uint64_t other = deadline_account(selected)->scheduling->deadlineAbsolute;
         return deadline != other ? deadline < other : candidate.readyOrder < previous.readyOrder;
     }
+
     if (candidateClass == 1)
     {
         return candidate.effectivePriority != previous.effectivePriority ? candidate.effectivePriority > previous.effectivePriority : candidate.readyOrder < previous.readyOrder;
     }
+
     const bool boosted = task->effectiveNice < task->baseNice;
     const bool previousBoosted = selected->effectiveNice < selected->baseNice;
+
     if (boosted != previousBoosted)
     {
         return boosted;
     }
+
     if (boosted && task->effectiveNice != selected->effectiveNice)
     {
         return task->effectiveNice < selected->effectiveNice;
     }
+
     return task->scheduleRuntime < selected->scheduleRuntime;
 }
 
@@ -390,26 +439,32 @@ uint64_t Scheduler::NextSchedulingEventLocked(task_t* task, uint8_t cpu, uint64_
 {
     uint64_t next = now + SCHEDULING_RR_QUANTUM;
     task_t* tasks = ResourceLayerImportCaps->taskManager->GetTasks();
+
     for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
     {
         if (!ResourceLayerImportCaps->taskManager->RetainForDispatch(&tasks[i]))
         {
             continue;
         }
+
         if (tasks[i].scheduling->policy == SCHEDULING_DEADLINE && tasks[i].scheduling->reservationCpu == cpu)
         {
             const uint64_t release = tasks[i].scheduling->deadlineRelease;
+
             if (release < next)
             {
                 next = release;
             }
         }
+
         ResourceLayerImportCaps->taskManager->ReleaseDispatchClaim(&tasks[i]);
     }
+
     if (task != nullptr)
     {
         const auto& state = *task->scheduling;
         uint64_t remaining = SCHEDULING_RR_QUANTUM;
+
         if (state.effectivePolicy == SCHEDULING_DEADLINE)
         {
             remaining = deadline_account(task)->scheduling->deadlineRemaining;
@@ -418,21 +473,26 @@ uint64_t Scheduler::NextSchedulingEventLocked(task_t* task, uint8_t cpu, uint64_
         {
             const uint64_t capacity = (SCHEDULING_UTILIZATION_SCALE - DeadlineUtilization[cpu]) * 95 * SCHEDULING_RT_WINDOW / 100 / SCHEDULING_UTILIZATION_SCALE;
             remaining = RealtimeConsumed[cpu] < capacity ? capacity - RealtimeConsumed[cpu] : 0;
+
             if (state.policy == SCHEDULING_RR && state.roundRobinRemaining < remaining)
             {
                 remaining = state.roundRobinRemaining;
             }
         }
+
         if (now + remaining < next)
         {
             next = now + remaining;
         }
     }
+
     const uint64_t realtimeRelease = RealtimeWindow[cpu] + SCHEDULING_RT_WINDOW;
+
     if (realtimeRelease > now && realtimeRelease < next)
     {
         next = realtimeRelease;
     }
+
     return next;
 }
 
@@ -442,60 +502,75 @@ uint64_t Scheduler::UserPriority(uint32_t selector, uint32_t who, bool modify, i
     {
         return LINUX_EINVAL;
     }
+
     if (selector == 0)
     {
         task_t* task = nullptr;
         uint64_t status = AcquireTask(who, modify, &task);
+
         if (status != 0)
         {
             return status;
         }
+
         status = modify ? SetUserNice(task, nice) : 20 - __atomic_load_n(&task->baseNice, __ATOMIC_ACQUIRE);
         ResourceLayerImportCaps->taskManager->ReleaseDispatchClaim(task);
         return status;
     }
+
     auto processes = ResourceLayerImportCaps->processManager;
     auto tasks = ResourceLayerImportCaps->taskManager;
     process_t* caller = processes->GetCurrentProcess();
+
     if (caller == nullptr)
     {
         return LINUX_ESRCH;
     }
+
     if (who == 0)
     {
         spinlock_acquire_preempt(&caller->credentialLock);
         who = selector == 1 ? caller->groupId : caller->credentials.user.real;
         spinlock_release_preempt(&caller->credentialLock);
     }
+
     uint64_t result = modify ? 0 : LINUX_ESRCH;
     bool found = false;
+
     for (size_t i = 0; i < TaskManager::MAX_TASKS; ++i)
     {
         task_t* task = &tasks->GetTasks()[i];
+
         if (!tasks->RetainForDispatch(task))
         {
             continue;
         }
+
         process_t* owner = task->process;
         bool matches = false;
+
         if (owner != nullptr && !owner->exited)
         {
             spinlock_acquire_preempt(&owner->credentialLock);
             matches = selector == 1 ? owner->groupId == who : owner->credentials.user.real == who;
             spinlock_release_preempt(&owner->credentialLock);
         }
+
         if (matches)
         {
             found = true;
+
             if (modify)
             {
                 task_t* permitted = nullptr;
                 uint64_t status = AcquireTask(task->id, true, &permitted);
+
                 if (status == 0)
                 {
                     status = SetUserNice(permitted, nice);
                     tasks->ReleaseDispatchClaim(permitted);
                 }
+
                 if (status != 0)
                 {
                     result = status;
@@ -504,13 +579,16 @@ uint64_t Scheduler::UserPriority(uint32_t selector, uint32_t who, bool modify, i
             else
             {
                 const uint64_t priority = 20 - __atomic_load_n(&task->baseNice, __ATOMIC_ACQUIRE);
+
                 if (result == LINUX_ESRCH || priority > result)
                 {
                     result = priority;
                 }
             }
         }
+
         tasks->ReleaseDispatchClaim(task);
     }
+
     return found ? result : LINUX_ESRCH;
 }

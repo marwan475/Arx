@@ -428,7 +428,9 @@ static uint64_t perform_user_buffer_io(VirtualMemoryManager* virtualMemoryManage
             ioResult              = isWrite ? virtualFileSystem->WriteAt(file, kernelBuffer, chunkSize, offset) : virtualFileSystem->ReadAt(file, kernelBuffer, chunkSize, offset);
         }
         else
+        {
             ioResult = isWrite ? virtualFileSystem->Write(file, kernelBuffer, chunkSize) : virtualFileSystem->Read(file, kernelBuffer, chunkSize);
+        }
 
         if (ioResult < 0)
         {
@@ -1983,7 +1985,9 @@ uint64_t VfsRequestManager::HandleFcntlRequest(const arch_syscall_frame_t* frame
             __atomic_store_n(&file->statusFlags, (previous & ~(04000ULL | 02000ULL)) | (arg & (04000ULL | 02000ULL)), __ATOMIC_RELAXED);
         }
         else
+        {
             __atomic_store_n(&file->statusFlags, arg, __ATOMIC_RELAXED);
+        }
         return 0;
     }
 
@@ -2957,30 +2961,39 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
     {
         return LINUX_EINVAL;
     }
+
     if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     process_t* process = ResourceCaps->processManager->GetCurrentProcess();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
+
     FileDescriptorGuard descriptors(process);
     const int32_t       dirfd = (int32_t) frame->arg0;
     const uint32_t      flags = descriptorOnly ? 0x1000U : (uint32_t) (ownership ? frame->arg4 : frame->arg3);
+
     if ((flags & ~(0x1000U | 0x100U)) != 0)
     {
         return LINUX_EINVAL;
     }
+
     char path[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
+
     if (!descriptorOnly && !(frame->arg1 == 0 && (flags & 0x1000)) && !safe_read_user_string(frame->arg1, path, sizeof(path), nullptr))
     {
         return LINUX_EFAULT;
     }
+
     inode_t*  inode  = nullptr;
     mount_t*  mount  = nullptr;
     dentry_t* dentry = nullptr;
+
     if (descriptorOnly || (path[0] == 0 && (flags & 0x1000)))
     {
         if (dirfd == LINUX_AT_FDCWD && !descriptorOnly)
@@ -2992,6 +3005,7 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
             {
                 return LINUX_ENOENT;
             }
+
             inode  = resolved.dentry->inode;
             mount  = resolved.mount;
             dentry = resolved.dentry;
@@ -2999,10 +3013,12 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
         else
         {
             file_descriptor_t* fd = dirfd >= 0 ? ProcessManager::GetFileDescriptor(process, (uint32_t) dirfd) : nullptr;
+
             if (fd == nullptr)
             {
                 return LINUX_EBADF;
             }
+
             inode  = static_cast<file_t*>(fd->file)->inode;
             mount  = static_cast<file_t*>(fd->file)->path.mount;
             dentry = static_cast<file_t*>(fd->file)->path.dentry;
@@ -3014,20 +3030,24 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
         {
             return LINUX_ENOENT;
         }
+
         vfs_path_t  start                                        = {};
         char        scratch[ProcessManager::MAX_CWD_PATH_LENGTH] = {};
         const char* effectivePath                                = nullptr;
         uint64_t    result                                       = prepare_request_path(LogicCaps->virtualFileSystem, process, dirfd, path, scratch, sizeof(scratch), &effectivePath, &start);
+
         if (result != 0)
         {
             return result;
         }
+
         if (flags & 0x100)
         {
             vfs_path_t    resolved = {};
             const int64_t status   = LogicCaps->virtualFileSystem->StatNoFollow(start, effectivePath, &inode, &resolved);
             mount                  = resolved.mount;
             dentry                 = resolved.dentry;
+
             if (status < 0)
             {
                 return normalize_vfs_result(status);
@@ -3036,15 +3056,18 @@ uint64_t VfsRequestManager::MetadataRequest(const arch_syscall_frame_t* frame, b
         else
         {
             vfs_path_t resolved = {};
+
             if (!LogicCaps->virtualFileSystem->ResolvePath(start, effectivePath, &resolved) || resolved.dentry == nullptr)
             {
                 return LINUX_ENOENT;
             }
+
             inode  = resolved.dentry->inode;
             mount  = resolved.mount;
             dentry = resolved.dentry;
         }
     }
+
     const uint32_t first  = (uint32_t) (descriptorOnly ? frame->arg1 : frame->arg2);
     const uint32_t second = (uint32_t) (descriptorOnly ? frame->arg2 : frame->arg3);
     return LogicCaps->virtualFileSystem->ChangeMetadata(inode, ownership, first, second, mount, dentry);
@@ -3146,26 +3169,34 @@ uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame
     {
         return LINUX_EINVAL;
     }
+
     if (ResourceCaps == nullptr || ResourceCaps->processManager == nullptr || LogicCaps == nullptr || LogicCaps->virtualFileSystem == nullptr)
     {
         return LINUX_ENOSYS;
     }
+
     process_t* process = ResourceCaps->processManager->AcquireCurrentCredentials();
+
     if (process == nullptr)
     {
         return LINUX_ESRCH;
     }
+
     const bool privileged = process->credentials.user.effective == 0;
     ResourceCaps->processManager->ReleaseCredentials(process);
+
     if (!privileged)
     {
         return (uint64_t) -1;
     }
+
     char source[512] = {}, target[512] = {}, type[64] = {}, options[4096] = {};
+
     if (!safe_read_user_string(frame->arg1, target, sizeof(target), nullptr) || (frame->arg0 != 0 && !safe_read_user_string(frame->arg0, source, sizeof(source), nullptr)) || (frame->arg2 != 0 && !safe_read_user_string(frame->arg2, type, sizeof(type), nullptr)))
     {
         return LINUX_EFAULT;
     }
+
     char                     absolute[512] = {};
     WorkingDirectorySnapshot cwd(process);
 
@@ -3173,27 +3204,33 @@ uint64_t VfsRequestManager::HandleMountRequest(const arch_syscall_frame_t* frame
     {
         return LINUX_ENAMETOOLONG;
     }
+
     if (target[0] == 0)
     {
         return LINUX_ENOENT;
     }
+
     if (frame->arg4 != 0 && !safe_read_user_string(frame->arg4, options, sizeof(options), nullptr))
     {
         return LINUX_EFAULT;
     }
+
     char           absoluteSource[512] = {};
     const uint64_t flags               = (frame->arg3 & 0xffff0000ULL) == 0xc0ed0000ULL ? frame->arg3 & ~0xffff0000ULL : frame->arg3;
+
     if ((flags & 8192) || ((flags & 4096) && !(flags & 32)))
     {
         if (source[0] == 0)
         {
             return LINUX_EINVAL;
         }
+
         if (!LogicCaps->virtualFileSystem->JoinPath(cwd.path, source, absoluteSource, sizeof(absoluteSource)))
         {
             return LINUX_ENAMETOOLONG;
         }
     }
+
     return LogicCaps->virtualFileSystem->Mount(flags & (4096 | 8192) ? absoluteSource : source, absolute, frame->arg2 != 0 ? type : nullptr, frame->arg3, frame->arg4 != 0 ? options : nullptr);
 }
 

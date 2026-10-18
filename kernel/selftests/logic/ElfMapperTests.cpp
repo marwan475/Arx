@@ -183,7 +183,10 @@ void test_ElfMapper(ResourceLayerCaps* resources, LogicLayerCaps* logic)
                   t.Check(m->ReadElf(&backend.file, &metadata), "parse rollback fixture");
                   metadata.type                       = 3;
                   metadata.segments[0].virtualAddress = 0;
-                  backend.operations.Read             = [](file_t*, void*, uint64_t) -> int64_t { return -5; };
+                  backend.operations.Read             = [](file_t*, void*, uint64_t) -> int64_t
+                  {
+                      return -5;
+                  };
                   constexpr uint64_t bias             = 0x50000000;
                   t.Check(!m->LoadLibrary(fixture.Process, &backend.file, &metadata, bias), "read failure after allocation rejects load");
                   t.Check(resources->virtualMemoryManager->VirtToPhys(bias, fixture.Space) == 0, "failed load removes page table mapping");

@@ -11,7 +11,10 @@ static inline process_t* smp_create_test_process(ProcessManager* manager, virt_a
     {
         process_t* process = manager->CreateProcess(space);
         if (process != nullptr)
+        {
             return process;
+        }
+
         arch_pause();
     }
     return nullptr;

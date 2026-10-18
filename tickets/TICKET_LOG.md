@@ -12,11 +12,7 @@ filename. Ticket files contain the authoritative details and work history.
 
 ## Debug
 
-| Priority | Ticket | Type | Status |
-| --- | --- | --- | --- |
-| P2 | [Expand compressed self-test lambdas into readable blocks](debug/expand_compressed_selftest_lambdas.md) | debug | open |
-| P2 | [Expand unbraced first-party control flow](debug/expand_unbraced_first_party_control_flow.md) | debug | open |
-| P2 | [Restore blank-line separation in dense kernel functions](debug/improve_dense_kernel_code_spacing.md) | debug | open |
+None.
 
 ## In progress
 
@@ -35,3 +31,6 @@ None.
 | P2 | [Document Request layer](closed/document_request_layer.md) | feature | closed |
 | P2 | [Document Resource layer](closed/document_resource_layer.md) | feature | closed |
 | P2 | [Document self-test infrastructure, suites and execution](closed/document_self_tests.md) | feature | closed |
+| P2 | [Expand compressed self-test lambdas into readable blocks](closed/expand_compressed_selftest_lambdas.md) | debug | closed |
+| P2 | [Expand unbraced first-party control flow](closed/expand_unbraced_first_party_control_flow.md) | debug | closed |
+| P2 | [Restore blank-line separation in dense kernel functions](closed/improve_dense_kernel_code_spacing.md) | debug | closed |

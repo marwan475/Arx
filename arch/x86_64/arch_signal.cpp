@@ -106,6 +106,7 @@ uint64_t arch_signal_prepare(arch_syscall_frame_t* frame, uint64_t result, const
     c.cs          = USER_CS;
     c.ss          = USER_SS;
     c.oldmask     = saved.uc.mask;
+
     // Restart only syscalls whose state was not consumed, and only for an
     // actual SYSCALL instruction. Poll/select/nanosleep/pause retain EINTR.
     uint16_t instruction = 0;
@@ -263,7 +264,9 @@ extern "C" void     arch_signal_interrupt(registers_t* r, void* floating)
     f.user_cs              = r->cs;
     f.user_ss              = r->ss;
     f.fxstate              = (uint64_t) floating;
+
     const uint64_t result  = dispatcher_signal_return(&f, r->rax);
+
     r->rax                 = result;
     r->rdi                 = f.arg0;
     r->rsi                 = f.arg1;

@@ -199,7 +199,9 @@ extern "C" void run_task_selftests(void* resourceLayerCaps)
         SelfTestManager::Get().RecordFailureDetail("task TLS bases were not isolated/restored across A -> B -> A");
     }
     else
+    {
         passes++;
+    }
 
     if (g_task_test_ctx.step != 3)
     {

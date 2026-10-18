@@ -74,7 +74,9 @@ bool lapic_timer_calibrate(void)
     uint64_t    start, finish;
 
     if (!cpu->arch_info.acpi_has_lapic || cpu->arch_info.acpi_lapic_base_addr == 0 || !arch_time_read_monotonic(&start))
+    {
         return false;
+    }
 
     // The selected clock is available after resource initialization. Calibrate here
     // from each CPU's post-init task, retaining the bootstrap timer on failure.
@@ -227,21 +229,26 @@ bool arch_program_scheduler_timer(uint64_t nanoseconds)
 {
     const uint8_t cpu = arch_cpu_id();
     const uint64_t ticks = __atomic_load_n(&scheduler_timer_ticks[cpu], __ATOMIC_ACQUIRE);
+
     if (ticks == 0 || nanoseconds == 0)
     {
         return false;
     }
+
     // Scheduling keeps a 10ms heartbeat for sleepers and accounting, and can
     // arm an earlier event for a quantum, reservation or replenishment boundary.
     if (nanoseconds > 10000000ULL)
     {
         nanoseconds = 10000000ULL;
     }
+
     uint64_t count = (ticks * nanoseconds + 9999999ULL) / 10000000ULL;
+
     if (count == 0)
     {
         count = 1;
     }
+
     uint64_t flags;
     __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
     volatile uint8_t* registers = lapic_get_base(&platform.cpus[cpu]);

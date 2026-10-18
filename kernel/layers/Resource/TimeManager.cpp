@@ -47,7 +47,9 @@ TimeManager::TimeManager() : TimeManager({initialize_platform_clock, read_platfo
         error_logger("Arx kernel: no usable monotonic clock; clock reads and timed waits are unavailable");
     }
     else if (!RealtimeAvailable)
+    {
         error_logger("Arx kernel: RTC unavailable; realtime clock reads are unavailable");
+    }
 }
 
 TimeManager::TimeManager(const time_clock_backend_t& backend) : RealtimeSeconds(0), ResolutionNanoseconds(0), ClockAvailable(false), RealtimeAvailable(false), Backend(backend)

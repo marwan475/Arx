@@ -49,38 +49,49 @@ void test_SignalManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
               [&](TestCase& t)
               {
                   TestFixture f(resources);
+
                   if (!f.Valid(t))
                   {
                       return;
                   }
+
                   SignalDispositionGuard guard(f.Process);
                   signal_sender_t        first = {11, 22, -1, 0x1122334455667788ULL}, second = {33, 44, -1, 0x8877665544332211ULL}, actual = {};
+
                   t.Equal(m->Queue(f.Process, nullptr, 64, first), 0, "highest RT number is supported");
                   t.Equal(m->Queue(f.Process, nullptr, 32, first), 0, "lowest RT number is supported");
                   t.Equal(m->Queue(f.Process, nullptr, 32, second), 0, "repeated RT number queues another record");
+
                   t.Equal(m->Peek(f.Process, f.Task, UINT64_MAX, &actual), 32, "RT delivery selects lowest number");
                   t.Equal(actual.pid, first.pid, "first sender retained");
                   t.Equal(actual.value, first.value, "first full-width payload retained");
+
                   m->Consume(f.Process, f.Task, 32);
                   t.Equal(m->Peek(f.Process, f.Task, UINT64_MAX, &actual), 32, "repeated RT number remains pending");
                   t.Equal(actual.pid, second.pid, "FIFO sender ordering within number");
                   t.Equal(actual.value, second.value, "repeated signal payload ordering");
+
                   m->Consume(f.Process, f.Task, 32);
                   t.Equal(m->Peek(f.Process, f.Task, 1ULL << 31, &actual), 0, "mask excludes other queued numbers");
                   m->Consume(f.Process, f.Task, 64);
+
                   for (size_t i = 0; i < signal_queue_t::CAPACITY; ++i)
                   {
                       t.Equal(m->Queue(f.Process, f.Task, 34, first), 0, "bounded target queue accepts each record");
                   }
+
                   t.Equal(m->Queue(f.Process, f.Task, 34, second), LINUX_EAGAIN, "queue exhaustion explicitly rejects additional send");
                   t.Equal(f.Task->signalQueue->count, signal_queue_t::CAPACITY, "exhaustion preserves earlier records");
                   t.Equal(m->Queue(f.Process, nullptr, 35, second), 0, "process and thread have separate queue budgets");
                   t.Equal(m->Peek(f.Process, f.Task, UINT64_MAX, &actual), 34, "thread RT queue precedes process RT queue");
+
                   for (size_t i = 0; i < signal_queue_t::CAPACITY; ++i)
                   {
                       m->Consume(f.Process, f.Task, 34);
                   }
+
                   t.Equal(f.Task->signalPending, 0, "last queued record clears summary bit");
+
                   m->Discard(&f.Process->signalPending, f.Process->signalQueue, 35);
                   t.Equal(f.Process->signalQueue->count, 0, "discard releases queued record capacity");
               });
@@ -88,35 +99,45 @@ void test_SignalManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
     suite.Run("logic/SignalManager/reserved_exit_delivery", [&](TestCase& t)
     {
         TestFixture f(resources);
+
         if (!f.Valid(t))
         {
             return;
         }
+
         auto space = resources->virtualMemoryManager->CreateUserAddressSpace();
         process_t* child = space != nullptr ? resources->processManager->CreateProcess(space) : nullptr;
+
         if (!t.Check(child != nullptr, "allocate reserved exit fixture"))
         {
             if (space != nullptr)
             {
                 resources->virtualMemoryManager->DestroyUserAddressSpace(space);
             }
+
             return;
         }
+
         child->exitSignal = 34;
         child->exitStatus = 23;
         t.Equal(m->ReserveExit(child, f.Process), 0, "reserve exit capacity before clone publication");
+
         {
             SignalDispositionGuard guard(f.Process);
             const signal_sender_t sender = {11, 22, -1, 99};
+
             for (size_t i = 0; i < signal_queue_t::CAPACITY - 1; ++i)
             {
                 t.Equal(m->Queue(f.Process, nullptr, 35, sender), 0, "ordinary send uses unreserved capacity");
             }
+
             t.Equal(m->Queue(f.Process, nullptr, 35, sender), LINUX_EAGAIN, "send cannot consume reserved exit slot");
         }
+
         m->ReleaseExit(resources, child, true);
         t.Check(resources->processManager->FreeProcess(child), "reap child before consuming exit notification");
         resources->virtualMemoryManager->DestroyUserAddressSpace(space);
+
         {
             SignalDispositionGuard guard(f.Process);
             signal_sender_t actual = {};

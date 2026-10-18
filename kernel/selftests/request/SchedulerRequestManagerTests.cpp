@@ -60,109 +60,142 @@ static bool test_scheduling_policies()
     task_t* caller = tasks->GetCurrentTask();
     process_t* process = resources->processManager->GetCurrentProcess();
     scheduling_attributes_t previous = {}, attributes = {};
+
     scheduler->ReadPolicy(caller, &previous);
     const uint64_t affinity = caller->affinityMask;
     const uint8_t cpu = arch_cpu_id();
+
     task_t* peer = tasks->AllocateTask();
+
     if (!expect(peer != nullptr && resources->processManager->AddTask(process, peer), "allocate policy selection peer"))
     {
         if (peer != nullptr)
         {
             tasks->FreeTask(peer);
         }
+
         cpu_preemption_enable();
         return false;
     }
+
     bool ok = expect(scheduler->SetAffinity(caller, 1ULL << cpu) == 0 && scheduler->SetAffinity(peer, 1ULL << cpu) == 0, "partition policy fixtures on executing CPU");
+
     attributes.size = sizeof(attributes);
     attributes.policy = SCHEDULING_FIFO;
     attributes.priority = 40;
     ok &= expect(scheduler->ConfigurePolicy(caller, attributes) == 0 && scheduler->ConfigurePolicy(peer, attributes) == 0, "FIFO priority activation");
+
     auto select = [&](Scheduler::scheduling_reason_t reason)
     {
         caller->schedulerQueued = peer->schedulerQueued = true;
         const auto decision = scheduler->RunSchedulingAlgorithm(cpu, reason);
         task_t* selected = decision.task;
+
         if (selected != nullptr)
         {
             tasks->ReleaseDispatchClaim(selected);
         }
+
         return selected;
     };
+
     ok &= expect(select(Scheduler::scheduling_reason_t::TIMER) == caller, "FIFO equal-priority timer preserves head");
     ok &= expect(select(Scheduler::scheduling_reason_t::YIELD) == peer, "FIFO yield advances to equal-priority peer");
+
     int32_t publicPriority = 40;
     const uint64_t parameterAddress = request_user_address(&publicPriority, sizeof(publicPriority));
     ok &= expect(syscall_call(SYSCALL_sched_setscheduler, 0, SCHEDULING_RR, parameterAddress) == 0 && syscall_call(SYSCALL_sched_getscheduler, 0) == SCHEDULING_RR, "public policy request installs and reports RR");
     ok &= expect(syscall_call(SYSCALL_sched_get_priority_min, SCHEDULING_RR) == 1 && syscall_call(SYSCALL_sched_get_priority_max, SCHEDULING_FIFO) == 99, "public RT priority range");
+
     time_timespec_t interval = {};
     const uint64_t intervalAddress = request_user_address(&interval, sizeof(interval));
     ok &= expect(syscall_call(SYSCALL_sched_rr_get_interval, 0, intervalAddress) == 0 && interval.seconds == 0 && interval.nanoseconds == static_cast<int64_t>(SCHEDULING_RR_QUANTUM), "public RR quantum ABI");
+
     attributes.policy = SCHEDULING_RR;
     ok &= expect(scheduler->ConfigurePolicy(caller, attributes) == 0 && scheduler->ConfigurePolicy(peer, attributes) == 0, "RR policy activation");
+
     scheduler->AccountSchedulingCurrent(true);
     uint64_t start = 0, now = 0;
     arch_time_read_monotonic(&start);
+
     do
     {
         arch_pause();
         arch_time_read_monotonic(&now);
     } while (now - start < 1000000);
+
     scheduler->AccountSchedulingCurrent(false);
     const uint64_t remaining = caller->scheduling->roundRobinRemaining;
     ok &= expect(remaining < SCHEDULING_RR_QUANTUM && remaining > 0, "RR charges actual elapsed execution");
     ok &= expect(select(Scheduler::scheduling_reason_t::RESCHEDULE) == caller && caller->scheduling->roundRobinRemaining <= remaining, "RR preserves unexpired quantum across reschedule");
+
     caller->scheduling->roundRobinRemaining = 0;
     ok &= expect(select(Scheduler::scheduling_reason_t::TIMER) == peer, "RR quantum expiry rotates equal-priority tasks");
+
     attributes = {sizeof(attributes), SCHEDULING_DEADLINE, 0, 0, 0, 8000000, 10000000, 10000000, 0, 0};
     ok &= expect(scheduler->ConfigurePolicy(caller, attributes) == 0, "deadline accepts 80 percent partition reservation");
+
     attributes.runtime = 1000000;
     ok &= expect(scheduler->ConfigurePolicy(peer, attributes) == static_cast<uint64_t>(-16), "deadline rejects overcommitted partition atomically");
+
     scheduling_attributes_t actual = {};
     scheduler->ReadPolicy(peer, &actual);
     ok &= expect(actual.policy == SCHEDULING_RR, "failed admission preserves old policy");
     ok &= expect(scheduler->ValidateClonePolicy(caller) == LINUX_EAGAIN, "deadline fork cannot duplicate reservation");
+
     attributes.flags = 1;
     ok &= expect(scheduler->ConfigurePolicy(caller, attributes) == 0 && scheduler->ValidateClonePolicy(caller) == 0, "reset-on-fork allows deadline parent");
+
     task_t* child = tasks->AllocateTask();
+
     if (child != nullptr)
     {
         scheduler->InheritPolicy(caller, child);
         ok &= expect(child->scheduling->policy == SCHEDULING_OTHER && child->scheduling->reservationCpu == -1, "reset child receives no reservation or PI donation");
         ok &= cleanup(tasks->FreeTask(child), "free policy inheritance child");
     }
+
     // Measure selection from a fresh interval: inheritance fixture setup is
     // not part of the deadline execution interval exercised below.
     scheduler->AccountSchedulingCurrent(true);
     ok &= expect(select(Scheduler::scheduling_reason_t::TIMER) == caller, "deadline class precedes real-time class");
+
     scheduler->AccountSchedulingCurrent(true);
     arch_time_read_monotonic(&start);
+
     do
     {
         arch_pause();
         arch_time_read_monotonic(&now);
     } while (now - start < 2000000);
+
     scheduler->AccountSchedulingCurrent(false);
     ok &= expect(caller->scheduling->deadlineRemaining == 0 && select(Scheduler::scheduling_reason_t::TIMER) == peer, "exhausted deadline reservation yields to eligible real-time peer");
+
     const uint64_t release = caller->scheduling->deadlineRelease;
+
     do
     {
         arch_pause();
         arch_time_read_monotonic(&now);
     } while (now < release);
+
     // No context switched in this fixture: begin a new accounting interval so
     // elapsed test bookkeeping is not charged as a resumed reservation.
     scheduler->AccountSchedulingCurrent(true);
     ok &= expect(select(Scheduler::scheduling_reason_t::TIMER) == caller && caller->scheduling->deadlineRemaining != 0, "deadline budget replenishes at next period");
+
     const auto credentials = process->credentials.user;
     process->credentials.user.effective = 1000;
     attributes.policy = SCHEDULING_FIFO;
     attributes.priority = 60;
     attributes.runtime = attributes.deadline = attributes.period = 0;
     ok &= expect(scheduler->ConfigurePolicy(peer, attributes) == static_cast<uint64_t>(-1), "unprivileged real-time activation rejected");
+
     process->credentials.user = credentials;
     attributes.policy = 3;
     ok &= expect(scheduler->ConfigurePolicy(peer, attributes) == LINUX_EOPNOTSUPP, "unenforced policy explicitly rejected");
+
     attributes = {};
     attributes.size = sizeof(attributes);
     scheduler->ConfigurePolicy(peer, attributes);
@@ -170,6 +203,7 @@ static bool test_scheduling_policies()
     resources->processManager->RemoveTask(process, peer);
     ok &= cleanup(tasks->FreeTask(peer), "free policy selection peer");
     ok &= expect(scheduler->ConfigurePolicy(caller, previous) == 0 && scheduler->SetAffinity(caller, affinity) == 0, "restore caller policy and partition");
+
     cpu_preemption_enable();
     return ok;
 }
@@ -215,6 +249,7 @@ static bool validate_sched_getaffinity(const syscall_case_t* ctx)
     ok &= equal(affinityMask, restricted, "affinity query returns stored restriction");
     inputMask = 0;
     ok &= equal(syscall_call(SYSCALL_sched_setaffinity, 0, 8, input), LINUX_EINVAL, "empty affinity rejected");
+
     if (platform.cpu_count > 1)
     {
         const uint32_t originalCpu = arch_cpu_id();
@@ -226,6 +261,7 @@ static bool validate_sched_getaffinity(const syscall_case_t* ctx)
         ok &= equal(syscall_call(SYSCALL_sched_setaffinity, 0, 8, input), 0, "self migration returns to original CPU");
         ok &= equal(arch_cpu_id(), originalCpu, "original CPU restored after migration");
     }
+
     inputMask = expectedMask;
     ok &= equal(syscall_call(SYSCALL_sched_setaffinity, 0, 8, input), 0, "restore affinity after restriction");
     ok &= test_scheduling_policies();

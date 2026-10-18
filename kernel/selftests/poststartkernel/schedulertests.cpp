@@ -364,7 +364,10 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
         if (tasks[i] != nullptr)
         {
             if (processes[i] != nullptr && tasks[i]->process == processes[i])
+            {
                 processManager->RemoveTask(processes[i], tasks[i]);
+            }
+
             if (!taskManager->FreeTask(tasks[i]) && outFailMask)
             {
                 *outFailMask |= 1ULL << 63;

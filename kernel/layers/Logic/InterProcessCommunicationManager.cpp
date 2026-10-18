@@ -143,13 +143,16 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     {
         return LINUX_ENOSYS;
     }
+
     if ((flags & ~(NONBLOCK | CLOEXEC | DIRECT)) != 0)
     {
         return (flags & ~(NONBLOCK | CLOEXEC | DIRECT | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP;
     }
+
     pipe_state_t* pipe   = static_cast<pipe_state_t*>(kzalloc(sizeof(pipe_state_t)));
     file_t*       reader = static_cast<file_t*>(kzalloc(sizeof(file_t)));
     file_t*       writer = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+
     if (pipe == nullptr || reader == nullptr || writer == nullptr)
     {
         kfree(pipe);
@@ -157,6 +160,7 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
         kfree(writer);
         return LINUX_ENOMEM;
     }
+
     process_t* process = Resources->processManager->GetCurrentProcess();
     Vfs->InitializeAnonymousInode(&pipe->inode, INODE_FIFO, 0600);
     pipe->reader            = reader;
@@ -178,20 +182,25 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     uint64_t result         = 0;
     {
         FileDescriptorGuard guard(process);
+
         for (size_t i = 0; i < 2; ++i)
         {
             const int64_t fd = process != nullptr ? Resources->processManager->AddFileDescriptor(process, i == 0 ? reader : writer, flags & CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations()) : (int64_t) LINUX_ESRCH;
+
             if (fd < 0)
             {
                 result = (uint64_t) fd;
                 break;
             }
+
             descriptors[i] = (int32_t) fd;
         }
+
         if (result == 0 && !safe_write_user(output, descriptors, sizeof(descriptors)))
         {
             result = LINUX_EFAULT;
         }
+
         if (result != 0)
         {
             for (size_t i = 0; i < 2; ++i)
@@ -203,11 +212,13 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
             }
         }
     }
+
     if (result != 0)
     {
         Vfs->Close(reader);
         Vfs->Close(writer);
     }
+
     return result;
 }
 
@@ -222,6 +233,7 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
     record_pipe_readiness_locked(pipe);
     uint32_t masks[2]         = {pipe->pendingReadiness[0], pipe->pendingReadiness[1]};
     pipe->pendingReadiness[0] = pipe->pendingReadiness[1] = 0;
+
     for (size_t i = 0; i < 2; ++i)
     {
         if (files[i] != nullptr && (masks[i] == 0 || !pipe->vfs->Retain(files[i])))
@@ -229,8 +241,10 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
             files[i] = nullptr;
         }
     }
+
     record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
+
     for (size_t i = 0; i < 2; ++i)
     {
         if (files[i] != nullptr)
@@ -239,6 +253,7 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
             VirtualFileSystem::Close(files[i]);
         }
     }
+
     events->Notify();
 }
 
@@ -310,7 +325,9 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     {
         return LINUX_EINVAL;
     }
+
     pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
+
     if (command == 1032)
     {
         spinlock_acquire_preempt(&pipe->lock);
@@ -319,22 +336,29 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
         spinlock_release_preempt(&pipe->lock);
         return capacity;
     }
+
     if (argument > PIPE_CAPACITY)
     {
         return (uint64_t) -1;
     }
+
     size_t capacity = PIPE_ATOMIC;
+
     while (capacity < argument)
     {
         capacity *= 2;
     }
+
     uint8_t* staged = static_cast<uint8_t*>(kmalloc(PIPE_CAPACITY * 2));
+
     if (staged == nullptr)
     {
         return LINUX_ENOMEM;
     }
+
     spinlock_acquire_preempt(&pipe->lock);
     uint64_t result = (uint64_t) -16;
+
     if (pipe->size <= capacity)
     {
         for (size_t i = 0; i < pipe->size; ++i)
@@ -342,15 +366,19 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
             staged[i]                 = pipe->data[(pipe->head + i) % pipe->capacity];
             staged[PIPE_CAPACITY + i] = pipe_packet(pipe, (pipe->head + i) % pipe->capacity);
         }
+
         memcpy(pipe->data, staged, pipe->size);
+
         for (size_t i = 0; i < pipe->size; ++i)
         {
             set_pipe_packet(pipe, i, staged[PIPE_CAPACITY + i]);
         }
+
         pipe->head     = 0;
         pipe->capacity = capacity;
         result         = capacity;
     }
+
     record_pipe_readiness_locked(pipe);
     spinlock_release_preempt(&pipe->lock);
     kfree(staged);
@@ -383,42 +411,54 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
     {
         return LINUX_EBADF;
     }
+
     size_t   requested;
     uint64_t result = vector_length(vectors, count, &requested);
+
     if (result != 0 || requested == 0)
     {
         return result;
     }
+
     pipe_state_t* pipe   = static_cast<pipe_state_t*>(file->privateData);
     uint8_t*      staged = static_cast<uint8_t*>(kmalloc(requested < PIPE_CAPACITY ? requested : PIPE_CAPACITY));
+
     if (staged == nullptr)
     {
         return LINUX_ENOMEM;
     }
+
     size_t transferred = 0;
+
     for (;;)
     {
         const uint64_t       sequence = pipe->events->Sequence();
         user_memory_access_t access;
+
         if (!begin_user_memory(&access))
         {
             result = LINUX_ESRCH;
             break;
         }
+
         spinlock_acquire_preempt(&pipe->lock);
         result                    = AGAIN;
         size_t bytes              = write ? pipe->capacity - pipe->size : pipe->size;
         bytes                     = bytes < requested - transferred ? bytes : requested - transferred;
         const bool   packetWrite  = write && (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & DIRECT);
         const size_t packetLength = requested - transferred < PIPE_ATOMIC ? requested - transferred : PIPE_ATOMIC;
+
         if (packetWrite)
         {
             bytes = pipe->capacity - pipe->size >= packetLength ? packetLength : 0;
         }
+
         size_t consumed = bytes;
+
         if (!write && bytes != 0)
         {
             const bool packetRead = (pipe_packet(pipe, pipe->head) & 1) != 0;
+
             if (packetRead)
             {
                 consumed = 0;
@@ -438,9 +478,11 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                         break;
                     }
                 }
+
                 consumed = bytes;
             }
         }
+
         if (write && pipe->reader == nullptr)
         {
             result = (uint64_t) -32;
@@ -458,6 +500,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                     staged[i] = pipe->data[(pipe->head + i) % pipe->capacity];
                 }
             }
+
             if (!copy_vector(&access, vectors, count, transferred, staged, bytes, write))
             {
                 result = LINUX_EFAULT;
@@ -472,6 +515,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                         pipe->data[index]  = staged[i];
                         set_pipe_packet(pipe, index, packetWrite ? 1 | (i + 1 == bytes ? 2 : 0) : 0);
                     }
+
                     pipe->size += bytes;
                 }
                 else
@@ -479,43 +523,53 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                     pipe->head = (pipe->head + consumed) % pipe->capacity;
                     pipe->size -= consumed;
                 }
+
                 transferred += bytes;
                 result = 0;
             }
         }
+
         record_pipe_readiness_locked(pipe);
         spinlock_release_preempt(&pipe->lock);
         end_user_memory(&access);
+
         if (result == 0)
         {
             NotifyPipe(pipe);
         }
+
         if (result == (uint64_t) -32 && pipe->signals != nullptr)
         {
             process_t* process = pipe->resources->processManager->GetCurrentProcess();
             task_t*    task    = pipe->resources->taskManager->GetCurrentTask();
+
             if (process != nullptr && task != nullptr)
             {
                 pipe->signals->Send((int32_t) process->id, (int32_t) task->id, 13);
             }
         }
+
         if (result != AGAIN && (result != 0 || !write || transferred == requested))
         {
             break;
         }
+
         if (result == AGAIN && (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK))
         {
             break;
         }
+
         if (result == AGAIN)
         {
             result = pipe->events->Wait(sequence);
+
             if (result != 0)
             {
                 break;
             }
         }
     }
+
     kfree(staged);
     return transferred != 0 || result == 0 ? transferred : result;
 }
@@ -526,37 +580,46 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
     {
         return LINUX_ENOSYS;
     }
+
     if ((flags & ~(1U | 2U)) != 0)
     {
         return (flags & 4U) ? LINUX_EOPNOTSUPP : LINUX_EINVAL;
     }
+
     char   name[250];
     size_t length = 0;
+
     if (!safe_read_user_string(pointer, name, sizeof(name), &length))
     {
         // Distinguish an overlong readable name from a fault.
         for (size_t i = 0; i < sizeof(name); ++i)
         {
             char byte;
+
             if (pointer > UINT64_MAX - i || !safe_read_user(pointer + i, &byte, 1))
             {
                 return LINUX_EFAULT;
             }
+
             if (byte == 0)
             {
                 return LINUX_EFAULT;
             }
         }
+
         return LINUX_EINVAL;
     }
+
     memory_file_t* memory = static_cast<memory_file_t*>(kzalloc(sizeof(memory_file_t)));
     file_t*        file   = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+
     if (memory == nullptr || file == nullptr)
     {
         kfree(memory);
         kfree(file);
         return LINUX_ENOMEM;
     }
+
     Vfs->InitializeAnonymousInode(&memory->inode, INODE_REGULAR, 0777);
     memory->manager       = Resources->virtualMemoryManager;
     memory->inode.backing = memory->manager->CreateBacking(0, true);
@@ -631,29 +694,37 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
     {
         memory_zero_range(memory, memory->inode.size, file->offset);
     }
+
     size_t copied = 0;
+
     while (copied < count)
     {
         const size_t address = file->offset + copied;
         const size_t page    = address / PAGE_SIZE;
+
         if (memory->pages[page] == nullptr)
         {
             memory->pages[page] = memory->manager->GetBackingPage(memory->inode.backing, page * PAGE_SIZE);
+
             if (memory->pages[page] == nullptr)
             {
                 break;
             }
         }
+
         const size_t bytes = count - copied < PAGE_SIZE - address % PAGE_SIZE ? count - copied : PAGE_SIZE - address % PAGE_SIZE;
         memcpy(static_cast<uint8_t*>(memory->pages[page]->pointer) + address % PAGE_SIZE, static_cast<const uint8_t*>(buffer) + copied, bytes);
         copied += bytes;
     }
+
     file->offset += copied;
+
     if (file->offset > memory->inode.size)
     {
         memory->inode.size = file->offset;
         __atomic_store_n(&memory->inode.backing->size, file->offset, __ATOMIC_RELEASE);
     }
+
     return copied != 0 ? (int64_t) copied : (int64_t) LINUX_ENOMEM;
 }
 
@@ -689,7 +760,9 @@ int64_t InterProcessCommunicationManager::MemoryTruncate(file_t* file, uint64_t 
     if (size < memory->inode.size)
     {
         for (size_t page = (size + PAGE_SIZE - 1) / PAGE_SIZE; page < MEMORY_PAGES; ++page)
+        {
             memory->pages[page] = nullptr;
+        }
     }
     memory->inode.size = size;
     return 0;

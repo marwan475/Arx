@@ -11,51 +11,63 @@ uint16_t arch_selftest_elf_machine(void)
 {
     return 183;
 }
+
 const char* arch_selftest_machine_name(void)
 {
     return "aarch64";
 }
+
 const virt_addr_t* arch_selftest_invalid_addresses(size_t* count)
 {
     *count = 0;
     return nullptr;
 }
+
 arch_selftest_page_permissions_t arch_selftest_page_permissions(phys_addr_t, uint64_t)
 {
     // Match the unavailable leaf-entry sentinel used by the original fixture.
     return {false, true, false};
 }
+
 void arch_selftest_user_frame(arch_syscall_frame_t*, uint64_t, uint64_t, void*)
 {
 }
+
 void arch_selftest_signal_restorer(arch_syscall_frame_t*)
 {
 }
+
 const uint8_t* arch_selftest_syscall_instruction(size_t* size)
 {
     *size = 0;
     return nullptr;
 }
+
 bool arch_selftest_syscall_probe(const arch_syscall_frame_t*)
 {
     return false;
 }
+
 bool arch_selftest_load_child(process_t*, uint64_t, uint32_t)
 {
     return false;
 }
+
 bool arch_selftest_load_resource_child(process_t*, uint64_t, uint32_t)
 {
     return false;
 }
+
 bool arch_selftest_signal_return(process_t*, ResourceLayerCaps*, SignalManager*, const signal_action_t&, uint64_t, uint64_t)
 {
     return false;
 }
+
 bool arch_selftest_timer_signal(process_t*, task_t*, SignalManager*, uint64_t, uint64_t, uint64_t)
 {
     return false;
 }
+
 bool arch_selftest_event_signal(process_t*, task_t*, SignalManager*, arch_syscall_frame_t&, const signal_action_t&, uint64_t, uint64_t)
 {
     return false;

@@ -55,20 +55,24 @@ struct SocketFileSystemFixture
     static int64_t Mknod(inode_t* directory, const char* name, const inode_creation_attributes_t* attributes, uint64_t)
     {
         auto* fixture = static_cast<SocketFileSystemFixture*>(directory->privateData);
+
         if (Lookup(directory, name) != nullptr)
         {
             return -17;
         }
+
         if ((attributes->mode & 0170000) != 0140000 || strlen(name) >= 108)
         {
             return -22;
         }
+
         for (auto& node : fixture->nodes)
         {
             if (node.inode.inodeNumber != 0)
             {
                 continue;
             }
+
             node.inode.inodeNumber   = ++fixture->sequence;
             node.inode.type          = INODE_SOCKET;
             node.inode.mode          = attributes->mode & 07777;
@@ -81,6 +85,7 @@ struct SocketFileSystemFixture
             node.present = true;
             return 0;
         }
+
         return -28;
     }
 

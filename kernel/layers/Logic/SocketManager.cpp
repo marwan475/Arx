@@ -409,17 +409,21 @@ uint64_t SocketManager::AutobindLocked(socket_endpoint_t* endpoint)
     {
         return LINUX_EINVAL;
     }
+
     static const char digits[] = "0123456789abcdef";
+
     for (size_t attempt = 0; attempt <= MAX_ENDPOINTS; ++attempt)
     {
         socket_address_t   address = {};
         address.family             = 1;
         uint32_t value             = ++AutobindSequence;
+
         for (size_t i = 0; i < 5; ++i)
         {
             address.path[5 - i] = digits[value & 15];
             value >>= 4;
         }
+
         if (FindAddress(address, 8) == nullptr)
         {
             endpoint->address       = address;
@@ -428,6 +432,7 @@ uint64_t SocketManager::AutobindLocked(socket_endpoint_t* endpoint)
             return 0;
         }
     }
+
     return (uint64_t) -98;
 }
 
@@ -467,39 +472,49 @@ uint64_t SocketManager::ParseControl(const socket_message_t* header, socket_anci
     uint64_t       result = 0;
     bool           rights = false;
     const uint64_t length = header != nullptr ? header->controlLength : 0;
+
     if (length > BUFFER_LIMIT || (length != 0 && length < sizeof(socket_control_t)))
     {
         result = LINUX_EINVAL;
     }
+
     for (uint64_t offset = 0; result == 0 && offset < length;)
     {
         socket_control_t item = {};
+
         if (length - offset < sizeof(item))
         {
             break; // An incomplete final alignment pad is not another header.
         }
+
         if (header->control > UINT64_MAX - offset || !safe_read_user(header->control + offset, &item, sizeof(item)))
         {
             result = LINUX_EFAULT;
             break;
         }
+
         if (item.length < sizeof(item) || item.length > length - offset)
         {
             result = LINUX_EINVAL;
             break;
         }
+
         const uint64_t payload = item.length - sizeof(item);
+
         if (item.level != SOL_SOCKET || (item.type != SCM_RIGHTS && item.type != SCM_CREDENTIALS))
         {
             result = LINUX_EOPNOTSUPP;
             break;
         }
+
         if (header->control + offset > UINT64_MAX - item.length)
         {
             result = LINUX_EFAULT;
             break;
         }
+
         const uint64_t data = header->control + offset + sizeof(item);
+
         if (item.type == SCM_RIGHTS)
         {
             if (rights || payload % sizeof(int32_t) != 0 || payload / sizeof(int32_t) > 253)
@@ -507,39 +522,49 @@ uint64_t SocketManager::ParseControl(const socket_message_t* header, socket_anci
                 result = LINUX_EINVAL;
                 break;
             }
+
             rights = true;
             int32_t descriptors[253];
+
             if (payload != 0 && !safe_read_user(data, descriptors, payload))
             {
                 result = LINUX_EFAULT;
                 break;
             }
+
             {
                 FileDescriptorGuard guard(process);
+
                 for (size_t i = 0; i < payload / sizeof(int32_t); ++i)
                 {
                     file_descriptor_t* descriptor = descriptors[i] >= 0 ? Resources->processManager->GetFileDescriptor(process, descriptors[i]) : nullptr;
+
                     if (descriptor == nullptr)
                     {
                         result = LINUX_EBADF;
                         break;
                     }
+
                     if (descriptor->operations != dispatcher_vfs_file_operations())
                     {
                         result = LINUX_EOPNOTSUPP;
                         break;
                     }
+
                     file_t* retained = static_cast<file_t*>(descriptor->file);
+
                     if (retained->operations == &Operations && static_cast<socket_endpoint_t*>(retained->privateData)->manager != this)
                     {
                         result = LINUX_EOPNOTSUPP;
                         break;
                     }
+
                     if (!Vfs->Retain(retained))
                     {
                         result = LINUX_EBADF;
                         break;
                     }
+
                     control->files[control->count++] = retained;
                 }
             }
@@ -547,30 +572,37 @@ uint64_t SocketManager::ParseControl(const socket_message_t* header, socket_anci
         else
         {
             socket_credentials_t supplied = {};
+
             if (control->explicitCredentials || payload != sizeof(supplied))
             {
                 result = LINUX_EINVAL;
                 break;
             }
+
             if (!safe_read_user(data, &supplied, sizeof(supplied)))
             {
                 result = LINUX_EFAULT;
                 break;
             }
+
             if (supplied.pid != control->credentials.pid || (supplied.uid != identities.user.real && supplied.uid != identities.user.effective && supplied.uid != identities.user.saved)
                 || (supplied.gid != identities.group.real && supplied.gid != identities.group.effective && supplied.gid != identities.group.saved))
             {
                 result = (uint64_t) -1;
                 break;
             }
+
             control->credentials         = supplied;
             control->explicitCredentials = true;
         }
+
         const uint64_t advance = (item.length + 7) & ~7ULL;
+
         if (advance > length - offset)
         {
             break;
         }
+
         offset += advance;
     }
 
@@ -658,25 +690,30 @@ bool SocketManager::DropReference(file_t* file, bool* last)
     size_t             incoming[MAX_ENDPOINTS]  = {};
     bool               reachable[MAX_ENDPOINTS] = {};
     size_t             count                    = 0;
+
     for (auto* node = manager->Endpoints; node != nullptr; node = node->next)
     {
         node->collectionIndex = count;
         nodes[count++]        = node;
     }
+
     for (size_t i = 0; i < count; ++i)
     {
         for (auto* pending = nodes[i]->pendingHead; pending != nullptr; pending = pending->pendingNext)
         {
             ++incoming[pending->collectionIndex];
         }
+
         for (auto* packet = nodes[i]->head; packet != nullptr; packet = packet->next)
         {
             for (size_t k = 0; packet->control != nullptr && k < packet->control->count; ++k)
             {
                 file_t* retained = packet->control->files[k];
+
                 if (retained->operations == &Operations)
                 {
                     auto* target = static_cast<socket_endpoint_t*>(retained->privateData);
+
                     if (target->manager == manager)
                     {
                         ++incoming[target->collectionIndex];
@@ -685,41 +722,51 @@ bool SocketManager::DropReference(file_t* file, bool* last)
             }
         }
     }
+
     size_t work[MAX_ENDPOINTS];
     size_t queued = 0;
+
     for (size_t i = 0; i < count; ++i)
     {
         spinlock_acquire_preempt(&nodes[i]->file->refLock);
         reachable[i] = nodes[i]->file->refCount > incoming[i];
         spinlock_release_preempt(&nodes[i]->file->refLock);
+
         if (reachable[i])
         {
             work[queued++] = i;
         }
     }
+
     for (size_t cursor = 0; cursor < queued; ++cursor)
     {
         auto* node = nodes[work[cursor]];
+
         for (auto* pending = node->pendingHead; pending != nullptr; pending = pending->pendingNext)
         {
             const size_t index = pending->collectionIndex;
+
             if (!reachable[index])
             {
                 reachable[index] = true;
                 work[queued++]   = index;
             }
         }
+
         for (auto* packet = node->head; packet != nullptr; packet = packet->next)
         {
             for (size_t k = 0; packet->control != nullptr && k < packet->control->count; ++k)
             {
                 file_t* retained = packet->control->files[k];
+
                 if (retained->operations != &Operations)
                 {
                     continue;
                 }
+
                 auto*        target = static_cast<socket_endpoint_t*>(retained->privateData);
                 const size_t index  = target->collectionIndex;
+
                 if (target->manager == manager && !reachable[index])
                 {
                     reachable[index] = true;
@@ -735,18 +782,23 @@ bool SocketManager::DropReference(file_t* file, bool* last)
         {
             continue;
         }
+
         auto* node = nodes[i];
+
         for (auto* packet = node->head; packet != nullptr; packet = packet->next)
         {
             manager->ChangeControlLocked(packet->control, false);
         }
+
         if (node->tail != nullptr)
         {
             node->tail->next = discarded;
             discarded        = node->head;
         }
+
         node->head   = node->tail = nullptr;
         node->queued = node->packetCount = 0;
+
         while (node->pendingHead != nullptr)
         {
             auto* pending     = node->pendingHead;
@@ -755,18 +807,22 @@ bool SocketManager::DropReference(file_t* file, bool* last)
             pending->pendingNext = abandoned;
             abandoned            = pending;
         }
+
         node->pendingTail  = nullptr;
         node->pendingCount = 0;
     }
+
     manager->RecordReadinessLocked();
     spinlock_release_preempt(&manager->Lock);
     free_packets(discarded);
+
     while (abandoned != nullptr)
     {
         auto* pending = abandoned;
         abandoned     = pending->pendingNext;
         VirtualFileSystem::Close(pending->file);
     }
+
     return true;
 }
 
@@ -961,6 +1017,7 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
         else
         {
             inode_t* node = nullptr;
+
             if (address.path[0] != 0)
             {
                 // Filesystem callbacks and notifications may poll sockets.
@@ -972,6 +1029,7 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
                 spinlock_acquire_preempt(&Lock);
                 endpoint->binding = false;
             }
+
             if (result == 0)
             {
                 endpoint->node          = node;
@@ -1779,6 +1837,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                     }
 
                     const bool hasControl = packet->control != nullptr && (packet->control->count != 0 || endpoint->passCredentials);
+
                     if (copied && message != 0)
                     {
                         const uint32_t reportedName  = header->name != 0 ? nameLength : 0;
@@ -1787,9 +1846,11 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                         const uint64_t capacity      = header->control != 0 ? header->controlLength : 0;
                         delivery->installed          = 0;
                         memset(delivery->bytes, 0, sizeof(delivery->bytes));
+
                         if (packet->control != nullptr && endpoint->passCredentials)
                         {
                             const size_t availableControl = capacity < 32 ? capacity : 32;
+
                             if (availableControl >= sizeof(socket_control_t))
                             {
                                 const size_t           payload = availableControl - sizeof(socket_control_t) < sizeof(socket_credentials_t) ? availableControl - sizeof(socket_control_t) : sizeof(socket_credentials_t);
@@ -1798,21 +1859,25 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                                 memcpy(delivery->bytes + sizeof(item), &packet->control->credentials, payload);
                                 controlLength = availableControl;
                             }
+
                             if (availableControl < sizeof(socket_control_t) + sizeof(socket_credentials_t))
                             {
                                 outputFlags |= MSG_CTRUNC;
                             }
                         }
+
                         if (packet->control != nullptr && packet->control->count != 0)
                         {
                             const uint64_t remaining = capacity > controlLength ? capacity - controlLength : 0;
                             size_t         limit     = remaining >= sizeof(socket_control_t) ? (remaining - sizeof(socket_control_t)) / sizeof(int32_t) : 0;
                             limit                    = limit < packet->control->count ? limit : packet->control->count;
                             process_t* process       = Resources->processManager->GetCurrentProcess();
+
                             for (size_t i = 0; i < limit; ++i)
                             {
                                 file_t*       received   = packet->control->files[i];
                                 const int64_t descriptor = Resources->processManager->AddFileDescriptor(process, received, flags & MSG_CMSG_CLOEXEC ? FD_FLAG_CLOEXEC : 0, dispatcher_vfs_file_operations());
+
                                 if (descriptor < 0)
                                 {
                                     if (descriptor != (int64_t) LINUX_EMFILE)
@@ -1820,16 +1885,20 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                                         copied = false;
                                         result = (uint64_t) descriptor;
                                     }
+
                                     break;
                                 }
+
                                 Vfs->Retain(received); // Allocation owns a reference, separate from the queued one.
                                 delivery->descriptors[delivery->installed] = (int32_t) descriptor;
                                 delivery->rollback[delivery->installed++]  = received;
                             }
+
                             if (delivery->installed < packet->control->count)
                             {
                                 outputFlags |= MSG_CTRUNC;
                             }
+
                             if (delivery->installed != 0)
                             {
                                 const uint64_t         size = sizeof(socket_control_t) + delivery->installed * sizeof(int32_t);
@@ -1839,11 +1908,13 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                                 controlLength += remaining < ((size + 7) & ~7ULL) ? remaining : ((size + 7) & ~7ULL);
                             }
                         }
+
                         copied = copied && (header->name == 0 || copiedName == 0 || safe_write_user_locked(&access, header->name, &packet->source, copiedName))
                                  && safe_write_user_locked(&access, message + offsetof(socket_message_t, nameLength), &reportedName, sizeof(reportedName))
                                  && (controlLength == 0 || safe_write_user_locked(&access, header->control, delivery->bytes, controlLength))
                                  && safe_write_user_locked(&access, message + offsetof(socket_message_t, controlLength), &controlLength, sizeof(controlLength))
                                  && safe_write_user_locked(&access, message + offsetof(socket_message_t, flags), &outputFlags, sizeof(outputFlags));
+
                         if (!copied)
                         {
                             for (size_t i = 0; i < delivery->installed; ++i)

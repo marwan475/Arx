@@ -22,20 +22,25 @@ static uint64_t create_readiness_source(process_t* process, file_t** output, uns
         {
             return __atomic_load_n(&static_cast<readiness_source_t*>(file->privateData)->mask, __ATOMIC_ACQUIRE);
         };
+
         result.Release = [](file_t* file)
         {
             delete static_cast<readiness_source_t*>(file->privateData);
         };
+
         return result;
     }();
+
     auto* state = new readiness_source_t{};
     auto* file  = static_cast<file_t*>(kzalloc(sizeof(file_t)));
+
     if (state == nullptr || file == nullptr)
     {
         delete state;
         kfree(file);
         return LINUX_ENOMEM;
     }
+
     vfs->InitializeAnonymousInode(&state->inode, INODE_CHAR_DEVICE, 0600);
     file->inode                = &state->inode;
     file->privateData          = state;
@@ -47,12 +52,15 @@ static uint64_t create_readiness_source(process_t* process, file_t** output, uns
     {
         ++*static_cast<unsigned*>(context);
     };
+
     const int64_t descriptor = resources->processManager->AddFileDescriptor(process, file, 0, dispatcher_vfs_file_operations());
+
     if (descriptor < 0)
     {
         vfs->Close(file);
         return (uint64_t) descriptor;
     }
+
     *output = file;
     return descriptor;
 }
@@ -90,28 +98,35 @@ static bool with_readiness_action(process_t* process, readiness_action_t* action
     const bool added    = retained && resources->processManager->AddTask(process, peer);
     const bool ready    = added && action->scheduler->EnqueueProcess(arch_cpu_id(), process->id);
     bool       ok       = expect(ready, "readiness interleaving peer fixture");
+
     if (ready)
     {
         ok &= wait();
         const uint64_t sequence = __atomic_load_n(&action->sequence, __ATOMIC_ACQUIRE);
+
         if (!__atomic_load_n(&action->finished, __ATOMIC_ACQUIRE))
         {
             ok &= expect(action->scheduler->WaitForEvent(&action->sequence, sequence, coordination_deadline()) == 0, "join readiness producer");
         }
+
         ok &= expect(__atomic_load_n(&action->finished, __ATOMIC_ACQUIRE), "readiness producer completed before waiter returned");
     }
+
     if (added)
     {
         detach_fixture_peer(resources, process, peer);
     }
+
     if (peer != nullptr)
     {
         if (retained)
         {
             resources->taskManager->ReleaseDispatchClaim(peer);
         }
+
         ok &= cleanup(resources->taskManager->FreeTask(peer), "readiness peer cleanup");
     }
+
     return ok;
 }
 
@@ -121,24 +136,29 @@ static bool test_readiness_reuse(process_t* process, uint64_t base)
     auto*      vfs        = dispatcher->GetLogicLayerCaps()->virtualFileSystem;
     bool       ok         = true;
     const bool modes[]    = {false, true};
+
     for (bool select : modes)
     {
         unsigned       closed      = 0;
         file_t*        original    = nullptr;
         const uint64_t watched     = create_readiness_source(process, &original, &closed);
         const uint64_t replacement = syscall_call(SYSCALL_eventfd2, 1, 04000);
+
         if ((int64_t) watched < 0 || watched >= 64 || (int64_t) replacement < 0)
         {
             if ((int64_t) watched >= 0)
             {
                 syscall_call(SYSCALL_close, watched);
             }
+
             if ((int64_t) replacement >= 0)
             {
                 syscall_call(SYSCALL_close, replacement);
             }
+
             return false;
         }
+
         struct context_t
         {
             VirtualFileSystem* vfs;
@@ -147,8 +167,10 @@ static bool test_readiness_reuse(process_t* process, uint64_t base)
             uint64_t           replacement;
             uint64_t           result;
         } context = {vfs, original, watched, replacement, UINT64_MAX};
+
         // The peer owns a producer reference, independent of the descriptor.
         vfs->Retain(original);
+
         readiness_action_t action = {[](void* argument)
         {
             auto* context   = static_cast<context_t*>(argument);
@@ -158,56 +180,69 @@ static bool test_readiness_reuse(process_t* process, uint64_t base)
             context->vfs->NotifyReadiness(context->original, EVENT_POLL_PRI);
             context->vfs->Close(context->original);
         }, &context, nullptr, false};
+
         event_pollfd_t poll       = {(int32_t) watched, EVENT_POLL_PRI, 0};
         uint64_t       exceptions = 1ULL << watched;
         const int64_t  timeout[2] = {1, 0};
         fixture_store(process, base + 128, &poll, sizeof(poll));
         fixture_store(process, base + 256, &exceptions, sizeof(exceptions));
         fixture_store(process, base + 512, timeout, sizeof(timeout));
+
         ok &= with_readiness_action(process, &action, [&]()
         {
             const uint64_t result = select ? syscall_call(SYSCALL_select, watched + 1, 0, 0, base + 256, base + 512)
                                            : syscall_call(SYSCALL_poll, base + 128, 1, 1000);
             return expect(result == 1, "blocked poll/select retains original file across close and descriptor reuse");
         });
+
         fixture_load(process, base + 128, &poll, sizeof(poll));
         fixture_load(process, base + 256, &exceptions, sizeof(exceptions));
         ok &= expect(context.result == watched && closed == 1 && (select ? exceptions == (1ULL << watched) : poll.revents == EVENT_POLL_PRI),
             "reuse neither retargets readiness nor leaks the original provider");
+
         syscall_call(SYSCALL_close, watched);
         syscall_call(SYSCALL_close, replacement);
     }
+
     return ok;
 }
 
 static bool test_readiness_producers(process_t* process, uint64_t base)
 {
     bool ok = true;
+
     for (uint32_t kind = 0; kind < 3; ++kind)
     {
         int32_t        pair[2] = {-1, -1};
         const uint64_t status  = kind == 0 ? syscall_call(SYSCALL_pipe2, base, 04000) : syscall_call(SYSCALL_socketpair, 1, (kind == 1 ? 1 : 2) | 04000, 0, base);
+
         if (!expect(status == 0, "concurrent pipe/socket source fixture"))
         {
             return false;
         }
+
         fixture_load(process, base, pair, sizeof(pair));
         const uint64_t epfd = syscall_call(SYSCALL_epoll_create1, 0);
         const uint64_t ack  = syscall_call(SYSCALL_eventfd2, 0, 1);
+
         if ((int64_t) epfd < 0 || (int64_t) ack < 0)
         {
             syscall_call(SYSCALL_close, pair[0]);
             syscall_call(SYSCALL_close, pair[1]);
+
             if ((int64_t) epfd >= 0)
             {
                 syscall_call(SYSCALL_close, epfd);
             }
+
             if ((int64_t) ack >= 0)
             {
                 syscall_call(SYSCALL_close, ack);
             }
+
             return false;
         }
+
         event_epoll_event_t event = {EVENT_POLL_IN | 0xc0000000U, kind};
         const uint64_t      one   = 1;
         fixture_store(process, base + 128, &one, sizeof(one));
@@ -225,6 +260,7 @@ static bool test_readiness_producers(process_t* process, uint64_t base)
         readiness_action_t action = {[](void* argument)
         {
             auto* context = static_cast<context_t*>(argument);
+
             for (size_t i = 0; i < 32 && !__atomic_load_n(&context->cancel, __ATOMIC_ACQUIRE); ++i)
             {
                 if (syscall_call(SYSCALL_write, context->writer, context->base + 128, 1) != 1 || syscall_call(SYSCALL_read, context->ack, context->base + 1024, 8) != 8)
@@ -237,6 +273,7 @@ static bool test_readiness_producers(process_t* process, uint64_t base)
         ok &= with_readiness_action(process, &action, [&]()
         {
             bool passed = true;
+
             for (size_t i = 0; i < 32; ++i)
             {
                 if (syscall_call(SYSCALL_epoll_wait, epfd, base + 1536, 1, 1000) != 1 || syscall_call(SYSCALL_read, pair[0], base + 256, 1) != 1 ||
@@ -245,12 +282,15 @@ static bool test_readiness_producers(process_t* process, uint64_t base)
                     __atomic_store_n(&context.cancel, true, __ATOMIC_RELEASE);
                     passed = false;
                 }
+
                 syscall_call(SYSCALL_write, ack, base + 512, 8);
+
                 if (!passed)
                 {
                     break;
                 }
             }
+
             return expect(passed, "concurrent drain/refill and one-shot rearm never lose pipe/socket wakeups");
         });
         ok &= expect(context.passed, "concurrent producer completed every acknowledged write");
@@ -259,6 +299,7 @@ static bool test_readiness_producers(process_t* process, uint64_t base)
         syscall_call(SYSCALL_close, ack);
         syscall_call(SYSCALL_close, epfd);
     }
+
     return ok;
 }
 
@@ -272,22 +313,27 @@ static bool test_readiness_interruption(process_t* process, uint64_t base)
     const uint64_t        oldProcessPending = process->signalPending;
     signal_action_t       previous          = {};
     const signal_action_t handler           = {base + 1280, 0x04000000, base + 1536, 0};
+
     if (!expect(signals->Action(10, &handler, &previous) == 0, "blocking interruption signal action"))
     {
         return false;
     }
+
     __atomic_store_n(&task->signalMask, oldMask & ~(1ULL << 9), __ATOMIC_RELEASE);
     bool ok = true;
+
     for (uint32_t kind = 0; kind < 3; ++kind)
     {
         __atomic_store_n(&task->signalPending, 0ULL, __ATOMIC_RELEASE);
         __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
         const uint64_t epfd = syscall_call(SYSCALL_epoll_create1, 0);
+
         if ((int64_t) epfd < 0)
         {
             ok = false;
             break;
         }
+
         struct context_t
         {
             SignalManager* signals;
@@ -295,13 +341,16 @@ static bool test_readiness_interruption(process_t* process, uint64_t base)
             int32_t        tid;
             uint64_t       result;
         } context = {signals, (int32_t) process->id, -1, UINT64_MAX};
+
         readiness_action_t action = {[](void* argument)
         {
             auto* context   = static_cast<context_t*>(argument);
             context->result = context->signals->Send(context->pid, context->tid, 10);
         }, &context, nullptr, false, 0};
+
         const int64_t duration[2] = {1, 0};
         fixture_store(process, base + 512, duration, sizeof(duration));
+
         ok &= with_readiness_action(process, &action, [&]()
         {
             const uint64_t result = kind == 0 ? syscall_call(SYSCALL_poll, 0, 0, 1000)
@@ -311,13 +360,17 @@ static bool test_readiness_interruption(process_t* process, uint64_t base)
             __atomic_store_n(&process->signalPending, 0ULL, __ATOMIC_RELEASE);
             return expect(result == (uint64_t) -4, "real queued signal interrupts a parked poll/select/epoll waiter");
         });
+
         ok &= expect(context.result == 0, "signal producer targets the waiting process");
+
         syscall_call(SYSCALL_close, epfd);
     }
+
     signals->Action(10, &previous, nullptr);
     __atomic_store_n(&task->signalMask, oldMask, __ATOMIC_RELEASE);
     __atomic_store_n(&task->signalPending, oldPending, __ATOMIC_RELEASE);
     __atomic_store_n(&process->signalPending, oldProcessPending, __ATOMIC_RELEASE);
+
     return ok;
 }
 
@@ -331,6 +384,7 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
     const uint64_t instances[] = {syscall_call(SYSCALL_epoll_create1, 0), syscall_call(SYSCALL_epoll_create1, 0), syscall_call(SYSCALL_epoll_create1, 0)};
     bool ok = expect((int64_t) source >= 0 && (int64_t) instances[0] >= 0 && (int64_t) instances[1] >= 0 && (int64_t) instances[2] >= 0,
         "exclusive epoll source and instance allocation");
+
     if (ok)
     {
         inode_t unsupportedInode = {};
@@ -340,6 +394,7 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
         ok &= expect(vfs->Poll(&unsupportedFile) == EVENT_POLL_ERR, "future device without a readiness provider is not reported synchronously ready");
         unsupportedInode.type = INODE_REGULAR;
         ok &= expect((vfs->Poll(&unsupportedFile) & (EVENT_POLL_IN | EVENT_POLL_OUT)) == (EVENT_POLL_IN | EVENT_POLL_OUT), "regular file readiness defaults are preserved");
+
         for (size_t i = 0; i < 3; ++i)
         {
             event_epoll_event_t event = {EVENT_POLL_IN | (i != 2 ? 0x10000000U : 0), i};
@@ -347,26 +402,32 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
             ok &= expect(syscall_call(SYSCALL_epoll_ctl, instances[i], 1, source, base + 128) == 0, "exclusive and nonexclusive registrations coexist with legacy close observer");
             ok &= expect(syscall_call(SYSCALL_epoll_wait, instances[i], base + 256, 1, 0) == 0, "empty source clears initial registration readiness");
         }
+
         bool selected[2] = {};
+
         for (size_t iteration = 0; iteration < 4; ++iteration)
         {
             __atomic_store_n(&static_cast<readiness_source_t*>(file->privateData)->mask, EVENT_POLL_IN, __ATOMIC_RELEASE);
             vfs->NotifyReadiness(file, EVENT_POLL_IN);
             uint64_t exclusiveReady = 0;
+
             for (size_t i = 0; i < 2; ++i)
             {
                 const uint64_t result = syscall_call(SYSCALL_epoll_wait, instances[i], base + 256, 1, 0);
                 selected[i] |= result == 1;
                 exclusiveReady += result;
             }
+
             ok &= expect(exclusiveReady == 1 && syscall_call(SYSCALL_epoll_wait, instances[2], base + 256, 1, 0) == 1,
                 "producer selects one exclusive instance and every nonexclusive instance");
             __atomic_store_n(&static_cast<readiness_source_t*>(file->privateData)->mask, 0U, __ATOMIC_RELEASE);
+
             for (uint64_t instance : instances)
             {
                 ok &= expect(syscall_call(SYSCALL_epoll_wait, instance, base + 256, 1, 0) == 0, "drained exclusive source is not ready");
             }
         }
+
         ok &= expect(selected[0] && selected[1], "exclusive selection does not permanently starve either instance");
         event_epoll_event_t event = {EVENT_POLL_IN, 0};
         fixture_store(process, base + 128, &event, sizeof(event));
@@ -384,6 +445,7 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
             "exclusive edge registration is supported and removable");
         syscall_call(SYSCALL_close, source);
         ok &= expect(closed == 1, "source final close invokes its original observer exactly once");
+
         for (uint64_t instance : instances)
         {
             ok &= expect(syscall_call(SYSCALL_epoll_wait, instance, base + 256, 1, 0) == 0, "source final close detaches every remaining weak watch");
@@ -393,6 +455,7 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
     {
         syscall_call(SYSCALL_close, source);
     }
+
     for (uint64_t instance : instances)
     {
         if ((int64_t) instance >= 0)
@@ -400,6 +463,7 @@ static bool test_epoll_exclusive(process_t* process, uint64_t base)
             syscall_call(SYSCALL_close, instance);
         }
     }
+
     return ok;
 }
 
@@ -1815,10 +1879,12 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
     auto* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
     auto* resources  = dispatcher->GetResourceLayerCaps();
     auto* backend    = new SocketFileSystemFixture();
+
     if (backend == nullptr)
     {
         return false;
     }
+
     bool ok = true;
     {
         VirtualFileSystem vfs(resources);
@@ -1833,6 +1899,7 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
         const char     root[]    = "/", entry[] = "/entry";
         fixture_store(process, base + 128, root, sizeof(root));
         fixture_store(process, base + 256, entry, sizeof(entry));
+
         if ((int64_t) normal >= 0 && (int64_t) exclusive >= 0 && inode != nullptr)
         {
             const uint32_t mask           = 1 | 0x200 | 0x40 | 0x80;
@@ -1840,6 +1907,7 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
             const uint64_t directWatch    = events.AddWatch(exclusive, base + 256, 1);
             ok &= expect((int64_t) events.AddWatch(normal, base + 128, mask) > 0 && (int64_t) directoryWatch > 0 && (int64_t) directWatch > 0,
                 "IN_EXCL_UNLINK is stored on a real directory watch");
+
             file_t original = {}, alias = {}, replacement = {};
             original.inode  = alias.inode = inode;
             ok &= expect(vfs.ResolvePath({}, "/entry", &original.path) && vfs.Link({}, "/entry", {}, "/alias", false) == 0 && vfs.ResolvePath({}, "/alias", &alias.path),
@@ -1848,12 +1916,15 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
             ok &= expect(vfs.Unlink({}, "/entry", false) == 0 && inode->linkCount == 1, "unlink only one directory entry of a live inode");
             ok &= expect(syscall_call(SYSCALL_read, normal, base + 1024, 512) == 32 && syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 32,
                 "IN_EXCL_UNLINK retains the deletion event itself");
+
             vfs.NotifyFile(&original, 1);
             ok &= expect(syscall_call(SYSCALL_read, normal, base + 1024, 512) == 32 && syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 16,
                 "post-unlink child event is suppressed only for the directory flag, not a direct inode watch");
+
             uint32_t record[4] = {};
             fixture_load(process, base + 1536, record, sizeof(record));
             ok &= expect(record[0] == directWatch && record[1] == 1, "direct inode watch survives child-entry unlink");
+
             vfs.NotifyFile(&alias, 1);
             ok &= expect(syscall_call(SYSCALL_read, normal, base + 1024, 512) == 32 && syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 48,
                 "still-linked alias is not excluded by the other entry's unlink");
@@ -1870,9 +1941,11 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
             vfs.NotifyFile(&alias, 1);
             ok &= expect(syscall_call(SYSCALL_read, normal, base + 1024, 512) == 32 && syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 48,
                 "open description follows renamed entry rather than appearing unlinked");
+
             char name[16] = {};
             fixture_load(process, base + 1536 + 16, name, sizeof(name));
             ok &= expect(memcmp(name, "renamed", 8) == 0, "post-rename file events report the current entry name");
+
             ok &= expect(vfs.Rename({}, "/renamed", {}, "/again") == 0 && syscall_call(SYSCALL_read, normal, base + 1024, 512) == 64 &&
                              syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 64, "successive renames retain open-entry identity");
             vfs.NotifyFile(&alias, 1);
@@ -1880,6 +1953,7 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
                 "open description follows multiple rename records");
             fixture_load(process, base + 1536 + 16, name, sizeof(name));
             ok &= expect(memcmp(name, "again", 6) == 0, "latest rename supplies the child event name");
+
             ok &= expect(vfs.Unlink({}, "/again", false) == 0 && syscall_call(SYSCALL_read, normal, base + 1024, 512) == 32 &&
                              syscall_call(SYSCALL_read, exclusive, base + 1536, 512) == 32, "unlink the current renamed alias");
             vfs.NotifyFile(&alias, 1);
@@ -1890,24 +1964,29 @@ static bool test_inotify_unlinked(process_t* process, uint64_t base)
         {
             ok &= expect(false, "unlink-filter notification descriptor allocation");
         }
+
         if ((int64_t) normal >= 0)
         {
             syscall_call(SYSCALL_close, normal);
         }
+
         if ((int64_t) exclusive >= 0)
         {
             syscall_call(SYSCALL_close, exclusive);
         }
+
         if (rebound != nullptr)
         {
             vfs.Unlink({}, "/entry", false);
             vfs.ReleaseSocketNode(rebound);
         }
+
         if (inode != nullptr)
         {
             vfs.ReleaseSocketNode(inode);
         }
     }
+
     delete backend;
     return ok;
 }
@@ -2152,12 +2231,14 @@ static bool test_signalfd_framework(process_t* process, uint64_t base, uint64_t 
     ok &= expect(syscall_call(SYSCALL_tgkill, process->id, tid, 34) == 0 && syscall_call(SYSCALL_tgkill, process->id, tid, 34) == 0, "signalfd queues repeated thread RT signals");
     ok &= expect(syscall_call(SYSCALL_read, fd, CANONICAL_KERNEL_BASE, 128) == LINUX_EFAULT, "RT signalfd fault retains queued records");
     const uint32_t expectedSignals[] = {34, 34, 32, 32, 64};
+
     for (uint32_t expectedSignal : expectedSignals)
     {
         ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "RT signalfd returns one complete queued record");
         fixture_load(process, base + 512, info, sizeof(info));
         ok &= expect(info[0] == expectedSignal && static_cast<int32_t>(info[2]) == (expectedSignal == 34 ? -6 : 0) && info[3] == process->id, "RT signalfd target precedence, number ordering and sender metadata");
     }
+
     uint8_t        queuedInfo[128] = {};
     const int32_t  queueCode       = -1;
     const int32_t  queuePid        = process->id;
@@ -2166,12 +2247,14 @@ static bool test_signalfd_framework(process_t* process, uint64_t base, uint64_t 
     memcpy(queuedInfo + 16, &queuePid, 4);
     memcpy(queuedInfo + 20, &queueUid, 4);
     const uint64_t payloads[] = {0x1122334455667788ULL, 0x8877665544332211ULL};
+
     for (uint64_t payload : payloads)
     {
         memcpy(queuedInfo + 24, &payload, 8);
         fixture_store(process, base + 2048, queuedInfo, sizeof(queuedInfo));
         ok &= expect(syscall_call(SYSCALL_rt_tgsigqueueinfo, process->id, tid, 34, base + 2048) == 0, "queue thread signal with full-width payload");
     }
+
     for (uint64_t payload : payloads)
     {
         ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "consume queued payload record");
@@ -2181,22 +2264,30 @@ static bool test_signalfd_framework(process_t* process, uint64_t base, uint64_t 
         fixture_load(process, base + 512 + 44, &integer, 4);
         ok &= expect(actual == payload && integer == static_cast<int32_t>(payload), "signalfd preserves pointer and integer payload in FIFO order");
     }
+
     ok &= expect(syscall_call(SYSCALL_rt_sigqueueinfo, process->id, 34, CANONICAL_KERNEL_BASE) == LINUX_EFAULT, "queued signal validates complete user siginfo");
     ok &= expect(syscall_call(SYSCALL_fcntl, fd, 4, 04000) == 0 && syscall_call(SYSCALL_read, fd, base + 512, 128) == static_cast<uint64_t>(-11), "RT signalfd drains repeated records exactly once");
+
     for (size_t index = 0; index < signal_queue_t::CAPACITY; ++index)
     {
         ok &= expect(syscall_call(SYSCALL_kill, process->id, 32) == 0, "RT send fills bounded queue");
     }
+
     ok &= expect(syscall_call(SYSCALL_kill, process->id, 32) == static_cast<uint64_t>(-11), "RT syscall queue exhaustion returns EAGAIN");
+
     for (size_t index = 0; index < signal_queue_t::CAPACITY; ++index)
     {
         ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128, "exhaustion retains all previously queued records");
     }
+
     ok &= expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == static_cast<uint64_t>(-11), "queue summary clears only after final repeated record");
 
     syscall_call(SYSCALL_fcntl, fd, 4, 0);
     syscall_peer_context_t rtPeer = {nullptr, SYSCALL_kill, {process->id, 34}, UINT64_MAX};
-    ok &= with_syscall_peer(process, &rtPeer, [&]() { return expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128 && rtPeer.result == 0, "blocked signalfd wakes for a masked real-time peer signal"); });
+    ok &= with_syscall_peer(process, &rtPeer, [&]()
+    {
+        return expect(syscall_call(SYSCALL_read, fd, base + 512, 128) == 128 && rtPeer.result == 0, "blocked signalfd wakes for a masked real-time peer signal");
+    });
 
     ok &= expect(syscall_call(SYSCALL_signalfd4, fd, base + 128, 4, 0) == LINUX_EINVAL && syscall_call(SYSCALL_signalfd4, fd, CANONICAL_KERNEL_BASE, 8, 0) == LINUX_EFAULT &&
                      syscall_call(SYSCALL_signalfd4, UINT32_MAX, base + 128, 8, 1) == LINUX_EINVAL,

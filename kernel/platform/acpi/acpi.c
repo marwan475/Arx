@@ -59,7 +59,9 @@ void uacpi_kernel_log(uacpi_log_level level, const uacpi_char* text)
         error_logger("uACPI[%u]: %s", (unsigned) level, (const char*) text);
     }
     else
+    {
         kprintf("uACPI[%u]: %s", (unsigned) level, (const char*) text);
+    }
 }
 
 uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table)

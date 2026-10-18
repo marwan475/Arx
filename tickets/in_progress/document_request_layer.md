@@ -30,7 +30,7 @@ implementation defects discovered during research separately.
 
 ## Related work
 
-Coordinate structure and navigation with [the project overview](../closed/document_project_structure.md). Formal layer guides own factory/capability explanations; component tickets own component internals.
+Coordinate structure and navigation with [the project overview](../closed/document_project_structure.md). Layer guides own factory/capability explanations and component APIs; the separate component tickets were consolidated into these guides.
 
 ## Source entry points
 
@@ -44,7 +44,7 @@ These are starting points; inspect callers, dependencies, and tests before makin
 
 - [x] Preserve the concise, human-readable, initialization-first guide and existing layer-wide contracts.
 - [x] Include a separate section for every factory-created manager/component.
-- [x] Each Request manager section identifies the Linux syscall family it handles; do not enumerate handler APIs. Describe Interrupt separately as a common kernel request handler.
+- [x] Each Request manager section describes every public function and maps each syscall handler to its Linux syscall(s), explaining what each operation does. Include constructors and the common Interrupt API.
 - [x] Verify API descriptions against public headers and implementations, including overloads and cleanup obligations.
 - [x] Remove layer diagram embeds, SVG assets, and their Mermaid source blocks for now.
 - [x] Preserve self-test coverage descriptions, limitations, plain source filenames, and working README navigation.
@@ -191,3 +191,42 @@ All revised acceptance criteria are met. Per the owner's instruction, this ticke
 remains in progress; owner review is pending. Diagrams and concrete examples remain
 explicit deferred TODOs. Historical closure log entries are preserved as history
 of the previously authorized closure; this reopening adds no closure entries.
+
+### 2026-10-17 — Owner-directed Request API expansion
+
+The owner superseded the earlier Request exception and explicitly requested the
+same per-function public API documentation used for Resource and Logic, explaining
+what the syscalls/functions do. Proceeding under that direct instruction; status
+remains in progress. Plan: inventory Request headers and Dispatcher routes, describe
+each public function and each syscall handled by shared entry points, verify actual
+implementation limits, and check full coverage and navigation. Diagrams and usage
+examples remain deferred. No manager tickets are recreated and no code is changed.
+
+### 2026-10-17 — Progress and remaining work; full Request API documented
+
+Expanded Request.md with per-function public API tables for all twelve managers,
+including constructors and the common interrupt entry point. Retained the factory
+API and each manager's role. Mapped every syscall handler to its Linux syscall(s)
+and explained each operation separately, including the nine scheduling-policy
+syscalls and two queued-signal syscalls sharing handler functions. Grouped the
+large VFS API into descriptor control, I/O, paths/links, metadata/access/mounts,
+and IPC sections. Preserved current architecture/support limits, self-tests,
+plain source filenames, README navigation, and deferred diagrams/examples.
+
+Verification: checked all 188 callable public declarations across Request headers
+against their own component sections; compared all 180 Dispatcher syscall routes
+to the documented handler/syscall pairs with no omissions or extras. Reviewed
+handler bodies and relevant Logic/Resource collaborators for syscall semantics,
+return conventions, shared-handler behavior, and current limitations. Source
+filenames and README/ticket links resolve; no diagrams or clickable source links
+were added. `git diff --check` passed. Only Request.md and this ticket changed;
+no kernel build or runtime tests were run for this documentation-only update.
+
+Existing implementation gaps recorded separately from the documentation work:
+VfsRequestManager accepts CLOSE_RANGE_UNSHARE without copying the descriptor table;
+the access-family final permission helper tests owner bits and AT_EACCESS does not
+select real/effective credentials. Documented these limits without claiming full
+Linux semantics. No implementation fixes or new manager tickets were introduced.
+
+All current acceptance criteria are met. Ticket remains in progress as previously
+requested, awaiting owner review; diagrams and examples remain deferred.

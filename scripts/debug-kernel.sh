@@ -13,7 +13,13 @@ qemu_common="${QEMU_COMMON:-}"
 x86_64_uefi="${X86_64_UEFI:-}"
 aarch64_uefi="${AARCH64_UEFI:-}"
 serial_log="${SERIAL_LOG:-${repo_root}/build/qemu-debug-serial.log}"
-gdb_extension="${GDB_EXTENSION:-${repo_root}/scripts/gdb_extention.py}"
+default_gdb_extension="${repo_root}/scripts/gdb_extention.py"
+
+if [[ "${arch}" == "x86_64" ]]; then
+    default_gdb_extension="${repo_root}/debug/gdb/arx.py"
+fi
+
+gdb_extension="${GDB_EXTENSION:-${default_gdb_extension}}"
 qemu_pid=""
 
 cleanup() {

@@ -27,14 +27,13 @@ filename. Ticket files contain the authoritative details and work history.
 
 ## In progress
 
-| Priority | Ticket | Type | Status |
-| --- | --- | --- | --- |
-| P1 | [Add platform, CPU, IPI and PCI framework views](in_progress/add_debug_platform_cpu_pci_views.md) | feature | in progress |
+None.
 
 ## Closed
 
 | Priority | Ticket | Type | Status |
 | --- | --- | --- | --- |
+| P1 | [Add platform, CPU, IPI and PCI framework views](closed/add_debug_platform_cpu_pci_views.md) | feature | closed |
 | P1 | [Build the debug-only kernel and GDB framework foundations](closed/build_debug_framework_foundation.md) | feature | closed |
 | P1 | [Document overall kernel architecture and responsibilities](closed/document_project_structure.md) | feature | closed |
 | P1 | [Remove Resource's dependency on Logic-owned signal definitions](closed/fix_resource_signal_type_dependency.md) | debug | closed |

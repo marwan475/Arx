@@ -20,33 +20,30 @@ connects, and continues to its `_start` hardware breakpoint. The script captures
 serial output in `build/qemu-debug-serial.log` and cleans up QEMU when GDB exits.
 No second terminal or separate GDB invocation is needed.
 
-The launcher currently loads the legacy extension by default. Load the new
-framework at the existing GDB prompt:
+The x86_64 launcher automatically loads `debug/gdb/arx.py`. At the GDB prompt:
 
 ```text
-source debug/gdb/arx.py
 hbreak kmain
 continue
 arx-debug list
 ```
 
 At `kmain` entry the Dispatcher does not yet exist. Continue to a later breakpoint
-before inspecting providers. To load the new framework automatically instead of
-the legacy extension for this session, use the launcher's existing override:
+before inspecting providers. The `GDB_EXTENSION` override can select a different
+extension for one session, including the legacy commands during migration:
 
 ```sh
-GDB_EXTENSION="$PWD/debug/gdb/arx.py" make x86_64-debug
+GDB_EXTENSION="$PWD/scripts/gdb_extention.py" make x86_64-debug
 ```
 
-Final launcher-default changes and legacy command removal belong to the cutover
-work. The commands require the normal image-building prerequisites, QEMU and GDB
-with Python and TUI support.
+Legacy command removal belongs to the cutover work. The commands require the
+normal image-building prerequisites, QEMU and GDB with Python and TUI support.
 
 Separate output directories are useful when keeping debug and release builds
 alongside each other:
 
 ```sh
-GDB_EXTENSION="$PWD/debug/gdb/arx.py" make x86_64-debug BUILD_DIR=build/framework-debug BIN_DIR=bin/framework-debug
+make x86_64-debug BUILD_DIR=build/framework-debug BIN_DIR=bin/framework-debug
 ```
 
 `x86_64-debug` forces a debug rebuild. Ordinary image targets do not track changed
@@ -309,8 +306,9 @@ No target locks or CPU helper calls are permitted.
 | `arx-pci` | `pci devices`, `pci stats` | Captured BDF/vendor/device plus segment/class/BAR/configuration fields; actual allocation bounds replace the legacy 4096-entry guess. |
 | Resource/manager discovery diagnostics | `status`, `list` | Dispatcher/DebugManager roots, named providers, staged availability and record types; no manager-map slot guesses or getter calls. Production Resource providers arrive in their own tickets. |
 
-Legacy commands remain available until the cutover ticket changes launch defaults
-and removes them. Their unsafe fallback discovery is not part of this contract.
+Legacy commands remain available through the explicit extension override until
+the cutover ticket removes them. Their unsafe fallback discovery is not part of
+this contract. The AArch64 launcher retains its existing extension default.
 
 ## Controlled foundation providers
 

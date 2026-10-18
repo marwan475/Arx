@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P1
-- Status: in progress
+- Status: closed
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -296,3 +296,19 @@ No further verification was run. Status remains in progress pending owner review
 and authorization to close to tickets/closed/add_debug_platform_cpu_pci_views.md.
 No commit was made. Generated builds/images and Python caches were moved to
 /tmp/arx-platform-artifacts-psai6y1x.
+
+### 2026-10-18 — Owner-directed automatic loading
+
+The owner explicitly requested automatic loading of the new extension. Changed
+the x86_64 launcher default to the new entry point and updated GdbCommands.md.
+The explicit extension override remains supported; AArch64 keeps its existing
+default. Verification remains stopped per the owner’s instruction.
+
+### 2026-10-18 — Completion
+
+The owner instructed “close ticket”, authorizing closure to the previously
+proposed tickets/closed/add_debug_platform_cpu_pci_views.md destination.
+Completed platform/CPU/IPI/PCI debug records and views, early discovery diagnostics,
+selectors, native-reader documentation and automatic x86_64 extension loading.
+Verification results and the subsequent owner-directed verification stop/tooling
+removal are recorded above. No additional verification was run for closure.

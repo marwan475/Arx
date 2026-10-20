@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/DebugRecords.h>
+
 #include "layers/Logic/VirtualFileSystem.hpp"
 
 #include <klib/spinlock.h>
@@ -54,6 +56,12 @@ static_assert(offsetof(socket_message_t, vectors) == 16 && offsetof(socket_messa
 class SocketManager
 {
 public:
+    ARX_DEBUG_ONLY(
+        static const void* DebugSocketOperations()
+        {
+            return &Operations;
+        }
+    )
     SocketManager(ResourceLayerCaps* resources, VirtualFileSystem* vfs, EventManager* events, SignalManager* signals);
     uint64_t Socket(int32_t domain, int32_t type, int32_t protocol);
     uint64_t Socketpair(int32_t domain, int32_t type, int32_t protocol, uint64_t output);

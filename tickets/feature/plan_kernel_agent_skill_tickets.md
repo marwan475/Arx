@@ -115,6 +115,18 @@ analysis; their presence, layout, and tooling support must be verified then.
 - [ ] Skill placement/discovery, shared references, tooling/documentation dependencies, and planned versus existing capabilities are explicit.
 - [ ] The work log links all resulting tickets, recommends an execution order, and explains deferred candidates; unfinished assessment or ticket creation is recorded before stopping.
 
+## Verification scope
+
+Keep verification proportional to this ticket's changes. Select the smallest set
+of checks that demonstrates the acceptance criteria and covers the affected
+behavior. Run the relevant checks once after the final changes; stop when they
+pass. Repeat or broaden checks only after a new change, a failure, or a concrete
+unresolved risk, and record the reason. Do not add repeated QEMU boots, unrelated
+suite runs, or baseline investigations merely for extra confidence. Record
+incidental failures and their impact; investigate further only when evidence
+makes them a blocker for this ticket. Preserve required acceptance checks and
+report any checks that could not run.
+
 ## Work log
 
 ### 2026-10-17 — Created
@@ -131,3 +143,10 @@ It covers manager-owned tracked records, rich-view adapters and post-investigati
 follow-up opportunities. Reuse/link that ticket instead of proposing a duplicate
 authoring skill here. This ticket's QEMU/GDB usage and self-test skill candidates
 remain distinct and open; this coordination update does not start their analysis.
+
+### 2026-10-20 — Owner-directed verification scope
+
+The owner requested avoiding excessive verification on remaining tickets. Added
+an explicit stopping rule and evidence-based limits on repeated or broader
+checks. Acceptance criteria, implementation scope, status, and execution gates
+are unchanged.

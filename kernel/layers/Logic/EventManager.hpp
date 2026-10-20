@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/DebugRecords.h>
+
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -51,6 +53,17 @@ enum : uint16_t
 class EventManager
 {
 public:
+    ARX_DEBUG_ONLY(
+        static const void* DebugCounterPoll()
+        {
+            return reinterpret_cast<const void*>(CounterPoll);
+        }
+
+        static const void* DebugEpollPoll()
+        {
+            return reinterpret_cast<const void*>(EpollPoll);
+        }
+    )
     EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs);
     uint64_t CreateCounter(uint32_t initial, uint32_t flags);
     uint64_t CreateInotify(uint32_t flags);

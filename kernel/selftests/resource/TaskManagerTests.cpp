@@ -9,6 +9,35 @@ void test_TaskManager(ResourceLayerCaps* resources)
 {
     auto* m = resources ? resources->taskManager : nullptr;
     ManagerSuite suite("resource/TaskManager", m != nullptr);
+#if DEBUG
+    suite.Run("resource/TaskManager/debug_incarnations", [&](TestCase& t)
+    {
+        const uint64_t before = m->DebugStats.liveSlots;
+        task_t* task = m->AllocateTask();
+
+        if (!t.Check(task != nullptr, "allocate debug task fixture"))
+        {
+            return;
+        }
+
+        const uint64_t generation = task->debug.generation;
+        t.Check(generation != 0 && !task->debug.exhausted, "task has an available incarnation");
+        t.Equal(m->DebugStats.liveSlots, before + 1, "one live slot added");
+        t.Check(m->FreeTask(task), "reclaim debug task fixture");
+        task_t* replacement = m->AllocateTask();
+
+        if (t.Check(replacement != nullptr, "allocate replacement task fixture"))
+        {
+            t.Check(replacement == task, "fixture reuses task address");
+            t.Check(replacement->debug.generation > generation, "task address reuse does not reuse identity");
+            t.Check(m->FreeTask(replacement), "reclaim replacement task fixture");
+        }
+
+        t.Equal(m->DebugStats.liveSlots, before, "task slot usage restored");
+        t.Equal(m->DebugStats.group.activeWriters, 0, "task update groups complete");
+    });
+#endif
+
     suite.Run("resource/TaskManager/system_task_statistics", [&](TestCase& t)
     {
         TestFixture f(resources);

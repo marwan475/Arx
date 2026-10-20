@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/CredentialDebugStats.hpp>
+
 #include "layers/Resource/ProcessManager.hpp"
 
 struct ResourceLayerCaps;
@@ -7,6 +9,7 @@ struct ResourceLayerCaps;
 class CredentialManager
 {
 public:
+    ARX_DEBUG_ONLY(CredentialDebugStats DebugStats{};)
     enum change_t
     {
         SET_ID,

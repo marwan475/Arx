@@ -361,6 +361,13 @@ FileDescriptorGuard::~FileDescriptorGuard()
 
 void ProcessManager::ResetProcessSlot(process_t* process, uint64_t id, bool allocated)
 {
+    ARX_DEBUG_RUN(
+        const uint64_t previous = process->debug.generation;
+        const bool exhausted = process->debug.exhausted || (allocated && previous == UINT64_MAX);
+        process->debug = {};
+        process->debug.generation = allocated && !exhausted ? previous + 1 : previous;
+        process->debug.exhausted = exhausted;
+    );
     process->allocated            = allocated;
     process->id                   = id;
     process->hasParent            = false;
@@ -428,6 +435,12 @@ ProcessManager::ProcessManager()
 {
     static_assert(sizeof(ProcessManager) <= HEAP_MAX_OBJECT_SIZE, "ProcessManager must fit the largest heap object");
     ManagerLock = 0;
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.records = Processes;
+        DebugStats.running = RunningProcesses;
+        DebugStats.capacity = MAX_PROCESSES;
+    );
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
@@ -436,6 +449,7 @@ ProcessManager::ProcessManager()
 
     for (size_t i = 0; i < MAX_PROCESSES; i++)
     {
+        ARX_DEBUG_RUN(Processes[i].debug = {});
         ResetProcessSlot(&Processes[i], i, false);
     }
 }
@@ -444,10 +458,12 @@ void ProcessManager::LockManager() const
 {
     cpu_preemption_disable();
     spinlock_acquire((spinlock_t*) &ManagerLock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&const_cast<ProcessManager*>(this)->DebugStats.group));
 }
 
 void ProcessManager::UnlockManager() const
 {
+    ARX_DEBUG_RUN(arx_debug_group_end(&const_cast<ProcessManager*>(this)->DebugStats.group));
     spinlock_release((spinlock_t*) &ManagerLock);
     cpu_preemption_enable();
 }
@@ -459,6 +475,7 @@ process_t* ProcessManager::AllocateProcessUnlocked()
         if (!Processes[i].allocated)
         {
             ResetProcessSlot(&Processes[i], i, true);
+            ARX_DEBUG_RUN(DebugAllocated(&Processes[i]));
             return &Processes[i];
         }
     }
@@ -468,6 +485,8 @@ process_t* ProcessManager::AllocateProcessUnlocked()
 
 process_t* ProcessManager::AllocateProcess()
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.allocations);)
+
     descriptor_table_t*    table        = CreateDescriptorTable();
     filesystem_context_t*  filesystem   = CopyFilesystemContext(nullptr);
     signal_dispositions_t* dispositions = CopySignalDispositions(nullptr);
@@ -499,11 +518,20 @@ process_t* ProcessManager::AllocateProcess()
         ReleaseSignalDispositions(dispositions);
     }
 
+    ARX_DEBUG_RUN(
+        if (process != nullptr)
+        {
+            DebugParent(process);
+            debugOperation.Finish();
+        }
+    );
     return process;
 }
 
 process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64_t preferredId)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.creations);)
+
     if (addressSpace == nullptr)
     {
         return nullptr;
@@ -573,6 +601,7 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
         {
             process = &Processes[preferredId];
             ResetProcessSlot(process, preferredId, true);
+            ARX_DEBUG_RUN(DebugAllocated(process));
         }
     }
     else
@@ -624,11 +653,20 @@ process_t* ProcessManager::CreateProcess(virt_addr_space_t* addressSpace, uint64
     }
 
     UnlockManager();
+    ARX_DEBUG_RUN(
+        if (process != nullptr)
+        {
+            DebugParent(process);
+            debugOperation.Finish();
+        }
+    );
     return process;
 }
 
 bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.reclamations);)
+
     descriptor_table_t*    tableToFree        = nullptr;
     filesystem_context_t*  filesystemToFree   = nullptr;
     signal_dispositions_t* dispositionsToFree = nullptr;
@@ -708,6 +746,18 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
 
     signal_queue_t* queueToFree = process->signalQueue;
     groupsToFree = process->supplementaryGroups;
+    ARX_DEBUG_RUN(
+        ARX_DEBUG_ADD(DebugStats.reclaimed, 1);
+        ARX_DEBUG_ADD(DebugStats.liveSlots, UINT64_MAX);
+        if (process->debug.published)
+        {
+            ARX_DEBUG_ADD(DebugStats.publishedSlots, UINT64_MAX);
+        }
+        if (process->debug.firstExited)
+        {
+            ARX_DEBUG_ADD(DebugStats.exitedRetained, UINT64_MAX);
+        }
+    );
     ResetProcessSlot(process, (uint64_t) (process - &Processes[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -727,6 +777,7 @@ bool ProcessManager::FreeProcess(process_t* process, bool onlyIfExited)
     ReleaseGroupList(groupsToFree);
     kfree(queueToFree);
 
+    ARX_DEBUG_RUN(debugOperation.Finish());
     return true;
 }
 
@@ -787,6 +838,8 @@ bool ProcessManager::AddTask(process_t* process, task_t* task)
 
     ILIST_APPEND(process->tasks, task);
     task->process = process;
+    ARX_DEBUG_STORE(task->debug.processAddress, reinterpret_cast<uintptr_t>(process));
+    ARX_DEBUG_STORE(task->debug.processGeneration, process->debug.generation);
     return true;
 }
 
@@ -1375,6 +1428,7 @@ bool ProcessManager::SetRunningProcess(uint8_t cpuId, process_t* process)
             return false;
         }
 
+        ARX_DEBUG_RUN(DebugPublished(process));
         process->ownerCpu = cpuId;
     }
 

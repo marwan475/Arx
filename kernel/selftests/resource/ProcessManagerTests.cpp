@@ -42,6 +42,60 @@ void test_ProcessManager(ResourceLayerCaps* resources)
 
     auto* m = resources ? resources->processManager : nullptr;
     ManagerSuite suite("resource/ProcessManager", m != nullptr);
+#if DEBUG
+    suite.Run("resource/ProcessManager/debug_incarnations", [&](TestCase& t)
+    {
+        const uint64_t before = m->DebugStats.liveSlots;
+        process_t* parent = m->AllocateProcess();
+        process_t* child = m->AllocateProcess();
+
+        if (parent == nullptr || child == nullptr)
+        {
+            t.Check(false, "allocate debug parent/child fixtures");
+            if (parent != nullptr)
+            {
+                m->FreeProcess(parent);
+            }
+            if (child != nullptr)
+            {
+                m->FreeProcess(child);
+            }
+            return;
+        }
+
+        const uint64_t oldGeneration = parent->debug.generation;
+        child->hasParent = true;
+        child->parentId = parent->id;
+        m->DebugParent(child, true);
+        t.Equal(child->debug.parentGeneration, oldGeneration, "capture exact parent incarnation");
+        t.Check(!child->debug.published, "reserved slot is not a published clone");
+        const uint64_t published = m->DebugStats.publishedSlots;
+        const uint64_t exits = m->DebugStats.firstExits;
+        m->DebugPublished(child);
+        m->DebugPublished(child);
+        m->DebugExit(child);
+        m->DebugExit(child);
+        t.Equal(m->DebugStats.publishedSlots, published + 1, "publication counted once");
+        t.Equal(m->DebugStats.firstExits, exits + 1, "first exit counted once");
+        t.Check(m->FreeProcess(parent), "reclaim parent fixture");
+        process_t* replacement = m->AllocateProcess();
+
+        if (t.Check(replacement != nullptr, "reserve reused parent slot"))
+        {
+            t.Check(replacement == parent, "fixture reuses lowest free slot");
+            t.Check(replacement->debug.generation > oldGeneration, "reused slot gets a new incarnation");
+            m->DebugParent(child);
+            t.Equal(child->debug.parentGeneration, oldGeneration, "refresh does not attach child to reused parent");
+            t.Check(m->FreeProcess(replacement), "reclaim replacement fixture");
+        }
+
+        t.Check(m->FreeProcess(child), "reclaim child fixture");
+        t.Equal(m->DebugStats.liveSlots, before, "slot usage returns to baseline");
+        t.Equal(m->DebugStats.publishedSlots, published, "reclamation removes current publication");
+        t.Equal(m->DebugStats.group.activeWriters, 0, "process update groups complete");
+    });
+#endif
+
     suite.Run("resource/ProcessManager/usage_aggregation", [&](TestCase& t)
     {
         TestFixture f(resources);

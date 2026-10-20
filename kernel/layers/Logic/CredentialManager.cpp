@@ -40,6 +40,9 @@ uint64_t CredentialManager::GetCredentials(process_credentials_t* credentials)
 
 uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t real, uint32_t effective, uint32_t saved)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.identities);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (Processes == nullptr)
     {
         return LINUX_ENOSYS;
@@ -139,6 +142,10 @@ uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t
                 current.filesystem = real;
             }
 
+            ARX_DEBUG_RUN(
+                const bool allowed = real == UINT32_MAX || privileged || identity_contains(old, real) || real == old.filesystem;
+                debugOperation.Finish(!allowed ? 3 : current.filesystem != old.filesystem ? 0 : 1);
+            );
             Processes->ReleaseCredentials(process);
             return result;
         default:
@@ -149,6 +156,11 @@ uint64_t CredentialManager::ChangeIdentity(bool group, change_t change, uint32_t
     if (result == 0)
     {
         current = next;
+        ARX_DEBUG_RUN(
+            const bool changed = old.real != next.real || old.effective != next.effective
+                                 || old.saved != next.saved || old.filesystem != next.filesystem;
+            debugOperation.Finish(changed ? 0 : 1);
+        );
     }
 
     Processes->ReleaseCredentials(process);
@@ -198,6 +210,9 @@ uint64_t CredentialManager::MaySetGroups()
 
 uint64_t CredentialManager::SetGroups(const uint32_t* groups, uint32_t count)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.groups);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (Processes == nullptr)
     {
         return LINUX_ENOSYS;
@@ -253,8 +268,14 @@ uint64_t CredentialManager::SetGroups(const uint32_t* groups, uint32_t count)
     else
     {
         previous                     = process->supplementaryGroups;
+        ARX_DEBUG_ONLY(
+            const uint32_t previousCount = previous != nullptr ? previous->count : 0;
+            const bool changed = previousCount != count
+                || (count != 0 && memcmp(previous->ids, next->ids, count * sizeof(uint32_t)) != 0);
+        )
         process->supplementaryGroups = next;
         next                         = nullptr;
+        ARX_DEBUG_RUN(debugOperation.Finish(changed ? 0 : 1));
     }
 
     Processes->ReleaseCredentials(process);

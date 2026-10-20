@@ -34,6 +34,7 @@ def parse(arguments):
     words = gdb.string_to_argv(arguments)
     limits = {"--limit": 100, "--bytes": 65536, "--depth": 8}
     maxima = {"--limit": 10000, "--bytes": 16 * 1024 * 1024, "--depth": 32,
+              "--pid": 63, "--tid": 127, "--scan": 1048576,
               "--cpu": 255, "--slot": 255, "--node": 7, "--order": 10, "--class": 131072,
               "--platform": (1 << 64) - 1, "--registry": (1 << 64) - 1}
     options = {}
@@ -69,13 +70,15 @@ def parse(arguments):
                 if not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", value):
                     raise ReadFailure("option requires a numeric value; expressions forbidden")
                 value = int(value, 16 if value.lower().startswith("0x") else 10)
-                minimum = 0 if word in ("--cpu", "--slot", "--node", "--order") else 1
+                minimum = 0 if word in ("--cpu", "--slot", "--node", "--order", "--pid", "--tid") else 1
                 if not minimum <= value <= maxima[word]:
                     raise ReadFailure("limit out of range: " + word)
             options[word] = value
         else:
             positional.append(word)
         index += 1
+    if "--pid" in options and "--tid" in options:
+        raise ReadFailure("--pid and --tid are mutually exclusive")
     if "--cpu" in options and "--slot" in options:
         raise ReadFailure("--cpu and --slot are mutually exclusive")
     if "--node" in options and ("--cpu" in options or "--slot" in options):
@@ -91,7 +94,7 @@ def parse(arguments):
 def gather(arguments):
     words, budget, options = parse(arguments)
     selectors = {name: value for name, value in options.items()
-                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap")}
+                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap", "--pid", "--tid", "--scan")}
     if len(words) >= 2 and tuple(words[:2]) in (("pmm", "pfn"), ("heap", "address")):
         if len(words) != 3 or not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", words[2]):
             raise ReadFailure("selected PFN/address requires one numeric value; expressions forbidden")

@@ -15,7 +15,7 @@ paths but do not decode these anonymous-file object graphs.
 Follow [the workflow](../TICKET.MD), required grilling and repository skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
 Depends on [foundations](../closed/build_debug_framework_foundation.md) and
-[task-aware descriptors](add_debug_process_resource_views.md). Reuse backing-page
+[task-aware descriptors](../closed/add_debug_process_resource_views.md). Reuse backing-page
 identities from [memory views](add_debug_virtual_memory_views.md) and readiness
 relationships from [signal/event views](add_debug_signal_event_views.md), without
 a circular requirement that every adapter be implemented first. Shared record
@@ -106,6 +106,18 @@ Compare known fixture owners and byte/queue changes, including short/failing
 operations. Use controlled corrupt counts/private pointers and cyclic chains.
 Run x86_64 QEMU/GDB at meaningful live fixture stops and debug/release checks.
 
+## Verification scope
+
+Keep verification proportional to this ticket's changes. Select the smallest set
+of checks that demonstrates the acceptance criteria and covers the affected
+behavior. Run the relevant checks once after the final changes; stop when they
+pass. Repeat or broaden checks only after a new change, a failure, or a concrete
+unresolved risk, and record the reason. Do not add repeated QEMU boots, unrelated
+suite runs, or baseline investigations merely for extra confidence. Record
+incidental failures and their impact; investigate further only when evidence
+makes them a blocker for this ticket. Preserve required acceptance checks and
+report any checks that could not run.
+
 ## Work log
 
 ### 2026-10-18 — Created
@@ -118,3 +130,10 @@ for pipes, memory files and UNIX sockets. No implementation has started.
 Shared analysis references were consolidated into their owning tickets before
 removing `tickets/analysis/`. Current links point to the archived evidence; ticket
 scope, implementation authorization and verification requirements are preserved.
+
+### 2026-10-20 — Owner-directed verification scope
+
+The owner requested avoiding excessive verification on remaining tickets. Added
+an explicit stopping rule and evidence-based limits on repeated or broader
+checks. Acceptance criteria, implementation scope, status, and execution gates
+are unchanged.

@@ -384,6 +384,13 @@ Descriptor entries hold file references. Readiness registrations are weak
 observers detached during final close, rather than owners of the file. Memory
 mappings retain backing independently of the original open file or ELF metadata.
 Process/task retirement can remain pending after an exit request succeeds.
+Debug lifecycle counters distinguish clone publication, committed exec, exit
+requests and wait outcomes. Resource-owned incarnation records follow Scheduler
+publication, exit, stop/continue and reparenting without changing ownership rules.
+Credential counters distinguish actual changes, no-ops and silent filesystem-ID
+refusals; credentials still live only in process records. Shared-resource views
+resolve task overrides explicitly and identify files through verified operation
+metadata. GdbCommands.md documents limits and partial-state interpretation.
 
 ## 4. General interactions
 

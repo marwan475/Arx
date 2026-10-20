@@ -60,6 +60,12 @@ Owns process records and their shared resource references. `ProcessManager.hpp`
 declares process state, descriptor/filesystem/credential structures, and guards;
 `ProcessManager.cpp` implements their storage and lifetime operations. The pool
 holds 64 process slots. Process exit policy belongs to ProcessController/Scheduler.
+Debug builds add slot incarnations, captured parent identities and maintained
+reservation/publication/reclamation counts. TaskManager similarly distinguishes
+its physical 128-slot inventory from mutable TIDs. Dispatcher registers borrowed
+process/task roots; bounded views show lifecycle, CPU claims and task-specific
+shared contexts. Reclaimed diagnostic records are cleared, with no retained
+process/task history. GdbCommands.md defines the command and native contracts.
 
 | Function | What it does |
 | --- | --- |

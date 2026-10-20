@@ -1011,6 +1011,10 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
                     task->scheduling->readyOrder = ++ReadySequence;
                 }
 
+                ARX_DEBUG_RUN(
+                    ResourceLayerImportCaps->processManager->DebugPublished(publish);
+                    task->debug.published = true;
+                );
                 decision.accepted = true;
                 decision.local |= task->placementCpu == cpuId;
 
@@ -1324,6 +1328,7 @@ bool Scheduler::KillProcess(uint64_t processId, int32_t exitStatus, bool onlyIfE
     }
 
     __atomic_store_n(&process->exited, true, __ATOMIC_RELEASE);
+    ARX_DEBUG_RUN(processManager->DebugExit(process));
 
     // Mark before unlocking so new dispatch claims cannot start. Cleanup may
     // touch user memory and wake futexes; no scheduler lock may span it.
@@ -1435,6 +1440,7 @@ void Scheduler::NotifyProcessExit(process_t* process)
     }
 
     ProcessManager* manager = ResourceLayerImportCaps->processManager;
+    ARX_DEBUG_ADD(manager->DebugStats.notifications, 1);
     process_t* parent       = process->hasParent ? manager->AcquireProcess(process->parentId) : nullptr;
 
     if (parent != nullptr && !parent->exited)
@@ -1493,6 +1499,10 @@ void Scheduler::NotifyProcessExit(process_t* process)
                 child->hasParent = userInit && adopter != process && !adopter->exited;
                 child->parentId  = child->hasParent ? adopter->id : 0;
                 child->parentTaskId = child->hasParent ? adopter->id : 0;
+                ARX_DEBUG_RUN(
+                    manager->DebugParent(child, true);
+                    ARX_DEBUG_ADD(manager->DebugStats.reparentings, 1);
+                );
 
                 if (!child->hasParent)
                 {
@@ -1526,6 +1536,17 @@ void Scheduler::ChangeStoppedState(process_t* process, int signal, bool stopped)
 
     if (changed)
     {
+        ARX_DEBUG_RUN(
+            ProcessDebugStats& stats = ResourceLayerImportCaps->processManager->DebugStats;
+            if (stopped)
+            {
+                ARX_DEBUG_ADD(stats.stops, 1);
+            }
+            else
+            {
+                ARX_DEBUG_ADD(stats.continues, 1);
+            }
+        );
         process->stopSignal       = stopped ? signal : process->stopSignal;
         process->stopPending      = stopped;
         process->continuedPending = !stopped;

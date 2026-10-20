@@ -8,6 +8,26 @@ void test_CredentialManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
 {
     auto* m = logic ? logic->credentialManager : nullptr;
     ManagerSuite suite("logic/CredentialManager", m != nullptr);
+#if DEBUG
+    suite.Run("logic/CredentialManager/debug_outcomes", [&](TestCase& t)
+    {
+        TestFixture fixture(resources);
+        if (!fixture.Valid(t))
+        {
+            return;
+        }
+
+        const DebugOperationStats before = m->DebugStats.identities;
+        t.Equal(m->ChangeIdentity(false, CredentialManager::SET_RES_ID, UINT32_MAX, UINT32_MAX, UINT32_MAX), 0, "credential no-op");
+        t.Equal(m->DebugStats.identities.noops, before.noops + 1, "no-op is not an actual change");
+        t.Equal(m->ChangeIdentity(false, CredentialManager::SET_ID, 1234), 0, "drop privilege for silent-refusal fixture");
+        t.Equal(m->DebugStats.identities.successes, before.successes + 1, "committed identity change counted");
+        t.Equal(m->ChangeIdentity(false, CredentialManager::SET_FS_ID, 9999), 1234, "refused filesystem ID returns old value");
+        t.Equal(m->DebugStats.identities.refusals, before.refusals + 1, "silent refusal has an explicit counter");
+        t.Equal(m->DebugStats.identities.inFlight, 0, "credential calls completed");
+    });
+#endif
+
     suite.Run("logic/CredentialManager/identity_query_change", [&](TestCase& t)
     {
         TestFixture f(resources);

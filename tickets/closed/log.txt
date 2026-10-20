@@ -17,3 +17,4 @@ plan_gdb_extension_tickets.md
 build_debug_framework_foundation.md
 add_debug_platform_cpu_pci_views.md
 add_debug_physical_allocation_views.md
+add_debug_process_resource_views.md

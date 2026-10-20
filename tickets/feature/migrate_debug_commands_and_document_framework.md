@@ -24,7 +24,7 @@ requires its own analysis/execution gate. Old-tool defects are tracked in
 
 Depends on [foundations](../closed/build_debug_framework_foundation.md) and the old-coverage
 parts of [physical allocation](../closed/add_debug_physical_allocation_views.md),
-[process/resources](add_debug_process_resource_views.md),
+[process/resources](../closed/add_debug_process_resource_views.md),
 [memory](add_debug_virtual_memory_views.md),
 [filesystems](add_debug_filesystem_views.md) and
 [platform/CPU/PCI](../closed/add_debug_platform_cpu_pci_views.md).
@@ -120,6 +120,18 @@ unavailable environment dependency. Run relevant debug/release builds, link/sour
 reference checks and documentation verification. Review diffs for premature
 deletion, stale aliases and unimplemented claims before owner review.
 
+## Verification scope
+
+Keep verification proportional to this ticket's changes. Select the smallest set
+of checks that demonstrates the acceptance criteria and covers the affected
+behavior. Run the relevant checks once after the final changes; stop when they
+pass. Repeat or broaden checks only after a new change, a failure, or a concrete
+unresolved risk, and record the reason. Do not add repeated QEMU boots, unrelated
+suite runs, or baseline investigations merely for extra confidence. Record
+incidental failures and their impact; investigate further only when evidence
+makes them a blocker for this ticket. Preserve required acceptance checks and
+report any checks that could not run.
+
 ## Work log
 
 ### 2026-10-18 — Created
@@ -157,8 +169,8 @@ in a live session. No kernel build/boot was performed for this planning task.
 | `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
 | `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../feature/add_debug_filesystem_views.md). |
 | `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../feature/add_debug_filesystem_views.md). |
-| `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../feature/add_debug_process_resource_views.md). |
-| `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../feature/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../feature/add_debug_scheduling_wait_views.md). |
+| `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../closed/add_debug_process_resource_views.md). |
+| `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../closed/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../feature/add_debug_scheduling_wait_views.md). |
 | `arx-rsrc` | Arguments ignored. Dispatcher/factory/caps and labeled manager addresses plus type availability. | Unconditional raw Resource slot reads; preserve useful discovery/type diagnostics in [foundation](../closed/build_debug_framework_foundation.md)/[platform](../closed/add_debug_platform_cpu_pci_views.md), not wrong slot values. |
 
 For PMM/VMM/CPU/heap, an omitted selector means all inferred CPU slots. A provided
@@ -275,3 +287,28 @@ counter assertions pass. Release QEMU reports the framework compiled out.
 `debug/tests/` contains repeatable checks. GdbCommands.md records replacement
 coverage and native semantics. This does not authorize legacy removal or closure
 of the cutover ticket; other providers and cutover work remain pending.
+
+### 2026-10-20 — Process/task migration coverage verified
+
+[Process/resource views](../closed/add_debug_process_resource_views.md)
+map `arx-proc` to `process tree/details` and `arx-task` to `task list/details`,
+with numeric PID/TID selection and generic typed context inspection. Allocated
+slots, IDs, address spaces, task membership, names, state, stack/context and links
+remain inspectable; real capacities replace legacy raw array guesses. Added
+incarnation-safe parentage, CPU/dispatch/retirement state, process defaults and
+task overrides, descriptor/file ownership correlation and credentials.
+
+One-CPU and four-CPU QEMU/GDB checks exercise slot reuse, private task contexts,
+retained child dispatch claims, wait-notification gating, real shared VFS files
+and completed clone/exec/exit/wait syscall fixtures. Host fixtures cover malformed,
+cyclic, stale and sparse data and independent scan/output limits. Release source,
+symbol/disassembly/layout checks and the release guest verify exclusion. Command
+and native-reader semantics are in GdbCommands.md; existing commands remain until
+cutover. This updates coverage evidence without closing or expanding that ticket.
+
+### 2026-10-20 — Owner-directed verification scope
+
+The owner requested avoiding excessive verification on remaining tickets. Added
+an explicit stopping rule and evidence-based limits on repeated or broader
+checks. Acceptance criteria, implementation scope, status, and execution gates
+are unchanged.

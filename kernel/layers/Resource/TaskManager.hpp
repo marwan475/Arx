@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/TaskDebugStats.hpp>
+
 #include "layers/DispatcherBridge.h"
 #include "layers/Resource/SignalState.hpp"
 #include "layers/Resource/TaskScheduling.hpp"
@@ -90,6 +92,7 @@ struct task_t
     void*                    stack;
     task_t*                  next;
     task_t*                  prev;
+    ARX_DEBUG_ONLY(TaskSlotDebug debug;)
 };
 
 class TaskManager
@@ -98,6 +101,11 @@ public:
     static constexpr size_t MAX_TASKS = 128;
 
     TaskManager();
+    ARX_DEBUG_ONLY(
+        TaskDebugStats DebugStats{};
+        void DebugAllocated(task_t* task);
+        void PublishDebug(DebugManager& manager, ProcessManager* processes);
+    )
 
     task_t*     AllocateTask();
     task_t*     CreateKernelTask(arch_task_entry_t entry, void* arg);

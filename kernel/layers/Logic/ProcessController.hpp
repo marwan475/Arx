@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/LifecycleDebugStats.hpp>
+
 #include <arch/arch.h>
 #include <klib/spinlock.h>
 #include <stdint.h>
@@ -29,6 +31,7 @@ static_assert(sizeof(process_clone_arguments_t) == 88, "Linux clone_args ABI");
 class ProcessController
 {
 public:
+    ARX_DEBUG_ONLY(LifecycleDebugStats DebugStats{};)
     ProcessController(ResourceLayerCaps* resources, LogicLayerCaps* logic);
 
     uint64_t Clone(const arch_syscall_frame_t* frame, const process_clone_arguments_t& arguments);

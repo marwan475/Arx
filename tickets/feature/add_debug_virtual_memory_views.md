@@ -17,7 +17,7 @@ backing objects, dirty pages and hardware table entries.
 Follow [the workflow](../TICKET.MD), required grilling and repo skills. Parent:
 [planning](../closed/plan_gdb_extension_tickets.md). Depends on
 [foundations](../closed/build_debug_framework_foundation.md); use process identities from
-[process/resource views](add_debug_process_resource_views.md). Related:
+[process/resource views](../closed/add_debug_process_resource_views.md). Related:
 [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment),
 [architecture documentation](../closed/document_architecture_layer.md).
 This ticket is open and retains its own analysis/execution gate.
@@ -114,6 +114,18 @@ cases absent in a normal boot. Include inaccessible HHDM, unmapped VA, malformed
 links and inactive process state. Run x86_64 debug/release checks for changed code;
 no privileged hardware register reads are required to verify the display.
 
+## Verification scope
+
+Keep verification proportional to this ticket's changes. Select the smallest set
+of checks that demonstrates the acceptance criteria and covers the affected
+behavior. Run the relevant checks once after the final changes; stop when they
+pass. Repeat or broaden checks only after a new change, a failure, or a concrete
+unresolved risk, and record the reason. Do not add repeated QEMU boots, unrelated
+suite runs, or baseline investigations merely for extra confidence. Record
+incidental failures and their impact; investigate further only when evidence
+makes them a blocker for this ticket. Preserve required acceptance checks and
+report any checks that could not run.
+
 ## Work log
 
 ### 2026-10-18 — Created
@@ -126,3 +138,10 @@ retention investigation workload. No implementation has started.
 Shared analysis references were consolidated into their owning tickets before
 removing `tickets/analysis/`. Current links point to the archived evidence; ticket
 scope, implementation authorization and verification requirements are preserved.
+
+### 2026-10-20 — Owner-directed verification scope
+
+The owner requested avoiding excessive verification on remaining tickets. Added
+an explicit stopping rule and evidence-based limits on repeated or broader
+checks. Acceptance criteria, implementation scope, status, and execution gates
+are unchanged.

@@ -3,6 +3,12 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
 
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/ProcessController.hpp"
+#include "layers/Logic/CredentialManager.hpp"
+#include "layers/Logic/InterProcessCommunicationManager.hpp"
+#include "layers/Logic/SocketManager.hpp"
+#include "layers/Logic/EventManager.hpp"
+#include <debug/kernel/DebugManager.hpp>
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/DmaManager.hpp"
@@ -48,11 +54,33 @@ void Dispatcher::StartKernel()
         }
     );
 
+    ARX_DEBUG_RUN(
+        ResourceLayerImportCaps->processManager->PublishDebug(debugManager, ResourceLayerImportCaps->taskManager, dispatcher_vfs_file_operations());
+        ResourceLayerImportCaps->taskManager->PublishDebug(debugManager, ResourceLayerImportCaps->processManager);
+        debugManager.DeclareUnavailable("lifecycle", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("credentials", "Logic layer not constructed");
+    );
+
     SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
 
     ARX_DEBUG_RUN(DebugFoundationPublishCpp(debugManager));
 
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
+
+    ARX_DEBUG_RUN(
+        LifecycleDebugStats& lifecycle = LogicLayerImportCaps->processController->DebugStats;
+        CredentialDebugStats& credentials = LogicLayerImportCaps->credentialManager->DebugStats;
+        ProcessDebugStats& process = ResourceLayerImportCaps->processManager->DebugStats;
+        process.fileOperations[0] = InterProcessCommunicationManager::DebugPipeOperations();
+        process.fileOperations[1] = InterProcessCommunicationManager::DebugMemoryOperations();
+        process.fileOperations[2] = SocketManager::DebugSocketOperations();
+        process.filePolls[0] = EventManager::DebugCounterPoll();
+        process.filePolls[1] = EventManager::DebugEpollPoll();
+        process.lifecycleGroup = &lifecycle.group;
+        process.credentialGroup = &credentials.group;
+        debugManager.Publish("lifecycle", "LifecycleDebugStats", &lifecycle, sizeof(lifecycle), 1, &lifecycle.group);
+        debugManager.Publish("credentials", "CredentialDebugStats", &credentials, sizeof(credentials), 1, &credentials.group);
+    );
 
     SelfTestManager::Get().RunLogicLayerTests((void*) ResourceLayerImportCaps, (void*) LogicLayerImportCaps);
 

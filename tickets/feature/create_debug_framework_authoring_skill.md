@@ -121,6 +121,18 @@ or permitted scratch fixtures; do not make unrelated production changes just to
 test the skill. Validate skill packaging with the then-available skill guidance,
 all local links and repository discovery, and record remaining environment limits.
 
+## Verification scope
+
+Keep verification proportional to this ticket's changes. Select the smallest set
+of checks that demonstrates the acceptance criteria and covers the affected
+behavior. Run the relevant checks once after the final changes; stop when they
+pass. Repeat or broaden checks only after a new change, a failure, or a concrete
+unresolved risk, and record the reason. Do not add repeated QEMU boots, unrelated
+suite runs, or baseline investigations merely for extra confidence. Record
+incidental failures and their impact; investigate further only when evidence
+makes them a blocker for this ticket. Preserve required acceptance checks and
+report any checks that could not run.
+
 ## Work log
 
 ### 2026-10-18 — Created
@@ -133,3 +145,10 @@ exist. Distinct from the broader QEMU/GDB usage-skill backlog; no skill authored
 Shared analysis references were consolidated into their owning tickets before
 removing `tickets/analysis/`. Current links point to the archived evidence; ticket
 scope, implementation authorization and verification requirements are preserved.
+
+### 2026-10-20 — Owner-directed verification scope
+
+The owner requested avoiding excessive verification on remaining tickets. Added
+an explicit stopping rule and evidence-based limits on repeated or broader
+checks. Acceptance criteria, implementation scope, status, and execution gates
+are unchanged.

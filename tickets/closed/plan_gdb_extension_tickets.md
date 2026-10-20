@@ -623,7 +623,7 @@ implementation is authorized.
 | --- | --- | --- |
 | 1 | [Kernel and GDB framework foundations](build_debug_framework_foundation.md) | P1 |
 | 2 | [Physical allocation, NUMA, heap and DMA](../closed/add_debug_physical_allocation_views.md) | P1 |
-| 3 | [Process tree, task ownership and shared resources](../feature/add_debug_process_resource_views.md) | P1 |
+| 3 | [Process tree, task ownership and shared resources](../closed/add_debug_process_resource_views.md) | P1 |
 | 4 | [Scheduling, blocked tasks, futexes and timers](../feature/add_debug_scheduling_wait_views.md) | P1 |
 | 5 | [Virtual memory, backing and x86_64 translation](../feature/add_debug_virtual_memory_views.md) | P1 |
 | 6 | [Initramfs and supported VFS namespace contents](../feature/add_debug_filesystem_views.md) | P1 |
@@ -712,7 +712,7 @@ Recommended sequential implementation order:
 | 2 | [Platform, CPU, IPI and PCI](../closed/add_debug_platform_cpu_pci_views.md) | Validate real bootstrap discovery and CPU identities used by later correlations. |
 | 3 | [Physical allocation, NUMA, heap and DMA](../closed/add_debug_physical_allocation_views.md) | Exercise C platform records, maintained stats and bounded lists with useful allocation evidence. |
 | 4 | [Self-test and boot-error records](../feature/add_debug_selftest_error_views.md) | Small bounded diagnostic records improve evidence collection for the remaining work. |
-| 5 | [Process tree, task ownership and resources](../feature/add_debug_process_resource_views.md) | Establish shared process/task/file identities and lifecycle ownership. |
+| 5 | [Process tree, task ownership and resources](../closed/add_debug_process_resource_views.md) | Establish shared process/task/file identities and lifecycle ownership. |
 | 6 | [Virtual memory and translation](../feature/add_debug_virtual_memory_views.md) | Build mapping/backing ownership on process identities and physical-address interpretation. |
 | 7 | [VFS and initramfs contents](../feature/add_debug_filesystem_views.md) | Establish paths/mount/backend interpretation before communication object views. |
 | 8 | [Scheduling, waits, futexes and timers](../feature/add_debug_scheduling_wait_views.md) | Correlate task identity, CPU ownership and address/backing-based waits. |

@@ -424,6 +424,140 @@ registration and update expressions.
 Legacy commands remain until the cutover ticket removes them. Inspection reads
 stored target state, acquires no target locks, and dumps no allocation payload.
 
+## Process trees, tasks and shared resources
+
+```text
+arx-debug process tree
+arx-debug process tree --pid 1 --depth 4 --limit 64
+arx-debug process details --pid 9
+arx-debug task list
+arx-debug task details --tid 12
+arx-debug process files --pid 9 --scan 256
+arx-debug task files --tid 12 --scan 4096 --bytes 262144
+arx-debug process credentials --pid 9
+arx-debug process stats
+arx-debug task stats
+arx-debug lifecycle stats
+arx-debug credentials stats
+```
+
+`process tree` starts with roots and follows children in slot order. A PID selector
+shows that process's subtree. Other process views require `--pid`; task details
+and files require `--tid`. These selectors are numeric IDs, not pointers or
+expressions, and cannot be combined. PID, TID, slot address and generation are
+separate identities. Processes use 64 fixed slots; tasks use 128. Exec can change
+a task's TID without changing its slot incarnation. Reused slots receive a new
+debug generation, and captured parent generations must match before a tree edge
+is drawn. Missing, stale and cyclic parents remain explicit. Reclamation removes
+the occupant's diagnostic data; only generation bookkeeping and counters remain.
+
+Trees distinguish initializing/reserved, active, retiring, reclaiming and
+exited/retained records. Temporary exec-image process slots are reservations,
+not successfully cloned children. Details show process groups/sessions, parent
+TID and captured task incarnation, wait-owner claim, exit recipient, wait/stop/
+notification flags, memory/lifetime references and task membership. A captured
+parent task may already be reclaimed; its saved identity does not attach a new
+occupant to that historical relationship. A wait-owner token encodes TID+1 and is
+shown without inventing an incarnation that was not captured.
+
+Task views show state, name, process incarnation, stored owner CPU, dispatch
+claims, and observed RunningTasks/SwitchingTasks links. Process details likewise
+show RunningProcesses separately from ownerCpu. These are different observations,
+not a scheduler eligibility or policy diagnosis. Task details include cleanup,
+sleep and syscall state, stack bounds and compact saved registers. The context
+address supports generic typed inspection for full FX-state detail; hundreds of
+saved FX bytes are not expanded by default. A missing stack is explicit.
+
+### Shared tables, files and credentials
+
+`process files` selects process defaults. `task files` resolves that task's own
+nonnull descriptor/filesystem context first, then falls back to its process's
+default. It never calls the active-task-sensitive Files()/Fs() getters. The view
+shows both selected and default addresses, cwd/umask, stored reference counts and
+observed owning context edges. Process defaults and task pointers each own a
+reference, even when they point to the same context. Sharing a table adds a table
+reference; it does not add a direct file reference for every sharing task.
+
+Descriptor `count` is allocated slot capacity, not the number of open entries.
+`--scan` caps descriptor slots examined independently of displayed rows: default
+256, maximum 1,048,576. Every slot, including a hole, consumes scan/byte work.
+The selected table is scanned first; remaining scan capacity correlates matching
+file handles in other distinct observed tables. Tables and decoded file objects
+are deduplicated, while descriptor edges and CLOEXEC flags remain visible. Sparse
+or incomplete scans report partial results and never claim an exhaustive open
+count or complete ownership census. Scan, entry and byte limits all apply.
+
+Only a verified VFS Dispatcher route authorizes interpreting a handle as file_t.
+Custom routes stay opaque. Verified VFS files expose offset/status/refcount,
+operation identity, inode metadata and mount/dentry identities. Matching stored
+operation tables identifies pipes, memory files and UNIX sockets; verified Poll
+identities distinguish event counters and epoll. Unknown implementations retain
+that label even if the inode is regular. These identity checks invoke no hooks.
+Full namespace traversal/path reconstruction belongs to filesystem views.
+
+Close/readiness registrations are weak observers, not owning file references.
+Their callbacks and contexts support bounded correlation; they are never invoked.
+Private file data remains opaque. Observed context and descriptor owners exclude
+in-flight references and other retained users, so differences from refcounts do
+not prove a leak. Process/task correlation identities are reusable by memory,
+IPC and event adapters without adding another ownership database.
+
+Credentials are process-wide inline real/effective/saved/filesystem UID/GID.
+Supplementary groups live in an immutable shared reference-counted list, with
+null meaning empty and a hard maximum of 65,536 entries. Group enumeration and
+names/cwd strings are bounded. No task-specific credential override is invented.
+
+### Maintained lifecycle counters and native contracts
+
+ProcessManager and TaskManager count slot reservations, live slots, final reset
+and rejected reclamation calls separately from higher-level lifecycle operations.
+Published/exit-retained process counts change at their actual owner transitions.
+First publication and first exit are counted once, including concurrent attempts.
+Reparent, changed stop/continue and exit notification counters follow source
+updates. A rejected reclamation may be deferred by claims or other live users;
+it is not a completed retirement. Slot reclamation does not imply that every
+backing reference owned by a caller has already been released.
+
+ProcessController's single `lifecycle` record counts clone publication, committed
+exec, exit requests and wait outcomes. A successful exit request differs from
+first process exit. Wait counters distinguish returned observations, non-NOWAIT
+result deliveries, no-result calls, failures and blocking enrollments; multiple
+enrollments may occur in one call. Credential counters distinguish changes,
+no-ops, errors and silently refused filesystem-ID requests that return the old
+ID. Group updates compare credential contents, while still preserving existing
+replacement behavior. Internal credential queries do not inflate mutation totals.
+Attempts/in-flight values include incomplete calls. Unsigned lifetime totals have
+modular overflow semantics; they do not reconstruct history after wraparound.
+
+| Semantic ID / version | Roots, bounds, ordering and lifetime |
+| --- | --- |
+| `arx.process` / 1 | ProcessDebugStats in ProcessDebugStats.hpp. Descriptor count=0, capacity=64. `records` is the fixed process_t array; inspect allocated slots in slot order. `running` addresses BOOT_SMP_MAX_CPUS observed CPU pointers; `taskStats` supplies the borrowed task root. Native readers need no private-manager offsets. PID equals slot, but incarnation requires generation and no exhausted flag. A captured parent PID/generation must match the current occupant. Task membership is a null-terminated doubly linked list bounded by the real task array and command budgets. |
+| `arx.task` / 1 | TaskDebugStats in TaskDebugStats.hpp. Descriptor count=0, capacity=128. `records`, `running`, `switching` and `processStats` are direct typed roots. Numeric TID is mutable; slot/generation is incarnation identity. Captured process address/generation validates the borrowed owner link. CPU arrays have BOOT_SMP_MAX_CPUS entries. |
+| Nested shared resources | Matching ProcessManager.hpp and VirtualFileSystem.hpp define descriptor_table_t, filesystem_context_t, process_group_list_t, file_t/inode_t and observers. Descriptor count is capacity, supplementary group count is used entries, references are stored counts. Descriptor traversal uses slot order; readiness observers are null-terminated intrusive links with cycle detection. Shared addresses are ephemeral and may be reused. Cwd is bounded by 256 bytes; task names by 16. File route/operation identity roots are stored in ProcessDebugStats; zero means unavailable/unpublished. |
+
+Manager roots and arrays last until their owners are destroyed; composition
+invalidates registrations before destroying the layers. Generations saturate:
+exhausted identity is unavailable rather than wrapped to an old incarnation.
+Borrowed source/parent/CPU links differ from owning context/descriptor/exit-recipient
+references and weak observers. Matching headers, architecture and build identity
+are required. Readers validate sizes, capacities, alignment, allocation, link
+membership, arithmetic and budgets rather than calling getters or taking locks.
+
+Manager groups bracket their lock-protected transactions and identity updates;
+lifecycle and credential groups mark relevant mutations. An interrupted group
+reports partial observations. Zero active writers does not promise coherence
+between providers or unmarked runtime fields. Bounded scans preserve available
+rows when later data is unreadable or a budget is exhausted. Everything added for
+tracking, registration and inspection roots is excluded under DEBUG=0.
+
+| Legacy coverage | Replacement | Preserved information and correction |
+| --- | --- | --- |
+| `arx-proc [pid]` | `process tree`, `process details --pid N` | Allocated slots/IDs, address space, task head and bounded task IDs; adds incarnation-safe parentage, lifecycle, waitability and ownership. |
+| `arx-task <tid>` | `task list`, `task details --tid N`, generic context inspection | IDs/name/state/process, stack/context and task links; uses the real 128-slot array, preserves explicit selection and adds CPU/dispatch/retirement observations. |
+
+Legacy commands remain until their separate cutover. No Request-layer telemetry,
+historical tracing, scheduler policy reader or dump mechanics is added here.
+
 ## Controlled foundation providers
 
 These providers demonstrate the contract; they are not PMM, scheduler or other

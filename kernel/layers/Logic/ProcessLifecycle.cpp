@@ -34,18 +34,32 @@ constexpr uint64_t CLONE_SUPPORTED     = CLONE_VM | CLONE_FS | CLONE_FILES | CLO
 class LifecycleGuard
 {
 public:
-    explicit LifecycleGuard(spinlock_t* lock) : Lock(lock)
+    explicit LifecycleGuard(spinlock_t* lock ARX_DEBUG_ONLY(, arx_debug_group_t* group = nullptr)) : Lock(lock)
     {
         spinlock_acquire_preempt(Lock);
+        ARX_DEBUG_RUN(
+            Group = group;
+            if (Group != nullptr)
+            {
+                arx_debug_group_begin(Group);
+            }
+        );
     }
 
     ~LifecycleGuard()
     {
+        ARX_DEBUG_RUN(
+            if (Group != nullptr)
+            {
+                arx_debug_group_end(Group);
+            }
+        );
         spinlock_release_preempt(Lock);
     }
 
 private:
     spinlock_t* Lock;
+    ARX_DEBUG_ONLY(arx_debug_group_t* Group;)
 };
 
 static void close_descriptors(process_t* process, VirtualFileSystem* files, bool closeOnExec)
@@ -100,6 +114,9 @@ ProcessController::ProcessController(ResourceLayerCaps* resources, LogicLayerCap
 
 uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const process_clone_arguments_t& arguments)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.clone);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (!arch_task_context_supported())
     {
         return LINUX_ENOSYS;
@@ -230,6 +247,11 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         {
             child->hasParent = parent->hasParent;
             child->parentId  = parent->parentId;
+            ARX_DEBUG_RUN(
+                child->debug.parentId = child->parentId;
+                child->debug.parentGeneration = parent->debug.parentGeneration;
+                child->debug.parentCaptured = true;
+            );
         }
 
     }
@@ -349,6 +371,7 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
         return LINUX_EFAULT;
     }
 
+    ARX_DEBUG_RUN(processes->DebugParent(child));
     child->waitable             = !thread || child->waitable;
     const bool     vfork        = (flags & CLONE_VFORK) != 0;
     const uint64_t execSequence = __atomic_load_n(&child->execSequence, __ATOMIC_ACQUIRE);
@@ -377,6 +400,11 @@ uint64_t ProcessController::Clone(const arch_syscall_frame_t* frame, const proce
 
         return LINUX_EAGAIN;
     }
+
+    ARX_DEBUG_RUN(
+        debugOperation.Finish();
+        debugUpdate.End();
+    );
 
     if (vfork)
     {
@@ -501,7 +529,7 @@ uint64_t ProcessController::SetTidAddress(uint64_t address)
 
 uint64_t ProcessController::Group(uint32_t operation, int32_t pid, int32_t group)
 {
-    LifecycleGuard guard(&Lock);
+    LifecycleGuard guard(&Lock ARX_DEBUG_ONLY(, &DebugStats.group));
     ProcessManager* manager = Resources->processManager;
     process_t*     caller  = manager->GetCurrentProcess();
 
@@ -580,6 +608,9 @@ uint64_t ProcessController::Group(uint32_t operation, int32_t pid, int32_t group
 
 uint64_t ProcessController::Exit(int32_t status, bool group)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.exit);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     ProcessManager* processes = Resources->processManager;
     TaskManager*    tasks     = Resources->taskManager;
     process_t*      process   = processes->GetCurrentProcess();
@@ -595,6 +626,10 @@ uint64_t ProcessController::Exit(int32_t status, bool group)
     {
         process->exitStatus = status;
         __atomic_store_n(&process->exited, true, __ATOMIC_RELEASE);
+        ARX_DEBUG_RUN(
+            processes->DebugExit(process);
+            debugOperation.Finish();
+        );
         return 0;
     }
 
@@ -624,11 +659,17 @@ uint64_t ProcessController::Exit(int32_t status, bool group)
     }
 
     cpu_preemption_enable();
+    ARX_DEBUG_RUN(
+        debugOperation.Finish();
+        debugUpdate.End();
+    );
     Logic->scheduler->ExitCurrentTask();
 }
 
 uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t options, uint64_t usage, bool waitid, uint32_t type)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.wait);)
+
     if (!waitid && selector == INT32_MIN)
     {
         return LINUX_ESRCH;
@@ -671,7 +712,7 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
         bool matching          = false;
 
         {
-            LifecycleGuard guard(&Lock);
+            LifecycleGuard guard(&Lock ARX_DEBUG_ONLY(, &DebugStats.group));
 
             for (size_t index = 0; index < manager->GetCapacity(); ++index)
             {
@@ -775,6 +816,17 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
             manager->ReleaseProcess(selected);
             __atomic_add_fetch(&parent->childSequence, 1ULL, __ATOMIC_RELEASE);
             Logic->scheduler->WakeEventWaiters(&parent->childSequence);
+            ARX_DEBUG_RUN(
+                if (copied)
+                {
+                    ARX_DEBUG_ADD(DebugStats.waitsObserved, 1);
+                    if ((options & NOWAIT) == 0)
+                    {
+                        ARX_DEBUG_ADD(DebugStats.waitsConsumed, 1);
+                    }
+                    debugOperation.Finish();
+                }
+            );
             return copied ? waitid ? 0 : pid : LINUX_EFAULT;
         }
 
@@ -795,9 +847,11 @@ uint64_t ProcessController::Wait(int64_t selector, uint64_t status, uint32_t opt
                 }
             }
 
+            ARX_DEBUG_RUN(debugOperation.Finish(1));
             return 0;
         }
 
+        ARX_DEBUG_ADD(DebugStats.waitsBlocked, 1);
         const uint64_t result = Logic->scheduler->WaitForEvent(&parent->childSequence, sequence);
 
         if (result != 0)
@@ -942,6 +996,9 @@ struct ExecImage
 
 uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.exec);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (!arch_task_context_supported())
     {
         return LINUX_ENOSYS;
@@ -1395,6 +1452,7 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
             if (child->hasParent && child->parentId == current->id)
             {
                 child->parentTaskId = current->id;
+                ARX_DEBUG_RUN(processes->DebugParent(child));
             }
 
             processes->ReleaseProcess(child);
@@ -1426,5 +1484,6 @@ uint64_t ProcessController::Execute(arch_syscall_frame_t* frame)
 
     __atomic_add_fetch(&current->execSequence, 1ULL, __ATOMIC_RELEASE);
     Logic->scheduler->WakeEventWaiters(&current->execSequence);
+    ARX_DEBUG_RUN(debugOperation.Finish());
     return 0;
 }

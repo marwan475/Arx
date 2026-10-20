@@ -8,6 +8,19 @@ void test_ProcessController(ResourceLayerCaps* resources, LogicLayerCaps* logic)
 {
     auto* m = logic ? logic->processController : nullptr;
     ManagerSuite suite("logic/ProcessController", m != nullptr);
+#if DEBUG
+    suite.Run("logic/ProcessController/debug_failures", [&](TestCase& t)
+    {
+        const DebugOperationStats before = m->DebugStats.clone;
+        process_clone_arguments_t arguments{};
+        t.Equal(m->Clone(nullptr, arguments), LINUX_EOPNOTSUPP, "invalid clone rejected before publication");
+        t.Equal(m->DebugStats.clone.attempts, before.attempts + 1, "clone attempt counted once");
+        t.Equal(m->DebugStats.clone.failures, before.failures + 1, "failed clone is not a committed clone");
+        t.Equal(m->DebugStats.clone.successes, before.successes, "clone publication total unchanged");
+        t.Equal(m->DebugStats.group.activeWriters, 0, "failed clone update group completed");
+    });
+#endif
+
     suite.Run("logic/ProcessController/group_identity", [&](TestCase& t)
     {
         TestFixture f(resources);

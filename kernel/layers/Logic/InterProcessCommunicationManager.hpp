@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/DebugRecords.h>
+
 #include "layers/Logic/VirtualFileSystem.hpp"
 
 struct ResourceLayerCaps;
@@ -9,6 +11,17 @@ class SignalManager;
 class InterProcessCommunicationManager
 {
 public:
+    ARX_DEBUG_ONLY(
+        static const void* DebugPipeOperations()
+        {
+            return &PipeOperations;
+        }
+
+        static const void* DebugMemoryOperations()
+        {
+            return &MemoryOperations;
+        }
+    )
     InterProcessCommunicationManager(ResourceLayerCaps* resources, VirtualFileSystem* vfs, EventManager* events, SignalManager* signals);
     uint64_t CreatePipe(uint64_t output, uint32_t flags);
     uint64_t CreateMemoryFile(uint64_t name, uint32_t flags);

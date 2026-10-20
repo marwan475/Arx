@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/ProcessDebugStats.hpp>
+
 #include "layers/Resource/TaskManager.hpp"
 
 #include <arch/arch.h>
@@ -171,6 +173,8 @@ struct process_t
     signal_sender_t        signalSenders[32];
     signal_queue_t*        signalQueue;
 
+    ARX_DEBUG_ONLY(ProcessSlotDebug debug;)
+
     descriptor_table_t*    Files() const;
     uint64_t               DescriptorLimit() const;
     filesystem_context_t*  Fs() const;
@@ -237,6 +241,14 @@ public:
     static constexpr size_t   MAX_CWD_PATH_LENGTH           = 256;
 
     ProcessManager();
+    ARX_DEBUG_ONLY(
+        ProcessDebugStats DebugStats{};
+        void DebugAllocated(process_t* process);
+        void DebugParent(process_t* process, bool changed = false);
+        void DebugPublished(process_t* process);
+        void DebugExit(process_t* process);
+        void PublishDebug(DebugManager& manager, TaskManager* tasks, const void* vfsRoute);
+    )
 
     static descriptor_table_t*    CreateDescriptorTable();
     static descriptor_table_t*    CopyDescriptorTable(descriptor_table_t* source);

@@ -142,6 +142,13 @@ static uint64_t resolve_task_kernel_stack_top(const task_t* task, const cpu_info
 
 void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 {
+    ARX_DEBUG_RUN(
+        const uint64_t previous = task->debug.generation;
+        const bool exhausted = task->debug.exhausted || (allocated && previous == UINT64_MAX);
+        task->debug = {};
+        task->debug.generation = allocated && !exhausted ? previous + 1 : previous;
+        task->debug.exhausted = exhausted;
+    );
     memset(&task->userLaunchContext, 0, sizeof(task->userLaunchContext));
     task->allocated            = allocated;
     task->state                = task_t::READY;
@@ -205,6 +212,13 @@ void TaskManager::ResetTaskSlot(task_t* task, uint64_t id, bool allocated)
 TaskManager::TaskManager()
 {
     static_assert(sizeof(TaskManager) <= 131072, "TaskManager must fit the largest heap object");
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.records = Tasks;
+        DebugStats.running = RunningTasks;
+        DebugStats.switching = SwitchingTasks;
+        DebugStats.capacity = MAX_TASKS;
+    );
     PriorityCleanup = nullptr;
     ManagerLock     = 0;
     LoadEpoch       = 0;
@@ -220,6 +234,7 @@ TaskManager::TaskManager()
 
     for (size_t i = 0; i < MAX_TASKS; i++)
     {
+        ARX_DEBUG_RUN(Tasks[i].debug = {});
         ResetTaskSlot(&Tasks[i], i, false);
     }
 }
@@ -228,10 +243,12 @@ void TaskManager::LockManager() const
 {
     cpu_preemption_disable();
     spinlock_acquire((spinlock_t*) &ManagerLock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&const_cast<TaskManager*>(this)->DebugStats.group));
 }
 
 void TaskManager::UnlockManager() const
 {
+    ARX_DEBUG_RUN(arx_debug_group_end(&const_cast<TaskManager*>(this)->DebugStats.group));
     spinlock_release((spinlock_t*) &ManagerLock);
     cpu_preemption_enable();
 }
@@ -243,6 +260,7 @@ task_t* TaskManager::AllocateTaskUnlocked()
         if (!Tasks[i].allocated && FindTask(i) == nullptr)
         {
             ResetTaskSlot(&Tasks[i], i, true);
+            ARX_DEBUG_RUN(DebugAllocated(&Tasks[i]));
             return Tasks[i].allocated ? &Tasks[i] : nullptr;
         }
     }
@@ -252,9 +270,17 @@ task_t* TaskManager::AllocateTaskUnlocked()
 
 task_t* TaskManager::AllocateTask()
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.allocations);)
+
     LockManager();
     task_t* task = AllocateTaskUnlocked();
     UnlockManager();
+    ARX_DEBUG_RUN(
+        if (task != nullptr)
+        {
+            debugOperation.Finish();
+        }
+    );
     return task;
 }
 
@@ -296,18 +322,36 @@ task_t* TaskManager::CreateTask(arch_task_entry_t entry, void* arg, const task_t
 
 task_t* TaskManager::CreateKernelTask(arch_task_entry_t entry, void* arg)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.creations);)
+
     if (entry == nullptr)
     {
         return nullptr;
     }
 
-    return CreateTask(entry, arg, nullptr);
+    task_t* task = CreateTask(entry, arg, nullptr);
+    ARX_DEBUG_RUN(
+        if (task != nullptr)
+        {
+            debugOperation.Finish();
+        }
+    );
+    return task;
 }
 
 task_t* TaskManager::CreateUserBootstrapTask(uint64_t userRip, uint64_t userRsp, uint64_t arg0, uint64_t arg1)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.creations);)
+
     const task_t::user_launch_context_t launch = {userRip, userRsp, arg0, arg1};
-    return CreateTask(user_task_bootstrap_entry, nullptr, &launch);
+    task_t* task = CreateTask(user_task_bootstrap_entry, nullptr, &launch);
+    ARX_DEBUG_RUN(
+        if (task != nullptr)
+        {
+            debugOperation.Finish();
+        }
+    );
+    return task;
 }
 
 static void cloned_user_entry(void* argument)
@@ -328,6 +372,8 @@ static void cloned_user_entry(void* argument)
 
 task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint64_t id)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.creations);)
+
     if (!arch_task_context_supported() || frame == nullptr || id >= MAX_TASKS)
     {
         return nullptr;
@@ -358,16 +404,25 @@ task_t* TaskManager::CreateUserCloneTask(const arch_syscall_frame_t* frame, uint
         vfree(allocation);
         return nullptr;
     }
+    ARX_DEBUG_RUN(DebugAllocated(task));
     task->stack      = static_cast<uint8_t*>(allocation) + PAGE_SIZE;
     task->isUserTask = true;
     void* stack_top  = static_cast<uint8_t*>(task->stack) + CPU_KERNEL_STACK_SIZE;
     arch_prepare_clone_context(&task->taskContext, frame, stack_top, cloned_user_entry, task);
     UnlockManager();
+    ARX_DEBUG_RUN(
+        if (task != nullptr)
+        {
+            debugOperation.Finish();
+        }
+    );
     return task;
 }
 
 bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resources_t* retiredResources)
 {
+    ARX_DEBUG_ONLY(DebugOperation debugOperation(DebugStats.reclamations);)
+
     void*            stackToFree   = nullptr;
     signal_sender_t* sendersToFree = nullptr;
 
@@ -469,6 +524,8 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
     task_scheduling_t* schedulingToFree = task->scheduling;
     signal_queue_t* queueToFree = task->signalQueue;
     sendersToFree = task->signalSenders;
+    ARX_DEBUG_ADD(DebugStats.reclaimed, 1);
+    ARX_DEBUG_ADD(DebugStats.liveSlots, UINT64_MAX);
     ResetTaskSlot(task, (uint64_t) (task - &Tasks[0]), false);
 
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
@@ -501,6 +558,7 @@ bool TaskManager::FreeTask(task_t* task, void** retiredStack, retired_task_resou
         ReleaseTaskStack(stackToFree);
     }
 
+    ARX_DEBUG_RUN(debugOperation.Finish());
     return true;
 }
 
@@ -893,6 +951,7 @@ task_t* TaskManager::FindTask(uint64_t id) const
 void TaskManager::SetCurrentIdentity(uint64_t id)
 {
     LockManager();
+    ARX_DEBUG_ADD(DebugStats.identityChanges, GetCurrentTask()->id != id ? 1 : 0);
     GetCurrentTask()->id = id;
     UnlockManager();
 }
@@ -942,6 +1001,7 @@ bool TaskManager::SetRunningTask(uint8_t cpuId, task_t* task)
             task->accountingRunning = arch_time_read_monotonic(&task->accountingStamp);
         }
 
+        ARX_DEBUG_RUN(task->debug.published = true);
         task->state    = task_t::RUNNING;
         task->ownerCpu = cpuId;
     }

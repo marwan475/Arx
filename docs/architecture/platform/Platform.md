@@ -65,7 +65,12 @@ block to its owning zone and merges free buddies where possible.
 ![Physical memory release](../../imgs/pmmfree-2026-04-15-065114.svg)
 
 Zone locks protect the allocator and usage counters. PhysicalMemoryManager exposes
-these services to higher layers.
+these services to higher layers. Debug builds track public requests separately
+from per-zone fallback attempts, maintain free-block counts by buddy order, and
+publish unique-node and normal/DMA-zone views. Tracking begins during platform
+initialization; Dispatcher registers the existing records later. Selected PFNs
+expose raw metadata and validated free heads without inferring ownership from
+stale interior-page flags. GdbCommands.md describes the commands and limits.
 
 ## 5. Virtual memory: reserve addresses and map pages
 
@@ -120,7 +125,12 @@ Klib's `klib.c` supplies the public allocation helpers:
 For example, `vmalloc` reserves a VMM range, obtains PMM blocks, and maps them
 into that range. `vfree` unmaps it, returns the blocks, and releases the reservation.
 Heap allocation uses a node's heap lock; oversized requests can fail and belong
-on the virtual-allocation path. Keep each allocation until its users are finished
+on the virtual-allocation path. Debug cache records count successful object
+allocations/releases and requested versus class-rounded bytes, with separate
+slab payload/bitmap backing totals. Bounded slab/address views preserve native
+list membership and derive occupancy separately; bitmap checks are optional.
+Original live request sizes and allocation provenance are not retained.
+Keep each allocation until its users are finished
 and release it with the matching helper.
 
 ## 7. ACPI: make firmware tables available

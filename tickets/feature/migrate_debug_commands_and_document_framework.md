@@ -23,7 +23,7 @@ requires its own analysis/execution gate. Old-tool defects are tracked in
 ### Dependencies and scope
 
 Depends on [foundations](../closed/build_debug_framework_foundation.md) and the old-coverage
-parts of [physical allocation](add_debug_physical_allocation_views.md),
+parts of [physical allocation](../closed/add_debug_physical_allocation_views.md),
 [process/resources](add_debug_process_resource_views.md),
 [memory](add_debug_virtual_memory_views.md),
 [filesystems](add_debug_filesystem_views.md) and
@@ -150,11 +150,11 @@ in a live session. No kernel build/boot was performed for this planning task.
 | Current command | Arguments and output | Source roots and replacement owner |
 | --- | --- | --- |
 | `arx-platform` | No argument defaults to show; `show`/`status`, `set <address_expr>`, `clear`. Reports override/resolution and CPU pointer/count. Override changes host-side state, not the kernel. | `ArxPlatform` resolves `platform`; replace through [foundation](../closed/build_debug_framework_foundation.md) bootstrap/status plus [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
-| `arx-pmm` | Optional CPU expression; regular-zone region/page/byte/PFN/HHDM accounting, per-order free blocks/pages and list-derived totals. | `platform.cpus[] -> numa_node.zone`, buddy free lists; [physical allocation](../feature/add_debug_physical_allocation_views.md). |
+| `arx-pmm` | Optional CPU expression; regular-zone region/page/byte/PFN/HHDM accounting, per-order free blocks/pages and list-derived totals. | `platform.cpus[] -> numa_node.zone`, buddy free lists; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
 | `arx-vmm` | Optional CPU expression; address-space pointer/type/PT/lock, all four region lists with bounds/size/type, metadata counts. | `platform.cpus[].address_space`; [memory views](../feature/add_debug_virtual_memory_views.md). |
 | `arx-cpus` | Optional CPU expression; count/slots/arch, platform IOAPIC details and CPU ID, NUMA/address space and LAPIC/ACPI identity. | `platform`, `cpu_info_t`, `arch_info_t`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-pci` | No supported selector; arguments are ignored. Arch/count/array pointer, x86 BDF/vendor/device summary. | `platform.pci_devices`, `pci_device_count`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
-| `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../feature/add_debug_physical_allocation_views.md). |
+| `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
 | `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../feature/add_debug_filesystem_views.md). |
 | `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../feature/add_debug_filesystem_views.md). |
 | `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../feature/add_debug_process_resource_views.md). |
@@ -254,3 +254,24 @@ platform-view work. The x86_64 launcher now defaults to the new entry point, wit
 the existing override retained and the AArch64 default preserved. This completes
 only that default change; remaining migration/parity/removal work and this
 ticket’s analysis gate remain open. Verification was not resumed.
+
+### 2026-10-20 — PMM/heap migration coverage verified
+
+[Physical allocation views](../closed/add_debug_physical_allocation_views.md)
+provide `pmm nodes/zones/orders/blocks/pfn`, `heap caches/slabs/address` and
+`dma allocations`, with generic stats. Legacy PMM normal-zone regions, counts,
+bytes, PFNs/HHDM, lock and per-order blocks/pages map to node/zone/order/block
+views. Legacy heap class/list totals, metadata-pool shape and lock map to
+cache/slab views. Explicit node, logical CPU and slot selectors replace ambiguous
+CPU expressions; shared nodes appear once and DMA zones are included.
+
+Parity evidence: one-CPU and four-CPU x86_64 QEMU/GDB stops before Dispatcher and
+before/after Resource tests inspected typed source fields and maintained totals,
+bounded buddy/slab enumeration, metadata chunks, bitmaps and selected heap
+addresses. Controlled host records cover an additional node, corrupt links/counts,
+invalid PFNs and truncation. DMA mock fixture stops show retained rollback and
+active release phases; production direct-address allocation/release and kernel
+counter assertions pass. Release QEMU reports the framework compiled out.
+`debug/tests/` contains repeatable checks. GdbCommands.md records replacement
+coverage and native semantics. This does not authorize legacy removal or closure
+of the cutover ticket; other providers and cutover work remain pending.

@@ -28,30 +28,31 @@ static void* slab_alloc(slab_t* slab)
     return (void*) ((uintptr_t) slab->objects_array + index * slab->object_size);
 }
 
-static void slab_free(slab_t* slab, void* ptr)
+static bool slab_free(slab_t* slab, void* ptr)
 {
     if (slab == NULL || ptr == NULL)
     {
-        return;
+        return false;
     }
 
     uint64_t index = ((uintptr_t) ptr - (uintptr_t) slab->objects_array) / slab->object_size;
 
     if (index >= slab->total_objects)
     {
-        return;
+        return false;
     }
 
     if (!bitmap_test(slab->object_bitmap, index))
     {
-        return;
+        return false;
     }
 
     bitmap_clear(slab->object_bitmap, index);
     slab->free_objects++;
+    return true;
 }
 
-static bool slab_init(slab_t* slab, size_t object_size)
+static bool slab_init(cache_t* cache, slab_t* slab, size_t object_size)
 {
     if (slab == NULL || object_size == 0)
     {
@@ -70,11 +71,31 @@ static bool slab_init(slab_t* slab, size_t object_size)
     slab->objects_array = pmm_alloc(SLAB_SIZE);
     slab->object_bitmap = pmm_alloc(BITMAP_BYTES_FOR_BITS(slab->total_objects));
 
+    ARX_DEBUG_RUN(
+        if (slab->objects_array != NULL)
+        {
+            ARX_DEBUG_ADD(cache->debugStats.payloadBackingBytes, SLAB_SIZE);
+        }
+
+        if (slab->object_bitmap != NULL)
+        {
+            // The buddy allocator commits at least one page for this bitmap.
+            ARX_DEBUG_ADD(cache->debugStats.bitmapBackingBytes, PAGE_SIZE);
+        }
+    );
+
     if (slab->objects_array == NULL || slab->object_bitmap == NULL)
     {
+        ARX_DEBUG_ADD(cache->debugStats.slabInitFailures, 1);
+        ARX_DEBUG_RUN(
+            ARX_DEBUG_ADD(cache->debugStats.retainedInitFailureBytes,
+                (slab->objects_array != NULL ? SLAB_SIZE : 0)
+                + (slab->object_bitmap != NULL ? PAGE_SIZE : 0));
+        );
         return false;
     }
 
+    ARX_DEBUG_ADD(cache->debugStats.slabsInitialized, 1);
     bitmap_init(slab->object_bitmap, slab->total_objects);
     return true;
 }
@@ -128,7 +149,7 @@ static bool slab_contains_ptr(const slab_t* slab, const void* ptr)
     return ((p - start) % slab->object_size) == 0;
 }
 
-static void* cache_alloc(cache_t* cache)
+static void* cache_alloc_impl(cache_t* cache)
 {
     if (cache == NULL)
     {
@@ -166,7 +187,7 @@ static void* cache_alloc(cache_t* cache)
             break;
         }
 
-        if (!slab_init(slab, cache->object_size))
+        if (!slab_init(cache, slab, cache->object_size))
         {
             free_slab_struct(cache, slab);
             break;
@@ -190,6 +211,23 @@ static void* cache_alloc(cache_t* cache)
     return NULL;
 }
 
+static void* cache_alloc(cache_t* cache, size_t requested)
+{
+    ARX_DEBUG_ADD(cache->debugStats.operations.attempts, 1);
+    void* pointer = cache_alloc_impl(cache);
+
+    if (pointer != NULL)
+    {
+        ARX_DEBUG_RUN(arx_allocation_success(&cache->debugStats.operations, requested, cache->object_size));
+    }
+    else
+    {
+        ARX_DEBUG_ADD(cache->debugStats.operations.failures, 1);
+    }
+
+    return pointer;
+}
+
 static void cache_free(cache_t* cache, void* ptr)
 {
     if (cache == NULL || ptr == NULL)
@@ -204,7 +242,10 @@ static void cache_free(cache_t* cache, void* ptr)
             continue;
         }
 
-        slab_free(slab, ptr);
+        if (slab_free(slab, ptr))
+        {
+            ARX_DEBUG_RUN(arx_allocation_free(&cache->debugStats.operations, cache->object_size));
+        }
 
         if (slab->free_objects > 0)
         {
@@ -222,7 +263,10 @@ static void cache_free(cache_t* cache, void* ptr)
             continue;
         }
 
-        slab_free(slab, ptr);
+        if (slab_free(slab, ptr))
+        {
+            ARX_DEBUG_RUN(arx_allocation_free(&cache->debugStats.operations, cache->object_size));
+        }
 
         if (slab->free_objects == slab->total_objects)
         {
@@ -253,7 +297,7 @@ static void cache_init(cache_t* cache, size_t object_size)
             panic();
         }
 
-        if (!slab_init(slab, object_size))
+        if (!slab_init(cache, slab, object_size))
         {
             error_logger("Arx kernel: failed to initialize slab\n");
             panic();
@@ -265,6 +309,10 @@ static void cache_init(cache_t* cache, size_t object_size)
 
 void heap_init(void)
 {
+    ARX_DEBUG_RUN(
+        platform.debugHeap.source = &platform;
+        platform.debugHeap.capacity = MAX_NUMA_NODES;
+    );
     numa_node_t* original = platform.cpus[arch_cpu_id()].numa_node;
     for (size_t i = 0; i < platform.numa_node_count; i++)
     {
@@ -278,10 +326,11 @@ void heap_init(void)
     }
 
     platform.cpus[arch_cpu_id()].numa_node = original;
+    ARX_DEBUG_STORE(platform.debugHeap.ready, 1);
     kprintf("Arx kernel: heap initialized\n");
 }
 
-void* heap_alloc(kernel_heap_t* heap, size_t size)
+static void* heap_alloc_impl(kernel_heap_t* heap, size_t size)
 {
     if (heap == NULL || size == 0)
     {
@@ -292,22 +341,53 @@ void* heap_alloc(kernel_heap_t* heap, size_t size)
     {
         if (size <= heap->caches[i].object_size)
         {
-            return cache_alloc(&heap->caches[i]);
+            return cache_alloc(&heap->caches[i], size);
         }
     }
 
     return NULL;
 }
 
+void* heap_alloc(kernel_heap_t* heap, size_t size)
+{
+    ARX_DEBUG_ADD(platform.debugHeap.allocationCalls, 1);
+    ARX_DEBUG_RUN(
+        if (heap != NULL)
+        {
+            arx_debug_group_begin(&heap->debugGroup);
+        }
+    );
+
+    void* pointer = heap_alloc_impl(heap, size);
+
+    if (pointer == NULL)
+    {
+        ARX_DEBUG_ADD(platform.debugHeap.allocationFailures, 1);
+    }
+
+    ARX_DEBUG_RUN(
+        if (heap != NULL)
+        {
+            arx_debug_group_end(&heap->debugGroup);
+        }
+    );
+    return pointer;
+}
+
 void heap_free(kernel_heap_t* heap, void* ptr)
 {
+    ARX_DEBUG_ADD(platform.debugHeap.freeCalls, 1);
     if (heap == NULL || ptr == NULL)
     {
         return;
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_begin(&heap->debugGroup));
+
     for (size_t i = 0; i < OBJECT_SIZE_CLASS_COUNT; i++)
     {
         cache_free(&heap->caches[i], ptr);
     }
+
+    ARX_DEBUG_RUN(arx_debug_group_end(&heap->debugGroup));
 }

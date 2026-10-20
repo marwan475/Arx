@@ -620,6 +620,48 @@ static void heap_test(void)
 
     selftest_case_begin("platform/memory/heap_cache");
 
+#if DEBUG
+    arx_allocation_stats_t debugBefore = heap->caches[OBJECT_SIZE_32].debugStats.operations;
+    void* debugPointer = heap_alloc(heap, 17);
+
+    if (debugPointer == NULL)
+    {
+        heap_test_log_fail("debug rounded object allocation failed", &failures);
+    }
+    else
+    {
+        arx_allocation_stats_t during = heap->caches[OBJECT_SIZE_32].debugStats.operations;
+
+        if (during.liveBlocks != debugBefore.liveBlocks + 1
+            || during.requestedBytes != debugBefore.requestedBytes + 17
+            || during.roundedBytes != debugBefore.roundedBytes + 32
+            || during.liveRoundedBytes != debugBefore.liveRoundedBytes + 32)
+        {
+            heap_test_log_fail("debug heap object and byte rounding counters disagree", &failures);
+        }
+        else
+        {
+            passes++;
+        }
+
+        heap_free(heap, debugPointer);
+        heap_free(heap, debugPointer);
+        arx_allocation_stats_t after = heap->caches[OBJECT_SIZE_32].debugStats.operations;
+
+        if (after.liveBlocks != debugBefore.liveBlocks
+            || after.liveRoundedBytes != debugBefore.liveRoundedBytes
+            || after.frees != debugBefore.frees + 1
+            || heap->debugGroup.activeWriters != 0)
+        {
+            heap_test_log_fail("debug heap free counters must count actual bit transitions", &failures);
+        }
+        else
+        {
+            passes++;
+        }
+    }
+#endif
+
     if (heap_alloc(heap, 0) != NULL)
     {
         heap_test_log_fail("heap_alloc(0) should return NULL", &failures);

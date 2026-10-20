@@ -2,6 +2,7 @@
 #define HEAP_H
 
 #include <boot/boot.h>
+#include <debug/kernel/stats/HeapDebugStats.h>
 #include <klib/spinlock.h>
 #include <memory/metadata.h>
 #include <stdbool.h>
@@ -51,12 +52,14 @@ typedef struct cache
     slab_t*         full_slabs;
     slab_t*         empty_slabs;
     metadata_pool_t slab_metadata_pool;
+    ARX_DEBUG_ONLY(arx_cache_debug_stats_t debugStats;)
 } cache_t;
 
 typedef struct kernel_heap
 {
     spinlock_t lock;
     cache_t    caches[OBJECT_SIZE_CLASS_COUNT];
+    ARX_DEBUG_ONLY(arx_debug_group_t debugGroup;)
 } kernel_heap_t;
 
 void  heap_init(void);

@@ -5,20 +5,21 @@
 
 #include <klib/klib.h>
 
-struct DmaManager::AllocationRecord
-{
-    DmaAllocation          allocation;
-    DmaDevice              device;
-    platform_dma_mapping_t mapping;
-    void*                  backing;
-    phys_addr_t            physical;
-    size_t                 reservedSize;
-    size_t                 mappedSize;
-    bool                   releasing;
-    AllocationRecord*      next;
-};
+#if DEBUG
+#include <debug/kernel/DebugManager.hpp>
+#include <platform.h>
+#endif
+
 
 static uint64_t NextAllocationId;
+
+#if DEBUG
+#define DMA_ALLOCATION_RESULT(value) DebugOutcome(true, (value))
+#define DMA_FREE_RESULT(value) DebugOutcome(false, (value))
+#else
+#define DMA_ALLOCATION_RESULT(value) (value)
+#define DMA_FREE_RESULT(value) (value)
+#endif
 
 static bool PowerOfTwo(size_t value)
 {
@@ -33,6 +34,12 @@ DmaManager::DmaManager(PhysicalMemoryManager* physical, VirtualMemoryManager* vi
     Lock            = 0;
     Allocations     = nullptr;
     AllocationCount = 0;
+    ARX_DEBUG_RUN(
+        DebugStats = {};
+        DebugStats.source = this;
+        DebugStats.backendKind = Operations.map == nullptr ? 0 : operations == &platform.dma_ops ? 1 : 2;
+        DebugView = {};
+    );
 }
 
 DmaManager::~DmaManager()
@@ -51,16 +58,42 @@ void DmaManager::Track(AllocationRecord* record, DmaAllocation* allocation)
     record->next = Allocations;
     Allocations  = record;
     AllocationCount++;
+    ARX_DEBUG_RUN(
+        record->debug.cleanupOnly = record->allocation.cpuAddress == nullptr;
+        record->debug.backingHeld = true;
+        record->debug.mappingHeld = true;
+        record->debug.phase = record->debug.cleanupOnly ? DmaDebugPhase::RollbackRetained : DmaDebugPhase::Live;
+
+        if (record->debug.cleanupOnly)
+        {
+            ARX_DEBUG_ADD(DebugStats.rollbackRetained, 1);
+            ARX_DEBUG_ADD(DebugStats.cleanupRecords, 1);
+        }
+        else
+        {
+            ARX_DEBUG_ADD(DebugStats.successfulRecords, 1);
+        }
+
+        ARX_DEBUG_ADD(DebugStats.retainedRequestedBytes, record->mappedSize);
+        ARX_DEBUG_ADD(DebugStats.retainedMappedBytes, record->mappedSize);
+        ARX_DEBUG_ADD(DebugStats.retainedReservedBytes, record->reservedSize);
+    );
     *allocation = record->allocation;
     spinlock_release_preempt(&Lock);
 }
 
 DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, size_t alignment, size_t boundary, DmaAllocation* allocation)
 {
+    ARX_DEBUG_ONLY(DebugDmaOperation debugOperation(DebugStats);)
+    ARX_DEBUG_ADD(DebugStats.allocationCalls, 1);
+
     if (allocation == nullptr || allocation->cpuAddress != nullptr || allocation->dmaAddress.value != 0 || allocation->size != 0 || allocation->id != 0 || size == 0 || !PowerOfTwo(alignment) || !PowerOfTwo(device.minimumAlignment) || (boundary != 0 && !PowerOfTwo(boundary)) || (device.boundary != 0 && !PowerOfTwo(device.boundary)) || device.addressMask == 0 || (device.addressMask & (device.addressMask + 1)) != 0)
     {
-        return DmaStatus::InvalidArgument;
+        return DMA_ALLOCATION_RESULT(DmaStatus::InvalidArgument);
     }
+
+    ARX_DEBUG_ONLY(const size_t requestedAlignment = alignment;)
+    ARX_DEBUG_ONLY(const size_t requestedBoundary = boundary;)
 
     alignment = alignment > device.minimumAlignment ? alignment : device.minimumAlignment;
 
@@ -71,19 +104,19 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
 
     if (boundary != 0 && size > boundary)
     {
-        return DmaStatus::InvalidArgument;
+        return DMA_ALLOCATION_RESULT(DmaStatus::InvalidArgument);
     }
 
     const size_t maximum = PAGE_SIZE * (1UL << MAX_ORDER);
 
     if (size > maximum || alignment > maximum)
     {
-        return DmaStatus::Unsupported;
+        return DMA_ALLOCATION_RESULT(DmaStatus::Unsupported);
     }
 
     if (Physical == nullptr || Virtual == nullptr || Operations.query == nullptr || Operations.map == nullptr || Operations.unmap == nullptr || Operations.writeBarrier == nullptr || Operations.readBarrier == nullptr)
     {
-        return DmaStatus::Unsupported;
+        return DMA_ALLOCATION_RESULT(DmaStatus::Unsupported);
     }
 
     platform_dma_caps_t   caps {};
@@ -91,12 +124,12 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
 
     if (status != DMA_SUCCESS)
     {
-        return static_cast<DmaStatus>(status);
+        return DMA_ALLOCATION_RESULT(static_cast<DmaStatus>(status));
     }
 
     if (!caps.coherent || vmm_kernel_space() == nullptr)
     {
-        return DmaStatus::Unsupported;
+        return DMA_ALLOCATION_RESULT(DmaStatus::Unsupported);
     }
 
     size_t reserved = PAGE_SIZE;
@@ -110,7 +143,7 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
 
     if (record == nullptr)
     {
-        return DmaStatus::NoMemory;
+        return DMA_ALLOCATION_RESULT(DmaStatus::NoMemory);
     }
 
     // IDs are global across managers, never reused, and stop before wraparound.
@@ -121,7 +154,7 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
         if (id == UINT64_MAX)
         {
             kfree(record);
-            return DmaStatus::NoMemory;
+            return DMA_ALLOCATION_RESULT(DmaStatus::NoMemory);
         }
 
         if (__atomic_compare_exchange_n(&NextAllocationId, &id, id + 1, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
@@ -135,10 +168,17 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
     if (record->backing == nullptr)
     {
         kfree(record);
-        return DmaStatus::NoMemory;
+        return DMA_ALLOCATION_RESULT(DmaStatus::NoMemory);
     }
 
     record->reservedSize = reserved;
+    ARX_DEBUG_RUN(
+        record->debug.requestedAlignment = requestedAlignment;
+        record->debug.requestedBoundary = requestedBoundary;
+        record->debug.effectiveAlignment = alignment;
+        record->debug.effectiveBoundary = boundary;
+        record->debug.physicalMask = caps.physicalAddressMask;
+    );
     uintptr_t cpuAddress = (uintptr_t) record->backing;
     bool      valid      = (cpuAddress & (alignment - 1)) == 0 && cpuAddress <= UINTPTR_MAX - (reserved - 1) && record->physical <= UINT64_MAX - (reserved - 1);
 
@@ -153,7 +193,7 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
     {
         Physical->Free(record->backing);
         kfree(record);
-        return DmaStatus::MappingFailed;
+        return DMA_ALLOCATION_RESULT(DmaStatus::MappingFailed);
     }
 
     memset(record->backing, 0, reserved);
@@ -166,37 +206,41 @@ DmaStatus DmaManager::AllocateCoherent(const DmaDevice& device, size_t size, siz
     {
         Physical->Free(record->backing);
         kfree(record);
-        return static_cast<DmaStatus>(status);
+        return DMA_ALLOCATION_RESULT(static_cast<DmaStatus>(status));
     }
 
     if (!dma_range_valid(record->mapping.address, size, device.addressMask, alignment, boundary))
     {
         status = Operations.unmap(Operations.context, &record->device, &record->mapping, size);
+        ARX_DEBUG_STORE(record->debug.lastCleanupStatus, status);
 
         if (status != DMA_SUCCESS)
         {
             // Never expose the invalid DMA range, or reuse still-mapped pages.
             Track(record, allocation);
-            return DmaStatus::MappingFailed;
+            return DMA_ALLOCATION_RESULT(DmaStatus::MappingFailed);
         }
 
         Physical->Free(record->backing);
         kfree(record);
-        return DmaStatus::MappingFailed;
+        return DMA_ALLOCATION_RESULT(DmaStatus::MappingFailed);
     }
 
     record->allocation.cpuAddress = record->backing;
     record->allocation.dmaAddress = record->mapping.address;
     record->allocation.size       = size;
     Track(record, allocation);
-    return DmaStatus::Success;
+    return DMA_ALLOCATION_RESULT(DmaStatus::Success);
 }
 
 DmaStatus DmaManager::FreeCoherent(DmaAllocation* allocation)
 {
+    ARX_DEBUG_ONLY(DebugDmaOperation debugOperation(DebugStats);)
+    ARX_DEBUG_ADD(DebugStats.freeCalls, 1);
+
     if (allocation == nullptr || allocation->id == 0)
     {
-        return DmaStatus::InvalidAllocation;
+        return DMA_FREE_RESULT(DmaStatus::InvalidAllocation);
     }
 
     spinlock_acquire_preempt(&Lock);
@@ -210,28 +254,45 @@ DmaStatus DmaManager::FreeCoherent(DmaAllocation* allocation)
     if (record == nullptr || record->allocation.cpuAddress != allocation->cpuAddress || record->allocation.dmaAddress.value != allocation->dmaAddress.value || record->allocation.size != allocation->size)
     {
         spinlock_release_preempt(&Lock);
-        return DmaStatus::InvalidAllocation;
+        return DMA_FREE_RESULT(DmaStatus::InvalidAllocation);
     }
 
     if (record->releasing)
     {
         spinlock_release_preempt(&Lock);
-        return DmaStatus::Busy;
+        return DMA_FREE_RESULT(DmaStatus::Busy);
     }
 
     record->releasing = true;
+    ARX_DEBUG_RUN(record->debug.phase = DmaDebugPhase::Unmapping);
     spinlock_release_preempt(&Lock);
     platform_dma_status_t status = Operations.unmap(Operations.context, &record->device, &record->mapping, record->mappedSize);
+
+    ARX_DEBUG_STORE(record->debug.lastCleanupStatus, status);
 
     if (status != DMA_SUCCESS)
     {
         spinlock_acquire_preempt(&Lock);
         record->releasing = false;
+        ARX_DEBUG_RUN(
+            record->debug.phase = record->debug.cleanupOnly ? DmaDebugPhase::RollbackRetained : DmaDebugPhase::Live;
+        );
         spinlock_release_preempt(&Lock);
-        return DmaStatus::MappingFailed;
+        return DMA_FREE_RESULT(DmaStatus::MappingFailed);
     }
 
+    ARX_DEBUG_RUN(
+        record->debug.phase = DmaDebugPhase::Unmapped;
+        record->debug.mappingHeld = false;
+        ARX_DEBUG_ADD(DebugStats.retainedMappedBytes, (uint64_t) -record->mappedSize);
+    );
+
     Physical->Free(record->backing);
+    ARX_DEBUG_RUN(
+        record->debug.phase = DmaDebugPhase::BackingReleased;
+        record->debug.backingHeld = false;
+        ARX_DEBUG_ADD(DebugStats.retainedReservedBytes, (uint64_t) -record->reservedSize);
+    );
     spinlock_acquire_preempt(&Lock);
     AllocationRecord** link = &Allocations;
 
@@ -242,10 +303,23 @@ DmaStatus DmaManager::FreeCoherent(DmaAllocation* allocation)
 
     *link = record->next;
     AllocationCount--;
+    ARX_DEBUG_RUN(
+        ARX_DEBUG_ADD(DebugStats.retainedRequestedBytes, (uint64_t) -record->mappedSize);
+
+        if (record->debug.cleanupOnly)
+        {
+            ARX_DEBUG_ADD(DebugStats.cleanupRecords, UINT64_MAX);
+            ARX_DEBUG_ADD(DebugStats.cleanupCompletions, 1);
+        }
+        else
+        {
+            ARX_DEBUG_ADD(DebugStats.successfulRecords, UINT64_MAX);
+        }
+    );
     *allocation = DmaAllocation {};
     spinlock_release_preempt(&Lock);
     kfree(record);
-    return DmaStatus::Success;
+    return DMA_FREE_RESULT(DmaStatus::Success);
 }
 
 void DmaManager::WriteBarrier()
@@ -271,3 +345,26 @@ size_t DmaManager::CountAllocations() const
     spinlock_release_preempt(&Lock);
     return count;
 }
+
+#if DEBUG
+DmaStatus DmaManager::DebugOutcome(bool allocating, DmaStatus status)
+{
+    const unsigned index = static_cast<unsigned>(status);
+
+    if (index < 7)
+    {
+        uint64_t* outcomes = allocating ? DebugStats.allocationOutcomes : DebugStats.freeOutcomes;
+        ARX_DEBUG_ADD(outcomes[index], 1);
+    }
+
+    return status;
+}
+
+void DmaManager::PublishDebug(DebugManager& manager)
+{
+    DebugView = {"allocations", "DmaDebugStats", "arx.memory.dma", 1,
+                 &DebugStats, sizeof(DebugStats), 0, 0};
+    manager.Register("dma", "DmaDebugStats", &DebugStats, sizeof(DebugStats), 1,
+                    &DebugStats.group, &DebugView, 1);
+}
+#endif

@@ -1,10 +1,12 @@
 #pragma once
 
 #include <dma/dma.h>
+#include <debug/kernel/stats/DmaDebugStats.hpp>
 #include <klib/spinlock.h>
 
 class PhysicalMemoryManager;
 class VirtualMemoryManager;
+class DebugManager;
 
 using DmaDevice  = dma_device_t;
 using DmaAddress = dma_address_t;
@@ -45,11 +47,31 @@ public:
     void   ReadBarrier();
     size_t CountAllocations() const;
 
+    ARX_DEBUG_ONLY(
+        void PublishDebug(DebugManager& manager);
+        const DmaDebugStats& DebugStatistics() const
+        {
+            return DebugStats;
+        }
+    )
+
     DmaManager(const DmaManager&)            = delete;
     DmaManager& operator=(const DmaManager&) = delete;
 
 private:
-    struct AllocationRecord;
+    struct AllocationRecord
+    {
+        DmaAllocation          allocation;
+        DmaDevice              device;
+        platform_dma_mapping_t mapping;
+        void*                  backing;
+        phys_addr_t            physical;
+        size_t                 reservedSize;
+        size_t                 mappedSize;
+        bool                   releasing;
+        AllocationRecord*      next;
+        ARX_DEBUG_ONLY(DmaAllocationDebugStats debug;)
+    };
     void Track(AllocationRecord* record, DmaAllocation* allocation);
 
     PhysicalMemoryManager* Physical;
@@ -58,4 +80,15 @@ private:
     mutable spinlock_t     Lock;
     AllocationRecord*      Allocations;
     size_t                 AllocationCount;
+    ARX_DEBUG_ONLY(
+        DmaDebugStats DebugStats;
+        arx_debug_view_t DebugView;
+        DmaStatus DebugOutcome(bool allocating, DmaStatus status);
+    )
+
+#if DEBUG
+public:
+    // Public layout alias for compiled native readers; no target calls needed.
+    using DebugAllocationRecord = AllocationRecord;
+#endif
 };

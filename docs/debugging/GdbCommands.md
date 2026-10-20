@@ -310,6 +310,120 @@ Legacy commands remain available through the explicit extension override until
 the cutover ticket removes them. Their unsafe fallback discovery is not part of
 this contract. The AArch64 launcher retains its existing extension default.
 
+## PMM, NUMA, heap and DMA views
+
+Start with summaries, then select the allocation or address that needs detail:
+
+```text
+arx-debug pmm nodes
+arx-debug pmm zones --node 0 --zone dma
+arx-debug pmm orders --node 0 --zone normal
+arx-debug pmm blocks --node 0 --zone dma --order 3 --limit 20
+arx-debug pmm pfn 12345
+arx-debug heap caches --class 64
+arx-debug heap slabs --node 0 --class 64 --limit 20
+arx-debug heap slabs --class 64 --check-bitmap --bytes 131072
+arx-debug heap address 0xffff800000100001 --check-bitmap
+arx-debug dma allocations --limit 20
+arx-debug pmm stats
+arx-debug heap stats
+arx-debug dma stats
+```
+
+`--node` selects a node-array index; proximity domain is a separate identity.
+Each node appears once, with its associated logical CPU IDs and slots. PMM and
+heap also accept `--cpu` or `--slot` to select that CPU's node, using the same
+explicit identities as CPU topology. Node and CPU selectors cannot be combined.
+`--zone` accepts `normal` or `dma`; `--order` applies to `pmm blocks`, from 0 to 10.
+`--class` selects an object size in bytes: powers of two from 16 through 131072.
+Addresses and PFNs must be numeric; expressions and inferior calls are forbidden.
+
+PMM summaries show total/free/used pages and the largest available block in
+bytes. `orders` shows maintained free-block counts without scanning every list;
+`blocks` explicitly walks and validates selected lists within the command budget.
+A zone attempt can fail while fallback to another node succeeds. Public request
+counters and per-zone attempt counters therefore describe different operations.
+In generic PMM stats, `requests[0]` means normal requests and `requests[1]` DMA.
+Live block count is maintained separately from used pages. Successful byte totals
+retain both original request size and buddy-rounded commitment; current usage
+retains rounded bytes, not original live request sizes. Boot page-metadata
+reservation is reported separately from allocation traffic. Free calls include
+ignored inputs; successful frees count only accepted allocator releases.
+
+Zone views preserve owned physical ranges, PFN envelopes, HHDM offset/presence,
+metadata address, observed lock and page/byte accounting. Ownership follows the
+regions, not the broad min/max envelope: normal and DMA zones share page metadata
+but own disjoint ranges. PFN inspection is bounded by the actual global metadata
+allocation. Interior flags and orders can be stale. A validated free-list head is
+identified as such; other raw page metadata does not prove allocation ownership.
+Largest-order availability helps explain fragmentation but cannot establish the
+sole cause of an allocation failure.
+
+Heap summaries show class allocation outcomes, live objects, rounded live bytes,
+initialized slabs, payload/bitmap backing and backing retained by failed slab
+initialization. `slabs` adds native lists, list-derived slab/object totals and
+metadata-pool chunks/shape. Native `full_slabs` means fully available objects;
+occupancy is derived separately from free/total counts. A slab may remain on the
+partial list after its last free object is allocated. Views preserve this state
+without repairing the allocator or relabeling it as a coherent occupancy index.
+`address` reports the containing slab, slot and byte offset, distinguishes object
+starts from interior pointers, and reads the selected allocation bit. An optional
+bitmap check compares all valid object bits with the free-object count. Allocation
+stack, object type, original request size and ownership provenance are unavailable.
+A capped search cannot prove that an address is absent.
+
+DMA records distinguish the public CPU pointer, backing CPU pointer, physical
+address and device address. A failed allocation with failed rollback can retain an
+id-only cleanup handle: its public size/pointers are zero, while its original
+request, mapping, cookie and reserved backing remain visible. Successful-origin
+records and cleanup-only records have separate counts. Requested, mapped and
+reserved bytes are distinct; release decrements mapped and backing quantities at
+their respective observed transitions. A record can still be linked after backing
+is returned. Phase and last cleanup result describe progress rather than implying
+that every linked record still owns its backing. A nonzero active-writer count
+makes these stopped-operation observations explicitly partial.
+
+Constraint checks use stored device masks, requested/effective alignment and
+boundary, and the physical mask. They never invoke backend hooks. Backend output
+names platform versus custom operations and prints opaque function/context
+identities. The platform backend uses direct physical DMA addresses; these views
+do not claim IOMMU translation tables or certify present hardware availability.
+PCI pointers, mapping cookies, backend contexts and buffer payloads are not followed.
+
+### Allocator native-reader contracts
+
+| Semantic ID / version | Typed root, bounds and interpretation |
+| --- | --- |
+| `arx.memory.pmm` / 1 | `arx_pmm_debug_stats_t`, declared in PmmDebugStats.h. Descriptor count=0; capacity=`MAX_NUMA_NODES` (8). Validate readiness and dynamic platform node count. Fixed normal/DMA zones have at most `PMM_MAX_REGIONS` (128) owned ranges and 11 buddy orders. `metadataCapacity` is the absolute-PFN allocation bound. Free lists are null-terminated doubly linked `page_t` heads; validate pointer stride, PFN, zone ownership, order, flags and previous links. Maintained counts include seeding and detect disagreement after a complete bounded walk. |
+| `arx.memory.heap` / 1 | `arx_heap_debug_stats_t`, declared in HeapDebugStats.h. Descriptor count=0; capacity=8; dynamic nodes and readiness as above. Each heap has 14 ascending size-class caches. Native slab lists are null-terminated and doubly linked; metadata-pool chunks bound reusable slab records. Object count must match the fixed 128 KiB slab payload divided by class size. Allocation bits are low-bit-first; bit 1 means allocated. Bitmap bytes are ceiling(object count/8). Chunk size must match element size times elements per chunk. |
+| `arx.memory.dma` / 1 | `DmaDebugStats`, declared in DmaDebugStats.hpp. Descriptor count=0 and capacity=0 describe a dynamic linked inventory, not an array bound. Source is DmaManager; AllocationCount includes cleanup-only records. DmaManager.hpp exposes DebugAllocationRecord for compiled readers. Traverse newest-tracked-first `next` links to null, with cycle detection and entry/byte ceilings; compare observed records/bytes with maintained counts only after a complete walk. |
+
+Platform roots, nodes, zones and heaps have kernel lifetime. Slab metadata slots
+can be reused; pointers are locations, not allocation identities. DMA roots and
+descriptors last until their manager is destroyed; record addresses are ephemeral
+and may be reused, while global nonzero allocation IDs are never reused. Composition
+invalidates providers before destroying Resource. Matching headers/build identity
+and these semantic rules are required for a compiled reader; DWARF is used by GDB,
+not required by the native layout contract.
+
+All walks share entry, byte and depth limits. Invalid links/counts, cycles,
+unreadable metadata, interrupted groups and exhausted budgets produce partial
+results, not false completeness. PMM groups cover locked allocator mutations;
+heap groups rely on existing caller synchronization. DMA groups span operations,
+including backend calls, to flag interruption between an action and its recorded
+phase. No group guarantees a coherent cross-provider snapshot. Early records
+exist before Dispatcher; use status/typed inspection then, since registry commands
+remain unavailable until publication. Release builds omit all added records,
+registration and update expressions.
+
+| Legacy coverage | Replacement | Preserved information and correction |
+| --- | --- | --- |
+| `arx-pmm [cpu]` | `pmm nodes/zones/orders/blocks`, explicit node/CPU selection | Normal-zone ranges/pages/bytes/PFNs/HHDM, observed locks and per-order blocks/pages; adds DMA zones, maintained operation counts and bounded PFN detail. Shared nodes are shown once. |
+| `arx-heap [cpu]` | `heap caches/slabs/address`, explicit node/CPU selection | Cache sizes, native partial/full/empty lists and totals, observed lock, metadata-pool pointers/shape; adds rounded usage, bounded address/bitmap detail and explicit native-list occupancy interpretation. |
+
+Legacy commands remain until the cutover ticket removes them. Inspection reads
+stored target state, acquires no target locks, and dumps no allocation payload.
+
 ## Controlled foundation providers
 
 These providers demonstrate the contract; they are not PMM, scheduler or other

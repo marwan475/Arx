@@ -213,6 +213,13 @@ address-space operation lock; backing-page I/O must follow caller serialization.
 Owns tracked coherent DMA allocations using physical memory and platform DMA
 operations. `DmaManager.hpp` defines devices, status, and allocation handles;
 `DmaManager.cpp` implements validation, mapping, and rollback. It is noncopyable.
+Debug builds retain operation outcomes, effective constraints and cleanup phases
+beside the manager's records. Dispatcher registers the provider after Resource
+creation; temporary test managers do not register themselves. Bounded inspection
+distinguishes successful buffers from failed-allocation cleanup handles and shows
+requested, mapped and reserved bytes separately. A releasing record may remain
+linked after its backing is returned; interrupted operations report partial state.
+GdbCommands.md documents the DMA view and its native-reader contract.
 
 | Function | What it does |
 | --- | --- |

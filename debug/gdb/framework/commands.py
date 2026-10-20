@@ -34,7 +34,7 @@ def parse(arguments):
     words = gdb.string_to_argv(arguments)
     limits = {"--limit": 100, "--bytes": 65536, "--depth": 8}
     maxima = {"--limit": 10000, "--bytes": 16 * 1024 * 1024, "--depth": 32,
-              "--cpu": 255, "--slot": 255,
+              "--cpu": 255, "--slot": 255, "--node": 7, "--order": 10, "--class": 131072,
               "--platform": (1 << 64) - 1, "--registry": (1 << 64) - 1}
     options = {}
     positional = []
@@ -42,13 +42,22 @@ def parse(arguments):
     while index < len(words):
         word = words[index]
         if word.startswith("--"):
-            if word not in maxima and word != "--device":
+            if word == "--check-bitmap":
+                if word in options:
+                    raise ReadFailure("duplicate option: " + word)
+                options[word] = True
+                index += 1
+                continue
+            if word not in maxima and word not in ("--device", "--zone"):
                 raise ReadFailure("invalid option: " + word)
             if word in options or index + 1 >= len(words):
                 raise ReadFailure("missing or duplicate option: " + word)
             index += 1
             value = words[index]
-            if word == "--device":
+            if word == "--zone":
+                if value not in ("normal", "dma"):
+                    raise ReadFailure("zone requires normal or dma")
+            elif word == "--device":
                 if not re.fullmatch(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]", value):
                     raise ReadFailure("device requires ssss:bb:dd.f")
                 segment, bus, devfun = value.split(":")
@@ -60,7 +69,7 @@ def parse(arguments):
                 if not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", value):
                     raise ReadFailure("option requires a numeric value; expressions forbidden")
                 value = int(value, 16 if value.lower().startswith("0x") else 10)
-                minimum = 0 if word in ("--cpu", "--slot") else 1
+                minimum = 0 if word in ("--cpu", "--slot", "--node", "--order") else 1
                 if not minimum <= value <= maxima[word]:
                     raise ReadFailure("limit out of range: " + word)
             options[word] = value
@@ -69,6 +78,8 @@ def parse(arguments):
         index += 1
     if "--cpu" in options and "--slot" in options:
         raise ReadFailure("--cpu and --slot are mutually exclusive")
+    if "--node" in options and ("--cpu" in options or "--slot" in options):
+        raise ReadFailure("--node and CPU selectors are mutually exclusive")
     if "--platform" in options and "--registry" in options:
         raise ReadFailure("--platform and --registry are mutually exclusive")
     for name in limits:
@@ -80,7 +91,15 @@ def parse(arguments):
 def gather(arguments):
     words, budget, options = parse(arguments)
     selectors = {name: value for name, value in options.items()
-                 if name in ("--cpu", "--slot", "--device")}
+                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap")}
+    if len(words) >= 2 and tuple(words[:2]) in (("pmm", "pfn"), ("heap", "address")):
+        if len(words) != 3 or not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", words[2]):
+            raise ReadFailure("selected PFN/address requires one numeric value; expressions forbidden")
+        value = int(words[2], 16 if words[2].lower().startswith("0x") else 10)
+        if value >= 1 << 64:
+            raise ReadFailure("selected PFN/address exceeds 64-bit range")
+        selectors["--value"] = value
+        words = words[:2]
     if not words:
         raise ReadFailure("usage: arx-debug status | list | <provider> stats | <provider> <view> | "
                           "inspect <type> <numeric-address> [--limit N --bytes N --depth N]")

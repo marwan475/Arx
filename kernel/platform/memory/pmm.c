@@ -4,6 +4,8 @@
 #include <memory/vmm.h>
 #include <platform.h>
 
+ARX_DEBUG_ONLY(_Static_assert(MAX_ORDER == 10, "update PMM debug order contract");)
+
 static size_t bytes_to_kb(size_t bytes)
 {
     return bytes / 1024;
@@ -149,6 +151,7 @@ static void add_block_to_free_list(zone_t* zone, size_t order, uint64_t pfn)
 
     free_list_t* free_list = &zone->buddy_free_lists[order];
     ILIST_PUSH_FRONT(free_list->head, block);
+    ARX_DEBUG_ADD(zone->debugStats.freeBlocks[order], 1);
 }
 
 static void buddy_seed_region(zone_t* zone, size_t region_index)
@@ -241,6 +244,11 @@ static const numa_memory_range_t* memory_range(const numa_topology_t* topology, 
 
 void pmm_init(struct boot_info* boot_info)
 {
+    ARX_DEBUG_RUN(
+        platform.debugPmm.source = &platform;
+        platform.debugPmm.capacity = MAX_NUMA_NODES;
+    );
+
     numa_topology_t topology;
     bool topology_valid = numa_boot_topology(boot_info, &topology);
     const struct boot_memmap_entry* memmap = (const void*) boot_info->memmap_entries;
@@ -325,6 +333,8 @@ void pmm_init(struct boot_info* boot_info)
 
     page_t* metadata = (void*) (uintptr_t) pa_to_hhdm(pfn_to_pa(metadata_pfn), boot_info->hhdm_present, boot_info->hhdm_offset);
     memset(metadata, 0, metadata_size);
+    ARX_DEBUG_STORE(platform.debugPmm.metadataCapacity, maximum_pfn);
+    ARX_DEBUG_STORE(platform.debugPmm.metadataReservedBytes, metadata_size);
 
     for (size_t i = 0; i < platform.numa_node_count; ++i)
     {
@@ -346,6 +356,8 @@ void pmm_init(struct boot_info* boot_info)
         ++platform.numa_nodes[node].cpu_count;
     }
 
+    ARX_DEBUG_STORE(platform.debugPmm.ready, 1);
+
     kprintf("Arx kernel: NUMA topology %s, %u nodes\n", topology_valid ? "validated" : "unavailable (uniform fallback)", (unsigned) platform.numa_node_count);
 }
 
@@ -361,6 +373,7 @@ static page_t* remove_block_from_free_list(zone_t* zone, size_t order)
 
     page_t* block = free_list->head;
     ILIST_REMOVE(free_list->head, block);
+    ARX_DEBUG_ADD(zone->debugStats.freeBlocks[order], UINT64_MAX);
     block->flags = PMM_PAGE_USED;
 
     return block;
@@ -442,6 +455,7 @@ static page_t* merge_block(zone_t* zone, page_t* block)
 
     // remove buddy from free list
     ILIST_REMOVE(zone->buddy_free_lists[buddy->order].head, buddy);
+    ARX_DEBUG_ADD(zone->debugStats.freeBlocks[buddy->order], UINT64_MAX);
 
     // merge block and buddy
 
@@ -480,8 +494,11 @@ static void buddy_free(zone_t* zone, uint64_t pfn)
 
 static void* pmm_alloc_zone(zone_t* zone, size_t size)
 {
+    ARX_DEBUG_ADD(zone->debugStats.operations.attempts, 1);
+
     if (size == 0)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
         return NULL;
     }
 
@@ -494,32 +511,61 @@ static void* pmm_alloc_zone(zone_t* zone, size_t size)
 
     if (order > MAX_ORDER)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
         return NULL;
     }
 
     spinlock_acquire_preempt(&zone->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&zone->debugStats.group));
 
     uint64_t pfn = buddy_alloc(zone, order);
 
     if (pfn == PMM_INVALID_PFN)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
+        ARX_DEBUG_RUN(arx_debug_group_end(&zone->debugStats.group));
         spinlock_release_preempt(&zone->lock);
         return NULL;
     }
 
     zone->free_pages -= order_size(order);
     zone->used_pages += order_size(order);
+    ARX_DEBUG_RUN(arx_allocation_success(&zone->debugStats.operations, size, order_size(order) * PAGE_SIZE));
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&zone->debugStats.group));
     spinlock_release_preempt(&zone->lock);
     virt_addr_t hhdm_va = pa_to_hhdm(pfn_to_pa(pfn), zone->hhdm_present, zone->hhdm_offset);
     return (void*) hhdm_va;
 }
 
+#if DEBUG
+static void pmm_debug_request_result(size_t kind, size_t size, void* pointer)
+{
+    if (pointer == NULL)
+    {
+        ARX_DEBUG_ADD(platform.debugPmm.requests[kind].failures, 1);
+        return;
+    }
+
+    size_t rounded = PAGE_SIZE;
+
+    while (rounded < size)
+    {
+        rounded *= 2;
+    }
+
+    arx_allocation_success(&platform.debugPmm.requests[kind], size, rounded);
+}
+#endif
+
 void* pmm_alloc(size_t size)
 {
+    ARX_DEBUG_ADD(platform.debugPmm.requests[0].attempts, 1);
+
     numa_node_t* local = platform.cpus[arch_cpu_id()].numa_node;
     if (local == NULL)
     {
+        ARX_DEBUG_ADD(platform.debugPmm.requests[0].failures, 1);
         return NULL;
     }
     void* pointer = pmm_alloc_zone(&local->zone, size);
@@ -530,13 +576,17 @@ void* pmm_alloc(size_t size)
             pointer = pmm_alloc_zone(&platform.numa_nodes[i].zone, size);
         }
     }
+    ARX_DEBUG_RUN(pmm_debug_request_result(0, size, pointer));
     return pointer;
 }
 
 static void* pmm_alloc_dma_zone(zone_t* zone, size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
 {
+    ARX_DEBUG_ADD(zone->debugStats.operations.attempts, 1);
+
     if (size == 0 || platform.cpus[arch_cpu_id()].numa_node == NULL)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
         return NULL;
     }
 
@@ -549,10 +599,12 @@ static void* pmm_alloc_dma_zone(zone_t* zone, size_t size, phys_addr_t maximum_a
 
     if (order > MAX_ORDER)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
         return NULL;
     }
 
     spinlock_acquire_preempt(&zone->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&zone->debugStats.group));
     page_t*  selected  = NULL;
     size_t   fromOrder = order;
     uint64_t bytes     = order_size(order) * PAGE_SIZE;
@@ -573,16 +625,20 @@ static void* pmm_alloc_dma_zone(zone_t* zone, size_t size, phys_addr_t maximum_a
 
     if (selected == NULL)
     {
+        ARX_DEBUG_ADD(zone->debugStats.operations.failures, 1);
+        ARX_DEBUG_RUN(arx_debug_group_end(&zone->debugStats.group));
         spinlock_release_preempt(&zone->lock);
         return NULL;
     }
 
     fromOrder--;
     ILIST_REMOVE(zone->buddy_free_lists[fromOrder].head, selected);
+    ARX_DEBUG_ADD(zone->debugStats.freeBlocks[fromOrder], UINT64_MAX);
     selected        = split_block(zone, selected, fromOrder, order);
     selected->flags = PMM_PAGE_USED;
     zone->free_pages -= order_size(order);
     zone->used_pages += order_size(order);
+    ARX_DEBUG_RUN(arx_allocation_success(&zone->debugStats.operations, size, order_size(order) * PAGE_SIZE));
     phys_addr_t physical = pfn_to_pa(selected->pfn);
 
     if (physical_address != NULL)
@@ -590,15 +646,19 @@ static void* pmm_alloc_dma_zone(zone_t* zone, size_t size, phys_addr_t maximum_a
         *physical_address = physical;
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&zone->debugStats.group));
     spinlock_release_preempt(&zone->lock);
     return (void*) (uintptr_t) pa_to_hhdm(physical, zone->hhdm_present, zone->hhdm_offset);
 }
 
 void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physical_address)
 {
+    ARX_DEBUG_ADD(platform.debugPmm.requests[1].attempts, 1);
+
     numa_node_t* local = platform.cpus[arch_cpu_id()].numa_node;
     if (local == NULL)
     {
+        ARX_DEBUG_ADD(platform.debugPmm.requests[1].failures, 1);
         return NULL;
     }
     void* pointer = pmm_alloc_dma_zone(&local->dma_zone, size, maximum_address, physical_address);
@@ -609,11 +669,13 @@ void* pmm_alloc_dma(size_t size, phys_addr_t maximum_address, phys_addr_t* physi
             pointer = pmm_alloc_dma_zone(&platform.numa_nodes[i].dma_zone, size, maximum_address, physical_address);
         }
     }
+    ARX_DEBUG_RUN(pmm_debug_request_result(1, size, pointer));
     return pointer;
 }
 
 void pmm_free(void* addr)
 {
+    ARX_DEBUG_ADD(platform.debugPmm.freeCalls, 1);
     if (addr == NULL)
     {
         return;
@@ -635,6 +697,7 @@ void pmm_free(void* addr)
             }
 
             spinlock_acquire_preempt(&zone->lock);
+            ARX_DEBUG_RUN(arx_debug_group_begin(&zone->debugStats.group));
             page_t* block = &zone->buddy_metadata[pfn];
             size_t  order = block->order;
 
@@ -643,8 +706,13 @@ void pmm_free(void* addr)
                 buddy_free(zone, pfn);
                 zone->free_pages += order_size(order);
                 zone->used_pages -= order_size(order);
+                ARX_DEBUG_RUN(
+                    arx_allocation_free(&zone->debugStats.operations, order_size(order) * PAGE_SIZE);
+                    arx_allocation_free(&platform.debugPmm.requests[i], order_size(order) * PAGE_SIZE);
+                );
             }
 
+            ARX_DEBUG_RUN(arx_debug_group_end(&zone->debugStats.group));
             spinlock_release_preempt(&zone->lock);
             return;
         }

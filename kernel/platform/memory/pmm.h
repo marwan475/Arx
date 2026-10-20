@@ -2,6 +2,7 @@
 #define PMM_H
 
 #include <boot/boot.h>
+#include <debug/kernel/stats/PmmDebugStats.h>
 #include <klib/spinlock.h>
 #include <memory/heap.h>
 #include <stdbool.h>
@@ -59,6 +60,7 @@ typedef struct zone
     bool         hhdm_present;
     uint64_t     hhdm_offset;
     size_t       total_memory;
+    ARX_DEBUG_ONLY(arx_zone_debug_stats_t debugStats;)
 } zone_t;
 
 typedef struct numa_node

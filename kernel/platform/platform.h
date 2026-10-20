@@ -42,6 +42,8 @@ typedef struct platform
     arch_platform_info_t     arch_info;
     platform_dma_ops_t       dma_ops;
     ARX_DEBUG_ONLY(arx_platform_debug_stats_t debugStats;)
+    ARX_DEBUG_ONLY(arx_pmm_debug_stats_t debugPmm;)
+    ARX_DEBUG_ONLY(arx_heap_debug_stats_t debugHeap;)
 } platform_t;
 
 extern platform_t platform;

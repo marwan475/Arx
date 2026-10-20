@@ -5,6 +5,7 @@
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/DmaManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 #include <debug/kernel/Foundation.hpp>
@@ -36,6 +37,16 @@ void Dispatcher::StartKernel()
     ARX_DEBUG_RUN(DebugPlatformPublish(debugManager));
 
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
+    ARX_DEBUG_RUN(
+        if (ResourceLayerImportCaps != nullptr && ResourceLayerImportCaps->dmaManager != nullptr)
+        {
+            ResourceLayerImportCaps->dmaManager->PublishDebug(debugManager);
+        }
+        else
+        {
+            debugManager.DeclareUnavailable("dma", "DMA manager not constructed");
+        }
+    );
 
     SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
 

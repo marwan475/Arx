@@ -331,6 +331,7 @@ void test_DmaManager(ResourceLayerCaps* resources)
 
     suite.Run("resource/DmaManager/failure_rollback", [&](TestCase& t)
     {
+        ARX_DEBUG_ONLY(const DmaDebugStats debugBefore = testManager.DebugStatistics();)
         uint64_t      before = DmaFreePages();
         DmaAllocation buffer {};
         mock.coherent = false;
@@ -348,9 +349,25 @@ void test_DmaManager(ResourceLayerCaps* resources)
         t.Check(testManager.AllocateCoherent(device, 8192, 1, 0, &buffer) == DmaStatus::MappingFailed, "failed rollback reported");
         t.Check(buffer.id != 0 && buffer.cpuAddress == nullptr && buffer.size == 0, "failed rollback returns cleanup-only handle");
         t.Equal(testManager.CountAllocations(), 1, "failed rollback remains tracked");
+        ARX_DEBUG_RUN(
+            const DmaDebugStats& stats = testManager.DebugStatistics();
+            t.Equal(stats.successfulRecords, 0, "failed allocation is not a successful buffer");
+            t.Equal(stats.cleanupRecords, 1, "cleanup-only backing is visible");
+            t.Equal(stats.retainedReservedBytes, 8192, "rollback retains reserved backing bytes");
+            t.Equal(stats.retainedMappedBytes, 8192, "rollback retains mapped bytes");
+            t.Equal(stats.retainedRequestedBytes, 8192, "cleanup handle retains original requested bytes");
+            t.Equal(stats.rollbackRetained, debugBefore.rollbackRetained + 1, "retained rollback counted once");
+            t.Equal(stats.allocationOutcomes[DMA_SUCCESS], debugBefore.allocationOutcomes[DMA_SUCCESS], "rollback handle never increments successful allocations");
+        );
         mock.failUnmap = false;
         t.Check(testManager.FreeCoherent(&buffer) == DmaStatus::Success, "cleanup-only handle releases retained mapping");
         mock.malformed = false;
+        ARX_DEBUG_RUN(
+            const DmaDebugStats& stats = testManager.DebugStatistics();
+            t.Equal(stats.cleanupRecords, 0, "cleanup removes retained rollback record");
+            t.Equal(stats.retainedReservedBytes, 0, "cleanup returns retained backing bytes");
+            t.Equal(stats.cleanupCompletions, debugBefore.cleanupCompletions + 1, "cleanup completion counted separately");
+        );
 
         if (t.Check(testManager.AllocateCoherent(device, 8192, 1, 0, &buffer) == DmaStatus::Success, "release-failure allocation"))
         {
@@ -359,6 +376,10 @@ void test_DmaManager(ResourceLayerCaps* resources)
             t.Check(testManager.FreeCoherent(&buffer) == DmaStatus::MappingFailed, "unmap failure reported");
             t.Equal(DmaFreePages(), allocated, "failed unmap never frees physical backing");
             t.Equal(testManager.CountAllocations(), 1, "failed unmap keeps metadata");
+            ARX_DEBUG_RUN(
+                t.Equal(testManager.DebugStatistics().retainedReservedBytes, 8192, "failed release retains backing counter");
+                t.Equal(testManager.DebugStatistics().successfulRecords, 1, "failed release preserves successful-origin record");
+            );
             mock.failUnmap = false;
             mock.manager   = &testManager;
             mock.releasing = &buffer;
@@ -372,6 +393,16 @@ void test_DmaManager(ResourceLayerCaps* resources)
         t.Equal(testManager.CountAllocations(), 0, "all failure metadata reclaimed");
         t.Equal(mock.live, 0, "all failure mappings reclaimed");
         t.Equal(DmaFreePages(), before, "all failure paths restore pages");
+        ARX_DEBUG_RUN(
+            const DmaDebugStats& stats = testManager.DebugStatistics();
+            t.Equal(stats.retainedRequestedBytes, 0, "all requested bytes removed after cleanup");
+            t.Equal(stats.retainedMappedBytes, 0, "all mapped bytes removed after cleanup");
+            t.Equal(stats.retainedReservedBytes, 0, "all backing bytes removed after cleanup");
+            t.Equal(stats.freeOutcomes[DMA_BUSY], debugBefore.freeOutcomes[DMA_BUSY] + 1, "recursive release counted as busy");
+            t.Equal(stats.freeOutcomes[DMA_MAPPING_FAILED], debugBefore.freeOutcomes[DMA_MAPPING_FAILED] + 1, "failed release counted separately");
+            t.Equal(stats.freeOutcomes[DMA_SUCCESS], debugBefore.freeOutcomes[DMA_SUCCESS] + 2, "normal and cleanup releases counted");
+            t.Equal(stats.group.activeWriters, 0, "all DMA operation groups completed");
+        );
     });
 
     suite.Run("resource/DmaManager/zone_exhaustion_cycles", [&](TestCase& t)

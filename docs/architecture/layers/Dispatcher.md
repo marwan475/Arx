@@ -28,7 +28,8 @@ Release builds exclude the registry, its initialization and all tracking work.
 
 `StartKernel` performs these steps:
 
-1. Create Resource and run its self-tests.
+1. Publish platform-owned debug providers, create Resource, register its DMA
+   provider in debug builds, and run Resource self-tests.
 2. Create Logic with Resource capabilities and run its self-tests.
 3. Create Request with both Resource and Logic capabilities.
 

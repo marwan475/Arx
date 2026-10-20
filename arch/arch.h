@@ -93,6 +93,11 @@ extern "C"
 
     // returns/takes physical address of page table
     phys_addr_t arch_get_pt(void);
+
+#if DEBUG
+    // Stored-RAM debugger format contract; zero means unsupported interpretation.
+    void arch_debug_paging_format(uint64_t* levels, uint64_t* virtual_bits, uint64_t* physical_bits);
+#endif
     void        arch_set_pt(phys_addr_t pt);
 
     // Optimization for mapping/unmapping large ranges of pages, to avoid redundant page table walks and cache clears

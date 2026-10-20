@@ -558,6 +558,115 @@ tracking, registration and inspection roots is excluded under DEBUG=0.
 Legacy commands remain until their separate cutover. No Request-layer telemetry,
 historical tracing, scheduler policy reader or dump mechanics is added here.
 
+## Virtual memory and page-table inspection
+
+```text
+arx-debug memory space
+arx-debug memory regions --pid 9
+arx-debug memory regions --cpu 0 --limit 64
+arx-debug memory space --slot 0
+arx-debug memory regions --space 0xffff800000100000
+arx-debug memory backing --pid 9
+arx-debug memory backing 0xffff800000200000
+arx-debug memory writeback
+arx-debug memory translate --pid 9 --va 0x400123
+arx-debug memory translate --pid 9 --va 0x400000 --size 8192
+arx-debug memory stats
+arx-debug vmm stats
+arx-debug elf stats
+arx-debug lifecycle stats --limit 150
+```
+
+Explicit addresses are illustrative; use identities from the current stopped
+kernel. `memory space`, `regions`, `backing` and `translate` default to the kernel
+space. Select one of `--pid`, `--cpu` (logical CPU ID), `--slot` (CPU table slot)
+or `--space` (numeric `virt_addr_space_t` address). PID selection uses allocated
+process slots and their incarnation identities, including inactive processes.
+CPU associations are stored observations and can be stale; they do not prove
+which hardware root is loaded. Explicit typed addresses have no lifetime proof.
+
+`space` summarizes type, physical page-table root, references, lock bytes, four
+list roots and metadata pools/counts. It correlates process owners and stored CPU
+associations. Nonzero locks and active mutation groups warn about transitional
+state without acquiring locks. Metadata record counts include free-region
+records; they are not counts of mappings. The maintained shared-resident total
+counts unique shared-accounted pages, not per-process RSS or all resident RAM.
+
+`regions` walks all four free/used lists and shows bounds and byte sizes. Used
+records add current/max R/W/X protection, shared-mapping semantics, resident
+base, backing object/offset, shared-page references and whole owned PMM blocks.
+Free records can contain stale backing fields; those fields are not decoded.
+The resident summary is an observation of selected region bytes and unique base
+addresses, not a system-wide physical-page census. A shared-page reference and
+a shared mapping have distinct meanings, particularly for private COW pages.
+
+`backing` follows objects reachable from the selected used regions, or inspects
+one explicitly selected `virt_backing_object_t`. Objects and shared pages are
+shown once, with repeated edges identified. Private shared pages reachable only
+through regions are included. References can outlive mappings and descriptors;
+object mapping counts count page-region edges, not mmap calls. Dirty is
+conservative while writable aliases exist. Provider operations/context addresses
+are opaque identities; callbacks are never invoked. Process/task file views show
+inode backing addresses so file and mapping output can be correlated without
+inventing a universal reference graph or complete backing catalogue.
+
+`writeback` walks the explicitly published pending queue. A failed final flush
+retains its object/provider context for retry. Retry can temporarily detach the
+queue: an active retry warns that an empty head may omit in-flight work. Objects
+and pages are ephemeral and are not retained merely for debugger inspection.
+
+`translate` requires `--va` (zero is valid). Optional `--size` is a positive byte
+range capped at 16 MiB. Traversal advances by leaf boundaries with shared entry,
+byte and depth limits; the default inspects one address. The supported repository
+format is four-level x86_64, 48-bit canonical VA and 52-bit encoded PA, including
+4 KiB, 2 MiB and 1 GiB leaves. These are format limits, not probed CPU capabilities.
+Each step shows the table PA, index, raw entry and present/RW/US/NX bits. RW and US
+are ANDed through ancestors; NX is ORed. The resulting permissions describe RAM
+page tables, not hardware TLB state or all privilege/control-register checks.
+
+The walker validates physical roots, canonicality, overflow, huge-leaf reserved
+bits and PAT placement. It reads individual entries through the retained HHDM
+presence/offset/bounds, with no identity fallback. Bounds do not guarantee every
+hole is readable: inaccessible memory, absent entries, repeated table links,
+unsupported formats and exhausted budgets stop with an explicit explanation.
+
+### Memory counters and native-reader contract
+
+`memory stats` exposes platform VMM map outcomes, unmap/protect requests, flush
+and retry outcomes, retained-writeback events, page/object reclamations and COW
+restoration/copy totals. A range request is one call; failed range mapping can
+have changed earlier leaves. Void unmap/protect APIs expose requests rather than
+fabricated success totals. Retained-writeback totals are enqueue events, not
+current queue length; `retryActive` counts retries in flight.
+
+`vmm stats` counts Resource address-space creation/cloning, anonymous-page
+allocation/release and backing creation/mapping. Nested calls describe distinct
+layers and must not be added as unique-page totals. Space destruction reports
+requests, actual reclamation and requests that did not reclaim a space, including
+reference drops or active/legacy reservations. Release-page success means a
+completed API call and can include an already absent mapping.
+
+Process-visible map/unmap/protect/residency/advice/break outcomes extend the
+existing `lifecycle` record. Early argument rejection is included; a brk query
+or unchanged break is a no-op, and a refused change is separate from errno-based
+failures. `elf stats` counts parse operations, header/segment validation calls,
+executable/library loads and image mapping outcomes. Validation calls include
+nested checks; segment metadata is transient and no image history is retained.
+
+Native readers use `arx.memory.virtual/1` and the matching
+`VirtualMemoryDebugStats.h`, `VirtualMemoryStats.hpp` and `LifecycleDebugStats.hpp`.
+The view descriptor has count/capacity zero: lists are null-terminated and need
+independent traversal budgets and cycle checks. `kernelSpace` is a borrowed
+`virt_addr_space_t` root; `pendingHead` is a `virt_backing_object_t` root;
+`processes` references `ProcessDebugStats`; `platform` references `platform_t`.
+`sharedResidentBytes` points to the existing maintained accounting value.
+Resource/lifecycle group pointers cover mutations outside platform VMM wrappers.
+Groups detect interrupted writers, not a coherent cross-provider snapshot.
+Stats have owner lifetime and unsigned modular totals. There is no all-spaces
+registry or complete backing catalogue. Release excludes added records, helpers,
+registration and argument evaluation. Legacy `arx-vmm` remains available until
+cutover; explicit CPU selectors replace its ID/slot fallback ambiguity.
+
 ## Controlled foundation providers
 
 These providers demonstrate the contract; they are not PMM, scheduler or other

@@ -18,7 +18,7 @@ Follow [the workflow](../TICKET.MD), required grilling and applicable repo skill
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
 Depends on [foundations](../closed/build_debug_framework_foundation.md). Reuse task/process
 and address-space identities from [process](../closed/add_debug_process_resource_views.md)
-and [memory](../feature/add_debug_virtual_memory_views.md), with local information readable
+and [memory](../closed/add_debug_virtual_memory_views.md), with local information readable
 when those adapters are unavailable. See [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment)
 and [platform documentation](../closed/document_platform_layer.md).
 This open ticket retains its own analysis and execution gate.

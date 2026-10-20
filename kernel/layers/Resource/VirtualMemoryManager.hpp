@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/VirtualMemoryStats.hpp>
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -11,6 +13,7 @@ extern "C"
 class VirtualMemoryManager
 {
 public:
+    ARX_DEBUG_ONLY(VirtualMemoryStats DebugStats = {};)
     virt_addr_space_t* CreateUserAddressSpace();
     virt_addr_space_t* CloneUserAddressSpace(virt_addr_space_t* source);
     void               DestroyUserAddressSpace(virt_addr_space_t* space);

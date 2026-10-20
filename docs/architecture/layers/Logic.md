@@ -390,7 +390,11 @@ publication, exit, stop/continue and reparenting without changing ownership rule
 Credential counters distinguish actual changes, no-ops and silent filesystem-ID
 refusals; credentials still live only in process records. Shared-resource views
 resolve task overrides explicitly and identify files through verified operation
-metadata. GdbCommands.md documents limits and partial-state interpretation.
+metadata. Memory operations extend the same ProcessController lifecycle record
+with map/unmap/protect/residency/advice/break outcomes, including early rejection
+and silent break refusal. ElfMapper publishes parse, validation and image-load
+outcomes without retaining temporary segment metadata. GdbCommands.md documents
+limits and partial-state interpretation.
 
 ## 4. General interactions
 

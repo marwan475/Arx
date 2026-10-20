@@ -1,6 +1,7 @@
 #include <klib/intrusive_list.h>
 #include <memory/vmm.h>
 #include <platform.h>
+#include <debug/kernel/stats/VirtualMemoryDebugStats.h>
 
 virt_addr_t KERNEL_VIRTUAL_BASE;
 virt_addr_t KERNEL_VIRTUAL_END;
@@ -16,8 +17,17 @@ static spinlock_t             pending_writeback_lock;
 static virt_backing_object_t* pending_writeback;
 static uint64_t              shared_resident_bytes;
 
+#if DEBUG
+arx_vmm_debug_stats_t arx_vmm_debug = {
+    .kernelSpace = &init_kernel_address_space,
+    .sharedResidentBytes = &shared_resident_bytes,
+    .platform = &platform,
+};
+#endif
+
 void vmm_account_shared_page(virt_shared_page_t* page)
 {
+    ARX_VMM_UPDATE();
     // Called once before publication of an anonymous shared backing page.
     page->shared_accounting = true;
     __atomic_fetch_add(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
@@ -38,6 +48,7 @@ void vmm_retain_object(virt_backing_object_t* object)
 
 void vmm_put_page(virt_shared_page_t* page)
 {
+    ARX_VMM_UPDATE();
     if (page != NULL && __atomic_sub_fetch(&page->references, 1U, __ATOMIC_ACQ_REL) == 0)
     {
         if (page->shared_accounting)
@@ -45,6 +56,7 @@ void vmm_put_page(virt_shared_page_t* page)
             __atomic_fetch_sub(&shared_resident_bytes, PAGE_SIZE, __ATOMIC_RELAXED);
         }
 
+        ARX_DEBUG_ADD(arx_vmm_debug.pagesReclaimed, 1);
         pmm_free(page->pointer);
         kfree(page);
     }
@@ -52,8 +64,11 @@ void vmm_put_page(virt_shared_page_t* page)
 
 int64_t vmm_flush_object(virt_backing_object_t* object)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.flushAttempts, 1);
     if (object == NULL || object->volatile_storage)
     {
+        ARX_DEBUG_ADD(arx_vmm_debug.flushSuccesses, 1);
         return 0;
     }
 
@@ -95,11 +110,14 @@ int64_t vmm_flush_object(virt_backing_object_t* object)
 
     spinlock_release_preempt(&object->lock);
 
+    ARX_DEBUG_ADD(arx_vmm_debug.flushSuccesses, result == 0 ? 1 : 0);
+    ARX_DEBUG_ADD(arx_vmm_debug.flushFailures, result == 0 ? 0 : 1);
     return result;
 }
 
 void vmm_put_object(virt_backing_object_t* object)
 {
+    ARX_VMM_UPDATE();
     if (object == NULL || __atomic_sub_fetch(&object->references, 1U, __ATOMIC_ACQ_REL) != 0)
     {
         return;
@@ -112,6 +130,8 @@ void vmm_put_object(virt_backing_object_t* object)
         spinlock_acquire_preempt(&pending_writeback_lock);
         object->pending_next = pending_writeback;
         pending_writeback    = object;
+        ARX_DEBUG_RUN(arx_vmm_debug.pendingHead = pending_writeback);
+        ARX_DEBUG_ADD(arx_vmm_debug.retainedWritebacks, 1);
         spinlock_release_preempt(&pending_writeback_lock);
         return;
     }
@@ -127,14 +147,19 @@ void vmm_put_object(virt_backing_object_t* object)
 
     dispatcher_release_backing_context(object->operations, object->context);
 
+    ARX_DEBUG_ADD(arx_vmm_debug.objectsReclaimed, 1);
     kfree(object);
 }
 
 int64_t vmm_retry_writeback(void)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.retryAttempts, 1);
     spinlock_acquire_preempt(&pending_writeback_lock);
     virt_backing_object_t* list = pending_writeback;
     pending_writeback           = NULL;
+    ARX_DEBUG_RUN(arx_vmm_debug.pendingHead = NULL);
+    ARX_DEBUG_ADD(arx_vmm_debug.retryActive, 1);
     spinlock_release_preempt(&pending_writeback_lock);
     int64_t result = 0;
 
@@ -152,11 +177,14 @@ int64_t vmm_retry_writeback(void)
         list = next;
     }
 
+    ARX_DEBUG_ADD(arx_vmm_debug.retryFailures, result == 0 ? 0 : 1);
+    ARX_DEBUG_ADD(arx_vmm_debug.retryActive, UINT64_MAX);
     return result;
 }
 
 void vmm_release_backing(virt_region_t* region)
 {
+    ARX_VMM_UPDATE();
     if (region->shared != NULL)
     {
         vmm_put_page(region->shared);
@@ -183,6 +211,7 @@ void vmm_release_backing(virt_region_t* region)
 
 bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
 {
+    ARX_VMM_UPDATE();
     virt_region_t* region = vmm_find_region(space, address);
 
     if (region == NULL || region->shared == NULL || (region->protection & 2) == 0)
@@ -215,6 +244,7 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
             dispatcher_account_minor_fault(space);
         }
 
+        ARX_DEBUG_ADD(arx_vmm_debug.cowRestored, 1);
         return true;
     }
 
@@ -237,6 +267,7 @@ bool vmm_resolve_cow_locked(virt_addr_space_t* space, virt_addr_t address)
     vmm_put_page(region->shared);
     region->shared  = NULL;
     region->backing = page;
+    ARX_DEBUG_ADD(arx_vmm_debug.cowCopied, 1);
     dispatcher_account_minor_fault(space);
     return true;
 }
@@ -407,7 +438,13 @@ static void remove_existing_mappings(virt_region_t** free_regions, virt_region_t
 
 void vmm_init(struct boot_info* boot_info)
 {
-    (void) boot_info;
+    ARX_DEBUG_RUN(
+        arx_vmm_debug.hhdmPresent = boot_info->hhdm_present;
+        arx_vmm_debug.hhdmOffset = boot_info->hhdm_offset;
+        arx_vmm_debug.hhdmStart = boot_info->hhdm_start;
+        arx_vmm_debug.hhdmEnd = boot_info->hhdm_end;
+        arch_debug_paging_format(&arx_vmm_debug.levels, &arx_vmm_debug.virtualBits, &arx_vmm_debug.physicalBits);
+    );
 
     KERNEL_VIRTUAL_BASE = CANONICAL_KERNEL_BASE;
     KERNEL_VIRTUAL_END  = CANONICAL_KERNEL_END;
@@ -480,6 +517,7 @@ void vmm_init(struct boot_info* boot_info)
     {
         platform.cpus[i].address_space = &init_kernel_address_space;
     }
+    ARX_DEBUG_STORE(arx_vmm_debug.ready, 1);
 }
 
 virt_addr_space_t* vmm_kernel_space(void)
@@ -522,6 +560,8 @@ virt_addr_t vmm_map_direct_mmio_page(phys_addr_t page, virt_addr_space_t* space)
 
 bool vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.mapAttempts, 1);
     if (va >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -530,11 +570,15 @@ bool vmm_map_page(virt_addr_t va, phys_addr_t pa, uint64_t flags, virt_addr_spac
     spinlock_acquire_preempt(&space->lock);
     bool success = arch_map_page(va, pa, flags, space->pt);
     spinlock_release_preempt(&space->lock);
+    ARX_DEBUG_ADD(arx_vmm_debug.mapSuccesses, success ? 1 : 0);
+    ARX_DEBUG_ADD(arx_vmm_debug.mapFailures, success ? 0 : 1);
     return success;
 }
 
 void vmm_unmap_page(virt_addr_t va, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.unmapRequests, 1);
     if (va >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -547,6 +591,8 @@ void vmm_unmap_page(virt_addr_t va, virt_addr_space_t* space)
 
 bool vmm_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, uint64_t flags, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.mapAttempts, 1);
     if (va_start >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -555,11 +601,15 @@ bool vmm_map_range(virt_addr_t va_start, phys_addr_t pa_start, uint64_t size, ui
     spinlock_acquire_preempt(&space->lock);
     bool success = arch_map_range(va_start, pa_start, size, flags, space->pt);
     spinlock_release_preempt(&space->lock);
+    ARX_DEBUG_ADD(arx_vmm_debug.mapSuccesses, success ? 1 : 0);
+    ARX_DEBUG_ADD(arx_vmm_debug.mapFailures, success ? 0 : 1);
     return success;
 }
 
 void vmm_unmap_range(virt_addr_t va_start, uint64_t size, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.unmapRequests, 1);
     if (va_start >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -572,6 +622,8 @@ void vmm_unmap_range(virt_addr_t va_start, uint64_t size, virt_addr_space_t* spa
 
 void vmm_protect_page(virt_addr_t va, uint64_t flags, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.protectRequests, 1);
     if (va >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -584,6 +636,8 @@ void vmm_protect_page(virt_addr_t va, uint64_t flags, virt_addr_space_t* space)
 
 void vmm_protect_range(virt_addr_t va_start, uint64_t size, uint64_t flags, virt_addr_space_t* space)
 {
+    ARX_VMM_UPDATE();
+    ARX_DEBUG_ADD(arx_vmm_debug.protectRequests, 1);
     if (va_start >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -616,6 +670,7 @@ phys_addr_t vmm_virt_to_phys(virt_addr_t va, virt_addr_space_t* space)
 
 virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_t type)
 {
+    ARX_VMM_UPDATE();
     if (type == VIRT_ADDR_KERNEL)
     {
         space = vmm_kernel_space();
@@ -706,6 +761,7 @@ virt_addr_t vmm_reserve_region(virt_addr_space_t* space, size_t size, virt_type_
 
 void vmm_free_region(virt_addr_space_t* space, virt_addr_t addr)
 {
+    ARX_VMM_UPDATE();
     if (addr >= CANONICAL_KERNEL_BASE)
     {
         space = vmm_kernel_space();
@@ -838,6 +894,7 @@ virt_region_t* vmm_find_region(virt_addr_space_t* space, virt_addr_t addr)
 // Caller holds operation_lock; the allocator lock protects the free/used lists.
 bool vmm_reserve_page_at(virt_addr_space_t* space, virt_addr_t addr)
 {
+    ARX_VMM_UPDATE();
     if (space == NULL || addr == 0 || (addr & (PAGE_SIZE - 1)) != 0 || addr > CANONICAL_USER_END - PAGE_SIZE + 1)
     {
         return false;

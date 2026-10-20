@@ -110,6 +110,9 @@ bool VirtualMemoryManager::IsPageAvailable(virt_addr_space_t* space, uint64_t ad
 
 virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t* source)
 {
+    ARX_MEMORY_SCOPE(DebugStats.cloneSpace, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     virt_addr_space_t* child = CreateUserAddressSpace();
 
     if (child == nullptr)
@@ -191,14 +194,17 @@ virt_addr_space_t* VirtualMemoryManager::CloneUserAddressSpace(virt_addr_space_t
         return nullptr;
     }
 
-    return child;
+    return ARX_MEMORY_RETURN(child);
 }
 
 bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection, bool heap)
 {
+    ARX_MEMORY_SCOPE(DebugStats.allocatePage, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (!IsPageAvailable(space, address) || !vmm_reserve_page_at(space, address))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     void* page = pmm_alloc(PAGE_SIZE);
@@ -206,7 +212,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     if (page == nullptr)
     {
         FreeRegion(space, address);
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     memset(page, 0, PAGE_SIZE);
@@ -217,7 +223,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
         pmm_free(page);
         FreeRegion(space, address);
 
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
     const phys_addr_t physicalAddress = hhdm_to_pa(reinterpret_cast<uintptr_t>(page), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
     // Intermediate tables remain writable/user-accessible; protection is leaf-only.
@@ -227,7 +233,7 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
         pmm_free(page);
         vmm_put_object(object);
         FreeRegion(space, address);
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     virt_region_t* region      = FindRegion(space, address);
@@ -238,16 +244,19 @@ bool VirtualMemoryManager::AllocateAnonymousPage(virt_addr_space_t* space, uint6
     region->maximum_protection = 7;
     object->mappings           = 1;
     ProtectPage(address, anonymous_page_flags(protection), space);
-    return true;
+    return ARX_MEMORY_RETURN(true);
 }
 
 int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uint64_t address, bool force)
 {
+    ARX_MEMORY_SCOPE(DebugStats.releasePage, 1);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     virt_region_t* region = FindRegion(space, address);
 
     if (region == nullptr || (region->backing == nullptr && region->object == nullptr))
     {
-        return 0;
+        return ARX_MEMORY_RETURN(0);
     }
 
     // Synchronous shootdown completes before physical-page reuse.
@@ -262,7 +271,7 @@ int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uin
             const phys_addr_t physical = hhdm_to_pa(reinterpret_cast<uintptr_t>(region->backing), platform.numa_nodes[0].zone.hhdm_present, platform.numa_nodes[0].zone.hhdm_offset);
             MapPage(address, physical, anonymous_page_flags(region->protection), space);
 
-            return status;
+            return ARX_MEMORY_RETURN(status);
         }
     }
     vmm_release_backing(region);
@@ -271,7 +280,7 @@ int64_t VirtualMemoryManager::ReleaseAnonymousPage(virt_addr_space_t* space, uin
     region->heap_page  = false;
     FreeRegion(space, address);
 
-    return 0;
+    return ARX_MEMORY_RETURN(0);
 }
 
 void VirtualMemoryManager::ProtectAnonymousPage(virt_addr_space_t* space, uint64_t address, uint32_t protection)
@@ -364,6 +373,9 @@ bool VirtualMemoryManager::DiscardAnonymousPage(virt_addr_space_t* space, uint64
 
 virt_backing_object_t* VirtualMemoryManager::CreateBacking(uint64_t size, bool file)
 {
+    ARX_MEMORY_SCOPE(DebugStats.createBacking, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     auto* object = static_cast<virt_backing_object_t*>(kzalloc(sizeof(virt_backing_object_t)));
 
     if (object != nullptr)
@@ -374,7 +386,7 @@ virt_backing_object_t* VirtualMemoryManager::CreateBacking(uint64_t size, bool f
         object->volatile_storage = !file;
     }
 
-    return object;
+    return ARX_MEMORY_RETURN(object);
 }
 
 void VirtualMemoryManager::RetainBacking(virt_backing_object_t* object)
@@ -444,14 +456,17 @@ virt_shared_page_t* VirtualMemoryManager::GetBackingPage(virt_backing_object_t* 
 
 bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t address, virt_backing_object_t* object, uint64_t offset, uint32_t protection, bool shared, uint32_t maximumProtection)
 {
+    ARX_MEMORY_SCOPE(DebugStats.mapBacking, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (object == nullptr || (offset & (PAGE_SIZE - 1)) != 0 || (protection & ~maximumProtection) != 0)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (shared && (maximumProtection & 2) != 0 && !object->volatile_storage && !dispatcher_backing_can_write(object->operations))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     const uint64_t size = __atomic_load_n(&object->size, __ATOMIC_ACQUIRE);
@@ -459,14 +474,14 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
     const bool beyondEnd = size == 0 || offset / PAGE_SIZE > (size - 1) / PAGE_SIZE;
     if (beyondEnd && (!object->file || shared))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     auto* page = beyondEnd ? nullptr : GetBackingPage(object, offset);
 
     if ((!beyondEnd && page == nullptr) || !IsPageAvailable(space, address) || !vmm_reserve_page_at(space, address))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (page != nullptr)
@@ -476,7 +491,7 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
         if (!MapPage(address, physical, anonymous_page_flags(3), space))
         {
             FreeRegion(space, address);
-            return false;
+            return ARX_MEMORY_RETURN(false);
         }
     }
 
@@ -512,7 +527,7 @@ bool VirtualMemoryManager::MapBackingPage(virt_addr_space_t* space, uint64_t add
         ProtectPage(address, anonymous_page_flags(shared ? protection : protection & ~2U), space);
     }
 
-    return true;
+    return ARX_MEMORY_RETURN(true);
 }
 
 int64_t VirtualMemoryManager::ResizeVolatileBacking(virt_backing_object_t* object, uint64_t size)
@@ -592,6 +607,9 @@ void VirtualMemoryManager::ReleaseAnonymousPages(virt_addr_space_t* space)
 
 virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
 {
+    ARX_MEMORY_SCOPE(DebugStats.createSpace, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     virt_addr_space_t* space = static_cast<virt_addr_space_t*>(kmalloc(sizeof(virt_addr_space_t)));
 
     if (space == nullptr)
@@ -628,15 +646,19 @@ virt_addr_space_t* VirtualMemoryManager::CreateUserAddressSpace()
     freeRegion->allocated     = true;
     space->user_free_regions  = freeRegion;
     space->user_regions_count = 1;
-    return space;
+    return ARX_MEMORY_RETURN(space);
 }
 
 void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
 {
+    ARX_DEBUG_ADD(DebugStats.destroyRequests, 1);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     // Caller has detached this isolated root from every process/CPU.
 
     if (space == nullptr || space->type != VIRT_ADDR_USER)
     {
+        ARX_DEBUG_ADD(DebugStats.destroyDeferred, 1);
         return;
     }
 
@@ -648,15 +670,18 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
         {
             if (__atomic_compare_exchange_n(&space->references, &references, references - 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
             {
+                ARX_DEBUG_ADD(DebugStats.destroyDeferred, 1);
                 return;
             }
         }
 
+        ARX_DEBUG_ADD(DebugStats.destroyDeferred, 1);
         return;
     }
 
     if (__atomic_sub_fetch(&space->references, 1U, __ATOMIC_ACQ_REL) != 0)
     {
+        ARX_DEBUG_ADD(DebugStats.destroyDeferred, 1);
         return;
     }
 
@@ -666,6 +691,7 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
     if (space->user_used_regions != nullptr)
     {
         __atomic_store_n(&space->references, 1U, __ATOMIC_RELEASE);
+        ARX_DEBUG_ADD(DebugStats.destroyDeferred, 1);
         return;
     }
 
@@ -680,5 +706,6 @@ void VirtualMemoryManager::DestroyUserAddressSpace(virt_addr_space_t* space)
         chunk = next;
     }
 
+    ARX_DEBUG_ADD(DebugStats.spacesReclaimed, 1);
     kfree(space);
 }

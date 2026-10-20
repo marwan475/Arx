@@ -183,6 +183,13 @@ Provides address spaces, page mappings, and shared/file-backed storage.
 implements it over platform VMM. Mapping transaction primitives require the
 address-space operation lock; backing-page I/O must follow caller serialization.
 
+Debug builds publish platform-owned kernel/pending-writeback roots and
+Resource-owned memory operation outcomes. Bounded views inspect inactive process
+spaces, region lists, backing/shared-page references and selected x86_64 page
+tables without target calls. Reclamation counters distinguish actual space
+release from reference drops or deferred teardown. GdbCommands.md defines the
+shared identities, units and snapshot limits.
+
 | Function | What it does |
 | --- | --- |
 | `CreateUserAddressSpace()` | Allocate an isolated user root and free-region metadata. |

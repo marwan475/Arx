@@ -25,7 +25,7 @@ requires its own analysis/execution gate. Old-tool defects are tracked in
 Depends on [foundations](../closed/build_debug_framework_foundation.md) and the old-coverage
 parts of [physical allocation](../closed/add_debug_physical_allocation_views.md),
 [process/resources](../closed/add_debug_process_resource_views.md),
-[memory](add_debug_virtual_memory_views.md),
+[memory](../closed/add_debug_virtual_memory_views.md),
 [filesystems](add_debug_filesystem_views.md) and
 [platform/CPU/PCI](../closed/add_debug_platform_cpu_pci_views.md).
 Do not require unrelated new signal/socket/event enhancements before removing
@@ -163,7 +163,7 @@ in a live session. No kernel build/boot was performed for this planning task.
 | --- | --- | --- |
 | `arx-platform` | No argument defaults to show; `show`/`status`, `set <address_expr>`, `clear`. Reports override/resolution and CPU pointer/count. Override changes host-side state, not the kernel. | `ArxPlatform` resolves `platform`; replace through [foundation](../closed/build_debug_framework_foundation.md) bootstrap/status plus [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-pmm` | Optional CPU expression; regular-zone region/page/byte/PFN/HHDM accounting, per-order free blocks/pages and list-derived totals. | `platform.cpus[] -> numa_node.zone`, buddy free lists; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
-| `arx-vmm` | Optional CPU expression; address-space pointer/type/PT/lock, all four region lists with bounds/size/type, metadata counts. | `platform.cpus[].address_space`; [memory views](../feature/add_debug_virtual_memory_views.md). |
+| `arx-vmm` | Optional CPU expression; address-space pointer/type/PT/lock, all four region lists with bounds/size/type, metadata counts. | `platform.cpus[].address_space`; [memory views](../closed/add_debug_virtual_memory_views.md). |
 | `arx-cpus` | Optional CPU expression; count/slots/arch, platform IOAPIC details and CPU ID, NUMA/address space and LAPIC/ACPI identity. | `platform`, `cpu_info_t`, `arch_info_t`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-pci` | No supported selector; arguments are ignored. Arch/count/array pointer, x86 BDF/vendor/device summary. | `platform.pci_devices`, `pci_device_count`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
@@ -312,3 +312,20 @@ The owner requested avoiding excessive verification on remaining tickets. Added
 an explicit stopping rule and evidence-based limits on repeated or broader
 checks. Acceptance criteria, implementation scope, status, and execution gates
 are unchanged.
+
+### 2026-10-20 — Virtual-memory migration coverage verified
+
+[Virtual-memory views](../closed/add_debug_virtual_memory_views.md) preserve
+legacy space pointer/type/PT/lock, explicit CPU ID/slot selection, four region
+lists with bounds/size/type and metadata counts through memory space/regions.
+The new views add inactive process selection, protection/max-protection, backing
+and shared-page identities, pending writeback and selected-VA/range x86_64
+translation. Process/task file output includes inode backing identity for
+correlation. Existing arx-vmm remains until cutover.
+
+Focused host fixtures cover three leaf sizes, permission folding, malformed and
+bounded state, selection and writeback. Debug/release builds and focused source/
+symbol exclusion/native-header checks pass. A QEMU/GDB run verifies retained
+writeback, clone backing, inactive process selection, known mapped/unmapped VA,
+and existing protection/shared-writeback/COW fixtures. GdbCommands.md documents
+format and completeness limits. This records parity without expanding cutover.

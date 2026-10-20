@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <debug/kernel/stats/VirtualMemoryStats.hpp>
 
 struct ResourceLayerCaps;
 struct file_t;
@@ -47,6 +48,7 @@ struct elf_metadata_t
 class ElfMapper
 {
 public:
+    ARX_DEBUG_ONLY(mutable ElfDebugStats DebugStats = {};)
     explicit ElfMapper(ResourceLayerCaps* resourceLayerCaps);
     ~ElfMapper() = default;
 

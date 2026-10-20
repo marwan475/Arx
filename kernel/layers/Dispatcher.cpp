@@ -16,6 +16,9 @@
 
 #include <debug/kernel/Foundation.hpp>
 #include <debug/kernel/Platform.hpp>
+#include <debug/kernel/VirtualMemory.hpp>
+#include <debug/kernel/stats/VirtualMemoryDebugStats.h>
+#include "layers/Logic/ElfMapper.hpp"
 #include <platform.h>
 
 #include <selftests/SelfTestManager.hpp>
@@ -57,6 +60,7 @@ void Dispatcher::StartKernel()
     ARX_DEBUG_RUN(
         ResourceLayerImportCaps->processManager->PublishDebug(debugManager, ResourceLayerImportCaps->taskManager, dispatcher_vfs_file_operations());
         ResourceLayerImportCaps->taskManager->PublishDebug(debugManager, ResourceLayerImportCaps->processManager);
+        DebugVirtualMemoryPublish(debugManager, ResourceLayerImportCaps->virtualMemoryManager, ResourceLayerImportCaps->processManager);
         debugManager.DeclareUnavailable("lifecycle", "Logic layer not constructed");
         debugManager.DeclareUnavailable("credentials", "Logic layer not constructed");
     );
@@ -68,6 +72,8 @@ void Dispatcher::StartKernel()
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
     ARX_DEBUG_RUN(
+        ElfDebugStats& elf = LogicLayerImportCaps->elfMapper->DebugStats;
+        debugManager.Publish("elf", "ElfDebugStats", &elf, sizeof(elf), 1, &elf.group);
         LifecycleDebugStats& lifecycle = LogicLayerImportCaps->processController->DebugStats;
         CredentialDebugStats& credentials = LogicLayerImportCaps->credentialManager->DebugStats;
         ProcessDebugStats& process = ResourceLayerImportCaps->processManager->DebugStats;
@@ -77,6 +83,7 @@ void Dispatcher::StartKernel()
         process.filePolls[0] = EventManager::DebugCounterPoll();
         process.filePolls[1] = EventManager::DebugEpollPoll();
         process.lifecycleGroup = &lifecycle.group;
+        arx_vmm_debug.lifecycleGroup = &lifecycle.group;
         process.credentialGroup = &credentials.group;
         debugManager.Publish("lifecycle", "LifecycleDebugStats", &lifecycle, sizeof(lifecycle), 1, &lifecycle.group);
         debugManager.Publish("credentials", "CredentialDebugStats", &credentials, sizeof(credentials), 1, &credentials.group);

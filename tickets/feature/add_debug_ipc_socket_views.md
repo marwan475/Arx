@@ -16,7 +16,7 @@ Follow [the workflow](../TICKET.MD), required grilling and repository skills.
 Parent: [planning](../closed/plan_gdb_extension_tickets.md).
 Depends on [foundations](../closed/build_debug_framework_foundation.md) and
 [task-aware descriptors](../closed/add_debug_process_resource_views.md). Reuse backing-page
-identities from [memory views](add_debug_virtual_memory_views.md) and readiness
+identities from [memory views](../closed/add_debug_virtual_memory_views.md) and readiness
 relationships from [signal/event views](add_debug_signal_event_views.md), without
 a circular requirement that every adapter be implemented first. Shared record
 types/helpers are owned by the relevant foundation/provider ticket. Reference:

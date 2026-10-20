@@ -356,9 +356,9 @@ def file_detail(context, pointer):
     if inode_pointer:
         inode = context.memory.read(inode_pointer, "inode_t", context.budget)
         row(context.result, context.budget, "Inode",
-            "address=%#x type=%s; number=%d size=%d bytes; mode=%#o UID=%d GID=%d"
+            "address=%#x type=%s; number=%d size=%d bytes; mode=%#o UID=%d GID=%d; backing=%#x"
             % (inode_pointer, INODE_TYPES.get(number(inode, "type"), "unknown"), number(inode, "inodeNumber"),
-               number(inode, "size"), number(inode, "mode"), number(inode, "uid"), number(inode, "gid")))
+               number(inode, "size"), number(inode, "mode"), number(inode, "uid"), number(inode, "gid"), number(inode, "backing")))
     observers(context, file)
 
 

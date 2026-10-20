@@ -1203,3 +1203,12 @@ bool arch_boot_map_physical(struct boot_info* boot, uint64_t physical, size_t le
 
     return true;
 }
+
+#if DEBUG
+void arch_debug_paging_format(uint64_t* levels, uint64_t* virtual_bits, uint64_t* physical_bits)
+{
+    *levels = 4;
+    *virtual_bits = X86_64_CANONICAL_VA_BITS;
+    *physical_bits = X86_64_PHYS_ADDR_BITS;
+}
+#endif

@@ -96,6 +96,12 @@ and MemoryRequestManager, which invoke the opaque backing provider. A failed
 writeback retains its object and provider context for retry; the route must stay
 alive until that retry completes.
 
+Debug builds publish the kernel space, pending-writeback head, retained HHDM
+bounds and existing shared-resident accounting, with map/flush/retry/COW activity
+counters. Retry marks detached work so an empty queue during retry is not
+presented as complete. The debugger reads stored structures through bounded
+views; GdbCommands.md describes their limits.
+
 `metadata.c` supplies reusable records for VMM regions and heap slabs. Its pools
 grow using PMM, allowing these allocators to maintain bookkeeping without relying
 on the general heap. Callers provide synchronization for the pools they own.

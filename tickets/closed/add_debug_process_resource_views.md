@@ -30,7 +30,7 @@ This open ticket requires its own analysis and execution instruction.
    versus attempted operations and identify where each counter is updated once.
    Debug data and updates disappear from release builds.
    This ticket owns the ProcessController record and lifecycle counters;
-   [memory work](../feature/add_debug_virtual_memory_views.md) can extend its agreed memory
+   [memory work](../closed/add_debug_virtual_memory_views.md) can extend its agreed memory
    fields without creating a second registration or duplicate record owner.
 2. Explicitly track process identity, parentage and lifecycle as creation,
    reparenting, stopping/continuing, exit and retirement occur. Provide a bounded

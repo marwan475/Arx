@@ -175,110 +175,116 @@ bool ElfMapper::ValidateUserspaceRange(uint64_t virtualAddress, uint64_t memoryS
 
 bool ElfMapper::ValidateLoadSegment(const elf64_program_header_t& programHeader, uint64_t fileSize) const
 {
+    ARX_MEMORY_SCOPE(DebugStats.validate, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (programHeader.fileSize > programHeader.memorySize)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (programHeader.fileSize > 0)
     {
         if (programHeader.offset > fileSize)
         {
-            return false;
+            return ARX_MEMORY_RETURN(false);
         }
 
         if (programHeader.fileSize > fileSize - programHeader.offset)
         {
-            return false;
+            return ARX_MEMORY_RETURN(false);
         }
     }
 
     if (!ValidateUserspaceRange(programHeader.virtualAddress, programHeader.memorySize))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (programHeader.alignment != 0 && programHeader.alignment != 1)
     {
         if (!IsPowerOfTwo(programHeader.alignment))
         {
-            return false;
+            return ARX_MEMORY_RETURN(false);
         }
 
         if ((programHeader.virtualAddress % programHeader.alignment) != (programHeader.offset % programHeader.alignment))
         {
-            return false;
+            return ARX_MEMORY_RETURN(false);
         }
     }
 
-    return true;
+    return ARX_MEMORY_RETURN(true);
 }
 
 bool ElfMapper::ValidateHeader(const elf64_header_t& header, uint64_t fileSize) const
 {
+    ARX_MEMORY_SCOPE(DebugStats.validate, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (header.ident[0] != ELF_MAGIC_0 || header.ident[1] != ELF_MAGIC_1 || header.ident[2] != ELF_MAGIC_2 || header.ident[3] != ELF_MAGIC_3)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.ident[4] != ELF_CLASS_64)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.ident[5] != ELF_DATA_LSB)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.ident[6] != ELF_VERSION_CURRENT || header.version != ELF_VERSION_CURRENT)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (!IsSupportedMachine(header.machine))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.type != ELF_TYPE_EXEC && header.type != ELF_TYPE_DYN)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.headerSize < sizeof(elf64_header_t))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.programHeaderCount == 0 || header.programHeaderCount > ELF_MAX_PROGRAM_HEADERS)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.programHeaderEntrySize != sizeof(elf64_program_header_t))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (header.programHeaderOffset > fileSize)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (AddWouldOverflow((uint64_t) header.programHeaderEntrySize, (uint64_t) header.programHeaderCount))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     const uint64_t tableSize = (uint64_t) header.programHeaderEntrySize * (uint64_t) header.programHeaderCount;
 
     if (tableSize > fileSize - header.programHeaderOffset)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
-    return true;
+    return ARX_MEMORY_RETURN(true);
 }
 
 bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, uint64_t fileSize, elf_metadata_t* metadata) const
@@ -375,14 +381,17 @@ bool ElfMapper::ParseProgramHeaders(file_t* file, const elf64_header_t& header, 
 
 bool ElfMapper::ReadElf(file_t* file, elf_metadata_t* metadata)
 {
+    ARX_MEMORY_SCOPE(DebugStats.parse, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (file == nullptr || metadata == nullptr)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (file->inode == nullptr)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (metadata->segments != nullptr)
@@ -397,19 +406,19 @@ bool ElfMapper::ReadElf(file_t* file, elf_metadata_t* metadata)
 
     if (fileSize < sizeof(elf64_header_t))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     elf64_header_t header = {};
 
     if (!ReadExactAt(file, 0, &header, sizeof(header)))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     if (!ValidateHeader(header, fileSize))
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
     metadata->type                   = header.type;
@@ -427,29 +436,38 @@ bool ElfMapper::ReadElf(file_t* file, elf_metadata_t* metadata)
     if (!ParseProgramHeaders(file, header, fileSize, metadata))
     {
         memset(metadata, 0, sizeof(*metadata));
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
-    return true;
+    return ARX_MEMORY_RETURN(true);
 }
 
 bool ElfMapper::LoadExecutable(process_t* process, file_t* file, elf_metadata_t* metadata)
 {
-    return LoadImage(process, file, metadata, metadata != nullptr ? metadata->loadBias : 0, true);
+    ARX_MEMORY_SCOPE(DebugStats.loadExecutable, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
+    return ARX_MEMORY_RETURN(LoadImage(process, file, metadata, metadata != nullptr ? metadata->loadBias : 0, true));
 }
 
 bool ElfMapper::LoadLibrary(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias)
 {
+    ARX_MEMORY_SCOPE(DebugStats.loadLibrary, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (metadata == nullptr || metadata->type != ELF_TYPE_DYN)
     {
-        return false;
+        return ARX_MEMORY_RETURN(false);
     }
 
-    return LoadImage(process, file, metadata, requestedLoadBias, false);
+    return ARX_MEMORY_RETURN(LoadImage(process, file, metadata, requestedLoadBias, false));
 }
 
 bool ElfMapper::LoadImage(process_t* process, file_t* file, elf_metadata_t* metadata, uint64_t requestedLoadBias, bool initializeHeap)
 {
+    ARX_MEMORY_SCOPE(DebugStats.mapImage, 0);
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (process == nullptr || file == nullptr || metadata == nullptr)
     {
         return false;
@@ -928,7 +946,7 @@ bool ElfMapper::LoadImage(process_t* process, file_t* file, elf_metadata_t* meta
         kfree(mappedPages);
     }
 
-    return true;
+    return ARX_MEMORY_RETURN(true);
 
 fail:
 

@@ -13,6 +13,12 @@ struct LifecycleDebugStats
     DebugOperationStats exec;
     DebugOperationStats exit;
     DebugOperationStats wait;
+    DebugOperationStats mapMemory;
+    DebugOperationStats unmapMemory;
+    DebugOperationStats protectMemory;
+    DebugOperationStats residency;
+    DebugOperationStats adviseMemory;
+    DebugOperationStats resizeBreak;
     uint64_t waitsBlocked;
     uint64_t waitsConsumed;
     uint64_t waitsObserved;

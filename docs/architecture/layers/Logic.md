@@ -298,8 +298,8 @@ wakeups. `SynchronizationManager.hpp` declares its bounded waiter/priority state
 ### SignalManager
 
 Manages signal actions, masks, queues, and user delivery. `SignalManager.hpp`
-defines the API; signal_types.h and SignalState.hpp define shared records and
-Resource queue storage. `SignalManager.cpp` coordinates Resource state,
+defines the API; signal_types.h defines shared records and C++ queue storage.
+`SignalManager.cpp` coordinates Resource state,
 Scheduler wakeups, and architecture signal frames. Queue helpers require the
 target's `SignalDispositionGuard`.
 
@@ -419,7 +419,7 @@ provide a live-kernel shutdown protocol.
 | `file_t` | Reference-counted open file; retained users release it through VFS close. |
 | `inode_t`, `dentry_t`, `mount_t` | VFS namespace/backing objects with lifetimes distinct from an open descriptor. |
 | `elf_metadata_t` | Parsed image metadata, separate from the backing retained by mapped segments. |
-| `signal_action_t`, `signal_stack_t` | Shared records defined in signal_types.h; Resource's SignalState.hpp owns queue storage, and saved machine context remains architecture-specific. |
+| `signal_action_t`, `signal_stack_t`, `signal_queue_t` | Shared records and C++ queue storage defined in signal_types.h; saved machine context remains architecture-specific. |
 
 Descriptor entries hold file references. Readiness registrations are weak
 observers detached during final close, rather than owners of the file. Memory

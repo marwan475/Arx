@@ -32,6 +32,22 @@ static const uint64_t SIGNAL_UNBLOCKABLE     = (UINT64_C(1) << 8) | (UINT64_C(1)
 static const uint64_t SIGNAL_DEFAULT_IGNORED = (UINT64_C(1) << 16) | (UINT64_C(1) << 17) | (UINT64_C(1) << 22) | (UINT64_C(1) << 27);
 
 #ifdef __cplusplus
+
+struct signal_queue_t
+{
+    static constexpr size_t CAPACITY = 128;
+
+    struct record_t
+    {
+        uint32_t        number;
+        signal_sender_t sender;
+    };
+
+    size_t   count;
+    size_t   reserved;
+    record_t records[CAPACITY];
+};
+
 static_assert(sizeof(signal_action_t) == 32 && offsetof(signal_action_t, mask) == 24, "Linux LP64 signal action ABI");
 static_assert(sizeof(signal_stack_t) == 24 && offsetof(signal_stack_t, size) == 16, "Linux LP64 signal stack ABI");
 static_assert(sizeof(signal_sender_t) == 24 && offsetof(signal_sender_t, value) == 16, "signal sender storage layout");

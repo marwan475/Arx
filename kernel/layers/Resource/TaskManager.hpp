@@ -3,11 +3,11 @@
 #include <debug/kernel/stats/TaskDebugStats.hpp>
 
 #include "layers/DispatcherBridge.h"
-#include "layers/Resource/SignalState.hpp"
 #include "layers/Resource/TaskScheduling.hpp"
 
 #include <arch/arch.h>
 #include <boot/boot.h>
+#include <klib/signal_types.h>
 #include <klib/spinlock.h>
 #include <stddef.h>
 #include <stdint.h>

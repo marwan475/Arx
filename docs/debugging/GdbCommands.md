@@ -803,7 +803,7 @@ without promising a coherent cross-provider snapshot.
 
 Native readers use `arx.filesystem.archive/1` and
 `arx.filesystem.namespace/1`, with matching FileSystemDebugStats.hpp,
-InitRamFileSystemManager.hpp, ResourceFileSystemTypes.hpp,
+InitRamFileSystemManager.hpp, ResourceFileSystem.hpp,
 VirtualFileSystem.hpp and VirtualFileSystemTypes.hpp. The archive descriptor has
 count zero/capacity 256; its count pointer gives the current array length. VFS
 has count/capacity zero because its published roots point at owner fields for

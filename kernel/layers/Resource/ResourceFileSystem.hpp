@@ -5,8 +5,19 @@
 
 class InitRamFileSystemManager;
 
-struct resource_fs_t;
-struct resource_node_t;
+// Retained backend layouts shared with matching native debug readers.
+struct resource_fs_t
+{
+    InitRamFileSystemManager* initRamManager;
+};
+
+struct resource_node_t
+{
+    resource_fs_t* fs;
+    char*          path;
+    bool           isDirectory;
+    uint64_t       size;
+};
 
 enum resource_node_type_t
 {

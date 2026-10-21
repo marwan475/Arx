@@ -298,11 +298,11 @@ hierarchies and exact-name inspection, including entries never cached by VFS.
 ### ResourceFileSystem
 
 Adapts the archive index into the filesystem callback table consumed by VFS.
-`ResourceFileSystem.hpp` declares the class and table; `ResourceFileSystem.cpp`
-implements opaque filesystem/node handles. Every table operation forwards to
-the matching method below, passing the table as its context argument.
-ResourceFileSystemTypes.hpp single-sources retained backend layouts for matching
-native readers. Debug records track public backend outcomes and returned I/O
+`ResourceFileSystem.hpp` declares the class, callback table and retained
+filesystem/node layouts used by matching native readers. `ResourceFileSystem.cpp`
+implements their operations. Every table operation forwards to the matching
+method below, passing the table as its context argument.
+Debug records track public backend outcomes and returned I/O
 bytes; thunks do not double count. Archive mode and backend kind are distinct:
 the current backend exposes directories or regular files.
 
@@ -376,9 +376,10 @@ route and must keep it and its context alive until the last user releases them.
 Dispatcher also supplies the scheduling-accounting bridge used at context-switch
 boundaries. Resource does not construct the Logic managers that own that policy.
 
-signal_types.h holds shared signal ABI records and masks below both Arch and
-the layers. SignalState.hpp holds Resource's signal queue storage. TaskManager
-and ProcessManager use these definitions without including SignalManager.hpp.
+signal_types.h holds shared signal ABI records, masks and C++ queue storage below
+both Arch and the layers. TaskManager and ProcessManager use these definitions
+without including SignalManager.hpp. The queue definition is guarded for C++ so
+C consumers retain the shared ABI declarations.
 
 ## 5. Filesystem capabilities
 

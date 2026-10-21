@@ -217,8 +217,8 @@ defines the immutable provider records used by Logic and self-test fixtures;
 their callable fields are private. Resource stores the handles and calls typed
 Dispatcher operations, never the upper callbacks themselves. A route and its
 context must outlive every task, descriptor table, or pending operation that uses
-them. Shared signal records live in signal_types.h; Resource queue storage lives
-in SignalState.hpp, so using signal data does not require a Logic manager header.
+them. Shared signal records and C++ queue storage live in signal_types.h, so
+using signal data does not require a Logic manager header.
 
 TaskManager keeps its existing task claims while cleanup runs outside the manager
 lock. Descriptor copies retain their source-table protection, and failed copies

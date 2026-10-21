@@ -1,5 +1,5 @@
 #pragma once
-#include "layers/Resource/SignalState.hpp"
+#include <klib/signal_types.h>
 
 #include <debug/kernel/stats/SignalDebugStats.hpp>
 

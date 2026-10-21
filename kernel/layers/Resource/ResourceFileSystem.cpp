@@ -1,5 +1,4 @@
 #include "layers/Resource/ResourceFileSystem.hpp"
-#include "layers/Resource/ResourceFileSystemTypes.hpp"
 
 #include "layers/Resource/InitRamFileSystemManager.hpp"
 

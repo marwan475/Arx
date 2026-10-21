@@ -632,7 +632,7 @@ implementation is authorized.
 | 9 | [Platform, CPU, IPI and PCI](../closed/add_debug_platform_cpu_pci_views.md) | P1 |
 | 10 | [Self-test progress and boot-error records](../feature/add_debug_selftest_error_views.md) | P2 |
 | 11 | [Cutover and replacement command documentation](../in_progress/migrate_debug_commands_and_document_framework.md) | P1 |
-| 12 | [Agent stats/view-authoring skill](../feature/create_debug_framework_authoring_skill.md) | P2 |
+| 12 | [Agent stats/view-authoring skill](../closed/create_debug_framework_authoring_skill.md) | P2 |
 
 Also created one P2 open
 [legacy discovery defect ticket](../debug/resolve_legacy_gdb_discovery_defects.md),
@@ -719,7 +719,7 @@ Recommended sequential implementation order:
 | 9 | [IPC and UNIX sockets](../closed/add_debug_ipc_socket_views.md) | Use descriptor/file, backing and namespace foundations for queue/peer ownership. |
 | 10 | [Signals and events](../in_progress/add_debug_signal_event_views.md) | Complete delivery/readiness correlation with the task, wait and producer views. |
 | 11 | [Cutover and command guide](../in_progress/migrate_debug_commands_and_document_framework.md) | Finish parity/integration checks and remove old commands once useful coverage is verified. |
-| 12 | [Authoring agent skill](../feature/create_debug_framework_authoring_skill.md) | Teach the verified interface, real examples and maintained guide. |
+| 12 | [Authoring agent skill](../closed/create_debug_framework_authoring_skill.md) | Teach the verified interface, real examples and maintained guide. |
 
 This is a useful serial sequence, not a requirement to wait for unrelated work:
 platform, physical allocation and self-test/error providers can proceed

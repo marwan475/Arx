@@ -22,3 +22,4 @@ add_debug_virtual_memory_views.md
 add_debug_filesystem_views.md
 add_debug_scheduling_wait_views.md
 add_debug_ipc_socket_views.md
+create_debug_framework_authoring_skill.md

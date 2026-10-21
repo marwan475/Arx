@@ -65,7 +65,7 @@ reference completeness, not all documentation writing at the end.
    view adapters. Label future features clearly. Link it from README Documentation
    and affected existing guides; follow applicable documentation skills.
 6. Review [agent-skill coordination](../feature/plan_kernel_agent_skill_tickets.md) and
-   [authoring skill](../feature/create_debug_framework_authoring_skill.md): both reuse this
+   [authoring skill](../closed/create_debug_framework_authoring_skill.md): both reuse this
    reference rather than duplicating or claiming unimplemented command behavior.
 
 ### Illustrative user flow and output

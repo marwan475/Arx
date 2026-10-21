@@ -22,6 +22,7 @@ Goal of this project is to explore Kernel design and large scale software manage
 - [Logic layer](docs/architecture/layers/Logic.md)
 - [Kernel self-tests](docs/architecture/selftests/SelfTests.md)
 - [Kernel debug framework and GDB commands](docs/debugging/GdbCommands.md)
+- [Agent skill: add debug statistics and views](docs/skills/add-debug-view/SKILL.md)
 
 ## Third Party
 

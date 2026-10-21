@@ -138,7 +138,7 @@ examples. Analysis and execution have not started.
 ### 2026-10-18 — Debug authoring skill coordination
 
 The owner-approved debug framework backlog created
-[a stats/view-authoring skill ticket](create_debug_framework_authoring_skill.md).
+[a stats/view-authoring skill ticket](../closed/create_debug_framework_authoring_skill.md).
 It covers manager-owned tracked records, rich-view adapters and post-investigation
 follow-up opportunities. Reuse/link that ticket instead of proposing a duplicate
 authoring skill here. This ticket's QEMU/GDB usage and self-test skill candidates

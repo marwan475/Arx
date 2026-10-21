@@ -146,6 +146,11 @@ unavailable while stored early platform progress remains inspectable through
 
 ## Kernel record interface
 
+For an investigation that needs missing stats or a rich collection, follow the
+repository [add-debug-view skill](../skills/add-debug-view/SKILL.md). It also
+routes information gaps outside the authorized scope into open follow-up tickets.
+The contracts and command reference remain here.
+
 DebugRecords.h defines the shared C-compatible contract; DebugManager.hpp defines
 the registry API. Dispatcher embeds DebugManager under `#if DEBUG`. The build
 includes its implementation and fixture sources only with DEBUG=1.

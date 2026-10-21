@@ -154,32 +154,43 @@ cpus.selectors = ("--cpu", "--slot")
 
 def pci(name, memory, descriptor, budget, selectors=None):
     selectors = selectors or {}
-    stats = root(memory, descriptor, "arx_pci_debug_stats_t", PCI_CAPACITY, budget)
     result = Result(source=int(descriptor["root"]), type_name="pci_device_t",
                     count_semantics="captured inventory order; one entry per device; no config reads")
     try:
+        stats = root(memory, descriptor, "arx_pci_debug_stats_t", PCI_CAPACITY, budget)
         outcome = int(stats["outcome"])
+        allocated = int(stats["allocated"])
+        exhausted = int(stats["capacityExhausted"])
         row(result, budget, "inventory", "outcome=%s allocated=%d capacity=%d capacityExhausted=%d"
-            % (unknown(PCI_OUTCOMES, outcome), int(stats["allocated"]), PCI_CAPACITY,
-               int(stats["capacityExhausted"])))
-        if outcome not in (2, 3):
-            result.fail("inventory unavailable or partial: " + unknown(PCI_OUTCOMES, outcome))
-        if int(stats["capacityExhausted"]):
+            % (unknown(PCI_OUTCOMES, outcome), allocated, PCI_CAPACITY, exhausted))
+        if outcome not in PCI_OUTCOMES or allocated not in (0, 1) or exhausted not in (0, 1):
+            raise ReadFailure("invalid PCI outcome or allocation flags")
+        if exhausted:
             result.fail("inventory truncated: allocation capacity exhausted")
         source = int(stats["source"])
+        address, count = inventory(memory, source, "pci_devices", "pci_device_count", PCI_CAPACITY, budget)
+        result.items[0]["text"] += " root=%#x count=%d" % (address, count)
+
+        if outcome == 1:
+            return result.fail("enumeration in progress; inventory publication may be incomplete")
+        if bool(address) != bool(allocated):
+            raise ReadFailure("invalid PCI root: inventory allocation unavailable")
+        if outcome in (0, 3, 5) and (address or count or allocated or exhausted):
+            raise ReadFailure("invalid %s PCI inventory" % PCI_OUTCOMES[outcome])
+        if outcome == 0:
+            result.items[0]["text"] += "; discovery deferred until PciManager::EnumerateDevices in kmain"
+            if selectors:
+                result.fail("PCI inventory unavailable: enumeration has not started")
+            return result
+        if outcome in (4, 5):
+            return result.fail("PCI inventory unavailable: " + PCI_OUTCOMES[outcome])
         arch = int(memory.field(source, "platform_t", "arch", budget))
         if arch != 0:
             raise ReadFailure("unsupported platform architecture: %d" % arch)
-        address, count = inventory(memory, source, "pci_devices", "pci_device_count", PCI_CAPACITY, budget)
-        result.items[0]["text"] += " root=%#x count=%d" % (address, count)
-        allocated = int(stats["allocated"])
-        if allocated not in (0, 1) or bool(address) != bool(allocated):
-            raise ReadFailure("invalid PCI root: inventory allocation unavailable")
-        if outcome == 3 and (address or count):
-            raise ReadFailure("invalid no-regions PCI inventory")
         matches = 0
         seen = set()
         for index in range(count):
+            budget.take_entry()
             location = address + index * memory.sizeof("pci_device_t")
             try:
                 device = memory.read(location, "pci_device_t", budget)

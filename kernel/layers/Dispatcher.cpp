@@ -14,6 +14,7 @@
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/DmaManager.hpp"
+#include "layers/Resource/PciManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
 #include <debug/kernel/Foundation.hpp>
@@ -49,6 +50,17 @@ void Dispatcher::StartKernel()
     ARX_DEBUG_RUN(DebugPlatformPublish(debugManager));
 
     ResourceLayerCaps* ResourceLayerImportCaps = resourceLayerFactory->Create();
+    ARX_DEBUG_RUN(
+        if (ResourceLayerImportCaps != nullptr && ResourceLayerImportCaps->pciManager != nullptr)
+        {
+            ResourceLayerImportCaps->pciManager->PublishDebug(debugManager);
+        }
+        else
+        {
+            debugManager.DeclareUnavailable("pci-manager", "PCI manager not constructed");
+        }
+    );
+
     ARX_DEBUG_RUN(
         if (ResourceLayerImportCaps != nullptr && ResourceLayerImportCaps->dmaManager != nullptr)
         {

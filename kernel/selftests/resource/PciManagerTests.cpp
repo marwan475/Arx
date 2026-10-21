@@ -1,6 +1,7 @@
 #include "layers/Resource/PciManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 
+#include <debug/kernel/DebugManager.hpp>
 #include <platform.h>
 #include <selftests/ManagerSuite.hpp>
 
@@ -8,12 +9,21 @@ struct PciMock
 {
     platform_pci_inventory_t inventory {};
     size_t calls = 0;
+    ARX_DEBUG_ONLY(const PciDebugStats* debugStats = nullptr;)
+    ARX_DEBUG_ONLY(bool sawActiveEnumeration = false;)
 };
 
 static platform_pci_inventory_t MockEnumerate(void* context)
 {
     PciMock* mock = static_cast<PciMock*>(context);
     mock->calls++;
+
+    ARX_DEBUG_RUN(
+        if (mock->debugStats != nullptr)
+        {
+            mock->sawActiveEnumeration = arx_debug_counter_read(&mock->debugStats->group.activeWriters) != 0;
+        }
+    );
 
     return mock->inventory;
 }
@@ -36,6 +46,27 @@ void test_PciManager(ResourceLayerCaps* resources)
         t.Check(!isolated.IsTruncated(), "initial inventory is not truncated");
         t.Equal(mock.calls, 0, "queries never invoke the backend");
         t.Check(manager->GetStatus() == PciStatus::NotEnumerated, "live enumeration waits until StartKernel returns");
+
+        ARX_DEBUG_RUN(
+            t.Equal(isolated.DebugStats.enumerateCalls, 0, "queries do not change enumeration statistics");
+            t.Equal(isolated.DebugStats.status, PCI_NOT_ENUMERATED, "debug state begins unstarted");
+            t.Equal(isolated.DebugStats.backendAvailable, 1, "debug state records backend availability");
+            t.Check(isolated.DebugStats.source == &isolated, "debug record belongs to its manager");
+
+            DebugManager* registry = new DebugManager();
+
+            if (t.Check(registry != nullptr, "isolated debug registry allocated outside the kernel stack"))
+            {
+                isolated.PublishDebug(*registry);
+                t.Equal(registry->records[0].state, ARX_DEBUG_READY, "composition publishes ready provider");
+                t.Check(registry->records[0].address == &isolated.DebugStats, "provider borrows manager statistics");
+                t.Check(registry->records[0].group == &isolated.DebugStats.group, "provider exposes interrupted enumeration group");
+                t.Check(registry->Withdraw("pci-manager", &isolated.DebugStats) == DebugManager::Result::Ok,
+                        "provider withdraws before borrowed storage expires");
+
+                delete registry;
+            }
+        );
     });
 
     suite.Run("resource/PciManager/discovery_identity_and_lookup", [&](TestCase& t)
@@ -57,6 +88,7 @@ void test_PciManager(ResourceLayerCaps* resources)
             platform_pci_ops_t operations { &mock, MockEnumerate };
             PciManager        temporary(&operations);
             operations.enumerate = nullptr;
+            ARX_DEBUG_RUN(mock.debugStats = &temporary.DebugStats;);
 
             t.Check(temporary.EnumerateDevices() == PciStatus::Success, "discovery succeeds");
             t.Equal(temporary.CountDevices(), 3, "all returned records exposed");
@@ -76,6 +108,18 @@ void test_PciManager(ResourceLayerCaps* resources)
             t.Check(temporary.EnumerateDevices() == PciStatus::Success, "repeated enumeration returns original success");
             t.Check(temporary.GetDevice(0) == &devices[0], "repeated call retains original address");
             t.Equal(mock.calls, 1, "successful backend invoked only once");
+
+            ARX_DEBUG_RUN(
+                t.Check(mock.sawActiveEnumeration, "backend runs inside marked debug operation");
+                t.Equal(temporary.DebugStats.enumerateCalls, 2, "all explicit enumeration calls counted");
+                t.Equal(temporary.DebugStats.backendCalls, 1, "backend invocation counted separately");
+                t.Equal(temporary.DebugStats.cachedCalls, 1, "cached result counted separately");
+                t.Equal(temporary.DebugStats.status, PCI_SUCCESS, "debug outcome remains cached success");
+                t.Equal(temporary.DebugStats.inventoryAddress, reinterpret_cast<uintptr_t>(devices), "debug root preserves inventory address");
+                t.Equal(temporary.DebugStats.deviceCount, 3, "debug count matches cached snapshot");
+                t.Equal(temporary.DebugStats.group.activeWriters, 0, "enumeration marker always closes");
+                t.Equal(temporary.DebugStats.group.completedUpdates, 2, "cached and fresh operations both finish");
+            );
         }
 
         t.Equal(devices[2].function, 7, "destruction leaves borrowed records intact");
@@ -86,6 +130,15 @@ void test_PciManager(ResourceLayerCaps* resources)
         PciManager unavailable(nullptr);
         t.Check(unavailable.EnumerateDevices() == PciStatus::Unsupported, "missing backend reports unsupported");
         t.Check(unavailable.EnumerateDevices() == PciStatus::Unsupported, "missing backend result is cached");
+
+        ARX_DEBUG_RUN(
+            t.Equal(unavailable.DebugStats.backendAvailable, 0, "missing backend is visible");
+            t.Equal(unavailable.DebugStats.backendCalls, 0, "missing backend never counts an invocation");
+            t.Equal(unavailable.DebugStats.enumerateCalls, 2, "missing backend calls still counted");
+            t.Equal(unavailable.DebugStats.cachedCalls, 1, "missing backend outcome is cached");
+            t.Equal(unavailable.DebugStats.status, PCI_UNSUPPORTED, "unsupported debug outcome recorded");
+            t.Equal(unavailable.DebugStats.group.activeWriters, 0, "missing backend closes debug group");
+        );
 
         const pci_enumeration_status_t statuses[] = {
             PCI_SUCCESS, PCI_UNSUPPORTED, PCI_NO_REGIONS, PCI_FAILED
@@ -104,6 +157,13 @@ void test_PciManager(ResourceLayerCaps* resources)
             mock.inventory.status = PCI_SUCCESS;
             t.Check(isolated.EnumerateDevices() == static_cast<PciStatus>(status), "failure and empty results are cached");
             t.Equal(mock.calls, 1, "each outcome invokes the backend only once");
+
+            ARX_DEBUG_RUN(
+                t.Equal(isolated.DebugStats.status, status, "empty and failure debug outcomes agree");
+                t.Equal(isolated.DebugStats.backendCalls, 1, "empty and failure backend calls counted");
+                t.Equal(isolated.DebugStats.cachedCalls, 1, "empty and failure cache hits counted");
+                t.Equal(isolated.DebugStats.group.activeWriters, 0, "every outcome closes debug group");
+            );
         }
     });
 
@@ -120,6 +180,11 @@ void test_PciManager(ResourceLayerCaps* resources)
         t.Equal(isolated.CountDevices(), MAX_PCI_DEVICES, "full recorded inventory retained");
         t.Check(isolated.GetDevice(MAX_PCI_DEVICES - 1) == &devices[MAX_PCI_DEVICES - 1], "last recorded device is accessible");
         t.Check(isolated.GetDevice(MAX_PCI_DEVICES) == nullptr, "no traversal beyond capacity");
+
+        ARX_DEBUG_RUN(
+            t.Equal(isolated.DebugStats.truncated, 1, "debug snapshot retains truncation");
+            t.Equal(isolated.DebugStats.deviceCount, MAX_PCI_DEVICES, "debug snapshot retains full recorded count");
+        );
     });
 
     suite.Run("resource/PciManager/invalid_backend_result", [&](TestCase& t)
@@ -142,6 +207,14 @@ void test_PciManager(ResourceLayerCaps* resources)
             t.Check(isolated.GetDevice(0) == nullptr, "invalid storage cannot be traversed");
             t.Check(isolated.EnumerateDevices() == PciStatus::Failed, "malformed result remains failed");
             t.Equal(mock.calls, 1, "malformed result cannot trigger a retry");
+
+            ARX_DEBUG_RUN(
+                t.Equal(isolated.DebugStats.rejectedResults, 1, "malformed result counted exactly once");
+                t.Equal(isolated.DebugStats.status, PCI_FAILED, "malformed result records failure");
+                t.Equal(isolated.DebugStats.inventoryAddress, 0, "malformed storage not published as inventory");
+                t.Equal(isolated.DebugStats.deviceCount, 0, "malformed count not published as inventory");
+                t.Equal(isolated.DebugStats.group.activeWriters, 0, "rejection closes debug group");
+            );
         }
     });
 }

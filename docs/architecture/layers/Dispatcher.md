@@ -28,8 +28,8 @@ Release builds exclude the registry, its initialization and all tracking work.
 
 `StartKernel` performs these steps:
 
-1. Publish platform-owned debug providers, create Resource, register its DMA
-   provider, process/task and virtual-memory roots, archive and Resource filesystem
+1. Publish platform-owned debug providers, create Resource, register its DMA and
+   PCI manager providers, process/task and virtual-memory roots, archive and Resource filesystem
    records in debug builds, and run
    Resource self-tests.
 2. Create Logic with Resource capabilities, publish lifecycle/credential/ELF,

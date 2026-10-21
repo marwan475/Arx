@@ -117,6 +117,9 @@ truncation, malformed backend results, and caching of both success and failure.
 `resource/PciManager/platform_inventory` runs after live discovery in `kmain`,
 checking platform/manager agreement, stable DMA identities, and repeated calls
 without replacing the inventory.
+Debug builds also check publication/withdrawal of borrowed manager statistics,
+call/backend/cache counters, rejected results, inventory snapshots, and balanced
+operation groups, including an active group observed inside the fake backend.
 
 ### VirtualMemoryManager
 

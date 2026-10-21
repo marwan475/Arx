@@ -260,6 +260,7 @@ arx-debug cpus topology
 arx-debug cpus topology --cpu 1
 arx-debug cpus topology --slot 0
 arx-debug pci stats
+arx-debug pci-manager stats
 arx-debug pci devices --device 0000:00:01.0 --limit 20
 ```
 
@@ -311,7 +312,45 @@ PCI outcomes distinguish not started, enumerating, succeeded, no ECAM regions,
 failed and unsupported (0 through 5); capacity exhaustion marks a truncated
 inventory. Discovery starts through PciManager in `kmain` after `StartKernel`
 returns, so the earlier published provider initially reports not started.
+An unfiltered devices view describes that deferred state without treating it as
+corruption; a device selector reports that enumeration has not started. A stop
+during enumeration reports partial publication and does not traverse records.
+Failed and unsupported outcomes report unavailable inventories. Truncated
+successful inventories retain their recorded device rows. PCI slot scans consume
+the entry budget even when a selector excludes their rows, and every memory read
+also consumes the byte budget.
 No config-space, APIC, MSR, MMIO or device-register access is performed.
+
+### PciManager discovery state
+
+`arx-debug pci-manager stats` reads the manager-owned `PciDebugStats` record.
+Dispatcher publishes this provider after Resource construction, before live PCI
+discovery. Temporary managers do not self-register. The manager and its borrowed
+record live until factory destruction; Dispatcher invalidates the registry first.
+The existing `pci stats` and `pci devices` commands describe the lower platform
+inventory. The manager provider needs no separate collection adapter.
+
+| Field | Meaning |
+| --- | --- |
+| `backendAvailable` | Whether the copied operation table contains an enumeration callback. |
+| `enumerateCalls` | Every explicit `EnumerateDevices` invocation, including missing-backend and cached results. |
+| `backendCalls` | Enumeration callback invocations; the callback may itself return cached platform state. |
+| `cachedCalls` | Calls answered from the manager's previously completed result. |
+| `rejectedResults` | Malformed callback results rejected by manager validation; ordinary backend failures do not increment it. |
+| `status` | Manager `pci_enumeration_status_t`: not enumerated=0, success=1, unsupported=2, no regions=3, failed=4. This differs from the platform debug outcome numbering. |
+| `inventoryAddress`, `deviceCount`, `truncated` | Last completed call's borrowed original RAM array, number of device functions, and capacity-exhaustion flag. |
+
+Counters start at construction, never reset, and wrap modulo 2^64. Read-only
+queries do not update them. `group.activeWriters` brackets each enumeration call,
+including cached returns; a nonzero value means the displayed fields may describe
+an interrupted update. `completedUpdates` counts finished calls. The group adds
+no lock or atomic-snapshot guarantee. Source and inventory addresses are borrowed
+identities; inspection never invokes manager methods or backend operations.
+Storage, publication and update work are excluded from release builds.
+
+Host reader fixtures can run without GDB using
+`python -B -m unittest discover -s debug/gdb/tests -v`. They cover stored-state
+interpretation and budgets, not live GDB, native layouts, or kernel execution.
 
 ### Explicit discovery roots
 

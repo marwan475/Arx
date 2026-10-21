@@ -1,5 +1,7 @@
 #include "layers/Resource/PciManager.hpp"
 
+#include <debug/kernel/DebugManager.hpp>
+
 PciManager::PciManager(const platform_pci_ops_t* operations)
     : Operations{}, Inventory{ nullptr, 0, PCI_NOT_ENUMERATED, false }
 {
@@ -7,12 +9,21 @@ PciManager::PciManager(const platform_pci_ops_t* operations)
     {
         Operations = *operations;
     }
+
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.backendAvailable = Operations.enumerate != nullptr;
+        DebugStats.status = PCI_NOT_ENUMERATED;
+    );
 }
 
 PciStatus PciManager::EnumerateDevices()
 {
+    ARX_DEBUG_ONLY(DebugPciEnumeration debugEnumeration(DebugStats, Inventory);)
+
     if (Inventory.status != PCI_NOT_ENUMERATED)
     {
+        ARX_DEBUG_ADD(DebugStats.cachedCalls, 1);
         return GetStatus();
     }
 
@@ -23,6 +34,7 @@ PciStatus PciManager::EnumerateDevices()
         return GetStatus();
     }
 
+    ARX_DEBUG_ADD(DebugStats.backendCalls, 1);
     platform_pci_inventory_t inventory = Operations.enumerate(Operations.context);
 
     switch (inventory.status)
@@ -30,6 +42,7 @@ PciStatus PciManager::EnumerateDevices()
         case PCI_SUCCESS:
             if (inventory.count > MAX_PCI_DEVICES || (inventory.count != 0 && inventory.devices == nullptr))
             {
+                ARX_DEBUG_ADD(DebugStats.rejectedResults, 1);
                 Inventory.status = PCI_FAILED;
                 return GetStatus();
             }
@@ -42,6 +55,7 @@ PciStatus PciManager::EnumerateDevices()
             Inventory.status = inventory.status;
             break;
         default:
+            ARX_DEBUG_ADD(DebugStats.rejectedResults, 1);
             Inventory.status = PCI_FAILED;
             break;
     }
@@ -93,3 +107,12 @@ const pci_device_t* PciManager::FindDevice(uint16_t segment, uint8_t bus, uint8_
 
     return nullptr;
 }
+
+#if DEBUG
+
+void PciManager::PublishDebug(DebugManager& manager)
+{
+    manager.Register("pci-manager", "PciDebugStats", &DebugStats, sizeof(DebugStats), 1, &DebugStats.group);
+}
+
+#endif

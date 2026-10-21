@@ -289,6 +289,12 @@ use execution accounting even though CPU clock queries are not yet supported.
 `PciManager.cpp` wraps an injected platform enumeration backend. The factory owns
 the noncopyable manager and publishes `ResourceLayerCaps::pciManager`. Platform
 owns the inventory; manager destruction does not release its records or mappings.
+Debug builds publish manager-owned `PciDebugStats` as `pci-manager` through
+Dispatcher after construction. It records enumeration/backend/cache call counts,
+rejected backend results, and the last completed inventory/status snapshot. A
+group marker exposes interrupted enumeration. Queries do not update statistics;
+release builds omit the record and tracking. GdbCommands.md describes the fields
+and the separate platform `pci devices` view.
 
 | Function | What it does |
 | --- | --- |

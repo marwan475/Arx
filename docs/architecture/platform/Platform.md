@@ -23,6 +23,9 @@ Dispatcher later publishes the platform, CPU and PCI providers. Runtime CPU
 flags and captured device fields are inspected from their existing RAM records.
 Release builds exclude the added records and tracking work. GdbCommands.md
 documents bounded inspection and the native-reader contracts.
+The platform `pci` provider describes captured hardware discovery. After Resource
+construction, Dispatcher also publishes `pci-manager` for the manager's cached
+outcome and explicit enumeration-call statistics.
 
 ![Platform CPU state](../../imgs/dispatcher-2026-04-15-070216.svg)
 

@@ -56,6 +56,9 @@ typedef enum arx_pci_outcome
 // array index/address locates the entry. bar_count bounds at most MAX_PCI_BARS
 // register slots, not resource sizes. Never follow BAR/ECAM/APIC addresses.
 // Both inventories live for the kernel lifetime; no index reuse is introduced.
+// PCI is published before PciManager triggers discovery in kmain. NOT_STARTED
+// has no inventory. ENUMERATING can interrupt allocation/publication; readers
+// report partial evidence without traversing records until it completes.
 typedef struct arx_cpu_debug_stats
 {
     struct platform* source;

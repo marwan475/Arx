@@ -1,5 +1,6 @@
 #pragma once
 
+#include <debug/kernel/stats/PciDebugStats.hpp>
 #include <pci/pci.h>
 
 enum class PciStatus
@@ -14,6 +15,9 @@ enum class PciStatus
 class PciManager
 {
 public:
+    ARX_DEBUG_ONLY(PciDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
+
     explicit PciManager(const platform_pci_ops_t* operations);
     PciManager(const PciManager&) = delete;
     PciManager& operator=(const PciManager&) = delete;

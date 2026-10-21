@@ -144,6 +144,8 @@ static void pci_unmap_regions(void)
 
 static bool pci_map_regions(void)
 {
+    const zone_t* zone = &platform.cpus[arch_cpu_id()].numa_node->zone;
+
     for (size_t i = 0; i < platform.arch_info.pci_region_count; i++)
     {
         uint64_t bus_count;
@@ -167,29 +169,19 @@ static bool pci_map_regions(void)
             return false;
         }
 
-        mapped = NULL;
+        const phys_addr_t physical_base = base + bus_offset;
+        const virt_addr_t virtual_base  = pa_to_hhdm(physical_base, zone->hhdm_present, zone->hhdm_offset);
 
-        for (uint64_t offset = 0; offset < map_size; offset += PAGE_SIZE)
-        {
-            const virt_addr_t va = vmm_map_direct_mmio_page(base + bus_offset + offset, vmm_kernel_space());
-
-            if (va == 0)
-            {
-                return false;
-            }
-
-            if (offset == 0)
-            {
-                mapped = (void*) (uintptr_t) va;
-            }
-        }
-
-        if (mapped == NULL)
+        // Map the whole window before synchronizing TLBs. A full ECAM window
+        // contains 65,536 pages; mapping each separately sends that many rounds
+        // of synchronous IPIs to every other initialized CPU.
+        if (virtual_base == 0 || !vmm_map_range(virtual_base, physical_base, map_size, vmm_kernel_page_flags(true, true), vmm_kernel_space()))
         {
             error_logger("PCI: failed to map ECAM region %u\n", (unsigned) i);
             return false;
         }
 
+        mapped = (void*) (uintptr_t) virtual_base;
         platform.arch_info.pci_regions[i].mapped_base = mapped;
         platform.arch_info.pci_regions[i].mapped_size = map_size;
     }

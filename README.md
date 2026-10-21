@@ -3,8 +3,8 @@ Multiarch 64 bit Kernel in development
 
 Targets:
 
-- x86_64 (currently supported)
-- aarch64 (experimental)
+- x86_64 (supported)
+- aarch64 (unsupported)
 
 Goal of this project is to explore Kernel design and large scale software management/maintenance and build a sandbox for Kernel experiments
 
@@ -17,9 +17,9 @@ Goal of this project is to explore Kernel design and large scale software manage
 - [Platform services](docs/architecture/platform/Platform.md)
 - [x86_64 support](docs/architecture/arch/x86_64.md)
 - [Dispatcher](docs/architecture/layers/Dispatcher.md)
-- [Request layer](docs/architecture/layers/Request.md)
 - [Resource layer](docs/architecture/layers/Resource.md)
 - [Logic layer](docs/architecture/layers/Logic.md)
+- [Request layer](docs/architecture/layers/Request.md)
 - [Kernel self-tests](docs/architecture/selftests/SelfTests.md)
 - [Kernel debug framework and GDB commands](docs/debugging/GdbCommands.md)
 

@@ -6,13 +6,16 @@ filename. Ticket files contain the authoritative details and work history.
 On 2026-10-20, the owner requested proportional verification and explicit stopping
 rules; the remaining feature, debug, and in-progress tickets record that guidance.
 
+Signal/event debug-view execution was authorized on 2026-10-20 after analysis.
+Implementation and 29 host tests are complete; required kernel build and live
+QEMU/GDB verification remain unavailable, so the ticket stays in progress.
+
 ## Feature
 
 | Priority | Ticket | Type | Status |
 | --- | --- | --- | --- |
 | P1 | [Cut over to the debug framework and document the replacement commands](feature/migrate_debug_commands_and_document_framework.md) | feature | open |
 | P2 | [Add self-test progress and recorded boot-error debug views](feature/add_debug_selftest_error_views.md) | feature | open |
-| P2 | [Add signal, epoll and event-notification debug views](feature/add_debug_signal_event_views.md) | feature | open |
 | P2 | [Create an agent skill for adding debug statistics and rich views](feature/create_debug_framework_authoring_skill.md) | feature | open |
 | P2 | [Identify Arx agent skills and create implementation tickets](feature/plan_kernel_agent_skill_tickets.md) | feature | open |
 
@@ -24,7 +27,9 @@ rules; the remaining feature, debug, and in-progress tickets record that guidanc
 
 ## In progress
 
-None.
+| Priority | Ticket | Type | Status |
+| --- | --- | --- | --- |
+| P2 | [Add signal, epoll and event-notification debug views](in_progress/add_debug_signal_event_views.md) | feature | in progress |
 
 ## Closed
 

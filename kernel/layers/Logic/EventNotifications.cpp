@@ -1,4 +1,5 @@
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/EventState.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
@@ -20,16 +21,6 @@ constexpr uint32_t IN_ONESHOT     = 0x80000000;
 constexpr uint32_t IN_EXCL_UNLINK = 0x04000000;
 constexpr uint64_t AGAIN          = (uint64_t) -11;
 
-struct notification_record_t
-{
-    int32_t  descriptor;
-    uint32_t mask;
-    uint32_t cookie;
-    uint32_t length;
-    char     name[256];
-};
-
-static_assert(offsetof(notification_record_t, name) == 16, "Linux inotify_event header");
 struct signal_record_t
 {
     uint32_t number;
@@ -45,52 +36,23 @@ struct signal_record_t
 };
 
 static_assert(sizeof(signal_record_t) == 128, "Linux signalfd_siginfo ABI");
-struct notification_watch_t
-{
-    inode_t* inode;
-    uint32_t mask;
-    int32_t  descriptor;
-};
-} // namespace
-
-struct event_notification_t
-{
-    inode_t               inode;
-    EventManager*         manager;
-    file_t*               file;
-    event_notification_t* next;
-    uint32_t              kind;
-};
-
-namespace
-{
-struct inotify_state_t
-{
-    event_notification_t  common;
-    notification_watch_t  watches[MAX_WATCHES];
-    notification_record_t records[MAX_EVENTS];
-    size_t                head;
-    size_t                count;
-    int32_t               nextDescriptor;
-};
-struct signal_descriptor_t
-{
-    event_notification_t common;
-    uint64_t             mask;
-};
 
 void enqueue(inotify_state_t* state, const notification_record_t& record)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(state->common.manager->DebugStats.group);)
+
     if (state->count != 0)
     {
         notification_record_t& last = state->records[(state->head + state->count - 1) % MAX_EVENTS];
         if (memcmp(&last, &record, sizeof(record)) == 0)
         {
+            ARX_DEBUG_ADD(state->common.manager->DebugStats.inotifyCoalesced, 1);
             return;
         }
     }
     if (state->count == MAX_EVENTS)
     {
+        ARX_DEBUG_ADD(state->common.manager->DebugStats.inotifyOverflow, 1);
         notification_record_t& last = state->records[(state->head + state->count - 1) % MAX_EVENTS];
         last                        = {};
         last.descriptor             = -1;
@@ -99,6 +61,7 @@ void enqueue(inotify_state_t* state, const notification_record_t& record)
     }
     state->records[(state->head + state->count) % MAX_EVENTS] = record;
     ++state->count;
+    ARX_DEBUG_ADD(state->common.manager->DebugStats.inotifyQueued, 1);
 }
 
 uint64_t pending(process_t* process, task_t* task)
@@ -171,6 +134,7 @@ uint64_t EventManager::InstallNotification(event_notification_t* notification, c
 
     notification->next = Notifications;
     Notifications      = notification;
+    ARX_DEBUG_ADD(DebugStats.liveNotifications, 1);
     spinlock_release_preempt(&NotificationLock);
     int64_t fd;
     {
@@ -189,35 +153,39 @@ uint64_t EventManager::InstallNotification(event_notification_t* notification, c
 
 uint64_t EventManager::CreateInotify(uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.createInotify);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
     if ((flags & ~(NONBLOCK | CLOEXEC)) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
     inotify_state_t* state = static_cast<inotify_state_t*>(kzalloc(sizeof(inotify_state_t)));
     if (state == nullptr)
     {
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
     state->common.kind = 1;
-    return InstallNotification(&state->common, &InotifyOperations, flags);
+    return ARX_COMM_RETURN(InstallNotification(&state->common, &InotifyOperations, flags));
 }
 
 uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.addWatch);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     file_t* file = RetainDescriptor(fd);
 
     if (file == nullptr)
     {
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     uint64_t result    = 0;
@@ -323,21 +291,23 @@ uint64_t EventManager::AddWatch(int32_t fd, uint64_t pointer, uint32_t mask)
     }
 
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t EventManager::RemoveWatch(int32_t fd, int32_t descriptor)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.removeWatch);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     file_t* file = RetainDescriptor(fd);
 
     if (file == nullptr)
     {
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     uint64_t result = LINUX_EINVAL;
@@ -370,11 +340,13 @@ uint64_t EventManager::RemoveWatch(int32_t fd, int32_t descriptor)
     }
 
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, const char* name, uint32_t cookie, bool unlinked)
 {
+    ARX_DEBUG_ADD(DebugStats.vfsNotifications, 1);
+
     file_t* changed[MAX_INSTANCES];
     size_t  count = 0;
     spinlock_acquire_preempt(&NotificationLock);
@@ -458,14 +430,16 @@ void EventManager::NotifyVfs(inode_t* inode, uint32_t mask, inode_t* parent, con
 
 uint64_t EventManager::SignalDescriptor(int32_t fd, uint64_t mask, uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.signalDescriptor);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     if ((flags & ~(NONBLOCK | CLOEXEC)) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     mask &= ~SIGNAL_UNBLOCKABLE;
@@ -476,19 +450,19 @@ uint64_t EventManager::SignalDescriptor(int32_t fd, uint64_t mask, uint32_t flag
 
         if (state == nullptr)
         {
-            return LINUX_ENOMEM;
+            return ARX_COMM_RETURN(LINUX_ENOMEM);
         }
 
         state->common.kind = 2;
         state->mask        = mask;
-        return InstallNotification(&state->common, &SignalOperations, flags);
+        return ARX_COMM_RETURN(InstallNotification(&state->common, &SignalOperations, flags));
     }
 
     file_t* file = RetainDescriptor(fd);
 
     if (file == nullptr)
     {
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     uint64_t result = LINUX_EINVAL;
@@ -502,11 +476,13 @@ uint64_t EventManager::SignalDescriptor(int32_t fd, uint64_t mask, uint32_t flag
     }
 
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 void EventManager::NotifySignals(process_t* process)
 {
+    ARX_DEBUG_ADD(DebugStats.signalNotifications, 1);
+
     if (Resources == nullptr || Resources->taskManager == nullptr || process == nullptr)
     {
         return;
@@ -562,6 +538,7 @@ void EventManager::NotificationRelease(file_t* file)
         link = &(*link)->next;
     }
     *link = notification->next;
+    ARX_DEBUG_ADD(manager->DebugStats.liveNotifications, UINT64_MAX);
     spinlock_release_preempt(&manager->NotificationLock);
     kfree(notification);
 }
@@ -683,11 +660,13 @@ uint64_t EventManager::NotificationReadVector(file_t* file, const file_iovec_t* 
 
                 if (!copy_record(&access, vectors, count, copied, &record, size))
                 {
+                    ARX_DEBUG_ADD(manager->DebugStats.copyFailures, 1);
                     result = LINUX_EFAULT;
                     break;
                 }
 
                 copied += size;
+                ARX_DEBUG_ADD(manager->DebugStats.inotifyCopied, 1);
                 state->head = (state->head + 1) % MAX_EVENTS;
                 --state->count;
             }
@@ -730,12 +709,14 @@ uint64_t EventManager::NotificationReadVector(file_t* file, const file_iovec_t* 
 
                     if (!copy_record(&access, vectors, count, copied, &record, sizeof(record)))
                     {
+                        ARX_DEBUG_ADD(manager->DebugStats.copyFailures, 1);
                         result = LINUX_EFAULT;
                         break;
                     }
 
                     SignalManager::Consume(process, task, signal);
                     copied += sizeof(record);
+                    ARX_DEBUG_ADD(manager->DebugStats.signalfdCopied, 1);
                     alarm |= signal == 14;
                 }
 

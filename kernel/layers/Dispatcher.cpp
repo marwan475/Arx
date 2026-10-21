@@ -72,6 +72,8 @@ void Dispatcher::StartKernel()
         debugManager.DeclareUnavailable("sync", "Logic layer not constructed");
         debugManager.DeclareUnavailable("ipc", "Logic layer not constructed");
         debugManager.DeclareUnavailable("sockets", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("signals", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("events", "Logic layer not constructed");
         ResourceLayerImportCaps->timeManager->PublishDebug(debugManager, &ResourceLayerImportCaps->processManager->DebugStats);
     );
 
@@ -96,6 +98,8 @@ void Dispatcher::StartKernel()
         LogicLayerImportCaps->socketManager->PublishDebug(debugManager, &process);
         LogicLayerImportCaps->interProcessCommunicationManager->DebugStats.sockets = &LogicLayerImportCaps->socketManager->DebugStats;
         LogicLayerImportCaps->interProcessCommunicationManager->PublishDebug(debugManager, &process);
+        LogicLayerImportCaps->signalManager->PublishDebug(debugManager, &process);
+        LogicLayerImportCaps->eventManager->PublishDebug(debugManager, &process);
         process.filePolls[0] = EventManager::DebugCounterPoll();
         process.filePolls[1] = EventManager::DebugEpollPoll();
         process.lifecycleGroup = &lifecycle.group;

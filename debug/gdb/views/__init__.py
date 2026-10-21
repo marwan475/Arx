@@ -4,8 +4,11 @@ Adding fields to stats never needs an adapter. Add an entry here only when a ric
 collection needs interpretation beyond generic DWARF rendering.
 """
 from . import foundation, platform, memory, process, virtual_memory, filesystem, scheduling, communication
+from . import signals_events
 
 ADAPTERS = {
+    (signals_events.SIGNALS, 1): ("SignalDebugStats", signals_events.signals),
+    (signals_events.EVENTS, 1): ("EventDebugStats", signals_events.events),
     (communication.IPC, 1): ("IpcDebugStats", communication.ipc),
     (communication.SOCKETS, 1): ("SocketDebugStats", communication.sockets),
     (scheduling.SCHEDULER, 1): ("SchedulerDebugStats", scheduling.scheduler),

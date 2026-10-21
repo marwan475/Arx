@@ -8,6 +8,45 @@ void test_SignalManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
 {
     auto* m = logic ? logic->signalManager : nullptr;
     ManagerSuite suite("logic/SignalManager", m != nullptr);
+
+#if DEBUG
+    suite.Run("logic/SignalManager/debug_queue_accounting", [&](TestCase& t)
+    {
+        TestFixture fixture(resources);
+
+        if (!fixture.Valid(t))
+        {
+            return;
+        }
+
+        const signal_action_t ignoredAction = {1, 0, 0, 0};
+        t.Equal(m->Action(10, &ignoredAction, nullptr), 0, "prepare ignored submission");
+
+        SignalDispositionGuard guard(fixture.Process);
+        const signal_sender_t sender = {11, 22, -1, 99};
+        const SignalDebugStats before = m->DebugStats;
+
+        t.Equal(m->Queue(fixture.Process, nullptr, 1, sender), 0, "accept standard signal");
+        t.Equal(m->Queue(fixture.Process, nullptr, 1, sender), 0, "coalesce standard signal");
+        t.Equal(m->Queue(fixture.Process, nullptr, 32, sender), 0, "append RT record");
+        t.Equal(m->Queue(fixture.Process, nullptr, 10, sender), 0, "ignore successful submission");
+        t.Equal(m->Queue(fixture.Process, nullptr, 0, sender), LINUX_EINVAL, "reject invalid signal");
+
+        t.Equal(m->DebugStats.queue.attempts - before.queue.attempts, 5, "count all queue attempts");
+        t.Equal(m->DebugStats.queue.successes - before.queue.successes, 4, "ignored and coalesced calls succeed");
+        t.Equal(m->DebugStats.queue.failures - before.queue.failures, 1, "record rejected queue call");
+        t.Equal(m->DebugStats.standardCoalesced - before.standardCoalesced, 1, "coalescing appends no record");
+        t.Equal(m->DebugStats.ignored - before.ignored, 1, "ignored is distinct from queued");
+        t.Equal(m->DebugStats.realtimeQueued - before.realtimeQueued, 1, "only RT append counts a record");
+
+        m->Consume(fixture.Process, fixture.Task, 1);
+        m->Consume(fixture.Process, fixture.Task, 32);
+        t.Equal(m->DebugStats.consumed - before.consumed, 2, "count signal consumption");
+        t.Equal(m->DebugStats.realtimeConsumed - before.realtimeConsumed, 1, "count RT record consumption");
+        t.Equal(m->DebugStats.handlerFrames - before.handlerFrames, 0, "queue and consume do not imply handler delivery");
+    });
+#endif
+
     suite.Run("logic/SignalManager/action_roundtrip", [&](TestCase& t)
     {
         TestFixture f(resources);

@@ -32,8 +32,9 @@ Release builds exclude the registry, its initialization and all tracking work.
    provider, process/task and virtual-memory roots, archive and Resource filesystem
    records in debug builds, and run
    Resource self-tests.
-2. Create Logic with Resource capabilities, publish lifecycle/credential/ELF and VFS
-   statistics in debug builds, and run its self-tests.
+2. Create Logic with Resource capabilities, publish lifecycle/credential/ELF,
+   scheduler/synchronization, IPC/socket, signal/event and VFS statistics in debug
+   builds, and run its self-tests.
 3. Create Request with both Resource and Logic capabilities.
 
 This order makes lower-layer services available before their consumers are

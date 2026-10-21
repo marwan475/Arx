@@ -1,6 +1,6 @@
 #pragma once
 
-#include <debug/kernel/DebugRecords.h>
+#include <debug/kernel/stats/EventDebugStats.hpp>
 
 #include <klib/spinlock.h>
 #include <stddef.h>
@@ -54,6 +54,9 @@ class EventManager
 {
 public:
     ARX_DEBUG_ONLY(
+        EventDebugStats DebugStats{};
+        void PublishDebug(class DebugManager& manager, const ProcessDebugStats* processes);
+
         static const void* DebugCounterPoll()
         {
             return reinterpret_cast<const void*>(CounterPoll);
@@ -84,6 +87,8 @@ public:
     uint64_t Wait(uint64_t expected, uint64_t deadline = UINT64_MAX);
 
 private:
+    static const struct file_operations_t CounterOperations;
+    static const struct file_operations_t EpollOperations;
     static const struct file_operations_t InotifyOperations;
     static const struct file_operations_t SignalOperations;
     uint64_t              InstallNotification(event_notification_t* notification, const struct file_operations_t* operations, uint32_t flags);

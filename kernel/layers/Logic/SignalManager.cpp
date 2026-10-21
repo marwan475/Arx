@@ -23,6 +23,8 @@ SignalManager::SignalManager(ResourceLayerCaps* resources, Scheduler* scheduler)
 
 uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal_action_t* previous)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (signal < 1 || signal > 64)
     {
         return LINUX_EINVAL;
@@ -115,6 +117,8 @@ uint64_t SignalManager::Action(int signal, const signal_action_t* action, signal
 
 uint64_t SignalManager::Mask(int operation, const uint64_t* mask, uint64_t* previous)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (mask != nullptr && (operation < 0 || operation > 2))
     {
         return LINUX_EINVAL;
@@ -152,6 +156,8 @@ uint64_t SignalManager::Mask(int operation, const uint64_t* mask, uint64_t* prev
 
 uint64_t SignalManager::BeginTemporaryMask(uint64_t mask)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (Resources == nullptr || Resources->taskManager == nullptr || Resources->processManager == nullptr)
     {
         return LINUX_ENOSYS;
@@ -175,6 +181,8 @@ uint64_t SignalManager::BeginTemporaryMask(uint64_t mask)
 
 void SignalManager::FinishTemporaryMask(bool deferRestore)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (Resources == nullptr || Resources->taskManager == nullptr || Resources->processManager == nullptr)
     {
         return;
@@ -201,6 +209,8 @@ void SignalManager::FinishTemporaryMask(bool deferRestore)
 
 uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previous, uint64_t rsp)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (Resources == nullptr || Resources->taskManager == nullptr)
     {
         return LINUX_ENOSYS;
@@ -261,33 +271,35 @@ uint64_t SignalManager::Stack(const signal_stack_t* stack, signal_stack_t* previ
 
 uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal, const signal_sender_t* queued)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.send);)
+
     if (signal < 0 || signal > 64)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     ProcessManager* processes = Resources->processManager;
     if (queued != nullptr && pid <= 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
     if (pid <= 0)
     {
         if (tid >= 0 || pid == INT32_MIN)
         {
-            return LINUX_EINVAL;
+            return ARX_COMM_RETURN(LINUX_EINVAL);
         }
 
         process_t* source = processes->GetCurrentProcess();
 
         if (source == nullptr)
         {
-            return LINUX_ESRCH;
+            return ARX_COMM_RETURN(LINUX_ESRCH);
         }
 
         const uint64_t group = pid == 0 ? source->groupId : static_cast<uint64_t>(-static_cast<int64_t>(pid));
@@ -315,7 +327,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal, const signal_
             processes->ReleaseProcess(member);
         }
 
-        return delivered ? 0 : failure;
+        return ARX_COMM_RETURN(delivered ? 0 : failure);
     }
 
     process_t*      source    = processes->AcquireCurrentMemoryProcess(false);
@@ -417,7 +429,7 @@ uint64_t SignalManager::Send(int32_t pid, int32_t tid, int signal, const signal_
         processes->ReleaseProcess(target);
     }
 
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SignalManager::Pause()
@@ -538,17 +550,23 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
 
     if (task->signalDepth == UINT64_MAX)
     {
+        ARX_DEBUG_ADD(DebugStats.handlerFailures, 1);
         Terminate(11);
     }
 
     const uint64_t mask        = __atomic_load_n(&task->signalMask, __ATOMIC_ACQUIRE);
     const uint64_t restoreMask = task->signalRestoreMask ? task->signalSavedMask : mask;
 
+    ARX_DEBUG_ONLY(DebugUpdate handlerUpdate(DebugStats.group);)
+
     if (arch_signal_prepare(frame, result, &action, &task->signalStack, &sender, restoreMask, signal, restartable) != 0)
     {
+        ARX_DEBUG_ADD(DebugStats.handlerFailures, 1);
+        ARX_DEBUG_RUN(handlerUpdate.End());
         Terminate(11);
     }
 
+    ARX_DEBUG_ADD(DebugStats.handlerFrames, 1);
     ++task->signalDepth;
     task->signalRestoreMask = false;
     __atomic_store_n(&task->signalMask, (mask | action.mask | ((action.flags & NODEFER) ? 0 : bit)) & ~SIGNAL_UNBLOCKABLE, __ATOMIC_RELEASE);
@@ -557,6 +575,8 @@ uint64_t SignalManager::Deliver(arch_syscall_frame_t* frame, uint64_t result, bo
 
 uint64_t SignalManager::Restore(arch_syscall_frame_t* frame)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (frame == nullptr)
     {
         return LINUX_EINVAL;
@@ -582,6 +602,7 @@ uint64_t SignalManager::Restore(arch_syscall_frame_t* frame)
     {
         if (task->isUserTask)
         {
+            ARX_DEBUG_RUN(debugUpdate.End());
             Terminate(11);
         }
 
@@ -591,21 +612,26 @@ uint64_t SignalManager::Restore(arch_syscall_frame_t* frame)
     __atomic_store_n(&task->signalMask, mask & ~SIGNAL_UNBLOCKABLE, __ATOMIC_RELEASE);
     task->signalStack = stack;
     --task->signalDepth;
+    ARX_DEBUG_ADD(DebugStats.restoredFrames, 1);
     return result;
 }
 
 uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, const signal_sender_t& sender)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.queue);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (signal < 1 || signal > 64)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     const uint64_t bit = 1ULL << (signal - 1);
 
     if (process->Signals()->ignored & bit)
     {
-        return 0;
+        ARX_DEBUG_ADD(DebugStats.ignored, 1);
+        return ARX_COMM_RETURN(0);
     }
 
     uint64_t* pending = task != nullptr ? &task->signalPending : &process->signalPending;
@@ -620,16 +646,17 @@ uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, cons
 
             if (queue == nullptr)
             {
-                return LINUX_ENOMEM;
+                return ARX_COMM_RETURN(LINUX_ENOMEM);
             }
         }
 
         if (queue->count + queue->reserved == signal_queue_t::CAPACITY)
         {
-            return static_cast<uint64_t>(-11);
+            return ARX_COMM_RETURN(static_cast<uint64_t>(-11));
         }
 
         queue->records[queue->count++] = {static_cast<uint32_t>(signal), sender};
+        ARX_DEBUG_ADD(DebugStats.realtimeQueued, 1);
     }
     else if (!(*pending & bit))
     {
@@ -639,15 +666,29 @@ uint64_t SignalManager::Queue(process_t* process, task_t* task, int signal, cons
 
             if (task->signalSenders == nullptr)
             {
-                return LINUX_ENOMEM;
+                return ARX_COMM_RETURN(LINUX_ENOMEM);
             }
         }
 
         (task != nullptr ? task->signalSenders : process->signalSenders)[signal - 1] = sender;
     }
+    else
+    {
+        ARX_DEBUG_ADD(DebugStats.standardCoalesced, 1);
+    }
 
+    ARX_DEBUG_RUN(
+        if (task != nullptr)
+        {
+            ARX_DEBUG_ADD(DebugStats.taskQueued, 1);
+        }
+        else
+        {
+            ARX_DEBUG_ADD(DebugStats.processQueued, 1);
+        }
+    );
     __atomic_fetch_or(pending, bit, __ATOMIC_RELEASE);
-    return 0;
+    return ARX_COMM_RETURN(0);
 }
 
 int SignalManager::Peek(process_t* process, task_t* task, uint64_t mask, signal_sender_t* sender)
@@ -704,6 +745,8 @@ int SignalManager::Peek(process_t* process, task_t* task, uint64_t mask, signal_
 
 void SignalManager::Consume(process_t* process, task_t* task, int signal)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     const uint64_t  bit       = 1ULL << (signal - 1);
     const bool      thread    = (task->signalPending & bit) != 0;
     uint64_t*       pending   = thread ? &task->signalPending : &process->signalPending;
@@ -722,6 +765,7 @@ void SignalManager::Consume(process_t* process, task_t* task, int signal)
             if (!removed && record.number == static_cast<uint32_t>(signal))
             {
                 removed = true;
+                ARX_DEBUG_ADD(DebugStats.realtimeConsumed, 1);
                 continue;
             }
 
@@ -732,6 +776,8 @@ void SignalManager::Consume(process_t* process, task_t* task, int signal)
         queue->count = count;
     }
 
+    ARX_DEBUG_ADD(DebugStats.consumed, 1);
+
     if (!remaining)
     {
         __atomic_fetch_and(pending, ~bit, __ATOMIC_RELEASE);
@@ -740,6 +786,8 @@ void SignalManager::Consume(process_t* process, task_t* task, int signal)
 
 void SignalManager::Discard(uint64_t* pending, signal_queue_t* queue, int signal)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     if (queue != nullptr && signal >= 32)
     {
         size_t count = 0;
@@ -750,18 +798,23 @@ void SignalManager::Discard(uint64_t* pending, signal_queue_t* queue, int signal
                 queue->records[count++] = queue->records[i];
             }
         }
+        ARX_DEBUG_ADD(DebugStats.realtimeDiscarded, queue->count - count);
         queue->count = count;
     }
+
     __atomic_fetch_and(pending, ~(1ULL << (signal - 1)), __ATOMIC_RELEASE);
 }
 
 uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.reserve);)
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     process_t* retained = recipient != nullptr ? Resources->processManager->AcquireProcess(recipient->id) : nullptr;
 
     if (retained == nullptr)
     {
-        return LINUX_ESRCH;
+        return ARX_COMM_RETURN(LINUX_ESRCH);
     }
 
     uint64_t result = 0;
@@ -792,6 +845,7 @@ uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
             else
             {
                 ++queue->reserved;
+                ARX_DEBUG_ADD(DebugStats.reservationsAcquired, 1);
                 child->exitRecipient = retained;
             }
         }
@@ -802,11 +856,13 @@ uint64_t SignalManager::ReserveExit(process_t* child, process_t* recipient)
         Resources->processManager->ReleaseProcess(retained);
     }
 
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 void SignalManager::ReleaseExit(ResourceLayerCaps* resources, process_t* child, bool deliver)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     process_t* recipient = __atomic_exchange_n(&child->exitRecipient, nullptr, __ATOMIC_ACQ_REL);
     if (recipient == nullptr)
     {
@@ -817,6 +873,7 @@ void SignalManager::ReleaseExit(ResourceLayerCaps* resources, process_t* child, 
     if (queue != nullptr && queue->reserved != 0)
     {
         --queue->reserved;
+        ARX_DEBUG_ADD(DebugStats.reservationsReleased, 1);
         if (deliver && !recipient->exited)
         {
             const signal_sender_t sender = {static_cast<int32_t>(child->id), child->credentials.user.real, child->terminationSignal != 0 ? 2 : 1, static_cast<uint64_t>(child->terminationSignal != 0 ? child->terminationSignal : child->exitStatus)};

@@ -10,6 +10,26 @@ void test_EventManager(ResourceLayerCaps* resources, LogicLayerCaps* logic)
 {
     auto* m = logic ? logic->eventManager : nullptr;
     ManagerSuite suite("logic/EventManager", m != nullptr);
+
+#if DEBUG
+    suite.Run("logic/EventManager/debug_notification_accounting", [&](TestCase& t)
+    {
+        const EventDebugStats before = m->DebugStats;
+
+        m->Notify();
+        t.Equal(m->CreateCounter(0, 0x80000000), LINUX_EINVAL, "reject invalid counter flags");
+        t.Equal(m->CreateEpoll(0x80000000), LINUX_EINVAL, "reject invalid epoll flags");
+
+        t.Equal(m->DebugStats.notifications - before.notifications, 1, "general notification counts an attempt");
+        t.Equal(m->DebugStats.createCounter.failures - before.createCounter.failures, 1, "record failed counter creation");
+        t.Equal(m->DebugStats.createEpoll.failures - before.createEpoll.failures, 1, "record failed epoll creation");
+        t.Equal(m->DebugStats.liveCounters, before.liveCounters, "failed creation adds no live object");
+        t.Equal(m->DebugStats.epollCopied, before.epollCopied, "notification is not user event delivery");
+        t.Equal(m->DebugStats.inotifyCopied, before.inotifyCopied, "notification copies no inotify record");
+        t.Equal(m->DebugStats.signalfdCopied, before.signalfdCopied, "notification consumes no signal record");
+    });
+#endif
+
     suite.Run("logic/EventManager/notification_sequence", [&](TestCase& t)
     {
         uint64_t sequence = m->Sequence();

@@ -247,6 +247,12 @@ implements credential acquisition, permission checks, and replacement.
 Connects file readiness and notifications to Scheduler waits. `EventManager.hpp`
 defines poll/epoll records and the API; `EventManager.cpp` and
 `EventNotifications.cpp` implement events and notification descriptors.
+`EventState.hpp` defines the stored epoll, counter and notification layouts.
+Debug builds publish EventDebugStats and bounded read-only views for weak epoll
+topology, descriptor-discovered counters and global inotify/signalfd state.
+Notification attempts, enqueue/coalescing/overflow outcomes and complete records
+copied to user memory are counted separately. GdbCommands.md documents the reader
+bounds, operation identities, ring order and borrowed lifetimes.
 
 | Function | What it does |
 | --- | --- |
@@ -292,9 +298,17 @@ wakeups. `SynchronizationManager.hpp` declares its bounded waiter/priority state
 ### SignalManager
 
 Manages signal actions, masks, queues, and user delivery. `SignalManager.hpp`
-defines signal records and the API; `SignalManager.cpp` coordinates Resource state,
+defines the API; signal_types.h and SignalState.hpp define shared records and
+Resource queue storage. `SignalManager.cpp` coordinates Resource state,
 Scheduler wakeups, and architecture signal frames. Queue helpers require the
 target's `SignalDispositionGuard`.
+
+In debug builds SignalManager owns static SignalDebugStats so all instances and
+static queue-helper callers contribute to boot-lifetime totals. Queue acceptance,
+ignored/coalesced signals, RT records, reservations, consumption and prepared
+handler frames remain distinct. Read-only pending/disposition views correlate
+Resource identities, masks, senders, compact queues and restoration state without
+consuming signals; GdbCommands.md specifies their stopped-state interpretation.
 
 | Function | What it does |
 | --- | --- |

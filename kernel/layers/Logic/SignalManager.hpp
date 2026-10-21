@@ -1,6 +1,8 @@
 #pragma once
 #include "layers/Resource/SignalState.hpp"
 
+#include <debug/kernel/stats/SignalDebugStats.hpp>
+
 #include <arch/arch.h>
 #include <stddef.h>
 
@@ -12,6 +14,11 @@ struct task_t;
 class SignalManager
 {
 public:
+    ARX_DEBUG_ONLY(
+        static SignalDebugStats DebugStats;
+        void PublishDebug(class DebugManager& manager, const ProcessDebugStats* processes);
+    )
+
     SignalManager(ResourceLayerCaps* resources, Scheduler* scheduler);
     // These helpers require the target's SignalDispositionGuard. Pending bits
     // summarize queues; consuming one RT record clears its bit only at the end.

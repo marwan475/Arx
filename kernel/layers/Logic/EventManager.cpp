@@ -1,4 +1,5 @@
 #include "layers/Logic/EventManager.hpp"
+#include "layers/Logic/EventState.hpp"
 
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
@@ -7,33 +8,6 @@
 #include "layers/Resource/TimeManager.hpp"
 
 #include <klib/klib.h>
-
-struct event_epoll_watch_t
-{
-    file_close_observer_t observer;
-    event_epoll_t*        owner;
-    file_t*               file; // Weak: its intrusive close observer detaches before release/free.
-    int32_t               descriptor;
-    event_epoll_event_t   event;
-    bool                  armed;
-    bool                  pending;
-    event_epoll_watch_t*  next;
-};
-
-struct event_epoll_t
-{
-    file_close_observer_t observer;
-    uint64_t              sequence;
-    inode_t               inode;
-    EventManager*         manager;
-    file_t*               file;
-    event_epoll_watch_t*  head;
-    event_epoll_watch_t*  tail;
-    event_epoll_t*        next;
-    uint64_t              topologyGeneration;
-    size_t                topologyDepth;
-    uint64_t              notificationGeneration;
-};
 
 namespace
 {
@@ -44,15 +18,20 @@ constexpr uint32_t EPOLL_EDGE      = 1U << 31;
 constexpr uint32_t EPOLL_ONCE      = 1U << 30;
 constexpr uint32_t EPOLL_EXCLUSIVE = 1U << 28;
 constexpr size_t   EPOLL_DEPTH     = 5;
-struct event_counter_t
-{
-    inode_t       inode;
-    spinlock_t    lock;
-    uint64_t      value;
-    bool          semaphore;
-    EventManager* manager;
-};
 } // namespace
+
+const file_operations_t EventManager::CounterOperations =
+{
+    nullptr, nullptr, nullptr, CounterSeek, nullptr, nullptr, nullptr,
+    CounterRelease, CounterPoll, CounterRead, CounterWrite,
+    CounterReadVector, CounterWriteVector,
+};
+
+const file_operations_t EventManager::EpollOperations =
+{
+    nullptr, nullptr, nullptr, EpollSeek, nullptr, nullptr, nullptr,
+    EpollRelease, EpollPoll, nullptr, nullptr,
+};
 
 EventManager::EventManager(ResourceLayerCaps* resources, Scheduler* scheduler, VirtualFileSystem* vfs) : Resources(resources), SchedulerManager(scheduler), Vfs(vfs), Generation(0), TopologyGeneration(0), NotificationGeneration(0), EpollLock(VirtualFileSystem::ReadinessLock), Epolls(nullptr)
 {
@@ -67,6 +46,8 @@ uint64_t EventManager::Sequence() const
 
 void EventManager::Notify()
 {
+    ARX_DEBUG_ADD(DebugStats.notifications, 1);
+
     __atomic_add_fetch(&Generation, 1ULL, __ATOMIC_RELEASE);
 
     if (SchedulerManager != nullptr)
@@ -77,6 +58,9 @@ void EventManager::Notify()
 
 void EventManager::NotifySource(file_t* file, uint32_t events)
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+    ARX_DEBUG_ADD(DebugStats.sourceNotifications, 1);
+
     spinlock_acquire_preempt(&EpollLock);
     ++NotificationGeneration;
 
@@ -127,6 +111,12 @@ void EventManager::NotifySourceLocked(file_t* file, uint32_t events, size_t dept
                 {
                     continue;
                 }
+                ARX_DEBUG_RUN(
+                    if (!watch->pending)
+                    {
+                        ARX_DEBUG_ADD(DebugStats.pendingTransitions, 1);
+                    }
+                );
                 watch->pending = true;
                 changed        = true;
             }
@@ -269,19 +259,18 @@ uint64_t EventManager::Poll(event_pollfd_t* descriptors, size_t count, uint64_t 
 
 uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.createCounter);)
+
     if ((flags & ~(NONBLOCK | CLOEXEC | 1U)) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
-    static const file_operations_t operations = {
-            nullptr, nullptr, nullptr, CounterSeek, nullptr, nullptr, nullptr, CounterRelease, CounterPoll, CounterRead, CounterWrite, CounterReadVector, CounterWriteVector,
-    };
     event_counter_t* counter = static_cast<event_counter_t*>(kzalloc(sizeof(event_counter_t)));
     file_t*          file    = static_cast<file_t*>(kzalloc(sizeof(file_t)));
 
@@ -289,15 +278,16 @@ uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
     {
         kfree(counter);
         kfree(file);
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     Vfs->InitializeAnonymousInode(&counter->inode, INODE_REGULAR, 0600);
     counter->value     = initial;
     counter->semaphore = (flags & 1) != 0;
     counter->manager   = this;
+    ARX_DEBUG_ADD(DebugStats.liveCounters, 1);
     file->inode        = &counter->inode;
-    file->operations   = &operations;
+    file->operations   = &CounterOperations;
     file->privateData  = counter;
     file->statusFlags  = 2 | (flags & NONBLOCK); // O_RDWR; semaphore/CLOEXEC are not status flags
     file->refCount     = 1;
@@ -313,7 +303,7 @@ uint64_t EventManager::CreateCounter(uint32_t initial, uint32_t flags)
         Vfs->Close(file);
     }
 
-    return (uint64_t) descriptor;
+    return ARX_COMM_RETURN((uint64_t) descriptor);
 }
 
 uint32_t EventManager::CounterPoll(file_t* file)
@@ -410,6 +400,7 @@ uint64_t EventManager::CounterReadVector(file_t* file, const file_iovec_t* vecto
             if (copied == sizeof(value))
             {
                 counter->value -= value;
+                ARX_DEBUG_ADD(counter->manager->DebugStats.counterReads, 1);
                 result = sizeof(value);
             }
             else
@@ -470,6 +461,7 @@ uint64_t EventManager::CounterWrite(file_t* file, uint64_t address, uint64_t cou
         if (fits)
         {
             counter->value += value;
+            ARX_DEBUG_ADD(counter->manager->DebugStats.counterWrites, 1);
         }
 
         spinlock_release_preempt(&counter->lock);
@@ -496,6 +488,10 @@ uint64_t EventManager::CounterWrite(file_t* file, uint64_t address, uint64_t cou
 
 void EventManager::CounterRelease(file_t* file)
 {
+    ARX_DEBUG_RUN(
+        auto* counter = static_cast<event_counter_t*>(file->privateData);
+        ARX_DEBUG_ADD(counter->manager->DebugStats.liveCounters, UINT64_MAX);
+    );
     kfree(file->privateData);
 }
 
@@ -541,19 +537,18 @@ file_t* EventManager::RetainDescriptor(int32_t fd)
 
 uint64_t EventManager::CreateEpoll(uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.createEpoll);)
+
     if ((flags & ~CLOEXEC) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
-    static const file_operations_t operations = {
-            nullptr, nullptr, nullptr, EpollSeek, nullptr, nullptr, nullptr, EpollRelease, EpollPoll, nullptr, nullptr,
-    };
     event_epoll_t* epoll = static_cast<event_epoll_t*>(kzalloc(sizeof(event_epoll_t)));
     file_t*        file  = static_cast<file_t*>(kzalloc(sizeof(file_t)));
 
@@ -561,14 +556,15 @@ uint64_t EventManager::CreateEpoll(uint32_t flags)
     {
         kfree(epoll);
         kfree(file);
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     Vfs->InitializeAnonymousInode(&epoll->inode, INODE_REGULAR, 0600);
     epoll->manager          = this;
+    ARX_DEBUG_ADD(DebugStats.liveEpolls, 1);
     epoll->file             = file;
     file->inode             = &epoll->inode;
-    file->operations        = &operations;
+    file->operations        = &EpollOperations;
     file->privateData       = epoll;
     file->statusFlags       = 2;
     file->refCount          = 1;
@@ -591,7 +587,7 @@ uint64_t EventManager::CreateEpoll(uint32_t flags)
         Vfs->Close(file);
     }
 
-    return (uint64_t) descriptor;
+    return ARX_COMM_RETURN((uint64_t) descriptor);
 }
 
 bool EventManager::CheckEpollDepth(event_epoll_t* epoll, event_epoll_t* owner, event_epoll_t* target, size_t depth)
@@ -622,9 +618,11 @@ bool EventManager::CheckEpollDepth(event_epoll_t* epoll, event_epoll_t* owner, e
 
 uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd, const event_epoll_event_t* event)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.controlEpoll);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     file_t* file;
@@ -638,7 +636,7 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
     if (file == nullptr)
     {
         Vfs->Close(target);
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     uint64_t result = [&]() -> uint64_t
@@ -797,7 +795,7 @@ uint64_t EventManager::ControlEpoll(int32_t epfd, int32_t operation, int32_t fd,
     // Final close detaches readiness observers under the same graph lock.
     Vfs->Close(target);
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint32_t EventManager::WatchReadiness(event_epoll_watch_t* watch)
@@ -841,10 +839,12 @@ uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, const user_memory_access_
 
             if (!safe_write_user_locked(access, address + ready * sizeof(event), &event, sizeof(event)))
             {
+                ARX_DEBUG_ADD(DebugStats.copyFailures, 1);
                 return ready != 0 ? ready : LINUX_EFAULT;
             }
 
             ++ready;
+            ARX_DEBUG_ADD(DebugStats.epollCopied, 1);
             watch->pending = (watch->event.events & EPOLL_EXCLUSIVE) != 0 && (watch->event.events & EPOLL_EDGE) == 0;
 
             if ((watch->event.events & EPOLL_ONCE) != 0)
@@ -887,16 +887,18 @@ uint64_t EventManager::ScanEpoll(event_epoll_t* epoll, const user_memory_access_
 
 uint64_t EventManager::WaitEpoll(int32_t epfd, uint64_t address, size_t count, uint64_t deadline)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.waitEpoll);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     file_t* file = RetainDescriptor(epfd);
 
     if (file == nullptr)
     {
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     uint64_t result = [&]() -> uint64_t
@@ -972,7 +974,7 @@ uint64_t EventManager::WaitEpoll(int32_t epfd, uint64_t address, size_t count, u
         }
     }();
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint32_t EventManager::EpollPoll(file_t* file)
@@ -1045,5 +1047,9 @@ void EventManager::EpollClosing(file_close_observer_t* observer, file_t*)
 
 void EventManager::EpollRelease(file_t* file)
 {
+    ARX_DEBUG_RUN(
+        auto* epoll = static_cast<event_epoll_t*>(file->privateData);
+        ARX_DEBUG_ADD(epoll->manager->DebugStats.liveEpolls, UINT64_MAX);
+    );
     kfree(file->privateData);
 }

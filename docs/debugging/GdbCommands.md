@@ -1065,3 +1065,106 @@ Roots have production-manager lifetime until quiescent Dispatcher teardown.
 Object addresses have ephemeral identity; native readers must preserve selection,
 reachability, lifetime and partial-result rules. No Request instrumentation,
 history recorder, payload capture service or dump mechanism is introduced.
+
+## Signals, epoll and notifications
+
+```text
+arx-debug signals stats
+arx-debug signals pending --tid 12 --limit 256 --bytes 262144
+arx-debug signals dispositions --pid 9 --limit 128
+arx-debug events stats
+arx-debug events epoll --tid 12 --fd 5 --limit 256
+arx-debug events notifications --limit 256
+arx-debug events notifications --tid 12 --fd 7
+arx-debug events counter --tid 12 --fd 6
+```
+
+Dispatcher reserves `signals` and `events` before Logic construction and publishes
+their production roots before Logic self-tests. Signal totals belong to static
+SignalManager storage so that static queue helpers and temporary manager instances
+are included throughout the boot. Event totals belong to each EventManager;
+only the production instance is published. All instrumentation is debug-only.
+
+`signals pending` shows process-directed and task-directed masks, standard-signal
+senders, RT records and reservations separately. `--pid` selects one process and
+its associated tasks; `--tid` selects a task plus its process. They are mutually
+exclusive. Without selectors, allocated identities are enumerated. Task output
+includes blocked/saved masks, deferred restoration, delivery depth, alternate
+stack and signal wait-sequence address for correlation with scheduler waits.
+Process output includes stop/exit state. Shared disposition addresses and
+reference counts correlate owners; `signals dispositions` shows each shared table
+once, with handlers, flags, restorers and masks.
+
+Signal bit `n-1` means signal `n`, and RTMIN is 32. Standard bits coalesce and
+retain the first sender. RT bits summarize records, not their count; the queue is
+a compact array in enqueue order, with at most 128 records plus reserved slots.
+Reservations protect future exit notifications and are not pending signals.
+Null queue/sender/disposition storage is reported explicitly. Eligible masks
+interpret stored pending, blocked, unblockable and ignored bits; they do not
+predict a handler call. Held disposition/resource locks, provider markers,
+stale incarnations and queue inconsistencies report partial state. No active
+guard's detached disposition table is inferred from a process's published pointer.
+
+`events epoll` starts from the manager's epoll list, showing instances, sequences,
+topology caches and stored watch order. Watches show requested events/data,
+armed/pending state, ET/ONESHOT/EXCLUSIVE flags, weak source files and close
+observers. Operation-table, private-data, inode, manager and observer identities
+are checked before interpreting sources. Nested epolls share budgets, reject
+cycles and have a depth ceiling of five. A stored pending flag is a hint; the
+reader never calls Poll, WatchReadiness, delivery methods or target locks.
+
+`events notifications` independently walks the global notification list (at most
+64 objects). Inotify scans 128 physical watch slots and reports masks, inode
+relationships and queued records in FIFO order `(head+i)%64`, with `head<64` and
+`count<=64`. Names are bounded by record length and 256-byte storage. Identical
+newest records coalesce. A full ring replaces its newest record with OVERFLOW;
+the displayed overflow state means an observed queued marker, not persistent
+history. IGNORED is also a queued record. Large inotify objects are read by member.
+
+Signalfd output shows its mask. With a selected descriptor owner, matching pending
+bits are correlated to that process/task context. The descriptor may be shared;
+it has no intrinsic single recipient. The matching union is process pending OR
+task pending intersected with the descriptor mask; this test does not apply the
+task blocking mask. No signal is consumed. Global notification inspection needs
+no process, scheduler or producer adapter; owner selectors require verified process
+and descriptor identities.
+
+`events counter` discovers anonymous eventfd objects through descriptors, since
+they do not belong to the global notification list. It shows current value,
+semaphore mode and observed owner edges. `--pid` selects a process default table,
+`--tid` a task override or process fallback, and `--fd` requires one of them.
+Unknown descriptor routes or operation tables keep private data opaque. Epoll and
+notification views accept the same selectors to restrict roots to selected files.
+Unselected nested weak sources can belong to other owners.
+
+All readers share entry, byte and depth budgets. Events also accept `--scan N`
+(default 4096, maximum 1048576) across descriptor slots, list/observer nodes and
+physical inotify watch/record slots. Exceeded bounds, invalid indices/counts,
+expired weak links and interrupted updates terminate with partial/truncated
+status. Complete traversal still does not establish an atomic snapshot, complete
+reference accounting or historical delivery evidence.
+
+Stats separate successful API returns from queue acceptance, standard coalescing,
+ignored submissions, RT appends/consumption/discard, reservation acquisition/release
+and successfully prepared handler frames. Recursive Send fanout calls count as
+separate API calls. Event notification attempts and source pending transitions
+are distinct from complete epoll/inotify/signalfd records copied to user memory.
+Counter read/write totals count successful eight-byte state transfers. Failed
+record copies can have changed part of user memory; copied-record totals require
+a complete copy. API failures, record-copy failures and live initialized event
+objects have separate counters. Live objects include failed later descriptor
+installation until final release. Independent atomic counters wrap modulo 2^64;
+groups identify interrupted writers and do not provide a coherent global snapshot.
+
+| Semantic ID/version | Exact-build native root and traversal |
+| --- | --- |
+| `arx.signals` / 1 | `SignalDebugStats`, descriptor count=0/capacity=0. Borrow ProcessDebugStats identities and Resource signal layouts. Enumerate allocated process/task slots, follow shared dispositions with positive references, check locks/groups, then read standard senders and compact RT records within count/reserved bounds. Do not invoke Signals, Peek or Consume. |
+| `arx.events` / 1 | `EventDebugStats`, descriptor count=0/capacity=0. EventState.hpp defines stored types. Walk source Epolls/Notifications, validate operation/private-data/inode/manager links and weak observer membership, and use bounded recursion for nested epolls. Discover counters through verified descriptors. Check readinessLock/NotificationLock/counter locks and all related provider groups. |
+
+Generation is the general wait sequence; TopologyGeneration invalidates depth
+caches, NotificationGeneration deduplicates propagation, and ExclusiveGeneration
+rotates exclusive selection. Per-epoll sequence addresses correlate scheduler
+waits. None of these wrapping counters is a lifetime identity. Roots are borrowed
+until quiescent Dispatcher teardown; file, watch and notification addresses are
+ephemeral and must be revalidated on every command. SignalDebugStats.hpp and
+EventDebugStats.hpp specify detailed native counter and lifetime contracts.

@@ -192,6 +192,9 @@ scheduled tests cover interactions that require the running kernel.
 
 Missing boot data, terminal failure, and failed architecture initialization can
 stop startup before the layer stack exists. Messages from `bootstrap.c` identify
-the last initialization step reached; `debug-kernel.sh` and `gdb_extention.py`
+the last initialization step reached; `debug-kernel.sh` and `debug/gdb/arx.py`
 provide existing debugging tools. KernelArch.md explains the subsequent layer
 construction and scheduling flow.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

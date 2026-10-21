@@ -50,7 +50,7 @@ and requires its own analysis/execution gate.
    roots and backend interpretation a future native dump reader needs; Python
    must not be the only definition of namespace visibility.
 6. Add adapters under `debug/gdb/views/`, guide examples/limits and old
-   VFS/initramfs coverage entries for [cutover](../feature/migrate_debug_commands_and_document_framework.md).
+   VFS/initramfs coverage entries for [cutover](../in_progress/migrate_debug_commands_and_document_framework.md).
 
 ### Proposed interface and illustrative output
 

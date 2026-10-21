@@ -51,7 +51,7 @@ Coordinate navigation with [the project overview](../closed/document_project_str
 - [Makefile](../../Makefile)
 - [scripts/build-dynamic-fixtures.sh](../../scripts/build-dynamic-fixtures.sh)
 - [scripts/debug-kernel.sh](../../scripts/debug-kernel.sh)
-- [scripts/gdb_extention.py](../../scripts/gdb_extention.py)
+- `scripts/gdb_extention.py` (removed during cutover)
 - [README.md](../../README.md)
 
 These are starting points; inspect callers, dependencies, and tests before making claims.

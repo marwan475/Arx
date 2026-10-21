@@ -345,7 +345,7 @@ x86_64-debug:
 	QEMU_GDB_PORT="$(QEMU_GDB_PORT_X86_64)" \
 	QEMU_COMMON="$(QEMU_X86_64_DEBUG_COMMON)" \
 	X86_64_UEFI="$(X86_64_UEFI)" \
-	bash $(SCRIPTS_DIR)/debug-kernel.sh
+	bash "$(SCRIPTS_DIR)/debug-kernel.sh"
 
 aarch64-debug:
 	@$(MAKE) --no-print-directory -B DEBUG=1 $(ISO_AARCH64)
@@ -357,7 +357,7 @@ aarch64-debug:
 	QEMU_GDB_PORT="$(QEMU_GDB_PORT_AARCH64)" \
 	QEMU_COMMON="$(QEMU_DEBUG_COMMON)" \
 	AARCH64_UEFI="$(AARCH64_UEFI)" \
-	bash $(SCRIPTS_DIR)/debug-kernel.sh
+	bash "$(SCRIPTS_DIR)/debug-kernel.sh"
 
 ALL_SOURCE_FILES := $(shell find . \
 	\( -path './busybox' -o -path './root' -o -path './build' -o -path './bin' \) -prune -o \

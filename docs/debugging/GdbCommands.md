@@ -29,15 +29,20 @@ arx-debug list
 ```
 
 At `kmain` entry the Dispatcher does not yet exist. Continue to a later breakpoint
-before inspecting providers. The `GDB_EXTENSION` override can select a different
-extension for one session, including the legacy commands during migration:
+before inspecting providers. The launcher requires the normal image-building
+prerequisites, QEMU with GTK, and GDB with Python and TUI support. It retains the
+existing `GDB_EXTENSION` override for an explicitly supplied custom script; no
+legacy commands or compatibility aliases are registered. AArch64 launches plain
+GDB by default because this framework supports x86_64 only.
 
-```sh
-GDB_EXTENSION="$PWD/scripts/gdb_extention.py" make x86_64-debug
-```
-
-Legacy command removal belongs to the cutover work. The commands require the
-normal image-building prerequisites, QEMU and GDB with Python and TUI support.
+The launcher resolves its default extension relative to its own location. Explicit
+kernel/image/firmware/custom-extension paths are interpreted from the invoking
+working directory; use absolute paths when launching from elsewhere. An extension
+path is passed as one GDB command-file argument, including paths with spaces.
+The integrated launcher is interactive. For existing manual headless QEMU runs,
+see [the self-test guide](../architecture/selftests/SelfTests.md); attach ordinary
+GDB with the matching ELF and source the framework's absolute path. No separate
+launcher mode is provided.
 
 Separate output directories are useful when keeping debug and release builds
 alongside each other:
@@ -108,6 +113,36 @@ consistency or object validity. `partial` includes truncation, cycles, shared gr
 edges, invalid indices, unreadable memory, unsupported interpretations and marked
 updates in progress. Partial results retain entries gathered before the problem.
 Invalid top-level metadata can instead reject the command with a specific error.
+
+## Migration from the removed commands
+
+The old script and all eleven `arx-*` registrations have been removed. Use
+`arx-debug`; there are no aliases. Values in command examples are illustrative
+unless identified as captured fixture output. Each provider section below explains
+its fields, units, roots, ordering, limits and partial-state behavior.
+
+| Former command | Replacement | Selection and retained coverage |
+| --- | --- | --- |
+| `arx-platform show/status/set/clear` | `arx-debug status`, `--platform ADDRESS`, `--registry ADDRESS` | Platform/Dispatcher/registry availability and typed roots; numeric overrides apply to one command rather than persistent host state. |
+| `arx-pmm [cpu]` | `arx-debug pmm nodes`, `zones`, `orders`, `blocks`, `pfn N` | Normal/DMA zone ranges, page/byte/PFN/HHDM accounting and per-order free lists; choose `--node`, logical `--cpu` or array `--slot`. |
+| `arx-heap [cpu]` | `arx-debug heap caches`, `slabs`, `address ADDRESS` | Cache sizes, partial/full/empty slab and object totals, metadata pools and observed lock; explicit node/CPU/slot selection deduplicates shared NUMA nodes. |
+| `arx-vmm [cpu]` | `arx-debug memory space`, `regions` | Space type, page-table root/lock, four region lists, bounds/types and metadata counts. Default is the kernel space; use `--cpu`/`--slot` for each CPU-linked space, or `--pid`/`--space` for another root. |
+| `arx-cpus [cpu]` | `arx-debug cpus topology`, `cpus stats`, `platform stats` | CPU count/slots/logical IDs, NUMA/address-space and stored APIC/ACPI/IOAPIC identities; logical IDs and slots are distinct selectors. |
+| `arx-pci` | `arx-debug pci devices`, `pci stats` | Captured BDF/vendor/device and extended stored PCI metadata within the actual allocation capacity. |
+| `arx-vfs [-v] [object]` | `arx-debug vfs mounts`, `cache`, `contents`; `--vfs ADDRESS` | Mount/root/filesystem identities, verbose mount information and cached dentry paths. Numeric explicit VFS roots and typed `inspect` preserve private-fixture inspection; cached paths are not all backing contents. |
+| `arx-initramfs [path]` | `arx-debug initramfs contents`, `entry --path PATH`; `--initramfs ADDRESS` | Parsed-entry list and exact archive path, size and data identity, plus metadata/hierarchy; use an explicit root for fixtures. |
+| `arx-proc [pid]` | `arx-debug process tree`, `details --pid N` | Allocated slots/IDs, address spaces, task roots and bounded membership, plus lifecycle and shared resources. |
+| `arx-task tid` | `arx-debug task list`, `details --tid N`; typed context `inspect` | Selected task identity, allocation/state, stack, links and architecture context; reads the real 128-slot inventory. |
+| `arx-rsrc` | `arx-debug status`, `list`, `<provider> stats`; typed `inspect` | Availability/types and provider manager source pointers. Dispatcher/factory/caps can be inspected through matching ELF types and numeric addresses; obsolete raw pointer-slot guesses are intentionally gone. |
+
+Selectors accept numeric IDs/addresses and bounded path strings, not GDB
+expressions or inferior function calls. `--cpu` means logical ID and `--slot`
+means array index; there is no automatic ID-to-slot fallback. Typed roots replace
+map-file guesses and inferior getters. Roots are resolved afresh per command, so
+changing ELF/inferior does not reuse a cached address. Discovery never changes
+GDB's language selection. Before Dispatcher publication, provider discovery is
+unavailable while stored early platform progress remains inspectable through
+`status`. Release and missing/mismatched-symbol states fail explicitly.
 
 ## Kernel record interface
 
@@ -304,7 +339,7 @@ No target locks or CPU helper calls are permitted.
 | `arx-platform show/status/set/clear` | `status`, per-command `--platform` / `--registry` | Typed roots and availability; numeric overrides with no persistent state or expression evaluation. |
 | `arx-cpus` | `cpus topology`, `cpus stats`, `platform stats` | Counts/IDs, NUMA/address-space and stored APIC identities plus runtime/progress state; explicit slot versus logical-ID selectors. |
 | `arx-pci` | `pci devices`, `pci stats` | Captured BDF/vendor/device plus segment/class/BAR/configuration fields; actual allocation bounds replace the legacy 4096-entry guess. |
-| Resource/manager discovery diagnostics | `status`, `list` | Dispatcher/DebugManager roots, named providers, staged availability and record types; no manager-map slot guesses or getter calls. Production Resource providers arrive in their own tickets. |
+| Resource/manager discovery diagnostics | `status`, `list` | Dispatcher/DebugManager roots, named providers, staged availability and record types; no manager-map slot guesses or getter calls. Use each provider stats source pointer for its manager address. |
 
 Legacy commands remain available through the explicit extension override until
 the cutover ticket removes them. Their unsafe fallback discovery is not part of
@@ -664,8 +699,8 @@ Resource/lifecycle group pointers cover mutations outside platform VMM wrappers.
 Groups detect interrupted writers, not a coherent cross-provider snapshot.
 Stats have owner lifetime and unsigned modular totals. There is no all-spaces
 registry or complete backing catalogue. Release excludes added records, helpers,
-registration and argument evaluation. Legacy `arx-vmm` remains available until
-cutover; explicit CPU selectors replace its ID/slot fallback ambiguity.
+registration and argument evaluation. The former `arx-vmm` command is replaced;
+explicit CPU selectors replace its ID/slot fallback ambiguity.
 
 ## VFS and initramfs contents
 
@@ -774,7 +809,7 @@ scan bound. Names, parent/forwarding chains and mount crossings require bounds
 and cycle checks. Native precedence and lifetime rules live beside the root
 records. Private layouts are single-sourced in their owning layer headers;
 callbacks remain opaque. Release excludes added records, helpers, registration
-and update evaluation. Legacy `arx-vfs` and `arx-initramfs` remain until cutover.
+and update evaluation. The former `arx-vfs` and `arx-initramfs` commands are replaced by these views.
 
 ## Controlled foundation providers
 

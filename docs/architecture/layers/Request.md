@@ -519,5 +519,8 @@ helpers. `SignalAbiFixture.hpp` supplies signal ABI fixtures.
 the current Makefile self-test sources. The active manager group is assembled by
 `requesttests.cpp`. Start with `Dispatcher.cpp` to identify
 the selected handler, then inspect that manager, its lower-layer collaborator,
-and its test file. `debug-kernel.sh` and `gdb_extention.py` provide the existing
+and its test file. `debug-kernel.sh` and `debug/gdb/arx.py` provide the existing
 debugger workflow.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

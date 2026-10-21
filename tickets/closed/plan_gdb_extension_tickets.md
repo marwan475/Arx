@@ -98,7 +98,7 @@ analysis rather than inventing work to meet a count.
 
 ## Source entry points
 
-- [GDB extension](../../scripts/gdb_extention.py)
+- `scripts/gdb_extention.py` (removed during cutover)
 - [Debug launcher](../../scripts/debug-kernel.sh)
 - [Build and QEMU targets](../../Makefile)
 - [Architecture contracts and implementations](../../arch)
@@ -624,14 +624,14 @@ implementation is authorized.
 | 1 | [Kernel and GDB framework foundations](build_debug_framework_foundation.md) | P1 |
 | 2 | [Physical allocation, NUMA, heap and DMA](../closed/add_debug_physical_allocation_views.md) | P1 |
 | 3 | [Process tree, task ownership and shared resources](../closed/add_debug_process_resource_views.md) | P1 |
-| 4 | [Scheduling, blocked tasks, futexes and timers](../feature/add_debug_scheduling_wait_views.md) | P1 |
+| 4 | [Scheduling, blocked tasks, futexes and timers](../closed/add_debug_scheduling_wait_views.md) | P1 |
 | 5 | [Virtual memory, backing and x86_64 translation](../closed/add_debug_virtual_memory_views.md) | P1 |
 | 6 | [Initramfs and supported VFS namespace contents](../closed/add_debug_filesystem_views.md) | P1 |
-| 7 | [Pipes, memory files and UNIX sockets](../feature/add_debug_ipc_socket_views.md) | P2 |
-| 8 | [Signals, epoll and event notifications](../feature/add_debug_signal_event_views.md) | P2 |
+| 7 | [Pipes, memory files and UNIX sockets](../closed/add_debug_ipc_socket_views.md) | P2 |
+| 8 | [Signals, epoll and event notifications](../in_progress/add_debug_signal_event_views.md) | P2 |
 | 9 | [Platform, CPU, IPI and PCI](../closed/add_debug_platform_cpu_pci_views.md) | P1 |
 | 10 | [Self-test progress and boot-error records](../feature/add_debug_selftest_error_views.md) | P2 |
-| 11 | [Cutover and replacement command documentation](../feature/migrate_debug_commands_and_document_framework.md) | P1 |
+| 11 | [Cutover and replacement command documentation](../in_progress/migrate_debug_commands_and_document_framework.md) | P1 |
 | 12 | [Agent stats/view-authoring skill](../feature/create_debug_framework_authoring_skill.md) | P2 |
 
 Also created one P2 open
@@ -645,7 +645,7 @@ repairing a tool already scheduled for deletion.
 
 Inventory and findings:
 
-- [Legacy inventory/coverage baseline](../feature/migrate_debug_commands_and_document_framework.md#legacy-command-inventory)
+- [Legacy inventory/coverage baseline](../in_progress/migrate_debug_commands_and_document_framework.md#legacy-command-inventory)
   covers all eleven registrations, arguments, roots, discovery, outputs, limits,
   fallbacks and replacement owners. Old getters can execute inferior functions;
   stale raw offsets cannot serve as a parity oracle.
@@ -715,10 +715,10 @@ Recommended sequential implementation order:
 | 5 | [Process tree, task ownership and resources](../closed/add_debug_process_resource_views.md) | Establish shared process/task/file identities and lifecycle ownership. |
 | 6 | [Virtual memory and translation](../closed/add_debug_virtual_memory_views.md) | Build mapping/backing ownership on process identities and physical-address interpretation. |
 | 7 | [VFS and initramfs contents](../closed/add_debug_filesystem_views.md) | Establish paths/mount/backend interpretation before communication object views. |
-| 8 | [Scheduling, waits, futexes and timers](../feature/add_debug_scheduling_wait_views.md) | Correlate task identity, CPU ownership and address/backing-based waits. |
-| 9 | [IPC and UNIX sockets](../feature/add_debug_ipc_socket_views.md) | Use descriptor/file, backing and namespace foundations for queue/peer ownership. |
-| 10 | [Signals and events](../feature/add_debug_signal_event_views.md) | Complete delivery/readiness correlation with the task, wait and producer views. |
-| 11 | [Cutover and command guide](../feature/migrate_debug_commands_and_document_framework.md) | Finish parity/integration checks and remove old commands once useful coverage is verified. |
+| 8 | [Scheduling, waits, futexes and timers](../closed/add_debug_scheduling_wait_views.md) | Correlate task identity, CPU ownership and address/backing-based waits. |
+| 9 | [IPC and UNIX sockets](../closed/add_debug_ipc_socket_views.md) | Use descriptor/file, backing and namespace foundations for queue/peer ownership. |
+| 10 | [Signals and events](../in_progress/add_debug_signal_event_views.md) | Complete delivery/readiness correlation with the task, wait and producer views. |
+| 11 | [Cutover and command guide](../in_progress/migrate_debug_commands_and_document_framework.md) | Finish parity/integration checks and remove old commands once useful coverage is verified. |
 | 12 | [Authoring agent skill](../feature/create_debug_framework_authoring_skill.md) | Teach the verified interface, real examples and maintained guide. |
 
 This is a useful serial sequence, not a requirement to wait for unrelated work:

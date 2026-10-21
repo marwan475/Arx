@@ -46,7 +46,7 @@ open and does not authorize implementation. See the [assessment](../closed/plan_
    an IOMMU translation table exists.
 6. Add adapters under `debug/gdb/views/`, native-reader root/bound/ordering
    descriptions and updates to `docs/debugging/GdbCommands.md`. Preserve old
-   `arx-pmm` and `arx-heap` information for [cutover](../feature/migrate_debug_commands_and_document_framework.md).
+   `arx-pmm` and `arx-heap` information for [cutover](../in_progress/migrate_debug_commands_and_document_framework.md).
 
 ### Proposed interface and illustrative output
 

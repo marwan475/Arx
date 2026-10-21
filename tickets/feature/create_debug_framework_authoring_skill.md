@@ -19,7 +19,7 @@ Coordinate with [agent-skill planning](plan_kernel_agent_skill_tickets.md), whos
 QEMU/GDB usage skill is distinct from authoring providers/views. Dependencies:
 [foundations](../closed/build_debug_framework_foundation.md), at least one verified stats
 and rich-view provider, and the implemented portions of the
-[command/maintainer guide](migrate_debug_commands_and_document_framework.md).
+[command/maintainer guide](../in_progress/migrate_debug_commands_and_document_framework.md).
 See [assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment).
 
 ### Proposed placement and discovery

@@ -2,7 +2,7 @@
 
 - Type: feature
 - Priority: P1
-- Status: open
+- Status: in progress
 - Required skill: mattpocock-skills:grilling
 
 ## Task prompt
@@ -16,8 +16,8 @@ working investigation capabilities simply because the new entry point loads.
 Follow [the workflow](../TICKET.MD), required grilling and repo skills. Parent:
 [planning](../closed/plan_gdb_extension_tickets.md). The initial
 [legacy inventory](migrate_debug_commands_and_document_framework.md#legacy-command-inventory) is the coverage
-baseline; recheck it against the current code when starting. This open ticket
-requires its own analysis/execution gate. Old-tool defects are tracked in
+baseline; recheck it against the current code when starting. This ticket follows
+its own analysis/execution gate. Old-tool defects are tracked in
 [the separate debug ticket](../debug/resolve_legacy_gdb_discovery_defects.md).
 
 ### Dependencies and scope
@@ -64,8 +64,8 @@ reference completeness, not all documentation writing at the end.
    a maintainer section for headers, update sites, registration, typed roots and
    view adapters. Label future features clearly. Link it from README Documentation
    and affected existing guides; follow applicable documentation skills.
-6. Review [agent-skill coordination](plan_kernel_agent_skill_tickets.md) and
-   [authoring skill](create_debug_framework_authoring_skill.md): both reuse this
+6. Review [agent-skill coordination](../feature/plan_kernel_agent_skill_tickets.md) and
+   [authoring skill](../feature/create_debug_framework_authoring_skill.md): both reuse this
    reference rather than duplicating or claiming unimplemented command behavior.
 
 ### Illustrative user flow and output
@@ -88,9 +88,9 @@ be labeled or captured from controlled verified state.
 
 ### Sources and unknowns
 
-- [legacy script](../../scripts/gdb_extention.py),
+- `scripts/gdb_extention.py` (removed during cutover),
   [launcher](../../scripts/debug-kernel.sh), [Makefile](../../Makefile),
-  [README](../../README.md), [.vscode](../../.vscode).
+  [README](../../README.md); no .vscode directory is currently present.
 - [Debug framework assessment](../closed/plan_gdb_extension_tickets.md#rich-view-assessment) and
   [architecture guides](../../docs/architecture/KernelArch.md) for relevant references.
 - Unknowns: existing user launch customizations, final grammar/override design,
@@ -101,12 +101,12 @@ be labeled or captured from controlled verified state.
 
 ## Acceptance criteria
 
-- [ ] Every old command's useful information/selection/discovery capability has a verified new equivalent or an explicitly owner-agreed change, with ledger evidence.
-- [ ] New discovery and views avoid the legacy resolver defects and never execute inferior getters; before-Dispatcher/release/missing-symbol behavior is documented.
+- [x] Every old command's useful information/selection/discovery capability has a verified new equivalent or an explicitly owner-agreed change, with ledger evidence.
+- [x] New discovery and views avoid the legacy resolver defects and never execute inferior getters; before-Dispatcher/release/missing-symbol behavior is documented.
 - [ ] x86_64 launch/headless/source integration loads only the new entry point with matching symbols; other architecture/build paths are not inadvertently broken.
-- [ ] The old script and registrations are removed after parity, stale active references are corrected and confirmed legacy defects have a recorded disposition.
-- [ ] The command/maintainer guide covers implemented behavior, examples, limits and migration; README and affected guide links resolve.
-- [ ] No unrelated rich-view completion, Request-layer tracking, dump implementation or compatibility alias backlog is silently added.
+- [x] The old script and registrations are removed after parity, stale active references are corrected and confirmed legacy defects have a recorded disposition.
+- [x] The command/maintainer guide covers implemented behavior, examples, limits and migration; README and affected guide links resolve.
+- [x] No unrelated rich-view completion, Request-layer tracking, dump implementation or compatibility alias backlog is silently added.
 
 ## Verification approach
 
@@ -152,7 +152,7 @@ commands and paths below describe the original investigation.
 
 ### Legacy GDB command inventory and replacement coverage
 
-Inventory checked against [gdb_extention.py](../../scripts/gdb_extention.py) on
+Inventory checked against `scripts/gdb_extention.py` (removed during cutover) on
 2026-10-18 during [the authorized planning execution](../closed/plan_gdb_extension_tickets.md).
 These are current source behaviors, not a claim that every legacy fallback works
 in a live session. No kernel build/boot was performed for this planning task.
@@ -170,7 +170,7 @@ in a live session. No kernel build/boot was performed for this planning task.
 | `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../closed/add_debug_filesystem_views.md). |
 | `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../closed/add_debug_filesystem_views.md). |
 | `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../closed/add_debug_process_resource_views.md). |
-| `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../closed/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../feature/add_debug_scheduling_wait_views.md). |
+| `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../closed/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../closed/add_debug_scheduling_wait_views.md). |
 | `arx-rsrc` | Arguments ignored. Dispatcher/factory/caps and labeled manager addresses plus type availability. | Unconditional raw Resource slot reads; preserve useful discovery/type diagnostics in [foundation](../closed/build_debug_framework_foundation.md)/[platform](../closed/add_debug_platform_cpu_pci_views.md), not wrong slot values. |
 
 For PMM/VMM/CPU/heap, an omitted selector means all inferred CPU slots. A provided
@@ -246,7 +246,7 @@ during cutover; do not copy broken behavior for compatibility.
 
 #### Migration completion and deferrals
 
-[Cutover](../feature/migrate_debug_commands_and_document_framework.md) owns the
+[Cutover](../in_progress/migrate_debug_commands_and_document_framework.md) owns the
 running coverage ledger and parity evidence. Source inventory alone is not
 parity verification. New providers must document equivalents and preserve explicit
 selection, useful fields and discovery diagnostics. Remove old commands/script
@@ -348,3 +348,164 @@ identity and unchanged cache occupancy. An earlier four-CPU VFS run passed;
 a later four-CPU run was blocked before the VFS fixture by a task-cleanup failure,
 recorded in the owning ticket without a claimed root cause or expanded scheduler
 investigation. GdbCommands.md documents commands, bounds and native contracts.
+
+### 2026-10-20 — Analysis started
+
+Owner requested final cutover and old-command removal. Read the full ticket,
+TICKET.MD, required grilling skill and applicable repository skills. Rechecking
+the eleven-command ledger, archived provider evidence, current launch integration
+and reference completeness before recording the implementation plan.
+
+Current launcher defaults x86_64 to debug/gdb/arx.py but AArch64 to the legacy
+script, so removal requires an explicit AArch64 default choice. The launcher
+currently requires GTK and GDB TUI and has no integrated headless mode. Both
+debug Make targets force DEBUG=1 builds. There is no current .vscode directory.
+Implementation has not started; design confirmation and the subsequent execution
+instruction remain pending under TICKET.MD.
+
+### 2026-10-20 — Analysis and plan; owner narrowed scope to cleanup
+
+Applied required grilling and the add-arx-code/update-kernel-docs repository
+skills. The owner rejected adding opt-in features: "no opt in thing just clean
+up". Keep the existing interactive workflow and existing customization surface;
+do not introduce headless/batch modes, command-file options, new providers,
+editor configuration or architecture support. Remove the obsolete commands and
+stale integration/documentation references. AArch64 uses plain GDB by default
+after legacy removal; do not automatically load the x86_64-only framework there.
+
+Read-only recheck found replacement source coverage for every legacy command:
+
+| Legacy | Existing replacement and relevant differences |
+| --- | --- |
+| arx-platform | status; numeric per-command --platform/--registry instead of persistent override state or expressions. |
+| arx-pmm | pmm nodes/zones/orders/blocks/pfn; explicit logical CPU, slot and node selectors. |
+| arx-heap | heap caches/slabs/address; shared NUMA nodes deduplicated. |
+| arx-vmm | memory space/regions; kernel-space default, explicit --cpu/--slot for CPU-linked spaces, and --pid/--space for other roots. |
+| arx-cpus | cpus topology/stats and platform stats; logical CPU IDs distinguished from array slots. |
+| arx-pci | pci devices/stats; captured inventory within actual capacity. |
+| arx-vfs | vfs mounts/cache/contents; numeric --vfs and typed inspect preserve explicit objects and verbose mount/cache detail. |
+| arx-initramfs | initramfs contents/entry with --path/--initramfs; exact archive entries and listing. |
+| arx-proc | process tree/details --pid; allocated slots, address spaces and bounded task membership. |
+| arx-task | task list/details --tid and typed context inspection; actual 128-slot inventory. |
+| arx-rsrc | status/list, provider stats source pointers and typed Dispatcher/factory/caps inspection; intentionally drops incorrect raw slot values. |
+
+The closed physical allocation, process/resource, virtual-memory, filesystem and
+platform tickets record debug/release builds and focused QEMU/GDB parity checks.
+The platform ticket's owner-directed verification stop followed successful
+single-/four-CPU snapshots, selector/corruption checks and release exclusion; it
+does not mean those prior results were absent. Reuse that recorded evidence and
+distinguish it from new cutover integration checks. Unfinished signal/event and
+selftest/error enhancements are not removal dependencies.
+
+Concrete cleanup plan:
+
+1. Complete the guide's eleven-command migration ledger, citing existing provider
+   parity records in this ticket. Document numeric selectors, kernel-space
+   default, staged unavailable behavior and typed explicit-object alternatives.
+2. Remove scripts/gdb_extention.py and its eleven registrations after reviewing
+   the ledger against existing source and recorded provider evidence. Keep the
+   new x86_64 entry point, existing interactive launch and existing custom-path
+   override. Remove the AArch64 legacy default; source no default extension there.
+   Fix source/path quoting and quote the existing Makefile launcher path only
+   where needed by this cleanup. Add no new launcher options or build targets.
+3. Correct active references in GdbCommands.md, architecture/arch/x86_64.md and
+   aarch64.md, platform/Platform.md, layers/Dispatcher.md, Logic.md, Request.md,
+   Resource.md and selftests/SelfTests.md. README already links the common guide.
+   Preserve historical ticket evidence and clearly identify removed paths there.
+4. Record the four legacy discovery defects as decommissioned through removal
+   and typed replacement in the related debug ticket, without closing it or
+   undertaking interim legacy repairs. Confirm coordination/authoring tickets
+   continue to reference the common guide rather than duplicate command behavior.
+5. Review the diff and verify the old script/registrations/active source paths
+   are gone, replacement references resolve, and no compatibility aliases,
+   unimplemented documentation claims or unrelated features were introduced.
+
+Verification is proportional to cleanup: Git Bash syntax checking and focused
+mocked launcher checks for x86_64 new-extension sourcing, AArch64 plain GDB,
+existing explicit override, path spaces/other working directories and cleanup;
+existing Python reader tests plus entry-point repeated-source/registration and
+fresh-root behavior checks; source/reference/link and whitespace checks. Use
+archived provider parity instead of rerunning unrelated kernel suites. A final
+live matching-ELF launch/build check remains unverified if required tools are
+unavailable; report that limit and leave the ticket in progress rather than
+claiming full verification or closing it. General toolchain installation is out
+of scope. Git Bash is available; make/compiler/QEMU/GDB and WSL are absent here.
+
+Analysis is recorded. Await the owner's post-analysis execution instruction under
+TICKET.MD, then move the ticket to tickets/in_progress/ before cleanup. No launcher,
+legacy script, code or human-facing guide has been modified during analysis.
+
+### 2026-10-20 — Execution authorized and parity ledger reviewed
+
+Owner instructed "go" after the cleanup-only plan was recorded. Moved the ticket
+to tickets/in_progress/ and updated the index before implementation. The eleven
+replacement rows above were checked against current source before deleting the
+legacy script. Existing live parity evidence is owned by:
+
+- Platform/CPU/PCI/status: closed/add_debug_platform_cpu_pci_views.md records
+  matching debug/release images, one-/four-CPU snapshots, roots/selectors/types,
+  corruption cases and release exclusion before the owner's verification stop.
+- PMM/heap: closed/add_debug_physical_allocation_views.md records normal-zone
+  accounting, buddy/slab metadata, node/CPU selection and release evidence.
+- Processes/tasks: closed/add_debug_process_resource_views.md records allocated
+  slots, context/links, identities, task membership and typed shared resources.
+- VMM: closed/add_debug_virtual_memory_views.md records all four region lists,
+  CPU/space/PID selection, metadata and known translation/backing fixtures.
+- VFS/initramfs: closed/add_debug_filesystem_views.md records archive list/exact
+  paths, mounts/cache/explicit fixture objects and matching source-state checks.
+
+This reuses the provider evidence already summarized in this ticket's prior work
+log; it does not claim those archived runs were repeated in the current Windows
+environment. Numeric-only selectors, distinct CPU IDs/slots, ephemeral overrides,
+kernel-space VMM default and explicit typed roots are documented in the guide's
+central eleven-command migration table. Bad raw slot values and inferior getter
+evaluation are intentionally not preserved.
+
+### 2026-10-20 — Progress and remaining work
+
+Cleanup implemented:
+
+- Removed scripts/gdb_extention.py (1,958 lines) and its eleven registrations.
+  No compatibility aliases remain. x86_64 retains debug/gdb/arx.py as its default;
+  AArch64 launches plain GDB. Existing GDB_EXTENSION customization is preserved.
+- The existing script path is passed as one GDB -x argument, avoiding command
+  interpolation/space splitting. Quoted the two existing Makefile launcher paths.
+  Existing interactive/TUI behavior and DEBUG=1 rebuild targets are preserved;
+  no opt-in mode, option, command-file feature or build target was added.
+- Updated GdbCommands.md setup and the complete migration ledger; retained its
+  existing provider/native/maintainer sections and illustrative-value caveat.
+  Corrected the affected architecture/selftest guides and linked the common
+  reference. README's existing Documentation link remains valid.
+- Corrected moved-ticket links and removed dead hyperlinks to the deleted legacy
+  source while preserving historical descriptions. The skill-coordination ticket
+  now points to the current entry point, and the authoring ticket still reuses the
+  shared guide. No new skill was implemented.
+- Added all four defect dispositions to the separate debug ticket without
+  closing it or starting an interim repair. New discovery uses matching symbols,
+  typed fields and registry records, with no inferior calls or language changes.
+
+Verification:
+
+- Git Bash `bash -n scripts/debug-kernel.sh` passed.
+- Bundled Python `python.exe -B -m unittest discover -s debug/tests -p
+  'test_*.py' -v`: all 35 tests passed. Six new cutover checks cover x86_64 loading
+  from another working directory with spaces in paths, AArch64 plain GDB,
+  existing custom script override, missing-script rejection, cleanup after GDB
+  failure, repeated-source single registration and fresh per-command discovery
+  (the override and cleanup share one case). Existing 29 reader/parser tests pass.
+- Initial Bash initialization/temp-file checks were blocked by the Windows
+  sandbox, not by product assertions. The approved unsandboxed rerun passed.
+  No further test repetition was needed after that passing run.
+- Reviewed the launcher and guide diff, active source references, removed
+  registrations, changed local links and ticket-index uniqueness. No editor
+  configuration existed to migrate. No kernel/provider code was changed.
+
+Remaining verification: actual kernel make/compiler, QEMU and GDB are absent in
+this environment, and WSL is not installed. Mock launcher tests do not prove
+live GDB -x Python script dispatch, matching-ELF attachment or debug/release build
+integration. One supported-environment live x86_64 launcher/ELF check (including
+an isolated build path and release refusal) remains required before marking the
+launch integration criterion complete. Use prior provider parity rather than
+rerunning unrelated subsystem suites. Do not add tooling installation or new
+launcher features. Ticket remains in progress, awaiting that verification and
+then the owner's review/closure instruction; no completion or closure is claimed.

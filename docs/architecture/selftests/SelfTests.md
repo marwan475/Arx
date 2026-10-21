@@ -850,7 +850,7 @@ selection currently requires source changes to registration/call paths, while
 preserving prerequisites and worker rendezvous.
 
 `x86_64-debug` runs `debug-kernel.sh`, starts QEMU paused, loads
-`gdb_extention.py`, attaches on port 1234 by default, and breaks at `_start`.
+`debug/gdb/arx.py`, attaches on port 1234 by default, and breaks at `_start`.
 `SERIAL_LOG` selects the debug serial file; its default is
 `build/qemu-debug-serial.log`. The script stops its QEMU process on debugger exit.
 Keep the loaded ELF and disk image from the same build.
@@ -861,12 +861,13 @@ Keep the loaded ELF and disk image from the same build.
 | `SelfTestManager::AbortUnsafe` | Cleanup/initialization reason and the still-active case. |
 | `request_selftest::SuiteContext::Begin` | The syscall within a manager-sized reporting case. |
 | `thread apply all bt` | BSP/AP stacks when a scheduler, TLB, or fixture wait stops progressing. |
-| `arx-platform`, `arx-cpus` | Platform initialization and per-CPU state. |
-| `arx-pmm`, `arx-vmm`, `arx-heap` | Physical, mapping, and heap ownership/accounting. |
-| `arx-proc`, `arx-task`, `arx-rsrc` | Process/task identity, resources, and retained ownership. |
-| `arx-vfs`, `arx-initramfs`, `arx-pci` | Filesystem fixtures, archive contents, and enumerated devices. |
+| `arx-debug status`, `arx-debug cpus topology` | Platform initialization and per-CPU state. |
+| `arx-debug pmm nodes`, `arx-debug memory regions`, `arx-debug heap caches` | Physical, mapping, and heap ownership/accounting. |
+| `arx-debug process details`, `arx-debug task details`, `arx-debug list` | Process/task identity, resources, and retained ownership. |
+| `arx-debug vfs cache`, `arx-debug initramfs contents`, `arx-debug pci devices` | Filesystem fixtures, archive contents, and enumerated devices. |
 
-Use GDB's `help` for each extension command's supported arguments. There is no
+See [GdbCommands.md](../../debugging/GdbCommands.md) for selectors, bounds and
+command interpretation. There is no
 dedicated self-test extension command; use ordinary GDB inspection of the manager
 and fixture state. Record the first failing expectation and its prerequisites,
 then trace the owning manager or peer. Keep source inventory, successful build,

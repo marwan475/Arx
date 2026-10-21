@@ -90,5 +90,9 @@ signal operations. Platform.md describes the shared bootstrap dependencies.
 architecture backend; `signalintegration.cpp` skips user-frame tests outside
 x86_64. Shared
 test code and AArch64 branches do not establish a passing full-port test run.
-`debug-kernel.sh` has an AArch64 launch branch, and `gdb_extention.py` provides
-kernel inspection tools; neither supplies the missing architecture backend.
+`debug-kernel.sh` launches AArch64 with plain GDB by default. The
+`debug/gdb/arx.py` framework supports x86_64 only; neither debugger workflow
+supplies the missing architecture backend.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

@@ -439,6 +439,9 @@ cross-layer memory, task, timing, and process behavior.
 | Filesystem backend | `InitRamFileSystemManagerTests.cpp`, `ResourceFileSystemTests.cpp`. |
 
 Start with the factory for dependencies, then the component's public interface,
-implementation, and tests. `debug-kernel.sh` and `gdb_extention.py` provide the
+implementation, and tests. `debug-kernel.sh` and `debug/gdb/arx.py` provide the
 existing debugger workflow. Platform.md explains the PMM/VMM and machine services
 beneath these managers.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

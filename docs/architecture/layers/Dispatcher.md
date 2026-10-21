@@ -189,5 +189,8 @@ created capabilities.
 Start with `Dispatcher.cpp` to find routing, then the selected Request manager
 and its factory imports. `syscalltests.cpp` exercises the C syscall bridge and
 returned errors; `SelfTestManager.cpp` coordinates the construction-time and later
-test phases. `debug-kernel.sh` and `gdb_extention.py` provide the existing debugger
+test phases. `debug-kernel.sh` and `debug/gdb/arx.py` provide the existing debugger
 workflow and inspection commands.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

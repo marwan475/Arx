@@ -522,6 +522,9 @@ and task-context behavior.
 | Communication | `SocketManagerTests.cpp`, `InterProcessCommunicationManagerTests.cpp`. |
 
 Use the factory to follow imports and callback registration, then the relevant
-interface, implementation, and tests. `debug-kernel.sh` and `gdb_extention.py`
+interface, implementation, and tests. `debug-kernel.sh` and `debug/gdb/arx.py`
 provide the existing debugger workflow. Dispatcher.md explains the entry bridges
 and Request.md explains how syscall arguments reach these services.
+
+See [GdbCommands.md](../../debugging/GdbCommands.md) for the supported x86_64
+commands, selectors and stopped-target limitations.

@@ -13,13 +13,14 @@ qemu_common="${QEMU_COMMON:-}"
 x86_64_uefi="${X86_64_UEFI:-}"
 aarch64_uefi="${AARCH64_UEFI:-}"
 serial_log="${SERIAL_LOG:-${repo_root}/build/qemu-debug-serial.log}"
-default_gdb_extension="${repo_root}/scripts/gdb_extention.py"
+default_gdb_extension=""
 
 if [[ "${arch}" == "x86_64" ]]; then
     default_gdb_extension="${repo_root}/debug/gdb/arx.py"
 fi
 
 gdb_extension="${GDB_EXTENSION:-${default_gdb_extension}}"
+gdb_extension_args=()
 qemu_pid=""
 
 cleanup() {
@@ -66,7 +67,10 @@ command -v "${qemu_bin}" >/dev/null 2>&1 || { echo "QEMU binary not found: ${qem
 command -v "${gdb_bin}" >/dev/null 2>&1 || { echo "GDB binary not found: ${gdb_bin}" >&2; exit 1; }
 [[ -f "${kernel_elf}" ]] || { echo "Kernel ELF not found: ${kernel_elf}" >&2; exit 1; }
 [[ -f "${img_path}" ]] || { echo "Image not found: ${img_path}" >&2; exit 1; }
-[[ -f "${gdb_extension}" ]] || { echo "GDB extension not found: ${gdb_extension}" >&2; exit 1; }
+if [[ -n "${gdb_extension}" ]]; then
+    [[ -f "${gdb_extension}" ]] || { echo "GDB extension not found: ${gdb_extension}" >&2; exit 1; }
+    gdb_extension_args=(-x "${gdb_extension}")
+fi
 mkdir -p "$(dirname "${serial_log}")"
 
 if [[ "${arch}" == "x86_64" ]]; then
@@ -86,7 +90,7 @@ if [[ "${arch}" == "x86_64" ]]; then
     "${gdb_bin}" -tui "${kernel_elf}" \
         -ex "set architecture i386:x86-64" \
         -ex "set breakpoint pending on" \
-        -ex "source ${gdb_extension}" \
+        "${gdb_extension_args[@]}" \
         -ex "layout src" \
         -ex "target remote localhost:${gdb_port}" \
         -ex "hbreak _start" \
@@ -111,7 +115,7 @@ elif [[ "${arch}" == "aarch64" ]]; then
     "${gdb_bin}" -tui "${kernel_elf}" \
         -ex "set architecture aarch64" \
         -ex "set breakpoint pending on" \
-        -ex "source ${gdb_extension}" \
+        "${gdb_extension_args[@]}" \
         -ex "layout src" \
         -ex "target remote localhost:${gdb_port}" \
         -ex "hbreak _start" \

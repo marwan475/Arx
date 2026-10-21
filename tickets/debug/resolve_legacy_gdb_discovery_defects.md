@@ -17,8 +17,8 @@ Follow [the workflow](../TICKET.MD), the required diagnosing-bugs skill during
 analysis, and applicable repository skills. Parent:
 [framework planning](../closed/plan_gdb_extension_tickets.md).
 Related: [foundations](../closed/build_debug_framework_foundation.md),
-[cutover](../feature/migrate_debug_commands_and_document_framework.md),
-[legacy inventory](../feature/migrate_debug_commands_and_document_framework.md#legacy-command-inventory).
+[cutover](../in_progress/migrate_debug_commands_and_document_framework.md),
+[legacy inventory](../in_progress/migrate_debug_commands_and_document_framework.md#legacy-command-inventory).
 This ticket starts open; diagnosis/implementation retains its own owner gate.
 
 ### Observed versus expected behavior
@@ -48,7 +48,7 @@ Do not claim kernel memory corruption or a specific observed boot failure.
 
 ### Reproduction and investigation
 
-Read [gdb_extention.py](../../scripts/gdb_extention.py): ArxPlatform helpers,
+Read `scripts/gdb_extention.py` (removed during cutover): ArxPlatform helpers,
 ArxResourceManagers, VFS discovery, array fallbacks and ArxResourceDebugCommand.
 For the pure helper reproduction, extract the ArxPlatform class through Python
 `ast`, execute only that class with `re` and a stub `gdb` object, and evaluate:
@@ -132,3 +132,29 @@ The owner requested avoiding excessive verification on remaining tickets. Added
 an explicit stopping rule and evidence-based limits on repeated or broader
 checks. Acceptance criteria, implementation scope, status, and execution gates
 are unchanged.
+
+### 2026-10-20 — Cutover decommission evidence
+
+The owner authorized cleanup in
+[the cutover ticket](../in_progress/migrate_debug_commands_and_document_framework.md).
+Its execution removed scripts/gdb_extention.py and all eleven old command
+registrations. No interim legacy helper repair or compatibility alias was added.
+The four defects have these replacement dispositions:
+
+1. Missing hex success return: the removed text-parsing helper is no longer used.
+   platform_address resolves the typed symbol address or a per-command numeric
+   override; missing symbols fail explicitly.
+2. Incorrect language restoration: replacement discovery does not set GDB's
+   language or evaluate arbitrary expressions/inferior getters. The removed
+   temporary-language helper has no active replacement path.
+3. Stale Resource/Logic slots: registry records publish typed manager-owned roots;
+   status/list and provider source fields replace positional manager guesses.
+4. Guessed array bases/capacity: adapters use matching ELF member addresses and
+   fixed physical bounds, including the actual 128-task inventory.
+
+Source review confirms those removed paths are absent. The cutover's host tests
+verify repeated loading registers only arx-debug and discovery re-reads current
+platform/Dispatcher roots. Existing provider tickets record prior live parity;
+new live build/ELF-reload checks are unavailable here without the kernel toolchain,
+QEMU and GDB. These are decommission notes from authorized cutover work, not a
+claim that this separate ticket's full verification or closure gate has completed.

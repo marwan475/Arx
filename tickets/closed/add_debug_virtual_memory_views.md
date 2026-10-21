@@ -52,7 +52,7 @@ This ticket is open and retains its own analysis/execution gate.
 5. Reuse shared identity readers to correlate backing with files, processes and
    CPUs without building a separate universal graph engine. Add view adapters,
    native-reader bounds/link/translation semantics and command-guide updates;
-   preserve all useful old VMM output for [cutover](../feature/migrate_debug_commands_and_document_framework.md).
+   preserve all useful old VMM output for [cutover](../in_progress/migrate_debug_commands_and_document_framework.md).
 
 ### Proposed interface and illustrative output
 

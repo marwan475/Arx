@@ -91,7 +91,7 @@ so skills describe available behavior and label planned capabilities accurately.
 - [Ticket workflow](../TICKET.MD)
 - [Build and QEMU targets](../../Makefile)
 - [Debug launcher](../../scripts/debug-kernel.sh)
-- [Arx GDB extension](../../scripts/gdb_extention.py)
+- [Arx GDB extension](../../debug/gdb/arx.py)
 - [Dynamic userspace fixture build](../../scripts/build-dynamic-fixtures.sh)
 - [Self-test infrastructure and suites](../../kernel/selftests)
 - [Kernel layers](../../kernel/layers)

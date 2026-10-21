@@ -58,7 +58,7 @@ Source-backed rich-view requirements: [assessment](../closed/plan_gdb_extension_
    sinks, serialization, panic hooks or general-purpose reflection.
 7. Start `docs/debugging/GdbCommands.md` with the contract, loading instructions,
    extension points and implemented commands. Per-provider tickets extend it;
-   [cutover](../feature/migrate_debug_commands_and_document_framework.md) owns final completeness.
+   [cutover](../in_progress/migrate_debug_commands_and_document_framework.md) owns final completeness.
 
 ### Proposed interface and illustrative output
 
@@ -98,7 +98,7 @@ as unavailable rather than silently stopping/resuming it.
   flags, source lists, symbol retention and C/C++ build constraints.
 - [spinlock.h](../../klib/spinlock.h), [error_logger.h](../../klib/error_logger.h):
   locking limitations and existing bounded publication precedent.
-- [legacy extension](../../scripts/gdb_extention.py): migration reference only;
+- `scripts/gdb_extention.py` (removed during cutover): migration reference only;
   [legacy defects](../debug/resolve_legacy_gdb_discovery_defects.md) must not be copied.
 - No implementation dependency. Remaining choices include by-value versus owned
   pointer storage, registry capacity, registration linkage, C-compatible helper

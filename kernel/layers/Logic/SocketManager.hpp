@@ -1,6 +1,6 @@
 #pragma once
 
-#include <debug/kernel/DebugRecords.h>
+#include <debug/kernel/stats/SocketDebugStats.hpp>
 
 #include "layers/Logic/VirtualFileSystem.hpp"
 
@@ -56,6 +56,9 @@ static_assert(offsetof(socket_message_t, vectors) == 16 && offsetof(socket_messa
 class SocketManager
 {
 public:
+    ARX_DEBUG_ONLY(SocketDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager, const ProcessDebugStats* processes);)
+
     ARX_DEBUG_ONLY(
         static const void* DebugSocketOperations()
         {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <debug/kernel/DebugRecords.h>
+#include <debug/kernel/stats/IpcDebugStats.hpp>
 
 #include "layers/Logic/VirtualFileSystem.hpp"
 
@@ -11,6 +11,9 @@ class SignalManager;
 class InterProcessCommunicationManager
 {
 public:
+    ARX_DEBUG_ONLY(IpcDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager, const ProcessDebugStats* processes);)
+
     ARX_DEBUG_ONLY(
         static const void* DebugPipeOperations()
         {

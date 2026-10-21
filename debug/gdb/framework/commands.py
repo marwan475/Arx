@@ -37,6 +37,7 @@ def parse(arguments):
               "--vfs": (1 << 64) - 1, "--initramfs": (1 << 64) - 1,
               "--space": (1 << 64) - 1, "--va": (1 << 64) - 1, "--size": 16 * 1024 * 1024,
               "--pid": 63, "--tid": 127, "--scan": 1048576,
+              "--fd": 1048575, "--payload-bytes": 4096,
               "--cpu": 255, "--slot": 255, "--node": 7, "--order": 10, "--class": 131072,
               "--platform": (1 << 64) - 1, "--registry": (1 << 64) - 1}
     options = {}
@@ -75,7 +76,7 @@ def parse(arguments):
                 if not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", value):
                     raise ReadFailure("option requires a numeric value; expressions forbidden")
                 value = int(value, 16 if value.lower().startswith("0x") else 10)
-                minimum = 0 if word in ("--cpu", "--slot", "--node", "--order", "--pid", "--tid", "--va") else 1
+                minimum = 0 if word in ("--cpu", "--slot", "--node", "--order", "--pid", "--tid", "--va", "--fd", "--payload-bytes") else 1
                 if not minimum <= value <= maxima[word]:
                     raise ReadFailure("limit out of range: " + word)
             options[word] = value
@@ -100,8 +101,8 @@ def parse(arguments):
 def gather(arguments):
     words, budget, options = parse(arguments)
     selectors = {name: value for name, value in options.items()
-                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap", "--pid", "--tid", "--scan", "--space", "--va", "--size", "--path", "--vfs", "--initramfs")}
-    if len(words) >= 2 and not (words == ["memory", "backing"]) and tuple(words[:2]) in (("pmm", "pfn"), ("heap", "address"), ("memory", "backing")):
+                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap", "--pid", "--tid", "--scan", "--space", "--va", "--size", "--path", "--vfs", "--initramfs", "--fd", "--payload-bytes")}
+    if len(words) >= 2 and not (words == ["memory", "backing"]) and tuple(words[:2]) in (("pmm", "pfn"), ("heap", "address"), ("memory", "backing"), ("sockets", "messages")):
         if len(words) != 3 or not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", words[2]):
             raise ReadFailure("selected PFN/address requires one numeric value; expressions forbidden")
         value = int(words[2], 16 if words[2].lower().startswith("0x") else 10)

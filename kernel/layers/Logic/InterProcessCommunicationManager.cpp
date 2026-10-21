@@ -1,4 +1,5 @@
 #include "layers/Logic/InterProcessCommunicationManager.hpp"
+#include "layers/Logic/IpcState.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SignalManager.hpp"
@@ -18,26 +19,6 @@ constexpr uint32_t NONBLOCK      = 04000;
 constexpr uint32_t CLOEXEC       = 02000000;
 constexpr uint64_t AGAIN         = (uint64_t) -11;
 
-struct pipe_state_t
-{
-    inode_t            inode;
-    spinlock_t         lock;
-    file_t*            reader;
-    file_t*            writer;
-    EventManager*      events;
-    SignalManager*     signals;
-    ResourceLayerCaps* resources;
-    VirtualFileSystem* vfs;
-    size_t             references;
-    uint32_t           lastReadiness[2];
-    uint32_t           pendingReadiness[2];
-    size_t             capacity;
-    size_t             head;
-    size_t             size;
-    uint8_t            data[PIPE_CAPACITY];
-    // Packet bits travel with bytes, so changing O_DIRECT affects future writes.
-    uint8_t packet[PIPE_CAPACITY / 4];
-};
 
 void record_pipe_readiness_locked(pipe_state_t* pipe)
 {
@@ -63,13 +44,6 @@ void set_pipe_packet(pipe_state_t* pipe, size_t index, uint8_t flags)
     pipe->packet[index / 4] = (pipe->packet[index / 4] & ~(3U << shift)) | (flags << shift);
 }
 
-struct memory_file_t
-{
-    inode_t               inode;
-    uint32_t              seals;
-    virt_shared_page_t*   pages[MEMORY_PAGES];
-    VirtualMemoryManager* manager;
-};
 
 // A mapped store past a partial EOF belongs to the mapping's zero-filled tail,
 // not to a later file extension. Clear holes before exposing new file bytes.
@@ -103,7 +77,7 @@ uint64_t vector_length(const file_iovec_t* vectors, size_t count, size_t* length
     return 0;
 }
 
-bool copy_vector(const user_memory_access_t* access, const file_iovec_t* vectors, size_t count, size_t offset, uint8_t* bytes, size_t length, bool write)
+bool copy_vector(const user_memory_access_t* access, const file_iovec_t* vectors, size_t count, size_t offset, uint8_t* bytes, size_t length, bool write ARX_DEBUG_ONLY(, uint64_t* copiedCounter))
 {
     size_t copied = 0;
     for (size_t i = 0; i < count && copied < length; ++i)
@@ -118,6 +92,7 @@ bool copy_vector(const user_memory_access_t* access, const file_iovec_t* vectors
         {
             return false;
         }
+        ARX_DEBUG_ADD(*copiedCounter, amount);
         copied += amount;
         offset = 0;
     }
@@ -139,14 +114,16 @@ InterProcessCommunicationManager::InterProcessCommunicationManager(ResourceLayer
 
 uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.createPipe);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr || Events == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     if ((flags & ~(NONBLOCK | CLOEXEC | DIRECT)) != 0)
     {
-        return (flags & ~(NONBLOCK | CLOEXEC | DIRECT | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP;
+        return ARX_COMM_RETURN((flags & ~(NONBLOCK | CLOEXEC | DIRECT | 0200U)) != 0 ? LINUX_EINVAL : LINUX_EOPNOTSUPP);
     }
 
     pipe_state_t* pipe   = static_cast<pipe_state_t*>(kzalloc(sizeof(pipe_state_t)));
@@ -158,7 +135,7 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
         kfree(pipe);
         kfree(reader);
         kfree(writer);
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     process_t* process = Resources->processManager->GetCurrentProcess();
@@ -170,6 +147,11 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
     pipe->resources         = Resources;
     pipe->vfs               = Vfs;
     pipe->references        = 2;
+    ARX_DEBUG_RUN(
+        pipe->debugStats = &DebugStats;
+        ARX_DEBUG_ADD(DebugStats.livePipes, 1);
+        ARX_DEBUG_ADD(DebugStats.pipesCreated, 1);
+    );
     pipe->lastReadiness[1]  = EVENT_POLL_OUT | EVENT_POLL_WRNORM;
     pipe->capacity          = PIPE_CAPACITY;
     reader->inode           = writer->inode = &pipe->inode;
@@ -219,7 +201,7 @@ uint64_t InterProcessCommunicationManager::CreatePipe(uint64_t output, uint32_t 
         Vfs->Close(writer);
     }
 
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 void InterProcessCommunicationManager::NotifyPipe(void* state)
@@ -228,6 +210,7 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
     EventManager* events   = pipe->events;
     file_t*       files[2] = {};
     spinlock_acquire_preempt(&pipe->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     files[0] = pipe->reader;
     files[1] = pipe->writer;
     record_pipe_readiness_locked(pipe);
@@ -243,6 +226,7 @@ void InterProcessCommunicationManager::NotifyPipe(void* state)
     }
 
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
 
     for (size_t i = 0; i < 2; ++i)
@@ -261,6 +245,7 @@ void InterProcessCommunicationManager::PipeRelease(file_t* file)
 {
     pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
     spinlock_acquire_preempt(&pipe->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     if (pipe->reader == file)
     {
         pipe->reader = nullptr;
@@ -270,14 +255,19 @@ void InterProcessCommunicationManager::PipeRelease(file_t* file)
         pipe->writer = nullptr;
     }
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
     NotifyPipe(pipe);
     spinlock_acquire_preempt(&pipe->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     const bool empty = --pipe->references == 0;
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
     if (empty)
     {
+        ARX_DEBUG_ADD(pipe->debugStats->pipeReleaseDiscardedBytes, pipe->size);
+        ARX_DEBUG_ADD(pipe->debugStats->livePipes, UINT64_MAX);
         kfree(pipe);
     }
 }
@@ -286,9 +276,11 @@ uint32_t InterProcessCommunicationManager::PipePoll(file_t* file)
 {
     pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
     spinlock_acquire_preempt(&pipe->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     const uint32_t result
             = (file->statusFlags & 3) == 0 ? (pipe->size != 0 ? EVENT_POLL_IN | EVENT_POLL_RDNORM : 0) | (pipe->writer == nullptr ? EVENT_POLL_HUP : 0) : (pipe->capacity - pipe->size >= PIPE_ATOMIC ? EVENT_POLL_OUT | EVENT_POLL_WRNORM : 0) | (pipe->reader == nullptr ? EVENT_POLL_ERR : 0);
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
     return result;
 }
@@ -311,9 +303,11 @@ int64_t InterProcessCommunicationManager::PipeIoctl(file_t* file, uint64_t reque
     }
     pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
     spinlock_acquire_preempt(&pipe->lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     const int32_t  size   = (int32_t) pipe->size;
     const uint64_t result = safe_write_user_locked(&access, argument, &size, sizeof(size)) ? 0 : LINUX_EFAULT;
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
     end_user_memory(&access);
     return (int64_t) result;
@@ -321,9 +315,14 @@ int64_t InterProcessCommunicationManager::PipeIoctl(file_t* file, uint64_t reque
 
 uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t command, uint64_t argument)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<pipe_state_t*>(file->privateData)->debugStats;
+        CommunicationOperation debugOperation(tracking->pipeControl);
+    )
+
     if (command != 1031 && command != 1032)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     pipe_state_t* pipe = static_cast<pipe_state_t*>(file->privateData);
@@ -331,15 +330,17 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     if (command == 1032)
     {
         spinlock_acquire_preempt(&pipe->lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
         const size_t capacity = pipe->capacity;
         record_pipe_readiness_locked(pipe);
+        ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
         spinlock_release_preempt(&pipe->lock);
-        return capacity;
+        return ARX_COMM_RETURN(capacity);
     }
 
     if (argument > PIPE_CAPACITY)
     {
-        return (uint64_t) -1;
+        return ARX_COMM_RETURN((uint64_t) -1);
     }
 
     size_t capacity = PIPE_ATOMIC;
@@ -353,10 +354,12 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
 
     if (staged == nullptr)
     {
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     spinlock_acquire_preempt(&pipe->lock);
+
+    ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
     uint64_t result = (uint64_t) -16;
 
     if (pipe->size <= capacity)
@@ -380,10 +383,11 @@ uint64_t InterProcessCommunicationManager::PipeControl(file_t* file, uint32_t co
     }
 
     record_pipe_readiness_locked(pipe);
+    ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
     spinlock_release_preempt(&pipe->lock);
     kfree(staged);
     NotifyPipe(pipe);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t InterProcessCommunicationManager::PipeRead(file_t* file, uint64_t address, uint64_t count)
@@ -407,17 +411,23 @@ uint64_t InterProcessCommunicationManager::PipeWriteVector(file_t* file, const f
 
 uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file_iovec_t* vectors, size_t count, bool write)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<pipe_state_t*>(file->privateData)->debugStats;
+        CommunicationOperation debugOperation(write ? tracking->pipeWrite : tracking->pipeRead, true);
+    )
+
     if (((__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 3) == 0) == write)
     {
-        return LINUX_EBADF;
+        return ARX_COMM_RETURN(LINUX_EBADF);
     }
 
     size_t   requested;
     uint64_t result = vector_length(vectors, count, &requested);
+    ARX_DEBUG_RUN(debugOperation.Request(result == 0 ? requested : 0));
 
     if (result != 0 || requested == 0)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     pipe_state_t* pipe   = static_cast<pipe_state_t*>(file->privateData);
@@ -425,7 +435,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
 
     if (staged == nullptr)
     {
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     size_t transferred = 0;
@@ -442,6 +452,8 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
         }
 
         spinlock_acquire_preempt(&pipe->lock);
+
+        ARX_DEBUG_RUN(arx_debug_group_begin(&pipe->debugGroup));
         result                    = AGAIN;
         size_t bytes              = write ? pipe->capacity - pipe->size : pipe->size;
         bytes                     = bytes < requested - transferred ? bytes : requested - transferred;
@@ -501,7 +513,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                 }
             }
 
-            if (!copy_vector(&access, vectors, count, transferred, staged, bytes, write))
+            if (!copy_vector(&access, vectors, count, transferred, staged, bytes, write ARX_DEBUG_ONLY(, write ? &pipe->debugStats->pipeWriteCopiedBytes : &pipe->debugStats->pipeCopiedBytes)))
             {
                 result = LINUX_EFAULT;
             }
@@ -517,11 +529,14 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
                     }
 
                     pipe->size += bytes;
+                    ARX_DEBUG_ADD(pipe->debugStats->pipeEnqueuedBytes, bytes);
                 }
                 else
                 {
                     pipe->head = (pipe->head + consumed) % pipe->capacity;
                     pipe->size -= consumed;
+                    ARX_DEBUG_ADD(pipe->debugStats->pipeConsumedBytes, consumed);
+                    ARX_DEBUG_ADD(pipe->debugStats->pipeDiscardedBytes, consumed - bytes);
                 }
 
                 transferred += bytes;
@@ -530,6 +545,7 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
         }
 
         record_pipe_readiness_locked(pipe);
+        ARX_DEBUG_RUN(arx_debug_group_end(&pipe->debugGroup));
         spinlock_release_preempt(&pipe->lock);
         end_user_memory(&access);
 
@@ -571,19 +587,21 @@ uint64_t InterProcessCommunicationManager::PipeTransfer(file_t* file, const file
     }
 
     kfree(staged);
-    return transferred != 0 || result == 0 ? transferred : result;
+    return ARX_COMM_RETURN(transferred != 0 || result == 0 ? transferred : result);
 }
 
 uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.createMemory);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->virtualMemoryManager == nullptr || Vfs == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     if ((flags & ~(1U | 2U)) != 0)
     {
-        return (flags & 4U) ? LINUX_EOPNOTSUPP : LINUX_EINVAL;
+        return ARX_COMM_RETURN((flags & 4U) ? LINUX_EOPNOTSUPP : LINUX_EINVAL);
     }
 
     char   name[250];
@@ -598,16 +616,16 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
 
             if (pointer > UINT64_MAX - i || !safe_read_user(pointer + i, &byte, 1))
             {
-                return LINUX_EFAULT;
+                return ARX_COMM_RETURN(LINUX_EFAULT);
             }
 
             if (byte == 0)
             {
-                return LINUX_EFAULT;
+                return ARX_COMM_RETURN(LINUX_EFAULT);
             }
         }
 
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     memory_file_t* memory = static_cast<memory_file_t*>(kzalloc(sizeof(memory_file_t)));
@@ -617,7 +635,7 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
     {
         kfree(memory);
         kfree(file);
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     Vfs->InitializeAnonymousInode(&memory->inode, INODE_REGULAR, 0777);
@@ -629,9 +647,14 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
         kfree(memory);
         kfree(file);
 
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
+    ARX_DEBUG_RUN(
+        memory->debugStats = &DebugStats;
+        ARX_DEBUG_ADD(DebugStats.liveMemoryFiles, 1);
+        ARX_DEBUG_ADD(DebugStats.memoryFilesCreated, 1);
+    );
     memory->inode.backing->volatile_storage = true;
     memory->seals                           = flags & 2 ? 0 : 1;
     file->inode                             = &memory->inode;
@@ -646,15 +669,21 @@ uint64_t InterProcessCommunicationManager::CreateMemoryFile(uint64_t pointer, ui
     {
         Vfs->Close(file);
     }
-    return (uint64_t) fd;
+    return ARX_COMM_RETURN((uint64_t) fd);
 }
 
 int64_t InterProcessCommunicationManager::MemoryRead(file_t* file, void* buffer, uint64_t count)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<memory_file_t*>(file->privateData);
+        DebugUpdate debugUpdate(tracking->debugGroup);
+        CommunicationOperation debugOperation(tracking->debugStats->memoryRead, true, count);
+    )
+
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
     if (file->offset >= memory->inode.size)
     {
-        return 0;
+        return ARX_COMM_RETURN(0);
     }
     const size_t bytes = count < memory->inode.size - file->offset ? count : memory->inode.size - file->offset;
     for (size_t i = 0; i < bytes; ++i)
@@ -662,20 +691,27 @@ int64_t InterProcessCommunicationManager::MemoryRead(file_t* file, void* buffer,
         const size_t address             = file->offset + i;
         static_cast<uint8_t*>(buffer)[i] = memory->pages[address / PAGE_SIZE] != nullptr ? static_cast<uint8_t*>(memory->pages[address / PAGE_SIZE]->pointer)[address % PAGE_SIZE] : 0;
     }
+    ARX_DEBUG_ADD(memory->debugStats->memoryReadBytes, bytes);
     file->offset += bytes;
-    return bytes;
+    return ARX_COMM_RETURN(bytes);
 }
 
 int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* buffer, uint64_t count)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<memory_file_t*>(file->privateData);
+        DebugUpdate debugUpdate(tracking->debugGroup);
+        CommunicationOperation debugOperation(tracking->debugStats->memoryWrite, true, count);
+    )
+
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
     if (count == 0)
     {
-        return 0;
+        return ARX_COMM_RETURN(0);
     }
     if (memory->seals & (8U | 16U))
     {
-        return -1;
+        return ARX_COMM_RETURN(-1);
     }
     if (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & 02000)
     {
@@ -683,11 +719,11 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
     }
     if (file->offset > MEMORY_PAGES * PAGE_SIZE || count > MEMORY_PAGES * PAGE_SIZE - file->offset)
     {
-        return -27;
+        return ARX_COMM_RETURN(-27);
     }
     if ((memory->seals & 4) && file->offset + count > memory->inode.size)
     {
-        return -1;
+        return ARX_COMM_RETURN(-1);
     }
 
     if (file->offset > memory->inode.size)
@@ -717,6 +753,7 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
         copied += bytes;
     }
 
+    ARX_DEBUG_ADD(memory->debugStats->memoryWriteBytes, copied);
     file->offset += copied;
 
     if (file->offset > memory->inode.size)
@@ -725,7 +762,7 @@ int64_t InterProcessCommunicationManager::MemoryWrite(file_t* file, const void* 
         __atomic_store_n(&memory->inode.backing->size, file->offset, __ATOMIC_RELEASE);
     }
 
-    return copied != 0 ? (int64_t) copied : (int64_t) LINUX_ENOMEM;
+    return ARX_COMM_RETURN(copied != 0 ? (int64_t) copied : (int64_t) LINUX_ENOMEM);
 }
 
 int64_t InterProcessCommunicationManager::MemorySeek(file_t* file, int64_t offset, int whence)
@@ -741,21 +778,27 @@ int64_t InterProcessCommunicationManager::MemorySeek(file_t* file, int64_t offse
 
 int64_t InterProcessCommunicationManager::MemoryTruncate(file_t* file, uint64_t size)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<memory_file_t*>(file->privateData);
+        DebugUpdate debugUpdate(tracking->debugGroup);
+        CommunicationOperation debugOperation(tracking->debugStats->memoryTruncate);
+    )
+
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
     if (size > MEMORY_PAGES * PAGE_SIZE)
     {
-        return -27;
+        return ARX_COMM_RETURN(-27);
     }
     if ((size < memory->inode.size && (memory->seals & 2)) || (size > memory->inode.size && (memory->seals & 4)))
     {
-        return -1;
+        return ARX_COMM_RETURN(-1);
     }
 
     const int64_t status = memory->manager->ResizeVolatileBacking(memory->inode.backing, size);
 
     if (status != 0)
     {
-        return status;
+        return ARX_COMM_RETURN(status);
     }
     if (size < memory->inode.size)
     {
@@ -765,11 +808,17 @@ int64_t InterProcessCommunicationManager::MemoryTruncate(file_t* file, uint64_t 
         }
     }
     memory->inode.size = size;
-    return 0;
+    return ARX_COMM_RETURN(0);
 }
 
 uint64_t InterProcessCommunicationManager::MemoryControl(file_t* file, uint32_t command, uint64_t argument)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<memory_file_t*>(file->privateData);
+        DebugUpdate debugUpdate(tracking->debugGroup);
+        CommunicationOperation debugOperation(tracking->debugStats->memoryControl);
+    )
+
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
     spinlock_acquire_preempt(&memory->inode.ioLock);
     uint64_t result = LINUX_EINVAL;
@@ -791,25 +840,32 @@ uint64_t InterProcessCommunicationManager::MemoryControl(file_t* file, uint32_t 
         }
     }
     spinlock_release_preempt(&memory->inode.ioLock);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 void InterProcessCommunicationManager::MemoryRelease(file_t* file)
 {
     memory_file_t* memory = static_cast<memory_file_t*>(file->privateData);
+    ARX_DEBUG_ADD(memory->debugStats->liveMemoryFiles, UINT64_MAX);
     VirtualMemoryManager::ReleaseBacking(memory->inode.backing);
     kfree(memory);
 }
 
 int64_t InterProcessCommunicationManager::MemoryBacking(file_t* file, VirtualMemoryManager*, uint32_t protection, bool shared, virt_backing_object_t** object, uint32_t* maximum)
 {
+    ARX_DEBUG_ONLY(
+        auto* tracking = static_cast<memory_file_t*>(file->privateData);
+        DebugUpdate debugUpdate(tracking->debugGroup);
+        CommunicationOperation debugOperation(tracking->debugStats->memoryBacking);
+    )
+
     auto* memory = static_cast<memory_file_t*>(file->privateData);
 
     if (shared && (memory->seals & (8U | 16U)) != 0)
     {
         if ((protection & 2) != 0)
         {
-            return -1;
+            return ARX_COMM_RETURN(-1);
         }
 
         *maximum &= ~2U;
@@ -828,11 +884,11 @@ int64_t InterProcessCommunicationManager::MemoryBacking(file_t* file, VirtualMem
 
         if (memory->pages[index] == nullptr)
         {
-            return -12;
+            return ARX_COMM_RETURN(-12);
         }
     }
 
     *object = memory->inode.backing;
 
-    return 0;
+    return ARX_COMM_RETURN(0);
 }

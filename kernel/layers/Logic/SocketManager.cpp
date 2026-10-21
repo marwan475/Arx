@@ -1,4 +1,5 @@
 #include "layers/Logic/SocketManager.hpp"
+#include "layers/Logic/SocketState.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SignalManager.hpp"
@@ -7,15 +8,6 @@
 
 #include <klib/klib.h>
 
-struct socket_ancillary_t
-{
-    socket_ancillary_t*  next;
-    size_t               count;
-    file_t*              files[253];
-    socket_credentials_t credentials;
-    bool                 explicitCredentials;
-    uint32_t             senderUid;
-};
 
 namespace
 {
@@ -40,16 +32,6 @@ constexpr uint64_t EPIPE            = (uint64_t) -32;
 constexpr uint64_t ENOTCONN         = (uint64_t) -107;
 constexpr uint64_t ECONNREFUSED     = (uint64_t) -111;
 
-struct socket_packet_t
-{
-    socket_packet_t*    next;
-    size_t              size;
-    size_t              offset;
-    socket_address_t    source;
-    uint32_t            sourceLength;
-    socket_ancillary_t* control;
-    uint8_t             data[];
-};
 
 struct socket_delivery_t
 {
@@ -174,7 +156,7 @@ uint64_t vector_size(const file_iovec_t* vectors, size_t count, size_t* size)
     return 0;
 }
 
-bool copy_vectors(const user_memory_access_t* access, const file_iovec_t* vectors, size_t count, size_t offset, void* data, size_t length, bool send)
+bool copy_vectors(const user_memory_access_t* access, const file_iovec_t* vectors, size_t count, size_t offset, void* data, size_t length, bool send ARX_DEBUG_ONLY(, uint64_t* copiedCounter))
 {
     size_t copied = 0;
 
@@ -202,6 +184,7 @@ bool copy_vectors(const user_memory_access_t* access, const file_iovec_t* vector
             return false;
         }
 
+        ARX_DEBUG_ADD(*copiedCounter, bytes);
         copied += bytes;
         offset = 0;
     }
@@ -210,44 +193,6 @@ bool copy_vectors(const user_memory_access_t* access, const file_iovec_t* vector
 }
 } // namespace
 
-struct socket_endpoint_t
-{
-    inode_t            inode;
-    SocketManager*     manager;
-    file_t*            file;
-    socket_endpoint_t* next;
-    socket_endpoint_t* peer;
-    socket_endpoint_t* pendingHead;
-    socket_endpoint_t* pendingTail;
-    socket_endpoint_t* pendingNext;
-    socket_packet_t*   head;
-    socket_packet_t*   tail;
-    inode_t*           node;
-    socket_address_t   address;
-    socket_address_t   peerAddress;
-    uint32_t           addressLength;
-    uint32_t           peerAddressLength;
-    uint32_t           type;
-    uint32_t           backlog;
-    uint32_t           pendingCount;
-    uint32_t           packetCount;
-    uint32_t           lastReadiness;
-    uint32_t           pendingReadiness;
-    uint32_t           sendLimit;
-    uint32_t           receiveLimit;
-    size_t             collectionIndex;
-    size_t             internalReferences;
-    size_t             queued;
-    bool               bound;
-    bool               binding;
-    bool               connected;
-    bool               listening;
-    bool               readShutdown;
-    bool               writeShutdown;
-    bool               passCredentials;
-    int32_t            credentials[3];
-    int32_t            peerCredentials[3];
-};
 
 const file_operations_t SocketManager::Operations = {
         nullptr, nullptr, nullptr, Seek, nullptr, Ioctl, nullptr, Release, Poll, Read, Write, ReadVector, WriteVector, nullptr, nullptr, false, nullptr, DropReference,
@@ -330,10 +275,12 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
     file->refCount          = 1;
     endpoint->lastReadiness = ReadinessLocked(endpoint);
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
 
     if (EndpointCount >= MAX_ENDPOINTS)
     {
         RecordReadinessLocked();
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         kfree(endpoint);
         kfree(file);
@@ -343,7 +290,9 @@ file_t* SocketManager::CreateFile(uint32_t type, uint32_t flags)
     endpoint->next = Endpoints;
     Endpoints      = endpoint;
     ++EndpointCount;
+    ARX_DEBUG_ADD(DebugStats.endpointsCreated, 1);
     RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     return file;
 }
@@ -371,6 +320,7 @@ void SocketManager::Notify()
     uint32_t masks[MAX_ENDPOINTS];
     size_t   count = 0;
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
 
     for (socket_endpoint_t* endpoint = Endpoints; endpoint != nullptr; endpoint = endpoint->next)
     {
@@ -386,6 +336,7 @@ void SocketManager::Notify()
 
     RecordReadinessLocked();
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
 
     for (size_t i = 0; i < count; ++i)
@@ -640,6 +591,20 @@ bool SocketManager::MayQueueRightsLocked(const socket_ancillary_t* control)
 
 void SocketManager::ChangeControlLocked(socket_ancillary_t* control, bool add)
 {
+    ARX_DEBUG_RUN(
+        if (control != nullptr)
+        {
+            if (add)
+            {
+                ARX_DEBUG_ADD(DebugStats.queuedRights, control->count);
+            }
+            else
+            {
+                ARX_DEBUG_ADD(DebugStats.unqueuedRights, control->count);
+            }
+        }
+    );
+
     for (size_t i = 0; control != nullptr && i < control->count; ++i)
     {
         file_t* file = control->files[i];
@@ -664,11 +629,13 @@ bool SocketManager::DropReference(file_t* file, bool* last)
     socket_packet_t*   discarded = nullptr;
     socket_endpoint_t* abandoned = nullptr;
     spinlock_acquire_preempt(&manager->Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&manager->DebugStats.group));
     spinlock_acquire_preempt(&file->refLock);
     if (file->refCount == 0)
     {
         spinlock_release_preempt(&file->refLock);
         manager->RecordReadinessLocked();
+        ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
         spinlock_release_preempt(&manager->Lock);
         return false;
     }
@@ -678,6 +645,7 @@ bool SocketManager::DropReference(file_t* file, bool* last)
     if (rooted)
     {
         manager->RecordReadinessLocked();
+        ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
         spinlock_release_preempt(&manager->Lock);
         return true;
     }
@@ -787,6 +755,7 @@ bool SocketManager::DropReference(file_t* file, bool* last)
 
         for (auto* packet = node->head; packet != nullptr; packet = packet->next)
         {
+            ARX_DEBUG_ADD(manager->DebugStats.discardedRights, packet->control != nullptr ? packet->control->count : 0);
             manager->ChangeControlLocked(packet->control, false);
         }
 
@@ -796,6 +765,8 @@ bool SocketManager::DropReference(file_t* file, bool* last)
             discarded        = node->head;
         }
 
+        ARX_DEBUG_ADD(manager->DebugStats.discardedBytes, node->queued);
+        ARX_DEBUG_ADD(manager->DebugStats.discardedMessages, node->packetCount);
         node->head   = node->tail = nullptr;
         node->queued = node->packetCount = 0;
 
@@ -813,6 +784,7 @@ bool SocketManager::DropReference(file_t* file, bool* last)
     }
 
     manager->RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
     spinlock_release_preempt(&manager->Lock);
     free_packets(discarded);
 
@@ -831,6 +803,7 @@ void SocketManager::Release(file_t* file)
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
     SocketManager*     manager  = endpoint->manager;
     spinlock_acquire_preempt(&manager->Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&manager->DebugStats.group));
     socket_endpoint_t** link = &manager->Endpoints;
 
     while (*link != endpoint)
@@ -838,8 +811,11 @@ void SocketManager::Release(file_t* file)
         link = &(*link)->next;
     }
 
+    ARX_DEBUG_ADD(manager->DebugStats.discardedBytes, endpoint->queued);
+    ARX_DEBUG_ADD(manager->DebugStats.discardedMessages, endpoint->packetCount);
     *link = endpoint->next;
     --manager->EndpointCount;
+    ARX_DEBUG_ADD(manager->DebugStats.endpointsReleased, 1);
 
     for (socket_endpoint_t* other = manager->Endpoints; other != nullptr; other = other->next)
     {
@@ -856,9 +832,11 @@ void SocketManager::Release(file_t* file)
     }
     for (auto* packet = endpoint->head; packet != nullptr; packet = packet->next)
     {
+        ARX_DEBUG_ADD(manager->DebugStats.discardedRights, packet->control != nullptr ? packet->control->count : 0);
         manager->ChangeControlLocked(packet->control, false);
     }
     manager->RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
     spinlock_release_preempt(&manager->Lock);
 
     while (pending != nullptr)
@@ -876,23 +854,25 @@ void SocketManager::Release(file_t* file)
 
 uint64_t SocketManager::Socket(int32_t domain, int32_t type, int32_t protocol)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.create);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr || Events == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     uint64_t result = validate_socket(domain, type, protocol);
 
     if (result != 0)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     file_t* file = CreateFile(type & 15, type);
 
     if (file == nullptr)
     {
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     result = Install(file, type);
@@ -902,21 +882,23 @@ uint64_t SocketManager::Socket(int32_t domain, int32_t type, int32_t protocol)
         Vfs->Close(file);
     }
 
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Socketpair(int32_t domain, int32_t type, int32_t protocol, uint64_t output)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.pair);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Vfs == nullptr || Events == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_COMM_RETURN(LINUX_ENOSYS);
     }
 
     uint64_t result = validate_socket(domain, type, protocol);
 
     if (result != 0)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     file_t* files[2] = {CreateFile(type & 15, type), CreateFile(type & 15, type)};
@@ -925,10 +907,11 @@ uint64_t SocketManager::Socketpair(int32_t domain, int32_t type, int32_t protoco
     {
         Vfs->Close(files[0]);
         Vfs->Close(files[1]);
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     socket_endpoint_t* first  = static_cast<socket_endpoint_t*>(files[0]->privateData);
     socket_endpoint_t* second = static_cast<socket_endpoint_t*>(files[1]->privateData);
     first->peer               = second;
@@ -941,6 +924,7 @@ uint64_t SocketManager::Socketpair(int32_t domain, int32_t type, int32_t protoco
     first->peerCredentials[2] = second->peerCredentials[2] = process->credentials.group.effective;
     spinlock_release(&process->credentialLock);
     RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
 
     {
@@ -981,17 +965,19 @@ uint64_t SocketManager::Socketpair(int32_t domain, int32_t type, int32_t protoco
     }
 
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.bind);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     socket_address_t address;
@@ -1000,6 +986,7 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
     if (result == 0)
     {
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
         if (endpoint->bound || endpoint->binding)
@@ -1024,9 +1011,11 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
                 // Reserve this bind, but never enter VFS under the socket lock.
                 endpoint->binding = true;
                 RecordReadinessLocked();
+                ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
                 spinlock_release_preempt(&Lock);
                 result = (uint64_t) Vfs->SocketNode(reinterpret_cast<const char*>(address.path), true, &node);
                 spinlock_acquire_preempt(&Lock);
+                ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
                 endpoint->binding = false;
             }
 
@@ -1041,24 +1030,28 @@ uint64_t SocketManager::Bind(int32_t fd, uint64_t pointer, uint32_t length)
 
         RecordReadinessLocked();
 
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
     }
 
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Listen(int32_t fd, int32_t backlog)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.listen);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
     if (endpoint->type == 2)
@@ -1077,20 +1070,23 @@ uint64_t SocketManager::Listen(int32_t fd, int32_t backlog)
 
     RecordReadinessLocked();
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     Vfs->Close(file);
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.connect);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
@@ -1099,27 +1095,29 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
     if (length < 2 || length > sizeof(address))
     {
         Vfs->Close(file);
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     if (!safe_read_user(pointer, &address, length))
     {
         Vfs->Close(file);
-        return LINUX_EFAULT;
+        return ARX_COMM_RETURN(LINUX_EFAULT);
     }
 
     if (address.family == 0 && endpoint->type == 2)
     {
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         endpoint->peer               = nullptr;
         endpoint->connected          = false;
         endpoint->peerAddress        = {};
         endpoint->peerAddress.family = 1;
         endpoint->peerAddressLength  = 2;
         RecordReadinessLocked();
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         Vfs->Close(file);
-        return 0;
+        return ARX_COMM_RETURN(0);
     }
 
     result        = read_address(pointer, length, &address);
@@ -1139,6 +1137,7 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
     {
         const uint64_t sequence = Events->Sequence();
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         socket_endpoint_t* target = FindAddress(address, length, node);
 
         if (endpoint->connected && endpoint->type != 2)
@@ -1203,6 +1202,7 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
 
         RecordReadinessLocked();
 
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
 
         if (result != EAGAIN || (__atomic_load_n(&file->statusFlags, __ATOMIC_RELAXED) & NONBLOCK))
@@ -1216,14 +1216,16 @@ uint64_t SocketManager::Connect(int32_t fd, uint64_t pointer, uint32_t length)
     Vfs->Close(accepted);
     Vfs->Close(file);
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, uint32_t flags)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.accept);)
+
     if ((flags & ~(NONBLOCK | CLOEXEC)) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     uint64_t result;
@@ -1231,7 +1233,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
@@ -1248,6 +1250,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
         }
 
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         socket_endpoint_t* incoming = endpoint->pendingHead;
 
         if (endpoint->type == 2)
@@ -1284,6 +1287,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
 
         RecordReadinessLocked();
 
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         end_user_memory(&access);
 
@@ -1294,6 +1298,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
             if ((int64_t) result < 0)
             {
                 spinlock_acquire_preempt(&Lock);
+                ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
                 incoming->pendingNext = endpoint->pendingHead;
                 endpoint->pendingHead = incoming;
 
@@ -1305,6 +1310,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
                 ++endpoint->pendingCount;
                 ++incoming->internalReferences;
                 RecordReadinessLocked();
+                ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
                 spinlock_release_preempt(&Lock);
             }
 
@@ -1326,7 +1332,7 @@ uint64_t SocketManager::Accept(int32_t fd, uint64_t address, uint64_t length, ui
 
     Vfs->Close(file);
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Name(int32_t fd, uint64_t address, uint64_t length, bool peer)
@@ -1348,9 +1354,11 @@ uint64_t SocketManager::Name(int32_t fd, uint64_t address, uint64_t length, bool
     }
 
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
     result                      = peer && !endpoint->connected ? ENOTCONN : write_address(&access, address, length, peer ? endpoint->peerAddress : endpoint->address, peer ? endpoint->peerAddressLength : endpoint->addressLength) ? 0 : LINUX_EFAULT;
     RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     Vfs->Close(file);
@@ -1362,8 +1370,10 @@ uint32_t SocketManager::Poll(file_t* file)
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
     SocketManager*     manager  = endpoint->manager;
     spinlock_acquire_preempt(&manager->Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&manager->DebugStats.group));
     const uint32_t result = ReadinessLocked(endpoint);
     manager->RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
     spinlock_release_preempt(&manager->Lock);
     return result;
 }
@@ -1426,9 +1436,11 @@ int64_t SocketManager::Ioctl(file_t* file, uint64_t request, uint64_t argument)
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
     SocketManager*     manager  = endpoint->manager;
     spinlock_acquire_preempt(&manager->Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&manager->DebugStats.group));
     const int32_t  available = (int32_t) (endpoint->type == 1 ? endpoint->queued : endpoint->head != nullptr ? endpoint->head->size : 0);
     const uint64_t result    = endpoint->listening ? LINUX_EINVAL : safe_write_user_locked(&access, argument, &available, sizeof(available)) ? 0 : LINUX_EFAULT;
     manager->RecordReadinessLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
     spinlock_release_preempt(&manager->Lock);
     end_user_memory(&access);
     return (int64_t) result;
@@ -1436,17 +1448,20 @@ int64_t SocketManager::Ioctl(file_t* file, uint64_t request, uint64_t argument)
 
 uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.shutdown);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     socket_packet_t*   discarded = nullptr;
     socket_endpoint_t* pending   = nullptr;
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
     if (how < 0 || how > 2)
@@ -1476,8 +1491,11 @@ uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
             discarded      = endpoint->head;
             for (auto* packet = discarded; packet != nullptr; packet = packet->next)
             {
+                ARX_DEBUG_ADD(DebugStats.discardedRights, packet->control != nullptr ? packet->control->count : 0);
                 ChangeControlLocked(packet->control, false);
             }
+            ARX_DEBUG_ADD(DebugStats.discardedBytes, endpoint->queued);
+            ARX_DEBUG_ADD(DebugStats.discardedMessages, endpoint->packetCount);
             endpoint->head   = endpoint->tail = nullptr;
             endpoint->queued = endpoint->packetCount = 0;
         }
@@ -1490,6 +1508,7 @@ uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
 
     RecordReadinessLocked();
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     free_packets(discarded);
 
@@ -1502,17 +1521,19 @@ uint64_t SocketManager::Shutdown(int32_t fd, int32_t how)
 
     Vfs->Close(file);
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uint64_t value, uint64_t length)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.getOption);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     uint32_t capacity;
@@ -1520,18 +1541,19 @@ uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uin
     if (!safe_read_user(length, &capacity, sizeof(capacity)))
     {
         Vfs->Close(file);
-        return LINUX_EFAULT;
+        return ARX_COMM_RETURN(LINUX_EFAULT);
     }
 
     if ((int32_t) capacity < 0)
     {
         Vfs->Close(file);
-        return LINUX_EINVAL;
+        return ARX_COMM_RETURN(LINUX_EINVAL);
     }
 
     int32_t  output[3] = {};
     uint32_t size      = sizeof(int32_t);
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
     if (level != 1)
@@ -1578,6 +1600,7 @@ uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uin
 
     RecordReadinessLocked();
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
 
     if (result == 0)
@@ -1587,17 +1610,19 @@ uint64_t SocketManager::GetOption(int32_t fd, int32_t level, int32_t option, uin
     }
 
     Vfs->Close(file);
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uint64_t pointer, uint32_t length)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(DebugStats.setOption);)
+
     uint64_t result;
     file_t*  file = RetainDescriptor(fd, &result);
 
     if (file == nullptr)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     int32_t value;
@@ -1618,6 +1643,7 @@ uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uin
     {
         const uint32_t requested = (uint32_t) value > BUFFER_LIMIT / 2 ? BUFFER_LIMIT : (uint32_t) value * 2;
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         socket_endpoint_t* endpoint = static_cast<socket_endpoint_t*>(file->privateData);
 
         if (option == 16)
@@ -1642,29 +1668,33 @@ uint64_t SocketManager::SetOption(int32_t fd, int32_t level, int32_t option, uin
 
         RecordReadinessLocked();
 
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
     }
 
     Vfs->Close(file);
     Notify();
-    return result;
+    return ARX_COMM_RETURN(result);
 }
 
 uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size_t count, uint32_t flags, bool send, const socket_address_t* destination, uint32_t destinationLength, uint64_t source, uint64_t sourceLength, uint64_t message, const socket_message_t* header)
 {
+    ARX_DEBUG_ONLY(CommunicationOperation debugOperation(send ? DebugStats.send : DebugStats.receive, true);)
+
     const uint32_t supported = send ? MSG_DONTWAIT | MSG_NOSIGNAL | 0x80U : MSG_DONTWAIT | MSG_PEEK | MSG_TRUNC | MSG_WAITALL | 0x40000000U;
 
     if ((flags & ~supported) != 0 || ((flags & MSG_PEEK) && (flags & MSG_WAITALL)))
     {
-        return LINUX_EOPNOTSUPP;
+        return ARX_COMM_RETURN(LINUX_EOPNOTSUPP);
     }
 
     size_t   requested;
     uint64_t result = vector_size(vectors, count, &requested);
+    ARX_DEBUG_RUN(debugOperation.Request(result == 0 ? requested : 0));
 
     if (result != 0)
     {
-        return result;
+        return ARX_COMM_RETURN(result);
     }
 
     socket_endpoint_t* endpoint    = static_cast<socket_endpoint_t*>(file->privateData);
@@ -1675,7 +1705,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
 
     if ((send && outgoing == nullptr) || (!send && message != 0 && delivery == nullptr))
     {
-        return LINUX_ENOMEM;
+        return ARX_COMM_RETURN(LINUX_ENOMEM);
     }
 
     inode_t* destinationNode = nullptr;
@@ -1693,7 +1723,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
         if (result != 0)
         {
             free_packets(outgoing);
-            return result;
+            return ARX_COMM_RETURN(result);
         }
     }
 
@@ -1718,6 +1748,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
             }
 
             spinlock_acquire_preempt(&Lock);
+            ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
             result            = EAGAIN;
             const bool stream = endpoint->type == 1;
 
@@ -1780,7 +1811,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                         {
                             result = (uint64_t) -109; // ETOOMANYREFS: bounded per-sender-UID in-flight rights.
                         }
-                        else if (!copy_vectors(&access, vectors, count, 0, outgoing->data, bytes, true))
+                        else if (!copy_vectors(&access, vectors, count, 0, outgoing->data, bytes, true ARX_DEBUG_ONLY(, &DebugStats.sendCopiedBytes)))
                         {
                             result = LINUX_EFAULT;
                         }
@@ -1804,6 +1835,8 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
 
                             target->tail = outgoing;
                             target->queued += bytes;
+                            ARX_DEBUG_ADD(DebugStats.enqueuedBytes, bytes);
+                            ARX_DEBUG_ADD(DebugStats.enqueuedMessages, 1);
                             ++target->packetCount;
                             outgoing    = nullptr;
                             transferred = bytes;
@@ -1829,7 +1862,8 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                     const size_t   bytes       = available < requested - transferred ? available : requested - transferred;
                     uint32_t       outputFlags = (!stream && bytes < available ? MSG_TRUNC : 0) | (flags & 0x40000000U);
                     const uint32_t nameLength  = stream ? 0 : packet->sourceLength;
-                    bool           copied      = copy_vectors(&access, vectors, count, transferred, packet->data + packet->offset, bytes, false);
+                    ARX_DEBUG_ONLY(size_t deliveredRights = 0;)
+                    bool           copied      = copy_vectors(&access, vectors, count, transferred, packet->data + packet->offset, bytes, false ARX_DEBUG_ONLY(, &DebugStats.copiedBytes));
 
                     if (copied && transferred == 0 && source != 0)
                     {
@@ -1924,6 +1958,8 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                         }
                         else
                         {
+                            ARX_DEBUG_RUN(deliveredRights = delivery->installed);
+                            ARX_DEBUG_ADD(DebugStats.installedRights, delivery->installed);
                             delivery->installed = 0; // Receiver table now owns the references.
                         }
                     }
@@ -1942,9 +1978,12 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
 
                         if (!(flags & MSG_PEEK))
                         {
+                            ARX_DEBUG_ADD(DebugStats.consumedBytes, stream ? bytes : available);
+                            ARX_DEBUG_ADD(DebugStats.discardedBytes, stream ? 0 : available - bytes);
                             endpoint->queued -= stream ? bytes : available;
                             packet->offset += bytes;
                             discardedControl = packet->control;
+                            ARX_DEBUG_ADD(DebugStats.discardedRights, discardedControl != nullptr ? discardedControl->count - deliveredRights : 0);
                             ChangeControlLocked(discardedControl, false);
                             packet->control = nullptr;
 
@@ -1958,6 +1997,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
                                 }
 
                                 --endpoint->packetCount;
+                                ARX_DEBUG_ADD(DebugStats.consumedMessages, 1);
                                 packet->next    = nullptr;
                                 discardedPacket = packet;
                             }
@@ -1992,6 +2032,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
 
             RecordReadinessLocked();
 
+            ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
             spinlock_release_preempt(&Lock);
             end_user_memory(&access);
         }
@@ -2047,7 +2088,7 @@ uint64_t SocketManager::Transfer(file_t* file, const file_iovec_t* vectors, size
         }
     }
 
-    return transferred != 0 || result == 0 ? transferred : result;
+    return ARX_COMM_RETURN(transferred != 0 || result == 0 ? transferred : result);
 }
 
 uint64_t SocketManager::Sendto(int32_t fd, uint64_t data, uint64_t size, uint32_t flags, uint64_t address, uint32_t length)

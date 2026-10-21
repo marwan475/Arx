@@ -70,6 +70,8 @@ void Dispatcher::StartKernel()
         debugManager.DeclareUnavailable("credentials", "Logic layer not constructed");
         debugManager.DeclareUnavailable("scheduler", "Logic layer not constructed");
         debugManager.DeclareUnavailable("sync", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("ipc", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("sockets", "Logic layer not constructed");
         ResourceLayerImportCaps->timeManager->PublishDebug(debugManager, &ResourceLayerImportCaps->processManager->DebugStats);
     );
 
@@ -91,6 +93,9 @@ void Dispatcher::StartKernel()
         process.fileOperations[0] = InterProcessCommunicationManager::DebugPipeOperations();
         process.fileOperations[1] = InterProcessCommunicationManager::DebugMemoryOperations();
         process.fileOperations[2] = SocketManager::DebugSocketOperations();
+        LogicLayerImportCaps->socketManager->PublishDebug(debugManager, &process);
+        LogicLayerImportCaps->interProcessCommunicationManager->DebugStats.sockets = &LogicLayerImportCaps->socketManager->DebugStats;
+        LogicLayerImportCaps->interProcessCommunicationManager->PublishDebug(debugManager, &process);
         process.filePolls[0] = EventManager::DebugCounterPoll();
         process.filePolls[1] = EventManager::DebugEpollPoll();
         process.lifecycleGroup = &lifecycle.group;

@@ -11,7 +11,6 @@ rules; the remaining feature, debug, and in-progress tickets record that guidanc
 | Priority | Ticket | Type | Status |
 | --- | --- | --- | --- |
 | P1 | [Cut over to the debug framework and document the replacement commands](feature/migrate_debug_commands_and_document_framework.md) | feature | open |
-| P2 | [Add pipe, memory-file and UNIX socket debug views](feature/add_debug_ipc_socket_views.md) | feature | open |
 | P2 | [Add self-test progress and recorded boot-error debug views](feature/add_debug_selftest_error_views.md) | feature | open |
 | P2 | [Add signal, epoll and event-notification debug views](feature/add_debug_signal_event_views.md) | feature | open |
 | P2 | [Create an agent skill for adding debug statistics and rich views](feature/create_debug_framework_authoring_skill.md) | feature | open |
@@ -41,6 +40,7 @@ None.
 | P1 | [Document overall kernel architecture and responsibilities](closed/document_project_structure.md) | feature | closed |
 | P1 | [Remove Resource's dependency on Logic-owned signal definitions](closed/fix_resource_signal_type_dependency.md) | debug | closed |
 | P1 | [Route necessary upward calls through Dispatcher](closed/fix_resource_upward_runtime_calls.md) | debug | closed |
+| P2 | [Add pipe, memory-file and UNIX socket debug views](closed/add_debug_ipc_socket_views.md) | feature | closed |
 | P2 | [Document architecture-specific code](closed/document_architecture_layer.md) | feature | closed |
 | P2 | [Document Logic layer](closed/document_logic_layer.md) | feature | closed |
 | P2 | [Document platform services](closed/document_platform_layer.md) | feature | closed |

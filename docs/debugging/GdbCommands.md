@@ -957,3 +957,111 @@ the shared entry budget. Native readers must preserve collection identity,
 sentinel, selection and partial-result rules instead of interpreting a descriptor
 capacity as an occupied count. Registration roots last until quiescent Dispatcher
 teardown; no provider creates a history recorder or dump mechanism.
+
+## Pipes, memory files and UNIX sockets
+
+```text
+arx-debug ipc stats
+arx-debug ipc pipes --tid 12
+arx-debug ipc memory-file --pid 9 --fd 4
+arx-debug sockets stats
+arx-debug sockets endpoints --pid 9
+arx-debug sockets messages 0xffff800012340000 --payload-bytes 32
+```
+
+The endpoint address is illustrative; select an address shown by the current
+endpoint catalogue. Dispatcher reserves `ipc` and `sockets` before Logic exists,
+then publishes the production managers. Temporary test instances do not register.
+All inspection reads stopped RAM without calls to Poll, Read, Write or Release,
+lock acquisition, target execution or retries waiting for a stopped writer.
+
+`ipc pipes` and `ipc memory-file` discover objects through allocated process/task
+descriptor tables and queued socket rights. A task uses its descriptor override,
+falling back to its process table. `--pid` selects the process default table;
+`--tid` selects the task's effective table; they are mutually exclusive. `--fd`
+requires one of them. Without selectors, tables/files/IPC objects are deduplicated
+while retaining observed owner edges. Descriptor routes must match the process
+provider's VFS identity, and file operation identities and inode types must match
+before private data is decoded. Unknown implementations remain opaque.
+
+IPC has no global object catalogue. Detached objects, parsed/detached message
+controls, installation/rollback references and mapping-only backing can remain
+outside these discovery roots. The views do not establish complete reference
+accounting or prove leaks. Shared backing/page addresses correlate with the
+memory views; backing may survive the original memory-file object's final close.
+
+Pipe output distinguishes endpoint file references from the pipe's remaining
+endpoint-object count. Reader/writer links are weak; null indicates a closed
+endpoint. Capacity, head, used bytes, stored readiness and logical packet segments
+are shown. Logical byte `i` is at `(head+i)%capacity`. Packet metadata packs two
+bits per physical byte: 1 marks packet bytes and 2 the final byte. A short packet
+read consumes/discards the unread tail. Metadata inspection copies at most 16KiB
+of packet bits and never copies the embedded 64KiB payload buffer by default.
+
+Memory-file output includes inode size, file offset, seals, 256 page slots,
+shared-page identity, backing references and matching regions in known process
+address spaces. Seals are SEAL=1, SHRINK=2, GROW=4, WRITE=8 and FUTURE_WRITE=16.
+Mapping edges identify address space, virtual range, backing offset and shared
+page. Shared spaces are scanned once; the shown process is a representative
+owner. Unknown/in-flight address spaces are outside this correlation scope.
+
+`sockets endpoints` traverses the existing manager list, bounded to 128 endpoints.
+It shows UNIX STREAM/DGRAM/SEQPACKET state, queue counts/bytes/limits, peers,
+shutdown and credential state, stored readiness, pending accepts and queued
+messages/rights. It accepts process/task/FD selectors. Peer links are weak;
+datagram peers can legitimately be unilateral. Connection-oriented asymmetry is
+reported as an observation, including possible partial state. Pending accepts
+own file references; current admission permits backlog+1 pending entries, so the
+reader checks chain/count/tail consistency rather than changing that policy.
+
+`sockets messages <numeric-endpoint>` selects a verified current catalogue member
+and includes inline ancillary rights and credentials. Messages are FIFO, at most
+128 per endpoint, with `offset<=size<=65536`; remaining bytes are `size-offset`.
+Ancillary chains and their at-most-253 rights per record share traversal budgets.
+Rights own actual file references, correlated with observed descriptor owners.
+Endpoint internalReferences counts pending accepts and queued socket rights,
+not every possible reference. UNIX addresses use explicit lengths; unnamed,
+pathname and abstract names are distinguished and embedded NULs are escaped.
+
+Payload detail requires `--payload-bytes N`, 0 through 4096 total bytes per
+command, also charged to `--bytes`. Pipes start at logical head, memory files at
+the selected file offset, and socket messages at their consumed offset. Sparse
+memory holes are identified as zero-filled without probing nonexistent pages.
+Socket payload detail applies to `messages`; `endpoints` remains metadata only.
+`--scan N` bounds total descriptor slots examined, including empty slots (default
+4096, maximum 1048576). It does not raise entry/byte/depth limits. Missing roots,
+invalid counts/indices/types/private pointers, cycles, partial groups and exceeded
+budgets preserve bounded partial evidence rather than guessing ownership.
+
+Maintained manager counters distinguish provider call attempts/results, positive
+short returns, zero/EOF success and returned byte totals. Retries within a call do
+not add attempts. PipeTransfer, memory read/write callbacks and socket Transfer
+are provider operations, not syscall totals. Copied counters count completed data
+copy fragments, including fragments preceding later failure; unknown progress
+inside a failed copy fragment is excluded. Socket send staging copies and receive
+copies are separate. Memory byte totals describe kernel-buffer provider copies.
+Returned bytes can exceed copied bytes under MSG_TRUNC. PEEK can copy bytes and
+install rights without removing queued data. Enqueue, consume, discard, message
+and rights counters record their actual transition sites; packet-tail discards,
+shutdown/collection/final-release discards and failed later metadata are distinct
+from API return success. Installed rights exclude rolled-back installations.
+Live IPC gauges count initialized objects until final release, including failed
+later descriptor installation. All counters are modular atomic uint64 values.
+
+Pipe/memory object markers and socket manager markers cover existing update
+transactions. Held file/table/inode locks and active writer groups report partial
+state; inspection never acquires those locks. Independent atomic counters and
+zero active writers do not establish a coherent global snapshot.
+
+| Semantic ID/version | Exact-build native root and traversal |
+| --- | --- |
+| `arx.ipc` / 1 | `IpcDebugStats`; descriptor count=0/capacity=0 denotes reachability rather than an array. Reuse ProcessDebugStats identities and route validation, then verify provider operation identity and inode type. `IpcState.hpp` defines pipe_state_t and memory_file_t. Read pipe metadata members individually, validate capacity/head/size, and interpret packet bits in logical ring order. Scan 256 memory page slots; correlate inode.backing with dependency-owned backing/page and region identities. Optional SocketDebugStats supplies queued-right roots. |
+| `arx.sockets` / 1 | `SocketDebugStats`; count=0/capacity=128. Dereference typed head/count roots, traverse endpoint next links within 128 nodes, and validate manager/file/operations/privateData/embedded inode links. `SocketState.hpp` defines endpoint, packet and ancillary layouts. Walk pendingNext and message/control next links with count/tail/cycle/depth checks. Preserve explicit address lengths, FIFO order, owner-edge kinds and borrowed lifetimes. |
+
+Descriptors, occupied files, queue nodes, rights, mapping nodes and emitted rows
+share work limits; all copied bytes, including empty descriptor slots, consume
+read budget. Fixed pipe metadata processing is bounded by its physical capacity.
+Roots have production-manager lifetime until quiescent Dispatcher teardown.
+Object addresses have ephemeral identity; native readers must preserve selection,
+reachability, lifetime and partial-result rules. No Request instrumentation,
+history recorder, payload capture service or dump mechanism is introduced.

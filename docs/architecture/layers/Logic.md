@@ -346,6 +346,12 @@ files. `SocketManager.hpp` defines address/message/control records and the API;
 `SocketManager.cpp` coordinates endpoints, readiness, credentials, and descriptor
 passing. User-address arguments are validated/copied by the manager.
 
+Debug builds publish the existing endpoint catalogue, FIFO accepts/messages,
+ancillary ownership and maintained operation/queue counters. UNIX address lengths
+preserve abstract embedded-NUL names. Inspection reads stored readiness without
+calling Poll; observed graphs exclude transient references and do not prove leaks.
+GdbCommands.md documents bounded endpoint/message views and native contracts.
+
 | Function | What it does |
 | --- | --- |
 | `SocketManager(resources, vfs, events, signals)` | Bind descriptor, namespace, readiness, and signal services. |
@@ -366,6 +372,12 @@ passing. User-address arguments are validated/copied by the manager.
 ### InterProcessCommunicationManager
 
 Creates pipes and anonymous memory files through VFS file operations.
+Debug builds expose descriptor/queued-right reachable pipe and memory-file state,
+including logical packet metadata, seals, backing pages and mapping relationships.
+There is no IPC object catalogue. Default inspection excludes payload, and transfer
+counters distinguish returned/copied bytes from queue consumption and discards.
+IpcState.hpp supplies shared runtime/native-reader layouts; GdbCommands.md defines
+the commands, bounds and reachability limits.
 `InterProcessCommunicationManager.hpp` declares the API;
 `InterProcessCommunicationManager.cpp` implements buffering, readiness, and
 memory-file backing. Blocking pipe operations use Event and Signal services.

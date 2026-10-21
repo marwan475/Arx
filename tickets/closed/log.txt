@@ -21,3 +21,4 @@ add_debug_process_resource_views.md
 add_debug_virtual_memory_views.md
 add_debug_filesystem_views.md
 add_debug_scheduling_wait_views.md
+add_debug_ipc_socket_views.md

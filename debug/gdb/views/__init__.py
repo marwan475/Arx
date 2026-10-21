@@ -3,9 +3,11 @@
 Adding fields to stats never needs an adapter. Add an entry here only when a rich
 collection needs interpretation beyond generic DWARF rendering.
 """
-from . import foundation, platform, memory, process, virtual_memory, filesystem, scheduling
+from . import foundation, platform, memory, process, virtual_memory, filesystem, scheduling, communication
 
 ADAPTERS = {
+    (communication.IPC, 1): ("IpcDebugStats", communication.ipc),
+    (communication.SOCKETS, 1): ("SocketDebugStats", communication.sockets),
     (scheduling.SCHEDULER, 1): ("SchedulerDebugStats", scheduling.scheduler),
     (scheduling.SYNC, 1): ("SynchronizationDebugStats", scheduling.sync),
     (scheduling.TIME, 1): ("TimeDebugStats", scheduling.time),

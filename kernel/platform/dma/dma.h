@@ -1,7 +1,7 @@
 #ifndef ARX_PLATFORM_DMA_H
 #define ARX_PLATFORM_DMA_H
 
-#include <device/device.h>
+#include <pci/pci.h>
 #include <memory/pmm.h>
 
 typedef enum platform_dma_status

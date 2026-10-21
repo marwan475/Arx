@@ -38,7 +38,8 @@ typedef enum arx_pci_outcome
     ARX_PCI_ENUMERATING,
     ARX_PCI_SUCCEEDED,
     ARX_PCI_NO_REGIONS,
-    ARX_PCI_FAILED
+    ARX_PCI_FAILED,
+    ARX_PCI_UNSUPPORTED
 } arx_pci_outcome_t;
 
 // v1 native contract: roots borrow platform's kernel-lifetime stored RAM.

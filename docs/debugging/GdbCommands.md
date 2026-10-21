@@ -273,7 +273,7 @@ availability, not the validity of every payload or rich-view descriptor.
 The platform owns these records for the kernel lifetime. `PlatformStats.h` defines
 their layout and numeric stage/outcome vocabulary. The platform stage follows
 the BSP: not started, boot entered, CPU table ready, architecture initializing,
-devices enumerating, waiting for CPUs, platform tests, kernel-stack barrier,
+the reserved devices-enumerating value, waiting for CPUs, platform tests, kernel-stack barrier,
 Dispatcher published, providers published and BSP handoff (values 0 through 10).
 Each CPU independently records not started, architecture initializing,
 architecture initialized and arrival on its permanent kernel stack (0 through 3).
@@ -307,8 +307,10 @@ valid only on their matching rich view and accept no expressions. Each entry
 also reports its inventory index and source address. BAR counts describe register
 slots (at most six), including absent entries and the empty upper slot of a
 64-bit BAR. Captured BAR bases/raw words do not provide probed resource sizes.
-PCI outcomes distinguish not started, enumerating, succeeded, no ECAM regions
-and failed (0 through 4); capacity exhaustion marks a possibly truncated inventory.
+PCI outcomes distinguish not started, enumerating, succeeded, no ECAM regions,
+failed and unsupported (0 through 5); capacity exhaustion marks a truncated
+inventory. Discovery starts through PciManager in `kmain` after `StartKernel`
+returns, so the earlier published provider initially reports not started.
 No config-space, APIC, MSR, MMIO or device-register access is performed.
 
 ### Explicit discovery roots

@@ -2,6 +2,7 @@
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
+#include "layers/Resource/PciManager.hpp"
 #include "layers/Resource/TaskManager.hpp"
 
 #include <arch/arch.h>
@@ -31,6 +32,20 @@ extern "C" void kmain(void)
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
     bool               mounted          = false;
+
+    if (resourceLayerCaps != nullptr && resourceLayerCaps->pciManager != nullptr)
+    {
+        PciStatus status = resourceLayerCaps->pciManager->EnumerateDevices();
+
+        kprintf("Arx kernel: PCI enumeration status=%u devices=%llu truncated=%u\n",
+                (unsigned) status,
+                (unsigned long long) resourceLayerCaps->pciManager->CountDevices(),
+                (unsigned) resourceLayerCaps->pciManager->IsTruncated());
+
+        debug_pci_devices();
+    }
+
+    SelfTestManager::Get().RunPciDiscoveryTests(resourceLayerCaps);
 
     if (resourceLayerCaps != nullptr && logicLayerCaps != nullptr && logicLayerCaps->virtualFileSystem != nullptr)
     {

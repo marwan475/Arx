@@ -434,6 +434,11 @@ void SelfTestManager::SetRootFileSystemMounted(bool mounted)
     __atomic_store_n(&rootFileSystemMounted, mounted, __ATOMIC_RELEASE);
 }
 
+void SelfTestManager::RunPciDiscoveryTests(void* resourceLayerCaps)
+{
+    run_pci_discovery_selftest_group(static_cast<ResourceLayerCaps*>(resourceLayerCaps));
+}
+
 void SelfTestManager::RunPostStartTests(void* resourceLayerCaps, void* logicLayerCaps)
 {
     run_poststartkernel_selftest_group(resourceLayerCaps, logicLayerCaps, __atomic_load_n(&rootFileSystemMounted, __ATOMIC_ACQUIRE));

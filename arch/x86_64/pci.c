@@ -1,6 +1,6 @@
 #include <acpi/acpi.h>
 #include <arch/arch.h>
-#include <device/device.h>
+#include <pci/pci.h>
 #include <klib/klib.h>
 #include <memory/vmm.h>
 #include <platform.h>
@@ -224,6 +224,7 @@ static bool pci_scan_function(const pci_ecam_region_t* region, uint8_t bus, uint
 
     if (*inout_device_count >= MAX_PCI_DEVICES)
     {
+        platform.pci_truncated = true;
         ARX_DEBUG_STORE(platform.debugStats.pci.capacityExhausted, 1);
         kprintf("PCI: device table full (%u), stopping enumeration\n", (unsigned) MAX_PCI_DEVICES);
         return false;
@@ -471,7 +472,7 @@ bool pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entrie
     return true;
 }
 
-bool pci_init(void)
+pci_enumeration_status_t arch_pci_enumerate(void)
 {
     size_t             region_count;
     size_t             extracted_count;
@@ -479,22 +480,22 @@ bool pci_init(void)
 
     platform.pci_devices      = NULL;
     platform.pci_device_count = 0;
+    platform.pci_truncated    = false;
 
     region_count = 0;
 
     if (!pci_get_mcfg_region_count(&region_count))
     {
         error_logger("PCI: failed to read MCFG region count\n");
-        return false;
+        return PCI_FAILED;
     }
 
     if (region_count == 0)
     {
         platform.arch_info.pci_regions      = NULL;
         platform.arch_info.pci_region_count = 0;
-        ARX_DEBUG_STORE(platform.debugStats.pci.outcome, ARX_PCI_NO_REGIONS);
         kprintf("PCI: no ECAM regions present\n");
-        return true;
+        return PCI_NO_REGIONS;
     }
 
     regions = (pci_ecam_region_t*) kmalloc(region_count * sizeof(pci_ecam_region_t));
@@ -502,7 +503,7 @@ bool pci_init(void)
     if (regions == NULL)
     {
         error_logger("PCI: failed to allocate region table (%u entries)\n", (unsigned) region_count);
-        return false;
+        return PCI_FAILED;
     }
 
     extracted_count = 0;
@@ -511,7 +512,7 @@ bool pci_init(void)
     {
         kfree(regions);
         error_logger("PCI: failed to extract MCFG regions\n");
-        return false;
+        return PCI_FAILED;
     }
 
     platform.arch_info.pci_regions      = regions;
@@ -524,7 +525,7 @@ bool pci_init(void)
         kfree(platform.arch_info.pci_regions);
         platform.arch_info.pci_regions      = NULL;
         platform.arch_info.pci_region_count = 0;
-        return false;
+        return PCI_FAILED;
     }
 
     if (!pci_get_device_info())
@@ -533,9 +534,9 @@ bool pci_init(void)
         kfree(platform.arch_info.pci_regions);
         platform.arch_info.pci_regions      = NULL;
         platform.arch_info.pci_region_count = 0;
-        return false;
+        return PCI_FAILED;
     }
 
     kprintf("PCI: loaded %u ECAM region(s) from MCFG\n", (unsigned) extracted_count);
-    return true;
+    return PCI_SUCCESS;
 }

@@ -303,7 +303,7 @@ flowchart TB
     D --> R[Create Resource, then run its tests]
     R --> L[Create Logic using Resource, then run its tests]
     L --> Q[Create Request using Resource and Logic]
-    Q --> F[Mount root and queue per-CPU tasks]
+    Q --> F[Enumerate PCI; mount root; queue tasks]
     F --> G[Release waiting CPUs and activate scheduling]
     G --> T[Scheduled post-init and Request tests]
 ```
@@ -336,7 +336,7 @@ flowchart TB
     P --> B[BSP arch_init: PAT check and MADT discovery]
     B --> C[Per-CPU GDT, TSS and syscall MSRs]
     C --> I[IDT, LAPIC and bootstrap timer; enable interrupts]
-    I --> D[BSP: devices, DMA and AP launch]
+    I --> D[BSP: DMA and AP launch]
     D --> AP[APs repeat per-CPU architecture setup]
     AP --> T[BSP waits for initialized CPUs and runs platform tests]
     T --> S[Kernel stacks and CPU rendezvous]

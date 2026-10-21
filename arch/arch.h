@@ -11,6 +11,7 @@ struct boot_info;
 #endif
 
 #include <klib/signal_types.h>
+#include <pci/pci.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <uacpi/status.h>
@@ -159,7 +160,7 @@ extern "C"
 
     void arch_enable_interrupts();
     void arch_disable_interrupts();
-    bool arch_device_init(void);
+    pci_enumeration_status_t arch_pci_enumerate(void);
 
     uacpi_status arch_acpi_init(struct acpi_madt* madt);
 

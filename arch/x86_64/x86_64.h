@@ -321,7 +321,6 @@ extern "C"
     uint32_t ioapic_register_device(uint32_t gsi);
     bool     pci_get_mcfg_region_count(size_t* out_region_count);
     bool     pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entries, size_t* out_entry_count);
-    bool     pci_init(void);
 
 #define DECL_ISR(n) void ISR##n();
     DECL_ISR(0)

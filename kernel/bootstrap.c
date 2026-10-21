@@ -141,13 +141,6 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
         panic();
     }
 
-    KDEBUG("-> enumerate_devices\n");
-    ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_DEVICES_ENUMERATING);
-    enumerate_devices();
-    KDEBUG("<- enumerate_devices done\n");
-
-    debug_pci_devices();
-
     arch_init_platform_dma();
 
     __atomic_store_n(&platform.cpus[arch_cpu_id()].initialized, true, __ATOMIC_RELEASE);

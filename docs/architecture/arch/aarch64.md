@@ -72,7 +72,7 @@ context switching.
 | Early firmware mapping | `arch_boot_map_physical` returns false. |
 | Signals | `arch_signal.cpp` rejects action validation, preparation, and restoration with EOPNOTSUPP; user-return detection returns false. |
 | Random seed | `arch_user_random_seed` returns false. |
-| Device discovery | `arch_device_init` returns false. |
+| PCI discovery | `arch_pci_enumerate` returns `PCI_UNSUPPORTED`. |
 | Firmware controller setup | `arch_acpi.c` returns success without processing MADT information. |
 | DMA | No AArch64 definitions of the DMA capability/barrier hooks are present; bootstrap initializes the platform DMA backend only on x86_64. |
 

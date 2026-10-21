@@ -30,6 +30,7 @@ public:
     void RunPlatformTests();
     void RunResourceLayerTests(void* resourceLayerCaps);
     void RunLogicLayerTests(void* resourceLayerCaps, void* logicLayerCaps);
+    void RunPciDiscoveryTests(void* resourceLayerCaps);
 
     // Publish the mount result before any per-CPU post-init tasks are queued.
     void SetRootFileSystemMounted(bool mounted);

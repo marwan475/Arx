@@ -76,17 +76,12 @@ void run_platform_invariants(void)
         selftest_case_end("platform/terminal/boot_framebuffer", 1, 0);
     }
 
-    selftest_case_begin("platform/device/inventory");
+    selftest_case_begin("platform/pci/not_enumerated");
+    bool pci_not_started = platform.pci_status == PCI_NOT_ENUMERATED &&
+                           platform.pci_devices == NULL && platform.pci_device_count == 0 &&
+                           !platform.pci_truncated;
 
-    if (platform.pci_device_count == 0)
-    {
-        kprintf("[SELFTEST] SKIP platform/device: no PCI devices discovered\n");
-        selftest_case_finish("platform/device/inventory", 0, 0, SELFTEST_SKIP);
-    }
-    else
-    {
-        selftest_case_end("platform/device/inventory", platform.pci_devices ? 1 : 0, platform.pci_devices ? 0 : 1);
-    }
+    selftest_case_end("platform/pci/not_enumerated", pci_not_started ? 1 : 0, pci_not_started ? 0 : 1);
 }
 
 static void fix_table_checksum(struct acpi_sdt_hdr* header)

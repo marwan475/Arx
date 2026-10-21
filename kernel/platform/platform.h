@@ -3,7 +3,7 @@
 
 #include <arch/arch.h>
 #include <debug/kernel/stats/PlatformStats.h>
-#include <device/device.h>
+#include <pci/pci.h>
 #include <dma/dma.h>
 #include <klib/spinlock.h>
 #include <memory/pmm.h>
@@ -39,6 +39,8 @@ typedef struct platform
     arch_type_t              arch;
     pci_device_t*            pci_devices;
     size_t                   pci_device_count;
+    pci_enumeration_status_t pci_status;
+    bool                     pci_truncated;
     arch_platform_info_t     arch_info;
     platform_dma_ops_t       dma_ops;
     ARX_DEBUG_ONLY(arx_platform_debug_stats_t debugStats;)

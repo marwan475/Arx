@@ -9,7 +9,7 @@ CPU_STAGES = {0: "not-started", 1: "arch-initializing", 2: "arch-initialized",
               3: "kernel-stack-arrived"}
 MAILBOX_TYPES = {0: "NONE", 1: "RESCHEDULE", 2: "INVALIDATE_TLB", 3: "EXCEPTION"}
 PCI_OUTCOMES = {0: "not-started", 1: "enumerating", 2: "succeeded",
-                3: "no-regions", 4: "failed"}
+                3: "no-regions", 4: "failed", 5: "unsupported"}
 
 
 def root(memory, descriptor, type_name, capacity, budget):

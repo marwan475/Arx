@@ -233,11 +233,6 @@ bool arch_init(void)
     return true;
 }
 
-bool arch_device_init(void)
-{
-    return pci_init();
-}
-
 void arch_init_cpu_info(void)
 {
     platform.arch = ARCH_X86_64;

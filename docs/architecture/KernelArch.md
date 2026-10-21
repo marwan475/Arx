@@ -37,7 +37,8 @@ stubs live in `arch_helper.c`.
 
 Platform is the kernel's hardware interface. It uses Arch for machine-specific
 operations and provides CPU state, memory management, the heap, ACPI, device
-setup, DMA services, and terminal output.
+discovery operations, DMA services, and terminal output. PCI discovery is deferred
+until the layers have been constructed.
 
 In `bootstrap.c`, `platform_init` sets up these facilities and starts the other
 CPUs. Platform tests run before the CPUs reach `platform_init_complete`. The
@@ -93,6 +94,7 @@ Resource owns kernel objects and provides the operations needed to manage them.
 | `VirtualMemoryManager.hpp` | Manages address spaces, virtual mappings, and memory backing. |
 | `DmaManager.hpp` | Allocates and tracks coherent DMA memory. |
 | `TimeManager.hpp` | Provides clocks, deadlines, and process interval timers. |
+| `PciManager.hpp` | Triggers PCI discovery and exposes the borrowed platform inventory. |
 | `InitRamFileSystemManager.hpp` | Reads the boot-provided cpio initramfs. |
 | `ResourceFileSystem.hpp` | Provides filesystem backend operations and node handles. |
 
@@ -144,8 +146,10 @@ the following managers.
 
 ## 8. Start normal kernel work
 
-Once the layers exist, `kmain` mounts the initramfs through VirtualFileSystem and
-Resource's filesystem services. It creates and queues post-initialization tasks
+After `StartKernel` returns, `kmain` explicitly calls PciManager to enumerate PCI
+on the bootstrap CPU, then runs the PCI inventory and production DMA checks.
+Discovery failures remain queryable and do not stop startup. It then mounts the
+initramfs through VirtualFileSystem and Resource's filesystem services. It creates and queues post-initialization tasks
 for each CPU, releases the waiting CPUs, and activates scheduling. Those tasks
 perform later initialization and tests.
 
@@ -173,6 +177,7 @@ They check individual managers and interactions between kernel components.
 | After platform setup | Platform tests check the underlying machine and memory services. |
 | After Resource construction | Resource tests check resource managers. |
 | After Logic construction | Logic tests check kernel behavior using Resource services. |
+| After `StartKernel` returns and PCI discovery completes | PCI inventory and production DMA checks use discovered devices. |
 | In scheduled post-initialization tasks | Integration tests exercise work that needs scheduling and multiple CPUs. |
 | After the bootstrap CPU's integration tests | Request tests run, followed by the final summary. |
 

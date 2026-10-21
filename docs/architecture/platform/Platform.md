@@ -149,19 +149,31 @@ It does not initialize a full ACPI runtime.
 NUMA discovery happens earlier through boot-time table access, before this uACPI
 setup. It is part of PMM initialization rather than a later topology rebuild.
 
-## 8. Architecture, devices, and DMA
+## 8. Architecture, PCI, and DMA
 
 On x86_64, `arch_init.c` configures segmentation, syscall entry, interrupts, and
 the local timer. The bootstrap CPU also processes interrupt-controller firmware
 information. Machine-specific details stay in Arch. AArch64 initialization is
 currently incomplete and reports failure.
 
-`device.c` delegates enumeration to Arch. On x86_64, `pci.c` builds the PCI device
-inventory stored in platform state. Discovery records devices; it does not mean
-a driver has been started for every device.
+The PCI-specific platform module is `platform/pci/pci.c`; `pci.h` defines its
+records and injectable enumeration operation table. `platform_pci_enumerate`
+delegates scanning to `arch_pci_enumerate`. The x86_64 backend discovers ACPI ECAM
+regions, maps configuration space, and builds the platform-owned inventory.
+AArch64 reports unsupported. Bootstrap does not invoke discovery: after
+`StartKernel` returns, `kmain` calls Resource's `PciManager::EnumerateDevices`.
+Both the manager and platform API cache the first outcome without rescanning.
 
-After enumeration, x86_64 initializes `dma.c`. It publishes operations for querying,
-mapping, and synchronizing coherent DMA memory, used by DmaManager. The current
+The platform retains inventory storage and ECAM mappings for the kernel lifetime.
+Original record addresses remain stable for DMA and debug readers. Status is
+available in release builds: not enumerated, success, unsupported, no regions, or
+failure. Capacity exhaustion retains up to 256 device functions and separately
+marks the inventory truncated. Captured command/status and BAR values are discovery
+snapshots; BAR lengths, runtime configuration writes, driver binding and hotplug
+are not provided.
+
+During bootstrap, x86_64 initializes `dma.c` independently of PCI discovery. It
+publishes operations for querying, mapping, and synchronizing coherent DMA memory, used by DmaManager. The current
 backend uses direct physical DMA addresses, checks device address constraints,
 and disables that backend when firmware advertises DMA remapping. It does not
 provide an IOMMU translation backend.
@@ -184,7 +196,8 @@ entering `platform_init_complete`.
 After all CPUs report initialized, the bootstrap CPU runs platform self-tests.
 `platformtests.c` groups memory, Klib, data-structure, and platform-invariant tests.
 `memorytests.c` and `platforminvariants.c` are useful starting points for checking
-allocator state, CPU setup, NUMA topology, and device inventory.
+allocator state, CPU setup, NUMA topology, and the deliberately unstarted PCI
+inventory. Checks against discovered devices run later in `kmain`.
 
 All CPUs then meet at `platform_init_complete`. The bootstrap CPU enters `kmain`
 to construct Dispatcher and the layers; other CPUs wait for scheduling. Later

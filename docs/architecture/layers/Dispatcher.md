@@ -38,8 +38,11 @@ Release builds exclude the registry, its initialization and all tracking work.
 3. Create Request with both Resource and Logic capabilities.
 
 This order makes lower-layer services available before their consumers are
-constructed. `StartKernel` then returns to `kmain`, which mounts the root
-filesystem, queues post-init work, and activates scheduling.
+constructed. `StartKernel` then returns to `kmain`, which explicitly invokes Resource
+PciManager enumeration and runs the PCI/production DMA checks before mounting the
+root filesystem, queuing post-init work, and activating scheduling. Layer
+constructors and their unit tests therefore run before the live PCI inventory
+exists; future drivers must start after this discovery step.
 
 Construction happens during bootstrap. Request tests run later in scheduled
 post-init work, rather than immediately after Request construction.

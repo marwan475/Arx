@@ -2,7 +2,7 @@
 #define CPU_H
 
 #include <arch/arch.h>
-#include <device/device.h>
+#include <pci/pci.h>
 #include <klib/spinlock.h>
 #include <memory/heap.h>
 #include <memory/pmm.h>

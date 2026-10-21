@@ -6,9 +6,9 @@ bool arch_init(void)
     return false;
 }
 
-bool arch_device_init(void)
+pci_enumeration_status_t arch_pci_enumerate(void)
 {
-    return false;
+    return PCI_UNSUPPORTED;
 }
 
 void arch_init_cpu_info(void)

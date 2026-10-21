@@ -15,14 +15,16 @@ the services under test.
 
 | Phase | Invocation point | What must already exist |
 | --- | --- | --- |
-| Platform | `bootstrap.c` calls `platform_selftests` after waiting for initialized CPUs. | Memory, heap, terminal, CPU/NUMA state, device enumeration, and platform DMA initialization. |
+| Platform | `bootstrap.c` calls `platform_selftests` after waiting for initialized CPUs. | Memory, heap, terminal, CPU/NUMA state, and platform DMA initialization; PCI has not been enumerated. |
 | Resource unit tests | `Dispatcher::StartKernel` calls `RunResourceLayerTests` immediately after Resource creation. | Platform services and the Resource capabilities; Logic has not been created. |
 | Logic unit tests | `Dispatcher::StartKernel` calls `RunLogicLayerTests` immediately after Logic creation. | Resource and Logic capabilities; Request has not been created and timer scheduling is inactive. |
+| PCI discovery | `kmain` calls `RunPciDiscoveryTests` after explicit enumeration following `StartKernel`. | All layers exist; live PCI discovery has been attempted; scheduling is inactive. |
 | Post-start integration | Each CPU's scheduled post-init task calls `RunPostInitTests`, which enters `RunPostStartTests`. | Request creation, publication of the root-mount result, queued per-CPU post-init tasks, active scheduling, and scheduler timer calibration. |
 | Request syscall tests | The BSP continues from post-start tests into `RunRequestTests`. | Live scheduler and layer capabilities; the integration phase has returned. |
 | Final report | The BSP calls `Finalize` after Request tests. | Completed preceding phases, or an explicit unsafe-abort path. |
 
-`kmain` mounts the cpio root filesystem, publishes the result with
+`kmain` first enumerates PCI through PciManager and runs the live inventory and
+production DMA checks. It then mounts the cpio root filesystem, publishes the result with
 `SetRootFileSystemMounted`, and creates a post-init process/task for every CPU.
 It publishes `bsp_kmain_exited` and activates scheduling. The tests therefore run
 in scheduled kernel tasks rather than continuing on the original bootstrap stack.
@@ -62,7 +64,7 @@ manager used by later C++ tests.
 | `platform/cpu/initialized_state` | CPU inventory, initialized flag, NUMA association, and agreement between active and recorded page tables. |
 | `platform/cpu/preemption_balance` | Balanced preemption-disable depth changes. |
 | `platform/terminal/boot_framebuffer` | Availability of the boot terminal framebuffer, with explicit skip when unavailable. |
-| `platform/device/inventory` | A nonempty PCI inventory has a backing array; an empty inventory is explicitly skipped. |
+| `platform/pci/not_enumerated` | Bootstrap leaves PCI status unstarted, storage absent, count zero and truncation clear. |
 
 The memory tests allocate and free real boot resources; they are not host-side
 allocator simulations. The NUMA parser tests supplement the actual boot inventory
@@ -90,8 +92,9 @@ cases; names are the suffix after `resource/<Manager>/`.
 
 ### DmaManager
 
-`DmaManagerTests.cpp` checks the production platform contract and a mock backend
-whose device addresses differ from physical addresses.
+`DmaManagerTests.cpp` uses a mock backend whose device addresses differ from
+physical addresses during Resource tests. Its `platform_contract` case runs
+later, after PCI discovery in `kmain`, using a record returned by PciManager.
 
 | Test | What it tests |
 | --- | --- |
@@ -104,6 +107,16 @@ whose device addresses differ from physical addresses.
 
 If no reserved DMA pages exist, `resource/DmaManager/reserved_memory` reports
 BLOCKED and the allocation-dependent cases are not reached.
+
+### PciManager
+
+`PciManagerTests.cpp` uses injected inventories during Resource tests. It checks
+that construction and queries leave discovery unstarted, original pointer identity
+and segment/BDF lookup, invalid indices/addresses, empty and failure outcomes,
+truncation, malformed backend results, and caching of both success and failure.
+`resource/PciManager/platform_inventory` runs after live discovery in `kmain`,
+checking platform/manager agreement, stable DMA identities, and repeated calls
+without replacing the inventory.
 
 ### VirtualMemoryManager
 

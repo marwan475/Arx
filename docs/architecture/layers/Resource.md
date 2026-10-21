@@ -1,6 +1,6 @@
 # Resource layer
 
-The Resource layer provides the kernel's memory, process, task, time, DMA, and
+The Resource layer provides the kernel's memory, process, task, time, DMA, PCI, and
 filesystem resources. Logic builds behavior and policy on these services; Request
 can also use them directly. Platform mechanisms and architecture hooks provide
 the underlying machine operations.
@@ -17,8 +17,11 @@ established memory, CPU state, and boot-image information. The factory construct
 the components in the table below, then publishes `ResourceLayerCaps`.
 
 DMA receives the physical/virtual memory managers and `platform.dma_ops`.
-TimeManager initializes its clock backend. InitRamFileSystemManager indexes the
-boot archive using its platform address and size; ResourceFileSystem then wraps
+TimeManager initializes its clock backend. PciManager copies the platform PCI
+operation table without invoking it. After `StartKernel` returns, `kmain` calls
+`EnumerateDevices` on the bootstrap CPU before post-init tasks are queued.
+InitRamFileSystemManager indexes the boot archive using its platform address
+and size; ResourceFileSystem then wraps
 that manager and exports filesystem callbacks.
 
 `GetCaps` returns null before creation. Repeated `Create` calls return the existing
@@ -280,6 +283,34 @@ realtime epoch, availability, and resolution; `read` supplies elapsed monotonic
 nanoseconds. Live use must share Scheduler's monotonic epoch. CPU interval timers
 use execution accounting even though CPU clock queries are not yet supported.
 
+### PciManager
+
+`PciManager.hpp` defines the discovery/query interface and `PciStatus`;
+`PciManager.cpp` wraps an injected platform enumeration backend. The factory owns
+the noncopyable manager and publishes `ResourceLayerCaps::pciManager`. Platform
+owns the inventory; manager destruction does not release its records or mappings.
+
+| Function | What it does |
+| --- | --- |
+| `PciManager(operations)` | Copy the operation table and start in `NotEnumerated`; context must outlive calls. |
+| `EnumerateDevices()` | Invoke the backend once on the BSP during startup and cache the outcome, including failures. |
+| `GetStatus()` | Report `NotEnumerated`, `Success`, `Unsupported`, `NoRegions`, or `Failed`. |
+| `IsTruncated()` | Report whether discovery stopped because inventory capacity was exhausted. |
+| `CountDevices()` | Return the captured device-function count, initially zero. |
+| `GetDevice(index)` | Borrow the original const platform record, or return null for an invalid index. |
+| `FindDevice(segment, bus, device, function)` | Find an exact segment-qualified address, or return null for invalid or absent addresses. |
+
+Queries do not trigger enumeration. After discovery is published to the other
+CPUs, concurrent read-only queries need no manager lock; concurrent enumeration
+and runtime rescans are unsupported. Success with zero devices differs from no
+ECAM regions, an unsupported backend, or failed enumeration. A truncated inventory
+remains usable up to its 256 recorded device functions.
+
+Returned records preserve the pointer identity required by platform DMA. They
+capture discovery-time configuration values, not live register state; BAR metadata
+has no probed resource lengths. Resource provides no configuration writes, BAR
+mapping, driver-selection policy, device claiming, or hotplug in this interface.
+
 ### InitRamFileSystemManager
 
 Indexes up to 256 CPIO entries without copying their file data out of the boot
@@ -365,7 +396,8 @@ PhysicalMemoryManager wraps platform PMM allocation; VirtualMemoryManager wraps
 VMM operations and manages user backing. DmaManager uses the platform DMA operation
 table rather than treating CPU pointers as device addresses. TimeManager's default
 backend calls architecture clock hooks; its alternate backend supports isolated,
-deterministic tests.
+deterministic tests. PciManager explicitly triggers platform PCI discovery and
+borrows its stable records; architecture-specific scanning stays beneath Resource.
 
 Necessary upward work passes through Dispatcher. TaskManager stores opaque
 priority and retirement routes; Dispatcher invokes their policy providers while
@@ -435,7 +467,8 @@ cross-layer memory, task, timing, and process behavior.
 
 | Area | Test files |
 | --- | --- |
-| Memory and DMA | `PhysicalMemoryManagerTests.cpp`, `VirtualMemoryManagerTests.cpp`, `DmaManagerTests.cpp`. |
+| Memory and DMA | `PhysicalMemoryManagerTests.cpp`, `VirtualMemoryManagerTests.cpp`, `DmaManagerTests.cpp`; the production DMA contract runs after PCI discovery. |
+| PCI discovery | `PciManagerTests.cpp`; isolated backend tests run with Resource, production inventory checks run after discovery in `kmain`. |
 | Execution and time | `ProcessManagerTests.cpp`, `TaskManagerTests.cpp`, `TimeManagerTests.cpp`. |
 | Filesystem backend | `InitRamFileSystemManagerTests.cpp`, `ResourceFileSystemTests.cpp`. |
 

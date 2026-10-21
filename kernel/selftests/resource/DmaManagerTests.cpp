@@ -1,4 +1,5 @@
 #include "layers/Resource/DmaManager.hpp"
+#include "layers/Resource/PciManager.hpp"
 #include "layers/Resource/PhysicalMemoryManager.hpp"
 #include "layers/Resource/ResourceLayerFactory.hpp"
 #include "layers/Resource/VirtualMemoryManager.hpp"
@@ -130,41 +131,11 @@ void test_DmaManager(ResourceLayerCaps* resources)
     {
         return;
     }
+
     DmaMock            mock;
     platform_dma_ops_t operations = MockOperations(&mock);
     DmaManager         testManager(resources->physicalMemoryManager, resources->virtualMemoryManager, &operations);
     DmaDevice          device { nullptr, UINT64_MAX, 1, 0 };
-
-    suite.Run("resource/DmaManager/platform_contract", [&](TestCase& t)
-    {
-        DmaDevice             actual { platform.pci_device_count != 0 ? &platform.pci_devices[0] : nullptr, UINT32_MAX, 1, 0 };
-        platform_dma_caps_t   caps {};
-        platform_dma_status_t status = platform.dma_ops.query(platform.dma_ops.context, &actual, &caps);
-        DmaAllocation         buffer {};
-        uint64_t              before = DmaFreePages();
-        DmaStatus             result = manager->AllocateCoherent(actual, 3000, 64, PAGE_SIZE, &buffer);
-
-        if (status == DMA_UNSUPPORTED)
-        {
-            t.Check(result == DmaStatus::Unsupported, "unsupported hardware fails explicitly");
-            t.Equal(buffer.id, 0, "unsupported hardware produces no allocation");
-        }
-        else if (before == 0)
-        {
-            t.Check(result == DmaStatus::NoMemory, "absent reserved memory fails explicitly");
-        }
-        else if (t.Check(result == DmaStatus::Success, "production coherent allocation"))
-        {
-            phys_addr_t physical = resources->virtualMemoryManager->VirtToPhys((virt_addr_t) buffer.cpuAddress, vmm_kernel_space());
-            t.Equal(buffer.dmaAddress.value, physical, "direct backend uses identity device address");
-            manager->WriteBarrier();
-            manager->ReadBarrier();
-            t.Check(manager->FreeCoherent(&buffer) == DmaStatus::Success, "production release");
-        }
-
-        t.Equal(DmaFreePages(), before, "production path restores DMA accounting");
-        t.Equal(manager->CountAllocations(), 0, "production tracking empty");
-    });
 
     if (DmaFreePages() == 0)
     {
@@ -497,4 +468,50 @@ void test_DmaManager(ResourceLayerCaps* resources)
         t.Equal(DmaFreePages(), before, "cycles restore DMA zone accounting");
         t.Equal(testManager.CountAllocations(), 0, "cycles leave no tracking metadata");
     });
+}
+
+void test_DmaManagerPlatform(ResourceLayerCaps* resources)
+{
+    TestCase t("resource/DmaManager/platform_contract");
+
+    if (!t.Check(resources != nullptr && resources->dmaManager != nullptr && resources->pciManager != nullptr,
+                 "DMA and PCI capabilities are present"))
+    {
+        return;
+    }
+
+    DmaManager*           manager = resources->dmaManager;
+    DmaDevice             actual { resources->pciManager->GetDevice(0), UINT32_MAX, 1, 0 };
+    platform_dma_caps_t   caps {};
+    platform_dma_status_t status = DMA_UNSUPPORTED;
+
+    if (platform.dma_ops.query != nullptr)
+    {
+        status = platform.dma_ops.query(platform.dma_ops.context, &actual, &caps);
+    }
+
+    DmaAllocation         buffer {};
+    uint64_t              before = DmaFreePages();
+    DmaStatus             result = manager->AllocateCoherent(actual, 3000, 64, PAGE_SIZE, &buffer);
+
+    if (status == DMA_UNSUPPORTED)
+    {
+        t.Check(result == DmaStatus::Unsupported, "unsupported hardware fails explicitly");
+        t.Equal(buffer.id, 0, "unsupported hardware produces no allocation");
+    }
+    else if (before == 0)
+    {
+        t.Check(result == DmaStatus::NoMemory, "absent reserved memory fails explicitly");
+    }
+    else if (t.Check(result == DmaStatus::Success, "production coherent allocation"))
+    {
+        phys_addr_t physical = resources->virtualMemoryManager->VirtToPhys((virt_addr_t) buffer.cpuAddress, vmm_kernel_space());
+        t.Equal(buffer.dmaAddress.value, physical, "direct backend uses identity device address");
+        manager->WriteBarrier();
+        manager->ReadBarrier();
+        t.Check(manager->FreeCoherent(&buffer) == DmaStatus::Success, "production release");
+    }
+
+    t.Equal(DmaFreePages(), before, "production path restores DMA accounting");
+    t.Equal(manager->CountAllocations(), 0, "production tracking empty");
 }

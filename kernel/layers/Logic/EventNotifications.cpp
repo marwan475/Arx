@@ -1,5 +1,4 @@
 #include "layers/Logic/EventManager.hpp"
-#include "layers/Logic/EventState.hpp"
 #include "layers/Logic/SignalManager.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"

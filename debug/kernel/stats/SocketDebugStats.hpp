@@ -8,7 +8,7 @@ struct socket_endpoint_t;
 // arx.sockets/1: count=0 capacity=128. *head is the manager-owned endpoint list,
 // next until null, max128. *count is the stored live endpoint count, not an array
 // length. Verify manager, file->operations, privateData and embedded inode links.
-// SocketState.hpp supplies exact layouts. pendingHead/pendingNext FIFO owns file
+// SocketManager.hpp supplies exact layouts. pendingHead/pendingNext FIFO owns file
 // refs/internalReferences. peer is WEAK; datagram asymmetry is legitimate.
 // Pending count can be backlog+1 under current admission policy. Message head/
 // next FIFO has <=128 packets per endpoint, offset<=size, queued=sum(size-offset).

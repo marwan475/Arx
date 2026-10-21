@@ -1,5 +1,4 @@
 #include "layers/Logic/EventManager.hpp"
-#include "layers/Logic/EventState.hpp"
 
 #include "layers/Logic/Scheduler.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"

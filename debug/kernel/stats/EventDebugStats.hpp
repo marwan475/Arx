@@ -8,7 +8,7 @@ struct SignalDebugStats;
 // arx.events/1. source's Epolls and Notifications are borrowed intrusive roots.
 // Notifications has at most 64 nodes; epoll/watch chains have no fixed capacity:
 // use explicit reader entry/byte/scan budgets and cycle detection. Nesting <=5.
-// EventState.hpp defines layouts. Verify exact operations, privateData, inode and
+// EventManager.hpp defines layouts. Verify exact operations, privateData, inode and
 // manager identities before casting. Epoll watch files are WEAK: validate close
 // observer membership and stop on a retiring file; never retain or Poll it.
 // armed/pending are stored hints, never computed readiness or delivery history.

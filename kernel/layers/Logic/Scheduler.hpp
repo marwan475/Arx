@@ -2,7 +2,7 @@
 
 #include <debug/kernel/stats/SchedulerDebugStats.hpp>
 
-#include "layers/Resource/TaskScheduling.hpp"
+#include "layers/Resource/TaskManager.hpp"
 
 #include <boot/boot.h>
 #include <cstddef>
@@ -12,7 +12,6 @@
 struct ResourceLayerCaps;
 class EventManager;
 class SynchronizationManager;
-struct task_t;
 struct process_t;
 struct virt_addr_space;
 

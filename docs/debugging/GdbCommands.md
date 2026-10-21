@@ -804,7 +804,7 @@ without promising a coherent cross-provider snapshot.
 Native readers use `arx.filesystem.archive/1` and
 `arx.filesystem.namespace/1`, with matching FileSystemDebugStats.hpp,
 InitRamFileSystemManager.hpp, ResourceFileSystem.hpp,
-VirtualFileSystem.hpp and VirtualFileSystemTypes.hpp. The archive descriptor has
+VirtualFileSystem.hpp. The archive descriptor has
 count zero/capacity 256; its count pointer gives the current array length. VFS
 has count/capacity zero because its published roots point at owner fields for
 null-terminated lists and the lazy hash table. Hash keys are parent/name pairs;
@@ -1095,8 +1095,8 @@ zero active writers do not establish a coherent global snapshot.
 
 | Semantic ID/version | Exact-build native root and traversal |
 | --- | --- |
-| `arx.ipc` / 1 | `IpcDebugStats`; descriptor count=0/capacity=0 denotes reachability rather than an array. Reuse ProcessDebugStats identities and route validation, then verify provider operation identity and inode type. `IpcState.hpp` defines pipe_state_t and memory_file_t. Read pipe metadata members individually, validate capacity/head/size, and interpret packet bits in logical ring order. Scan 256 memory page slots; correlate inode.backing with dependency-owned backing/page and region identities. Optional SocketDebugStats supplies queued-right roots. |
-| `arx.sockets` / 1 | `SocketDebugStats`; count=0/capacity=128. Dereference typed head/count roots, traverse endpoint next links within 128 nodes, and validate manager/file/operations/privateData/embedded inode links. `SocketState.hpp` defines endpoint, packet and ancillary layouts. Walk pendingNext and message/control next links with count/tail/cycle/depth checks. Preserve explicit address lengths, FIFO order, owner-edge kinds and borrowed lifetimes. |
+| `arx.ipc` / 1 | `IpcDebugStats`; descriptor count=0/capacity=0 denotes reachability rather than an array. Reuse ProcessDebugStats identities and route validation, then verify provider operation identity and inode type. `InterProcessCommunicationManager.hpp` defines pipe_state_t and memory_file_t. Read pipe metadata members individually, validate capacity/head/size, and interpret packet bits in logical ring order. Scan 256 memory page slots; correlate inode.backing with dependency-owned backing/page and region identities. Optional SocketDebugStats supplies queued-right roots. |
+| `arx.sockets` / 1 | `SocketDebugStats`; count=0/capacity=128. Dereference typed head/count roots, traverse endpoint next links within 128 nodes, and validate manager/file/operations/privateData/embedded inode links. `SocketManager.hpp` defines endpoint, packet and ancillary layouts. Walk pendingNext and message/control next links with count/tail/cycle/depth checks. Preserve explicit address lengths, FIFO order, owner-edge kinds and borrowed lifetimes. |
 
 Descriptors, occupied files, queue nodes, rights, mapping nodes and emitted rows
 share work limits; all copied bytes, including empty descriptor slots, consume
@@ -1199,7 +1199,7 @@ groups identify interrupted writers and do not provide a coherent global snapsho
 | Semantic ID/version | Exact-build native root and traversal |
 | --- | --- |
 | `arx.signals` / 1 | `SignalDebugStats`, descriptor count=0/capacity=0. Borrow ProcessDebugStats identities and Resource signal layouts. Enumerate allocated process/task slots, follow shared dispositions with positive references, check locks/groups, then read standard senders and compact RT records within count/reserved bounds. Do not invoke Signals, Peek or Consume. |
-| `arx.events` / 1 | `EventDebugStats`, descriptor count=0/capacity=0. EventState.hpp defines stored types. Walk source Epolls/Notifications, validate operation/private-data/inode/manager links and weak observer membership, and use bounded recursion for nested epolls. Discover counters through verified descriptors. Check readinessLock/NotificationLock/counter locks and all related provider groups. |
+| `arx.events` / 1 | `EventDebugStats`, descriptor count=0/capacity=0. EventManager.hpp defines stored types. Walk source Epolls/Notifications, validate operation/private-data/inode/manager links and weak observer membership, and use bounded recursion for nested epolls. Discover counters through verified descriptors. Check readinessLock/NotificationLock/counter locks and all related provider groups. |
 
 Generation is the general wait sequence; TopologyGeneration invalidates depth
 caches, NotificationGeneration deduplicates propagation, and ExclusiveGeneration

@@ -54,7 +54,8 @@ also follow the lifetime and locking rules later in this guide.
 Owns runnable-task selection, CPU placement, scheduling policy, sleeping/waking,
 and execution accounting. `Scheduler.hpp` declares the API; `Scheduler.cpp` and
 `SchedulerPolicies.cpp` implement it. `scheduling_attributes_t` describes requested
-policy; `task_scheduling_t` stores effective task policy in Resource-owned state.
+policy; `task_scheduling_t` in TaskManager.hpp stores effective task policy in
+Resource-owned state.
 
 | Function | What it does |
 | --- | --- |
@@ -116,7 +117,7 @@ roots with operation outcomes. Visible cpio contents combine the actual backend
 archive with runtime state and mount crossings, including uncached names.
 Callback-only backends report known paths and incomplete enumeration. Private
 Resource nodes are decoded only after native capability/operation verification;
-VirtualFileSystemTypes.hpp owns their shared retained layouts. GdbCommands.md
+VirtualFileSystem.hpp owns their shared retained layouts. GdbCommands.md
 describes path identities, precedence, bounds and native-reader semantics.
 
 | Function | What it does |
@@ -247,7 +248,7 @@ implements credential acquisition, permission checks, and replacement.
 Connects file readiness and notifications to Scheduler waits. `EventManager.hpp`
 defines poll/epoll records and the API; `EventManager.cpp` and
 `EventNotifications.cpp` implement events and notification descriptors.
-`EventState.hpp` defines the stored epoll, counter and notification layouts.
+`EventManager.hpp` defines the stored epoll, counter and notification layouts.
 Debug builds publish EventDebugStats and bounded read-only views for weak epoll
 topology, descriptor-discovered counters and global inotify/signalfd state.
 Notification attempts, enqueue/coalescing/overflow outcomes and complete records
@@ -356,7 +357,8 @@ a separate component or factory export.
 ### SocketManager
 
 Implements Unix-domain stream, datagram, and sequenced-packet sockets using VFS
-files. `SocketManager.hpp` defines address/message/control records and the API;
+files. `SocketManager.hpp` defines address/message/control records, endpoint and
+queued packet/ancillary layouts, and the API;
 `SocketManager.cpp` coordinates endpoints, readiness, credentials, and descriptor
 passing. User-address arguments are validated/copied by the manager.
 
@@ -390,9 +392,9 @@ Debug builds expose descriptor/queued-right reachable pipe and memory-file state
 including logical packet metadata, seals, backing pages and mapping relationships.
 There is no IPC object catalogue. Default inspection excludes payload, and transfer
 counters distinguish returned/copied bytes from queue consumption and discards.
-IpcState.hpp supplies shared runtime/native-reader layouts; GdbCommands.md defines
-the commands, bounds and reachability limits.
-`InterProcessCommunicationManager.hpp` declares the API;
+`InterProcessCommunicationManager.hpp` declares the API and shared runtime layouts
+used by matching native readers; GdbCommands.md defines the commands, bounds and
+reachability limits.
 `InterProcessCommunicationManager.cpp` implements buffering, readiness, and
 memory-file backing. Blocking pipe operations use Event and Signal services.
 

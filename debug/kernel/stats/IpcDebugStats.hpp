@@ -7,7 +7,7 @@ struct SocketDebugStats;
 
 // arx.ipc/1: count=0 capacity=0 means descriptor/ancillary reachability, not a
 // catalogue. Verify ProcessDebugStats.vfsRoute before file_t interpretation and
-// pipeOperations/memoryOperations before privateData casts to IpcState.hpp types.
+// pipeOperations/memoryOperations before privateData casts to InterProcessCommunicationManager.hpp types.
 // Native readers enumerate allocated process/task slots (including overrides),
 // deduplicate descriptor tables/files but retain owner edges. Borrowed identities
 // use dependency-owned generations. Socket message rights extend reachable roots

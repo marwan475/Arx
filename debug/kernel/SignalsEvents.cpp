@@ -1,7 +1,6 @@
 #include "DebugManager.hpp"
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SignalManager.hpp"
-#include "layers/Logic/EventState.hpp"
 
 #if DEBUG
 

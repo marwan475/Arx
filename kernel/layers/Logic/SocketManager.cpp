@@ -1,5 +1,4 @@
 #include "layers/Logic/SocketManager.hpp"
-#include "layers/Logic/SocketState.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SignalManager.hpp"

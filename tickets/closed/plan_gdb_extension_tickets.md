@@ -792,7 +792,7 @@ debug information, rather than remaining only an optional candidate.
   effective versus base priority, and FIFO/RR/deadline policy state.
 - Sources: [TaskManager.hpp](../../kernel/layers/Resource/TaskManager.hpp)
   (`Tasks`, `RunningTasks`, `SwitchingTasks`, `task_t`),
-  [TaskScheduling.hpp](../../kernel/layers/Resource/TaskScheduling.hpp),
+  [TaskManager.hpp](../../kernel/layers/Resource/TaskManager.hpp),
   [Scheduler.hpp](../../kernel/layers/Logic/Scheduler.hpp),
   [Scheduler.cpp](../../kernel/layers/Logic/Scheduler.cpp).
 - There is no conventional ready-list root: scheduling scans task slots and

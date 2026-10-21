@@ -120,7 +120,7 @@ change with its limits, or the scoped open follow-up ticket described above.
   storage, decision accounting, grouping and composition publication. Reuse an
   existing field when it already answers the question.
 - **Production collection:** [IpcDebugStats.hpp](../../../debug/kernel/stats/IpcDebugStats.hpp),
-  [IpcState.hpp](../../../kernel/layers/Logic/IpcState.hpp),
+  [InterProcessCommunicationManager.hpp](../../../kernel/layers/Logic/InterProcessCommunicationManager.hpp),
   [Communication.cpp](../../../debug/kernel/Communication.cpp),
   [communication.py](../../../debug/gdb/views/communication.py) and
   [IPC selftests](../../../kernel/selftests/logic/InterProcessCommunicationManagerTests.cpp)

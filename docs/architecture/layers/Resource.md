@@ -134,8 +134,8 @@ noncopyable. Holding the credential guard forbids user copies and manager-lock c
 ### TaskManager
 
 Owns 128 task slots, stacks, saved machine contexts, and execution claims.
-`TaskManager.hpp` declares the API; `TaskManager.cpp` implements task transitions.
-`TaskScheduling.hpp` stores scheduling attributes/state; it exposes no functions.
+`TaskManager.hpp` declares the API, scheduling attributes, per-task scheduling
+state and scheduling constants; `TaskManager.cpp` implements task transitions.
 
 | Function | What it does |
 | --- | --- |

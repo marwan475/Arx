@@ -1,5 +1,4 @@
 #include "layers/Logic/InterProcessCommunicationManager.hpp"
-#include "layers/Logic/IpcState.hpp"
 
 #include "layers/Logic/EventManager.hpp"
 #include "layers/Logic/SignalManager.hpp"

@@ -72,7 +72,7 @@ out with release; historical scheduling/event streams and dump mechanics are exc
   [Scheduler.cpp](../../kernel/layers/Logic/Scheduler.cpp),
   [SchedulerPolicies.cpp](../../kernel/layers/Logic/SchedulerPolicies.cpp):
   `SleepQueue`, `SleepHeads`, execution/accounting arrays, policy selection.
-- [TaskScheduling.hpp](../../kernel/layers/Resource/TaskScheduling.hpp):
+- [TaskManager.hpp](../../kernel/layers/Resource/TaskManager.hpp):
   `task_scheduling_t`, deadline/RR/priority fields.
 - [SynchronizationManager.hpp](../../kernel/layers/Logic/SynchronizationManager.hpp),
   [implementation](../../kernel/layers/Logic/SynchronizationManager.cpp): bounded

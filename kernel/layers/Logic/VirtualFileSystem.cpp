@@ -1,5 +1,4 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
-#include "layers/Logic/VirtualFileSystemTypes.hpp"
 #include "layers/DispatcherRoutes.hpp"
 
 #include "layers/Logic/EventManager.hpp"

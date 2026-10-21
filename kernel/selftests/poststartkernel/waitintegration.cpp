@@ -13,6 +13,18 @@ process_t*         sharedPeer;
 virt_addr_space_t* sharedPeerSpace;
 unsigned           sharedOperation;
 
+void fixture_return_probe(ScheduledFixture& f)
+{
+    cpu_preemption_disable();
+    // Force an early dispatch attempt instead of relying on timer timing.
+    f.T.Check(!f.L->scheduler->ScheduleProcess(f.Result), "fixture driver stays blocked until main completes");
+    cpu_preemption_enable();
+}
+
+void fixture_unused_peer(ScheduledFixture&)
+{
+}
+
 void shared_waiter(ScheduledFixture& f)
 {
     const uint64_t mapped = f.L->processController->MapProcessMemory(SharedSource, 3 * PAGE_SIZE, 3, 0x21, -1, 0);
@@ -201,6 +213,14 @@ static void sibling_main(ScheduledFixture& fixture)
 
 void test_wait_integration(ResourceLayerCaps* r, LogicLayerCaps* l)
 {
+    if (r && r->processManager && l && l->scheduler)
+    {
+        TestCase test("poststartkernel/scheduler/scheduled_fixture_completion");
+        ScheduledFixture fixture(test, r, l, fixture_return_probe, fixture_unused_peer);
+        fixture.Result = r->processManager->GetCurrentProcess()->id;
+        fixture.Run(UINT64_MAX);
+    }
+
     {
         TestCase test("poststartkernel/scheduler/concurrent_siblings");
         if (platform.cpu_count < 2)

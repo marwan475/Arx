@@ -339,6 +339,7 @@ from `ElfMapper/library_backing`.
 | `memory/copy_on_write` | Writing through user-copy detaches cloned backing while the other root retains original bytes. |
 | `events/counter_epoll_notification` | Counter writes publish epoll readiness/data and draining removes level readiness. |
 | `timers/scheduled_sleep` | A scheduled sleep resumes no earlier than its monotonic deadline. |
+| `scheduler/scheduled_fixture_completion` | The fixture driver stays blocked against an early dispatch attempt until its main task completes. |
 | `scheduler/concurrent_siblings` | Two threads in one process run on different CPUs and exercise per-node allocation and cross-node freeing. |
 | `synchronization/shared_cross_process` | Distinct processes/virtual aliases rendezvous through a shared futex key while unrelated backing and private wakes stay isolated. |
 | `synchronization/shared_requeue` | Shared compare/requeue transfers retained backing keys and preserves waiter lifetime across mapping removal. |

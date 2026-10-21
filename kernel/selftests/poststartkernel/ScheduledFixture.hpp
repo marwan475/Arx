@@ -129,7 +129,23 @@ public:
             return false;
         }
 
+        // A context switch does not join the dispatched task. Timer scheduling
+        // can otherwise select this suspended driver before MainEntry finishes.
+        cpu_preemption_disable();
+
+        if (!R->taskManager->MarkSleeping(ReturnTask))
+        {
+            SelfTestManager::Get().AbortUnsafe("cannot block scheduled fixture driver");
+        }
+
         bool dispatched = L->scheduler->ScheduleProcess(Process->id);
+
+        if (!dispatched)
+        {
+            R->taskManager->FinishSleeping(ReturnTask);
+        }
+
+        cpu_preemption_enable();
 
         if (!Completed && dispatched)
         {
@@ -188,6 +204,7 @@ private:
         cpu_preemption_disable();
         __atomic_store_n(&self.Process->exited, true, __ATOMIC_RELEASE);
         self.Completed = true;
+        self.R->taskManager->FinishSleeping(self.ReturnTask);
 
         if (!self.R->taskManager->ExecuteTask(self.ReturnTask))
         {

@@ -154,6 +154,7 @@ struct process_t
     uint32_t               memoryUsers;   // Also prevents attaching shared address-space roots.
     uint32_t               lifetimeUsers; // Retains the process without claiming its mappings.
     spinlock_t             timerLock;
+    ARX_DEBUG_ONLY(arx_debug_group_t timerDebugGroup{};)
     uint64_t               realTimerDeadline;
     uint64_t               realTimerInterval;
     bool                   realTimerArmed;

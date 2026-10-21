@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/SynchronizationDebugStats.hpp>
+
 #include "layers/DispatcherRoutes.hpp"
 
 #include <klib/spinlock.h>
@@ -16,6 +18,9 @@ class  Scheduler;
 class SynchronizationManager
 {
 public:
+    ARX_DEBUG_ONLY(SynchronizationDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
+
     SynchronizationManager(ResourceLayerCaps* resources, Scheduler* scheduler);
     uint64_t Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline, bool shared = false, uint64_t priorityDestination = 0);
     uint64_t Wake(uint64_t address, int32_t count, uint32_t bits, bool shared                                                                   = false);
@@ -30,7 +35,7 @@ public:
     void     ConfigureChildTid(task_t* task, process_t* owner, uint64_t address);
     uint64_t GetRobustList(int32_t tid, uint64_t* head, uint64_t* length);
 
-private:
+    // Public layout types support exact-build read-only native consumers.
     static constexpr size_t CAPACITY = 128;
     static constexpr size_t NONE     = (size_t) -1;
     struct waiter_t
@@ -70,6 +75,8 @@ private:
         uint64_t sequence;
         uint64_t order;
     };
+
+private:
     pi_state_t         PiStates[CAPACITY];
     pi_waiter_t        PiWaiters[CAPACITY];
     uint64_t           PiOrder;

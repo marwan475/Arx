@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/TimeDebugStats.hpp>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,6 +35,9 @@ struct time_clock_backend_t
 class TimeManager
 {
 public:
+    ARX_DEBUG_ONLY(mutable TimeDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager, const ProcessDebugStats* processes);)
+
     TimeManager();
     // Isolated backends allow deterministic tests without republishing hardware
     // state. A live backend must share the scheduler's platform monotonic epoch.

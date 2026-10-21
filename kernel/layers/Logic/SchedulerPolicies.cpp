@@ -163,6 +163,7 @@ uint64_t Scheduler::ConfigurePolicy(task_t* task, const scheduling_attributes_t&
         DeadlineUtilization[state.reservationCpu] -= ReservationUtilization(state.deadlineRuntime, state.deadlinePeriod);
     }
 
+    ARX_DEBUG_ADD(DebugStats.policyChanges, 1);
     state.policy = state.effectivePolicy = policy;
     state.effectivePriority = attributes.priority;
     state.deadlineDonor = nullptr;
@@ -244,6 +245,17 @@ void Scheduler::ApplyPriorityDonation(task_t* task, int32_t nice, uint32_t polic
 {
     LockQueues();
     auto& state = *task->scheduling;
+    ARX_DEBUG_RUN(
+        const auto& previous = *task->scheduling;
+        task_t* effectiveDonor = donor == task ? nullptr : donor;
+
+        if (task->effectiveNice != nice || previous.effectivePolicy != policy
+            || previous.effectivePriority != priority || previous.deadlineDonor != effectiveDonor)
+        {
+            ARX_DEBUG_ADD(DebugStats.donations, 1);
+        }
+    );
+
     __atomic_store_n(&task->effectiveNice, nice, __ATOMIC_RELEASE);
     __atomic_store_n(&state.effectivePriority, priority, __ATOMIC_RELEASE);
     __atomic_store_n(&state.deadlineDonor, donor == task ? nullptr : donor, __ATOMIC_RELEASE);

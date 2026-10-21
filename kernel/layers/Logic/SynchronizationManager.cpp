@@ -108,14 +108,16 @@ void SynchronizationManager::Remove(size_t index)
 
 uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint32_t bits, uint64_t deadline, bool shared, uint64_t priorityDestination)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.wait);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     if ((address & 3) != 0 || bits == 0)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     ProcessManager* processes = Resources->processManager;
@@ -123,7 +125,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
 
     if (process == nullptr)
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     task_t*  task   = Resources->taskManager->GetCurrentTask();
@@ -161,6 +163,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             }
         }
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         uint32_t actual;
         uint64_t status = 0;
 
@@ -213,9 +216,11 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             }
 
             Tail = index;
+            ARX_DEBUG_ADD(DebugStats.queued, 1);
         }
 
         const uint64_t sequence = __atomic_load_n(&waiter.sequence, __ATOMIC_ACQUIRE);
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         end_user_memory(&access);
 
@@ -229,6 +234,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             uint64_t   now   = 0;
             const bool clock = deadline == UINT64_MAX || arch_time_read_monotonic(&now);
             spinlock_acquire_preempt(&Lock);
+            ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
 
             if (waiter.woken)
             {
@@ -244,6 +250,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             }
             else
             {
+                ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
                 spinlock_release_preempt(&Lock);
                 status = SchedulerManager->WaitForEvent(&waiter.sequence, sequence, deadline);
 
@@ -253,6 +260,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
                 }
 
                 spinlock_acquire_preempt(&Lock);
+                ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
                 // A concurrent wake already consumed this waiter; report that success.
 
                 if (waiter.woken)
@@ -275,6 +283,7 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
             waiter.identity = nullptr;
             auto* object    = waiter.object;
             waiter.object   = nullptr;
+            ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
             spinlock_release_preempt(&Lock);
             VirtualMemoryManager::ReleaseBacking(object);
             VirtualMemoryManager::ReleaseBacking(destinationObject);
@@ -288,24 +297,26 @@ uint64_t SynchronizationManager::Wait(uint64_t address, uint32_t expected, uint3
         }
     }();
     processes->ReleaseMemoryProcess(process);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t bits, bool shared)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.wake);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     if ((address & 3) != 0 || bits == 0)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     if (!range_within_u64(address, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
-        return LINUX_EFAULT;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EFAULT);
     }
 
     ProcessManager* processes = Resources->processManager;
@@ -313,7 +324,7 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
 
     if (process == nullptr)
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     uint64_t result;
@@ -350,7 +361,7 @@ uint64_t SynchronizationManager::Wake(uint64_t address, int32_t count, uint32_t 
         result = WakeKey(process->addressSpace, address, count, bits);
     }
     processes->ReleaseMemoryProcess(process);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 uint64_t SynchronizationManager::WakeKey(void* identity, uint64_t offset, int32_t count, uint32_t bits)
@@ -360,12 +371,15 @@ uint64_t SynchronizationManager::WakeKey(void* identity, uint64_t offset, int32_
     // for a nonpositive nr_wake (the limit is checked after removing it).
     const uint32_t limit = count > 0 ? (uint32_t) count : 1U;
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     if (IsPriorityKeyLocked(identity, offset) || IsRequeueKeyLocked(identity, offset))
     {
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         return LINUX_EINVAL;
     }
     const size_t woken = WakeKeyLocked(identity, offset, limit, bits, notify);
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     NotifyWaiters(notify, woken);
     return woken;
@@ -385,6 +399,7 @@ size_t SynchronizationManager::WakeKeyLocked(void* identity, uint64_t offset, ui
         {
             Remove(index);
             waiter.woken = true;
+            ARX_DEBUG_ADD(DebugStats.woken, 1);
             __atomic_add_fetch(&waiter.sequence, 1ULL, __ATOMIC_RELEASE);
             notify[woken++] = &waiter.sequence;
         }
@@ -417,26 +432,28 @@ void SynchronizationManager::WakeExitWord(virt_addr_space_t* space, uint64_t add
 
 uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, bool compare, uint32_t expected, bool shared)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.requeue);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     if ((address & 3) != 0 || (destination & 3) != 0 || wakeCount < 0 || moveCount < 0)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     if (!range_within_u64(address, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END) || !range_within_u64(destination, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
-        return LINUX_EFAULT;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EFAULT);
     }
 
     user_memory_access_t access;
 
     if (!begin_user_memory(&access))
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     const uint64_t* notify[CAPACITY];
@@ -455,9 +472,10 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
     {
         end_user_memory(&access);
 
-        return result;
+        return ARX_WAIT_RESULT(debugOperation, result);
     }
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     uint32_t actual = 0;
 
     if (IsPriorityKeyLocked(sourceKey.identity, sourceKey.offset) || IsPriorityKeyLocked(destinationKey.identity, destinationKey.offset) || IsRequeueKeyLocked(sourceKey.identity, sourceKey.offset) || IsRequeueKeyLocked(destinationKey.identity, destinationKey.offset))
@@ -505,6 +523,7 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
 
                 Tail = index;
                 ++moved;
+                ARX_DEBUG_ADD(DebugStats.moved, 1);
             }
 
             if (index == last)
@@ -518,27 +537,30 @@ uint64_t SynchronizationManager::Requeue(uint64_t address, uint64_t destination,
         result = woken + moved;
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     NotifyWaiters(notify, woken);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t secondCount, uint32_t operation, bool shared)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.wakeOperation);)
+
     if (Resources == nullptr || Resources->processManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     if ((address & 3) != 0 || (destination & 3) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     if (!range_within_u64(address, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END) || !range_within_u64(destination, sizeof(uint32_t), CANONICAL_USER_BASE, CANONICAL_USER_END))
     {
-        return LINUX_EFAULT;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EFAULT);
     }
 
     const uint32_t command  = (operation >> 28) & 7;
@@ -548,7 +570,7 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
 
     if (command > 4)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     const uint32_t argument = (operation & 0x80000000U) != 0 ? 1U << ((uint32_t) operand & 31U) : (uint32_t) operand;
@@ -556,7 +578,7 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
 
     if (!begin_user_memory(&access))
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     const uint64_t* notify[CAPACITY];
@@ -574,9 +596,10 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
     {
         end_user_memory(&access);
 
-        return result;
+        return ARX_WAIT_RESULT(debugOperation, result);
     }
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     uint32_t actual = 0;
 
     if (IsPriorityKeyLocked(sourceKey.identity, sourceKey.offset) || IsPriorityKeyLocked(destinationKey.identity, destinationKey.offset) || IsRequeueKeyLocked(sourceKey.identity, sourceKey.offset) || IsRequeueKeyLocked(destinationKey.identity, destinationKey.offset))
@@ -668,10 +691,11 @@ uint64_t SynchronizationManager::WakeOperation(uint64_t address, uint64_t destin
         }
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     NotifyWaiters(notify, woken);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 uint64_t SynchronizationManager::SetRobustList(uint64_t head)
@@ -1061,6 +1085,7 @@ void SynchronizationManager::RefreshPrioritiesLocked()
         if (changed)
         {
             reschedule |= Scheduler::AvailableCpuMask();
+            ARX_DEBUG_ADD(DebugStats.donationChanges, 1);
         }
     }
 
@@ -1078,26 +1103,30 @@ void SynchronizationManager::RefreshPrioritiesLocked()
 void SynchronizationManager::RefreshPriorities()
 {
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     RefreshPrioritiesLocked();
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     SchedulerManager->RequestReschedule(__atomic_exchange_n(&PriorityRescheduleMask, 0ULL, __ATOMIC_ACQ_REL));
 }
 
 uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t command, uint64_t deadline, bool shared)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.priority);)
+
     if (!arch_task_context_supported())
     {
-        return LINUX_EOPNOTSUPP;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EOPNOTSUPP);
     }
 
     if (Resources == nullptr || Resources->processManager == nullptr || Resources->taskManager == nullptr || SchedulerManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ENOSYS);
     }
 
     if ((address & 3) != 0 || (command != 6 && command != 7 && command != 8 && command != 13))
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     auto       processes = Resources->processManager;
@@ -1112,7 +1141,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
             processes->ReleaseMemoryProcess(process);
         }
 
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     const size_t slot   = task - tasks->GetTasks();
@@ -1133,6 +1162,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
         result = key.Resolve(Resources->virtualMemoryManager, access.space, address, shared);
 
         spinlock_acquire_preempt(&Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
         size_t stateIndex = NONE;
         size_t freeIndex  = NONE;
 
@@ -1421,6 +1451,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
 
         RefreshPrioritiesLocked();
         const uint64_t sequence = __atomic_load_n(&waiter.sequence, __ATOMIC_ACQUIRE);
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         end_user_memory(&access);
 
@@ -1462,6 +1493,7 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
     }
 
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     size_t     stateIndex = waiter.state;
     const bool cancelled  = waiter.used;
     waiter.used           = false;
@@ -1492,12 +1524,13 @@ uint64_t SynchronizationManager::PriorityFutex(uint64_t address, uint32_t comman
         }
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     VirtualMemoryManager::ReleaseBacking(releaseObject);
     NotifyWaiters(notify, notifyCount);
     processes->ReleaseMemoryProcess(process);
 
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 void SynchronizationManager::CleanupPriority(void* context, task_t* task)
@@ -1512,10 +1545,12 @@ void SynchronizationManager::CleanupPriority(void* context, task_t* task)
     for (size_t i = 0; i < CAPACITY; ++i)
     {
         spinlock_acquire_preempt(&manager->Lock);
+        ARX_DEBUG_RUN(arx_debug_group_begin(&manager->DebugStats.group));
         pi_state_t& state = manager->PiStates[i];
 
         if (!state.used || state.owner != task)
         {
+            ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
             spinlock_release_preempt(&manager->Lock);
             continue;
         }
@@ -1547,6 +1582,7 @@ void SynchronizationManager::CleanupPriority(void* context, task_t* task)
         }
 
         manager->RefreshPrioritiesLocked();
+        ARX_DEBUG_RUN(arx_debug_group_end(&manager->DebugStats.group));
         spinlock_release_preempt(&manager->Lock);
 
         if (process != nullptr)
@@ -1617,21 +1653,23 @@ bool SynchronizationManager::IsRequeueKeyLocked(void* identity, uint64_t offset)
 
 uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t destination, int32_t wakeCount, int32_t moveCount, uint32_t expected, bool shared)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.requeuePriority);)
+
     if (!arch_task_context_supported())
     {
-        return LINUX_EOPNOTSUPP;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EOPNOTSUPP);
     }
 
     if ((address & 3) != 0 || (destination & 3) != 0 || wakeCount != 1 || moveCount < 0)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     user_memory_access_t access;
 
     if (!begin_user_memory(&access))
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     FutexKey sourceKey, destinationKey;
@@ -1645,6 +1683,7 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
     const uint64_t* notify[CAPACITY];
     size_t count = 0;
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     uint32_t source = 0, word = 0;
     size_t stateIndex = NONE, freeIndex = NONE;
 
@@ -1816,6 +1855,7 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
                 edge.state = stateIndex;
                 edge.order = ++PiOrder;
                 waiter.converted = waiter.woken = true;
+                ARX_DEBUG_ADD(DebugStats.converted, 1);
                 __atomic_add_fetch(&waiter.sequence, 1ULL, __ATOMIC_RELEASE);
                 notify[moved++] = &waiter.sequence;
             }
@@ -1831,15 +1871,17 @@ uint64_t SynchronizationManager::RequeuePriority(uint64_t address, uint64_t dest
         Resources->taskManager->ReleaseDispatchClaim(owner);
     }
 
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
     end_user_memory(&access);
     NotifyWaiters(notify, moved);
-    return result != 0 ? result : moved;
+    return ARX_WAIT_RESULT(debugOperation, result != 0 ? result : moved);
 }
 
 bool SynchronizationManager::LockSchedulingChange(task_t* task, uint64_t affinity)
 {
     spinlock_acquire_preempt(&Lock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
     bool participant = PiWaiters[task - Resources->taskManager->GetTasks()].used;
 
     for (const auto& state : PiStates)
@@ -1865,6 +1907,7 @@ bool SynchronizationManager::LockSchedulingChange(task_t* task, uint64_t affinit
 
     if (blocked)
     {
+        ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
         spinlock_release_preempt(&Lock);
         return false;
     }
@@ -1874,5 +1917,6 @@ bool SynchronizationManager::LockSchedulingChange(task_t* task, uint64_t affinit
 
 void SynchronizationManager::UnlockSchedulingChange()
 {
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release_preempt(&Lock);
 }

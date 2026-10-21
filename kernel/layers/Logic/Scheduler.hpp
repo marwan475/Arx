@@ -1,5 +1,7 @@
 #pragma once
 
+#include <debug/kernel/stats/SchedulerDebugStats.hpp>
+
 #include "layers/Resource/TaskScheduling.hpp"
 
 #include <boot/boot.h>
@@ -17,6 +19,9 @@ struct virt_addr_space;
 class Scheduler
 {
 public:
+    ARX_DEBUG_ONLY(SchedulerDebugStats DebugStats{};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
+
     explicit Scheduler(ResourceLayerCaps* resourceLayerCaps);
     ~Scheduler() = default;
 
@@ -91,6 +96,8 @@ private:
     void        LockQueues();
     void        UnlockQueues();
 
+public:
+    // Public layout types support exact-build read-only native consumers.
     static constexpr size_t SLEEP_QUEUE_CAPACITY = 128;
     static constexpr size_t NO_SLEEPER           = static_cast<size_t>(-1);
 
@@ -109,6 +116,7 @@ private:
         bool            uninterruptible;
     };
 
+private:
     void AccountSchedulingLocked(uint8_t cpu, uint64_t now);
     void ReplenishReservationsLocked(uint64_t now);
     uint64_t ReservationUtilization(uint64_t runtime, uint64_t period) const;

@@ -250,6 +250,14 @@ Provides clock readings, monotonic deadlines, and process timers.
 `TimeManager.hpp` defines time records and injectable clock callbacks;
 `TimeManager.cpp` implements clock conversion and timer state.
 
+Debug builds publish clock configuration, successful normal-path samples and
+process timer/accounting roots. Real-timer deadlines use monotonic nanoseconds;
+CPU timers use charged user or total user-plus-kernel nanoseconds. Per-process
+timer markers identify interrupted updates. Inspection never calls a clock backend
+or claims the samples are current. Timer commit counts remain separate from API
+return outcomes, including output-copy failure after a commit. GdbCommands.md
+specifies the time views and exact-build reader contracts.
+
 | Function | What it does |
 | --- | --- |
 | `TimeManager()` | Initialize the live architecture clock backend and report its availability. |

@@ -62,10 +62,12 @@ void Scheduler::LockQueues()
 {
     cpu_preemption_disable();
     spinlock_acquire(&QueueLock);
+    ARX_DEBUG_RUN(arx_debug_group_begin(&DebugStats.group));
 }
 
 void Scheduler::UnlockQueues()
 {
+    ARX_DEBUG_RUN(arx_debug_group_end(&DebugStats.group));
     spinlock_release(&QueueLock);
     cpu_preemption_enable();
 }
@@ -147,6 +149,7 @@ void Scheduler::WakeSleepingTasks(uint8_t cpuId)
             *link         = entry.next;
             entry.next    = NO_SLEEPER;
             entry.waiting = false;
+            ARX_DEBUG_ADD(DebugStats.awakened, 1);
             entry.result  = exited ? static_cast<uint64_t>(-3) : interrupted ? static_cast<uint64_t>(-4) : timed && !clockAvailable && !changed ? static_cast<uint64_t>(-38) : 0;
             __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
         }
@@ -196,6 +199,7 @@ void Scheduler::WakeSignalWaiters(process_t* process)
                 *link         = entry.next;
                 entry.next    = NO_SLEEPER;
                 entry.waiting = false;
+                ARX_DEBUG_ADD(DebugStats.awakened, 1);
                 reschedule |= 1ULL << (entry.task->placementCpu >= 0 ? entry.task->placementCpu : entry.cpuId);
                 entry.result  = (uint64_t) -4;
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
@@ -367,6 +371,7 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
                 *link         = entry.next;
                 entry.next    = NO_SLEEPER;
                 entry.waiting = false;
+                ARX_DEBUG_ADD(DebugStats.awakened, 1);
                 reschedule |= 1ULL << (entry.task->placementCpu >= 0 ? entry.task->placementCpu : entry.cpuId);
                 entry.result  = 0;
                 __atomic_store_n(&entry.task->sleepBlocked, false, __ATOMIC_RELEASE);
@@ -384,33 +389,35 @@ void Scheduler::WakeEventWaiters(const uint64_t* sequence)
 
 uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, uint64_t expected, bool uninterruptible)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.sleeps);)
+
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
     {
-        return 0;
+        return ARX_WAIT_RESULT(debugOperation, 0);
     }
 
     uint64_t now = 0;
 
     if (monotonicDeadline != UINT64_MAX && !arch_time_read_monotonic(&now))
     {
-        return static_cast<uint64_t>(-38);
+        return ARX_WAIT_RESULT(debugOperation, static_cast<uint64_t>(-38));
     }
 
     if (monotonicDeadline <= now)
     {
-        return 0;
+        return ARX_WAIT_RESULT(debugOperation, 0);
     }
 
     if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr || ResourceLayerImportCaps->taskManager == nullptr || IdleAddressSpace == nullptr)
     {
-        return static_cast<uint64_t>(-38);
+        return ARX_WAIT_RESULT(debugOperation, static_cast<uint64_t>(-38));
     }
 
     const uint8_t cpuId = arch_cpu_id();
 
     if (cpuId >= BOOT_SMP_MAX_CPUS)
     {
-        return static_cast<uint64_t>(-22);
+        return ARX_WAIT_RESULT(debugOperation, static_cast<uint64_t>(-22));
     }
 
     ProcessManager* processManager = ResourceLayerImportCaps->processManager;
@@ -429,14 +436,14 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         }
 
         cpu_preemption_enable();
-        return static_cast<uint64_t>(-3);
+        return ARX_WAIT_RESULT(debugOperation, static_cast<uint64_t>(-3));
     }
 
     if (IdleTasks[cpuId] == nullptr || !taskManager->MarkSleeping(task))
     {
         processManager->ReleaseMemoryProcess(process);
         cpu_preemption_enable();
-        return static_cast<uint64_t>(-12);
+        return ARX_WAIT_RESULT(debugOperation, static_cast<uint64_t>(-12));
     }
 
     LockQueues();
@@ -448,7 +455,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         taskManager->FinishSleeping(task);
         processManager->ReleaseMemoryProcess(process);
         cpu_preemption_enable();
-        return (uint64_t) -4;
+        return ARX_WAIT_RESULT(debugOperation, (uint64_t) -4);
     }
 
     if (sequence != nullptr && __atomic_load_n(sequence, __ATOMIC_ACQUIRE) != expected)
@@ -457,7 +464,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
         taskManager->FinishSleeping(task);
         processManager->ReleaseMemoryProcess(process);
         cpu_preemption_enable();
-        return 0;
+        return ARX_WAIT_RESULT(debugOperation, 0);
     }
 
     const size_t taskIndex = static_cast<size_t>(task - taskManager->GetTasks());
@@ -470,6 +477,7 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     entry.sequence         = sequence;
     entry.expectedSequence = expected;
     entry.cpuId            = cpuId;
+    ARX_DEBUG_ADD(DebugStats.blocked, 1);
     entry.waiting          = true;
     entry.dispatched       = false;
     entry.uninterruptible  = uninterruptible;
@@ -520,11 +528,13 @@ uint64_t Scheduler::Sleep(uint64_t monotonicDeadline, const uint64_t* sequence, 
     taskManager->FinishSleeping(task);
     processManager->ReleaseMemoryProcess(process);
     cpu_preemption_enable();
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 void Scheduler::ActivateScheduling()
 {
+    ARX_DEBUG_ONLY(DebugUpdate debugUpdate(DebugStats.group);)
+
     for (size_t i = 0; i < BOOT_SMP_MAX_CPUS; i++)
     {
         SchedulingActive[i] = true;
@@ -950,6 +960,7 @@ bool Scheduler::PublishTask(process_t* process, task_t* task)
 
 Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId, scheduling_reason_t reason, process_t* publish, task_t* placement)
 {
+    ARX_DEBUG_ADD(DebugStats.selectAttempts, 1);
     scheduling_decision_t decision = {nullptr, nullptr, UINT64_MAX, cpuId, false, false};
 
     if (cpuId >= platform.cpu_count)
@@ -980,6 +991,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
 
     if (publish != nullptr)
     {
+        ARX_DEBUG_ADD(DebugStats.publishAttempts, 1);
         uint64_t remote = 0;
         LockQueues();
 
@@ -1005,6 +1017,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
                 }
 
                 task->schedulerQueued = true;
+                ARX_DEBUG_ADD(DebugStats.publishedTasks, 1);
 
                 if (task->scheduling->readyOrder == 0)
                 {
@@ -1121,6 +1134,7 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
         if (current != nullptr && ResourceLayerImportCaps->processManager->GetRunningProcess(cpuId) != nullptr && !PolicyEligible(current, cpuId) && tasks->RetainForDispatch(IdleTasks[cpuId]))
         {
             decision.task = IdleTasks[cpuId];
+            ARX_DEBUG_ADD(DebugStats.selectedIdle, 1);
             decision.accepted = true;
         }
 
@@ -1132,10 +1146,12 @@ Scheduler::scheduling_decision_t Scheduler::RunSchedulingAlgorithm(uint8_t cpuId
     // takes precedence while an owner is blocking a higher-priority waiter.
     selected->scheduleRuntime += 1ULL << ((selected->baseNice + 20) / 4);
     selected->schedulerQueued = false;
+    ARX_DEBUG_ADD(DebugStats.selectedTasks, 1);
 
     if (sleeper != nullptr)
     {
         sleeper->dispatched = true;
+        ARX_DEBUG_ADD(DebugStats.dispatchedSleepers, 1);
     }
 
     decision.task = selected;
@@ -1169,6 +1185,7 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
         current->schedulingBusy = true;
     }
 
+    ARX_DEBUG_ADD(DebugStats.dispatchAttempts, 1);
     bool executed = false;
 
     if (current != nullptr && (!(current->affinityMask & (1ULL << cpuId)) || (current->placementCpu >= 0 && current->placementCpu != cpuId)))
@@ -1208,6 +1225,7 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
                 if (decision.task->allocated && !decision.task->dying && decision.task->process == decision.process)
                 {
                     decision.task->schedulerQueued = true;
+                    ARX_DEBUG_ADD(DebugStats.dispatchRequeues, 1);
                 }
 
                 sleep_entry_t& sleeper = SleepQueue[decision.task - tasks->GetTasks()];
@@ -1228,11 +1246,22 @@ bool Scheduler::RunNextReadyProcess(uint8_t cpuId, scheduling_reason_t reason)
     }
 
     cpu_preemption_enable();
+    if (executed)
+    {
+        ARX_DEBUG_ADD(DebugStats.dispatchSuccess, 1);
+    }
+    else
+    {
+        ARX_DEBUG_ADD(DebugStats.dispatchFailure, 1);
+    }
+
     return executed;
 }
 
 void Scheduler::RequestReschedule(uint64_t cpus)
 {
+    ARX_DEBUG_ADD(DebugStats.rescheduleRequests, 1);
+
     for (uint8_t cpu = 0; cpu < platform.cpu_count; ++cpu)
     {
         if (!(cpus & (1ULL << cpu)))

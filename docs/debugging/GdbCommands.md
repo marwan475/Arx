@@ -808,3 +808,152 @@ may be null only for length zero. Index walks accept -1 as empty; other negative
 or out-of-range indices are invalid. Reads can stop mid-mutation, so damaged links
 are evidence rather than proof of permanent corruption. The fixture adapter is
 in foundation.py; FoundationStats.hpp and FoundationCStats.h define the layouts.
+
+## Scheduler, waits, futexes and timers
+
+```text
+arx-debug scheduler stats
+arx-debug scheduler cpus --cpu 1
+arx-debug scheduler tasks --cpu 1 --tid 12
+arx-debug scheduler tasks --cpu 1 --slot 12
+arx-debug scheduler sleeps --cpu 1
+arx-debug sync stats
+arx-debug sync waiters --tid 12
+arx-debug sync pi --pid 9
+arx-debug time stats
+arx-debug time clocks --cpu 1
+arx-debug time timers --pid 9
+```
+
+Dispatcher publishes `time` after Resource construction and reserves `scheduler`
+and `sync` as unavailable until Logic exists. Temporary self-test managers update
+their own records without registering. Generic stats show maintained counts and
+typed collection roots. No Request-layer instrumentation is involved.
+
+`SchedulerDebugStats.hpp`, `SynchronizationDebugStats.hpp`, `TimeDebugStats.hpp`
+and `TimePlatformDebug.h` define the exact-build native-reader contracts. Rich
+views use the common bounded array/index readers and the process/task provider's
+slot and generation identities. All links are current borrowed observations;
+address reuse supplies no historical identity. Invalid, exhausted or unallocated
+identities, unreadable pointers, invalid indices and cycles produce partial
+results. Raise `--bytes` only when a reported byte limit prevents reading the
+selected records; `--limit` and `--depth` remain independent bounds.
+
+### Scheduling and sleep interpretation
+
+The scheduler scans TaskManager's 128 physical slots. It has no conventional
+ready-list root. `tasks` shows stored state/queued flags, dispatch claims, owner
+and placement CPU, affinity, base/effective nice, policy and priority, ready order,
+RR budget and deadline reservation/donor state. Policy identifiers follow the
+existing ABI: OTHER=0, FIFO=1, RR=2, DEADLINE=6. Service is a weighted scheduling
+counter, not elapsed time. Budgets, execution stamps and reservation deadlines
+are nanoseconds; deadline utilization uses a scale of 1,000,000.
+
+Eligibility means passing the checks visible in stored state for the selected
+CPU. The view explains dispatch-retention restrictions, switching/dying state,
+queue/sleep state, affinity, placement, running elsewhere, process stop state,
+deadline budget/reservation and realtime throttling. A matching awakened sleep
+slot changes the queue/dying/sleep checks. Donation uses the observed deadline
+donor's account. Missing identities, invalid policy data or interrupted groups
+make eligibility unknown. The real selection path first reads time, accounts
+execution, replenishes reservations and acquires dispatch claims. Inspection
+performs none of those operations and cannot predict the next task.
+
+`cpus` shows configured CPU slots and their active, idle and execution-task links,
+execution/accounting stamps, realtime windows/consumption, deadline utilization
+and sleep heads. `sleeps` preserves physical slot identity independently of TID,
+shows every occupied selected slot including awakened/dispatched entries, and
+checks all CPU chains. Heads/next use the 64-bit `size_t(-1)` sentinel. A waiting
+entry should be reachable from exactly one head; chains are ordered by monotonic
+deadline. Stored results retain their signed Linux interpretation: 0 is normal
+wake/completion, -3 is exited/dying, -4 interrupted, and -38 unavailable timed
+clock. The futex layer separately interprets timeout versus sequence wake.
+An infinite deadline is `UINT64_MAX`, not an estimated future time.
+
+`tasks` accepts `--cpu`, `--pid` or `--tid`, and `--slot` for a physical task slot;
+`sleeps` uses the same selectors with `--slot` naming a sleep slot. CPU and slot
+can be combined on these two views. `cpus` accepts only `--cpu`. With no CPU
+selector, task exclusions are evaluated for each configured CPU. Task/process
+selectors remain mutually exclusive.
+
+### Futex and priority inheritance interpretation
+
+`waiters` reports ordinary futex waiters in physical array-slot order and reports
+the observed head/next queue order separately. Keys are `(identity, offset)`:
+private keys use address-space identity and a virtual address; shared keys use a
+retained backing object and byte offset. The retained object distinguishes these
+key forms. Requeue destination identity/backing/offset and retention are separate.
+Used/queued/woken, conversion/requeue flags, sequence and wake bits remain visible.
+A wake consuming a waiter does not establish that its task has been dispatched.
+
+`pi` scans used PI states and PI waiter edges, preserving both indices. It shows
+owners, owner base/effective priority and policy, waiter ordering/sequence,
+deadline donors, memory-owner process identity and pending priority-reschedule
+mask. Graph traversal follows observed waiter-to-owner edges with a depth bound.
+Missing/invalid owners and observed cycles are evidence of the stopped state,
+including partial/dead states; they do not prove arbitrary lock deadlock.
+
+Both views accept `--pid` or `--tid`. For `waiters`, `--slot` selects an ordinary
+waiter slot; for `pi`, it selects a PI-state slot and its related edges. PI task
+selection includes states owned by or waited on by that task. Occupancy reports
+identify full arrays, subject to any reported traversal/read limits. Keys and
+owner relationships have ephemeral lifetimes; inspection retains no backing.
+
+### Clocks, domains and counters
+
+`clocks` reads configuration and samples already in RAM. It shows manager clock
+and realtime availability, resolution, realtime base seconds, backend addresses,
+and a successful normal-path monotonic high-water sample. Zero successful reads
+means no sample, even if the stored value is zero. Hardware-backed instances also
+expose selected HPET/ACPI PM clock identity, tick mask, scaling, origin and stored
+elapsed/nanosecond samples. These independent samples can disagree during an
+update. Callback/context addresses are shown only as identifiers and never
+executed or followed into MMIO/port state. `--cpu` selects the stored LAPIC
+calibration, in ticks per 10ms; zero means unavailable/unconfigured. Custom test
+backends have no platform-clock association.
+
+`timers` scans allocated process slots or selects `--pid`, owning process via
+`--tid`, or physical process `--slot`. Real-timer deadlines and intervals use
+MONOTONIC nanoseconds despite the timer name. Virtual CPU timers use charged
+USER_CPU time, and profiling timers use saturating USER+KERNEL_CPU time. Zero
+CPU deadline means disarmed. Accounting excludes live uncharged execution;
+`realTimerExpired` means awaiting restart, not proof of signal delivery. Samples
+have unknown age; views do not fabricate current time, remaining time or overdue
+claims. Timers in different domains cannot be compared directly.
+
+API counts separate attempts, returned success/failure and calls with no recorded
+return (`inFlight`, including suspended or retired calls). Nonnegative Linux
+results, including zero affected waiters, are successful returns. Transition
+counts separately measure queued assignments, selections, actual sleep insertion
+and wake removal, ordinary waiter consumption/requeue, PI conversion, donation
+changes and timer commits/expiration/restart. Republished queued tasks count each
+assignment. `selectAttempts` counts all algorithm calls, including publication
+and placement; selection counters count choices rather than execution.
+`dispatchAttempts` counts RunNextReadyProcess calls after its early guards, and
+success/failure counts its eventual bool result, including idle execution.
+`timerCommits` includes disarming and can increase even when SetTimer subsequently
+returns EFAULT copying the previous timer out. Expiration counts remain valid
+when the resulting signal is ignored. Counter fields use atomic unsigned 64-bit
+updates with modular overflow; their precise scopes are in the stats headers.
+
+Scheduler and synchronization groups bracket their existing queue/PI locks;
+time groups bracket existing timer locks, with a separate marker in each process.
+They add no inspection-time locks. Task/process lifecycle and CPU accounting
+remain independently owned and marked. An interrupted group is partial; zero
+active writers does not establish a cross-manager atomic snapshot. Readers never
+retry waiting for a stopped writer.
+
+### Native collection selection
+
+| Semantic ID/version | Typed root and collection contract |
+| --- | --- |
+| `arx.scheduler` / 1 | `SchedulerDebugStats`, descriptor count=0/capacity=128. Validate root capacity, CPU count against CPU capacity=8, and sentinel. `sleepEntries` is `Scheduler::sleep_entry_t[128]`; heads and CPU pointer/scalar arrays have eight elements. Walk every head using bounded `next` indices to sentinel, detect duplicate reachability/cycles, then scan occupied slots (`task!=null`) in slot order. Task selection scans dependency-owned task slots; CPU selection filters interpretation, never invents a ready list. |
+| `arx.sync` / 1 | `SynchronizationDebugStats`, count=0/capacity=128. `waiters`, `states`, `piWaiters` cast to the public nested `SynchronizationManager::waiter_t`, `pi_state_t`, `pi_waiter_t` arrays. Scan `used` flags within physical bounds, then copy selected records through the common array reader. Validate head/tail/next to sentinel, edge state indices and task-slot addresses. Preserve physical indices; owner/waiter correlations share a bounded work/depth budget. |
+| `arx.time` / 1 | `TimeDebugStats`, count=0/capacity=64. Clock configuration is in the root; optional platform points to `arx_time_platform_debug_t`, whose optional source points only to RAM `clock_source_t`. Never follow the clock's callbacks/context. Timers scan allocated dependency-owned process slots; task selection resolves a current validated task/process association. Check process generation and `timerDebugGroup`, then copy timer fields and independently charged CPU accounting. |
+
+All scans are physically bounded and charge copied bytes even for empty slots.
+Occupied records, linked traversal, emitted rows and PI correlation steps consume
+the shared entry budget. Native readers must preserve collection identity,
+sentinel, selection and partial-result rules instead of interpreting a descriptor
+capacity as an occupied count. Registration roots last until quiescent Dispatcher
+teardown; no provider creates a history recorder or dump mechanism.

@@ -84,8 +84,9 @@ def parse(arguments):
         index += 1
     if "--pid" in options and "--tid" in options:
         raise ReadFailure("--pid and --tid are mutually exclusive")
-    if "--cpu" in options and "--slot" in options:
-        raise ReadFailure("--cpu and --slot are mutually exclusive")
+    if "--cpu" in options and "--slot" in options and positional not in (
+            ["scheduler", "tasks"], ["scheduler", "sleeps"]):
+        raise ReadFailure("--cpu and --slot are mutually exclusive for this view")
     if "--node" in options and ("--cpu" in options or "--slot" in options):
         raise ReadFailure("--node and CPU selectors are mutually exclusive")
     if "--platform" in options and "--registry" in options:

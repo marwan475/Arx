@@ -3,6 +3,8 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
 
 #include "layers/Logic/Scheduler.hpp"
+#include "layers/Logic/SynchronizationManager.hpp"
+#include "layers/Resource/TimeManager.hpp"
 #include "layers/Logic/ProcessController.hpp"
 #include "layers/Logic/CredentialManager.hpp"
 #include "layers/Logic/InterProcessCommunicationManager.hpp"
@@ -66,6 +68,9 @@ void Dispatcher::StartKernel()
         DebugVirtualMemoryPublish(debugManager, ResourceLayerImportCaps->virtualMemoryManager, ResourceLayerImportCaps->processManager);
         debugManager.DeclareUnavailable("lifecycle", "Logic layer not constructed");
         debugManager.DeclareUnavailable("credentials", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("scheduler", "Logic layer not constructed");
+        debugManager.DeclareUnavailable("sync", "Logic layer not constructed");
+        ResourceLayerImportCaps->timeManager->PublishDebug(debugManager, &ResourceLayerImportCaps->processManager->DebugStats);
     );
 
     SelfTestManager::Get().RunResourceLayerTests((void*) ResourceLayerImportCaps);
@@ -75,6 +80,8 @@ void Dispatcher::StartKernel()
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
     ARX_DEBUG_RUN(
+        LogicLayerImportCaps->scheduler->PublishDebug(debugManager);
+        LogicLayerImportCaps->synchronizationManager->PublishDebug(debugManager);
         LogicLayerImportCaps->virtualFileSystem->PublishDebug(debugManager);
         ElfDebugStats& elf = LogicLayerImportCaps->elfMapper->DebugStats;
         debugManager.Publish("elf", "ElfDebugStats", &elf, sizeof(elf), 1, &elf.group);

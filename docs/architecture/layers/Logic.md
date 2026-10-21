@@ -97,6 +97,13 @@ policy; `task_scheduling_t` stores effective task policy in Resource-owned state
 | `NotifyProcessExit(process)` | Publish completed exit and wake/notify the parent once. |
 | `ChangeStoppedState(process, signal, stopped)` | Update stop/continue state and notify scheduling/waiting participants. |
 
+Debug builds publish scheduler CPU accounting, task policy/eligibility and indexed
+sleep views, plus synchronization waiter/PI views. Manager-owned counters separate
+API outcomes from committed wait/wake/requeue/donation transitions. Inspection
+uses existing task/process slot identities and reports interrupted updates without
+acquiring queue locks or predicting the next task. GdbCommands.md documents the
+commands, bounds and native-reader contracts.
+
 ### VirtualFileSystem
 
 Owns namespace traversal, mount registration, dentries/inodes, file operations,

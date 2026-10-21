@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <klib/clock.h>
+#include <debug/kernel/stats/TimePlatformDebug.h>
 #include <klib/klib.h>
 #include <memory/vmm.h>
 #include <platform.h>
@@ -302,6 +303,12 @@ bool arch_time_init(uint64_t* realtimeSeconds, bool* realtimeAvailable, uint64_t
     }
 
     *resolutionNanoseconds = ((uint64_t) selected->numerator + selected->denominator - 1) / selected->denominator;
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&arx_time_platform_debug.group);
+        arx_time_platform_debug.sourceId = selected == &sources[0] ? 1 : 2;
+        __atomic_store_n(&arx_time_platform_debug.source, selected, __ATOMIC_RELEASE);
+        arx_debug_group_end(&arx_time_platform_debug.group);
+    );
     __atomic_store_n(&active_source, selected, __ATOMIC_RELEASE);
     kprintf("Arx kernel: selected clock source %s\n", selected == &sources[0] ? "HPET" : "ACPI PM timer");
     return true;

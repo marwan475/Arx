@@ -3,9 +3,12 @@
 Adding fields to stats never needs an adapter. Add an entry here only when a rich
 collection needs interpretation beyond generic DWARF rendering.
 """
-from . import foundation, platform, memory, process, virtual_memory, filesystem
+from . import foundation, platform, memory, process, virtual_memory, filesystem, scheduling
 
 ADAPTERS = {
+    (scheduling.SCHEDULER, 1): ("SchedulerDebugStats", scheduling.scheduler),
+    (scheduling.SYNC, 1): ("SynchronizationDebugStats", scheduling.sync),
+    (scheduling.TIME, 1): ("TimeDebugStats", scheduling.time),
     (filesystem.ARCHIVE_SEMANTICS, 1): ("InitRamDebugStats", filesystem.archive_view),
     (filesystem.VFS_SEMANTICS, 1): ("VfsDebugStats", filesystem.vfs_view),
     (virtual_memory.SEMANTICS, 1): ("arx_vmm_debug_stats_t", virtual_memory.gather),

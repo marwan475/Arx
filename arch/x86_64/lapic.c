@@ -4,6 +4,8 @@
 #include <memory/vmm.h>
 #include <platform.h>
 
+#include <debug/kernel/stats/TimePlatformDebug.h>
+
 static uint64_t scheduler_timer_ticks[BOOT_SMP_MAX_CPUS];
 
 static volatile uint8_t* lapic_get_base(const cpu_info_t* cpu)
@@ -116,6 +118,7 @@ bool lapic_timer_calibrate(void)
     REG(uint32_t, registers + LAPIC_REG_LVT_TIMER)     = measured ? LAPIC_LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR : previous_lvt;
     REG(uint32_t, registers + LAPIC_REG_INITIAL_COUNT) = measured ? (uint32_t) initial : previous_initial;
     __atomic_store_n(&scheduler_timer_ticks[arch_cpu_id()], measured ? initial : 0, __ATOMIC_RELEASE);
+    ARX_DEBUG_STORE(arx_time_platform_debug.lapicTicks[arch_cpu_id()], measured ? initial : 0);
     cpu_preemption_enable();
 
     if (measured)

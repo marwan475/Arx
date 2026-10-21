@@ -55,11 +55,42 @@ TimeManager::TimeManager() : TimeManager({initialize_platform_clock, read_platfo
 TimeManager::TimeManager(const time_clock_backend_t& backend) : RealtimeSeconds(0), ResolutionNanoseconds(0), ClockAvailable(false), RealtimeAvailable(false), Backend(backend)
 {
     ClockAvailable = Backend.initialize != nullptr && Backend.read != nullptr && Backend.initialize(Backend.context, &RealtimeSeconds, &RealtimeAvailable, &ResolutionNanoseconds) && ResolutionNanoseconds != 0;
+
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.clockAvailable = ClockAvailable;
+        DebugStats.realtimeAvailable = RealtimeAvailable;
+        DebugStats.realtimeSeconds = RealtimeSeconds;
+        DebugStats.resolutionNanoseconds = ResolutionNanoseconds;
+        DebugStats.backendInitialize = reinterpret_cast<uintptr_t>(Backend.initialize);
+        DebugStats.backendRead = reinterpret_cast<uintptr_t>(Backend.read);
+        DebugStats.backendContext = reinterpret_cast<uintptr_t>(Backend.context);
+        DebugStats.platform = Backend.read == read_platform_clock ? &arx_time_platform_debug : nullptr;
+    );
 }
 
 bool TimeManager::ReadMonotonic(uint64_t* nanoseconds) const
 {
-    return ClockAvailable && Backend.read(Backend.context, nanoseconds);
+    const bool success = ClockAvailable && Backend.read(Backend.context, nanoseconds);
+
+    ARX_DEBUG_RUN(
+        if (success)
+        {
+            uint64_t previous = __atomic_load_n(&DebugStats.sampleNanoseconds, __ATOMIC_RELAXED);
+
+            while (previous < *nanoseconds && !__atomic_compare_exchange_n(&DebugStats.sampleNanoseconds, &previous, *nanoseconds, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            {
+            }
+
+            ARX_DEBUG_ADD(DebugStats.sampleReads, 1);
+        }
+        else
+        {
+            ARX_DEBUG_ADD(DebugStats.sampleFailures, 1);
+        }
+    );
+
+    return success;
 }
 
 uint64_t TimeManager::ReadClock(int clock, time_timespec_t* value)
@@ -200,6 +231,10 @@ uint64_t TimeManager::GetTimer(int which, uint64_t destination)
     uint64_t         result  = 0;
     TaskManager::AccountActive(false);
     spinlock_acquire_preempt(&process->timerLock);
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&DebugStats.group);
+        arx_debug_group_begin(&process->timerDebugGroup);
+    );
 
     if (((which == 0 && process->realTimerArmed) || which != 0) && !ReadMonotonic(&now))
     {
@@ -211,6 +246,10 @@ uint64_t TimeManager::GetTimer(int which, uint64_t destination)
         result = safe_write_user_locked(&access, destination, &value, sizeof(value)) ? 0 : LINUX_EFAULT;
     }
 
+    ARX_DEBUG_RUN(
+        arx_debug_group_end(&process->timerDebugGroup);
+        arx_debug_group_end(&DebugStats.group);
+    );
     spinlock_release_preempt(&process->timerLock);
     end_user_memory(&access);
     return result;
@@ -218,16 +257,18 @@ uint64_t TimeManager::GetTimer(int which, uint64_t destination)
 
 uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.setTimer);)
+
     if (which < 0 || which > 2)
     {
-        return LINUX_EINVAL;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_EINVAL);
     }
 
     user_memory_access_t access;
 
     if (!begin_user_memory(&access))
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     process_t*       process = access.process;
@@ -250,6 +291,10 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
         TaskManager::AccountActive(false);
         const uint64_t cpuNow = which == 0 ? 0 : cpu_clock(process, which);
         spinlock_acquire_preempt(&process->timerLock);
+        ARX_DEBUG_RUN(
+            arx_debug_group_begin(&DebugStats.group);
+            arx_debug_group_begin(&process->timerDebugGroup);
+        );
 
         if (!timeval_nanoseconds(value.value, &duration) || !timeval_nanoseconds(value.interval, &interval))
         {
@@ -293,15 +338,20 @@ uint64_t TimeManager::SetTimer(int which, uint64_t source, uint64_t previous)
 
             process->timerIntervalSeconds[which]      = value.interval.seconds;
             process->timerIntervalMicroseconds[which] = value.interval.microseconds;
+            ARX_DEBUG_ADD(DebugStats.timerCommits, 1);
             // Linux commits the new timer before copying the old value out.
             result = previous == 0 || safe_write_user_locked(&access, previous, &old, sizeof(old)) ? 0 : LINUX_EFAULT;
         }
 
+        ARX_DEBUG_RUN(
+            arx_debug_group_end(&process->timerDebugGroup);
+            arx_debug_group_end(&DebugStats.group);
+        );
         spinlock_release_preempt(&process->timerLock);
     }
 
     end_user_memory(&access);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 bool TimeManager::ExpireCpuTimers(process_t* process)
@@ -312,6 +362,10 @@ bool TimeManager::ExpireCpuTimers(process_t* process)
     }
 
     spinlock_acquire_preempt(&process->timerLock);
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&DebugStats.group);
+        arx_debug_group_begin(&process->timerDebugGroup);
+    );
     uint64_t signals = 0;
 
     for (int index = 0; index < 2; ++index)
@@ -321,6 +375,7 @@ bool TimeManager::ExpireCpuTimers(process_t* process)
 
         if (deadline != 0 && elapsed >= deadline)
         {
+            ARX_DEBUG_ADD(DebugStats.cpuExpirations, 1);
             signals |= 1ULL << (index == 0 ? 25 : 26); // SIGVTALRM, SIGPROF
             const uint64_t interval = process->cpuTimerInterval[index];
             const uint64_t step     = interval == 0 ? 0 : interval - (elapsed - deadline) % interval;
@@ -360,6 +415,10 @@ bool TimeManager::ExpireCpuTimers(process_t* process)
         published = signals != 0;
     }
 
+    ARX_DEBUG_RUN(
+        arx_debug_group_end(&process->timerDebugGroup);
+        arx_debug_group_end(&DebugStats.group);
+    );
     spinlock_release_preempt(&process->timerLock);
     return published;
 }
@@ -371,11 +430,13 @@ uint64_t TimeManager::CancelAlarm()
 
 uint64_t TimeManager::SetAlarm(uint32_t seconds)
 {
+    ARX_DEBUG_ONLY(DebugResultOperation debugOperation(DebugStats.setAlarm);)
+
     user_memory_access_t access;
 
     if (!begin_user_memory(&access))
     {
-        return LINUX_ESRCH;
+        return ARX_WAIT_RESULT(debugOperation, LINUX_ESRCH);
     }
 
     process_t*     process  = access.process;
@@ -383,6 +444,10 @@ uint64_t TimeManager::SetAlarm(uint32_t seconds)
     uint64_t       result   = 0;
     const uint64_t duration = (uint64_t) seconds * 1000000000;
     spinlock_acquire_preempt(&process->timerLock);
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&DebugStats.group);
+        arx_debug_group_begin(&process->timerDebugGroup);
+    );
 
     if ((seconds != 0 || process->realTimerArmed) && !ReadMonotonic(&now))
     {
@@ -409,12 +474,17 @@ uint64_t TimeManager::SetAlarm(uint32_t seconds)
         process->realTimerExpired             = false;
         process->timerIntervalSeconds[0]      = 0;
         process->timerIntervalMicroseconds[0] = 0;
+        ARX_DEBUG_ADD(DebugStats.timerCommits, 1);
         result = (uint32_t) remaining;
     }
 
+    ARX_DEBUG_RUN(
+        arx_debug_group_end(&process->timerDebugGroup);
+        arx_debug_group_end(&DebugStats.group);
+    );
     spinlock_release_preempt(&process->timerLock);
     end_user_memory(&access);
-    return result;
+    return ARX_WAIT_RESULT(debugOperation, result);
 }
 
 bool TimeManager::ExpireRealTimer(process_t* process, uint64_t now)
@@ -425,12 +495,17 @@ bool TimeManager::ExpireRealTimer(process_t* process, uint64_t now)
     }
 
     spinlock_acquire_preempt(&process->timerLock);
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&DebugStats.group);
+        arx_debug_group_begin(&process->timerDebugGroup);
+    );
     bool expired = false;
 
     if (process->realTimerArmed && now >= process->realTimerDeadline)
     {
         process->realTimerArmed   = false;
         process->realTimerExpired = true;
+        ARX_DEBUG_ADD(DebugStats.realExpirations, 1);
         SignalDispositionGuard signalGuard(process);
         const uint64_t         bit = 1ULL << 13; // SIGALRM
 
@@ -448,6 +523,10 @@ bool TimeManager::ExpireRealTimer(process_t* process, uint64_t now)
         signalGuard.Release();
     }
 
+    ARX_DEBUG_RUN(
+        arx_debug_group_end(&process->timerDebugGroup);
+        arx_debug_group_end(&DebugStats.group);
+    );
     spinlock_release_preempt(&process->timerLock);
     return expired;
 }
@@ -460,6 +539,10 @@ void TimeManager::RestartRealTimer(process_t* process)
     }
 
     spinlock_acquire_preempt(&process->timerLock);
+    ARX_DEBUG_RUN(
+        arx_debug_group_begin(&DebugStats.group);
+        arx_debug_group_begin(&process->timerDebugGroup);
+    );
     uint64_t now = 0;
 
     if (process->realTimerExpired && process->realTimerInterval != 0 && ReadMonotonic(&now))
@@ -474,9 +557,14 @@ void TimeManager::RestartRealTimer(process_t* process)
         {
             process->realTimerDeadline = base + step;
             process->realTimerArmed    = true;
+            ARX_DEBUG_ADD(DebugStats.realRestarts, 1);
         }
     }
 
     process->realTimerExpired = false;
+    ARX_DEBUG_RUN(
+        arx_debug_group_end(&process->timerDebugGroup);
+        arx_debug_group_end(&DebugStats.group);
+    );
     spinlock_release_preempt(&process->timerLock);
 }

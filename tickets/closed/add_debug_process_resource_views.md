@@ -92,7 +92,7 @@ Request-layer support, historical tracing and dump mechanics are excluded.
   and security update sites; register production records through construction wiring.
 - [VirtualFileSystem.hpp](../../kernel/layers/Logic/VirtualFileSystem.hpp):
   `file_t`, `inode_t`, `file_close_observer_t`; namespace readers belong to
-  [filesystem work](../feature/add_debug_filesystem_views.md).
+  [filesystem work](../closed/add_debug_filesystem_views.md).
 - Unknowns: retained-slot identity, parent publication during clone/exit,
   reparenting semantics, counter resets/overflow, table scan limits and how to
   describe borrowed/temporary references. Avoid changing process ownership rules.

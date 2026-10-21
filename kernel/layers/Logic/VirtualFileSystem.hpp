@@ -1,4 +1,5 @@
 #pragma once
+#include <debug/kernel/stats/FileSystemDebugStats.hpp>
 
 #include <stdint.h>
 
@@ -249,6 +250,8 @@ struct vfs_overlay_dentry_entry_t;
 class VirtualFileSystem
 {
 public:
+    ARX_DEBUG_ONLY(mutable VfsDebugStats DebugStats = {};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
     // Readiness graph mutation and final-close detachment share this lock.
     // Observers are intrusive and weak. Closing runs under this lock and may
     // detach observers, but cannot close files or call producer/driver code.

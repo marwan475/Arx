@@ -17,6 +17,7 @@
 #include <debug/kernel/Foundation.hpp>
 #include <debug/kernel/Platform.hpp>
 #include <debug/kernel/VirtualMemory.hpp>
+#include "layers/Resource/InitRamFileSystemManager.hpp"
 #include <debug/kernel/stats/VirtualMemoryDebugStats.h>
 #include "layers/Logic/ElfMapper.hpp"
 #include <platform.h>
@@ -60,6 +61,8 @@ void Dispatcher::StartKernel()
     ARX_DEBUG_RUN(
         ResourceLayerImportCaps->processManager->PublishDebug(debugManager, ResourceLayerImportCaps->taskManager, dispatcher_vfs_file_operations());
         ResourceLayerImportCaps->taskManager->PublishDebug(debugManager, ResourceLayerImportCaps->processManager);
+        ResourceLayerImportCaps->initRamFileSystemManager->PublishDebug(debugManager);
+        static_cast<ResourceFileSystem*>(ResourceLayerImportCaps->fileSystemCaps->context)->PublishDebug(debugManager);
         DebugVirtualMemoryPublish(debugManager, ResourceLayerImportCaps->virtualMemoryManager, ResourceLayerImportCaps->processManager);
         debugManager.DeclareUnavailable("lifecycle", "Logic layer not constructed");
         debugManager.DeclareUnavailable("credentials", "Logic layer not constructed");
@@ -72,6 +75,7 @@ void Dispatcher::StartKernel()
     LogicLayerCaps* LogicLayerImportCaps = logicLayerFactory->Create(ResourceLayerImportCaps);
 
     ARX_DEBUG_RUN(
+        LogicLayerImportCaps->virtualFileSystem->PublishDebug(debugManager);
         ElfDebugStats& elf = LogicLayerImportCaps->elfMapper->DebugStats;
         debugManager.Publish("elf", "ElfDebugStats", &elf, sizeof(elf), 1, &elf.group);
         LifecycleDebugStats& lifecycle = LogicLayerImportCaps->processController->DebugStats;

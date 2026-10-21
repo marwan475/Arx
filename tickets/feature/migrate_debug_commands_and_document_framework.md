@@ -26,7 +26,7 @@ Depends on [foundations](../closed/build_debug_framework_foundation.md) and the 
 parts of [physical allocation](../closed/add_debug_physical_allocation_views.md),
 [process/resources](../closed/add_debug_process_resource_views.md),
 [memory](../closed/add_debug_virtual_memory_views.md),
-[filesystems](add_debug_filesystem_views.md) and
+[filesystems](../closed/add_debug_filesystem_views.md) and
 [platform/CPU/PCI](../closed/add_debug_platform_cpu_pci_views.md).
 Do not require unrelated new signal/socket/event enhancements before removing
 legacy commands once all required migrated coverage passes. Provider tickets
@@ -167,8 +167,8 @@ in a live session. No kernel build/boot was performed for this planning task.
 | `arx-cpus` | Optional CPU expression; count/slots/arch, platform IOAPIC details and CPU ID, NUMA/address space and LAPIC/ACPI identity. | `platform`, `cpu_info_t`, `arch_info_t`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-pci` | No supported selector; arguments are ignored. Arch/count/array pointer, x86 BDF/vendor/device summary. | `platform.pci_devices`, `pci_device_count`; [platform views](../closed/add_debug_platform_cpu_pci_views.md). |
 | `arx-heap` | Optional CPU expression; NUMA heap lock, cache size, partial/full/empty slab/object totals and metadata-pool pointers/shape. | `platform.cpus[] -> numa_node.heap.caches[]`; [physical allocation](../closed/add_debug_physical_allocation_views.md). |
-| `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../feature/add_debug_filesystem_views.md). |
-| `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../feature/add_debug_filesystem_views.md). |
+| `arx-vfs` | Optional leading `--verbose`/`-v`, then optional VFS expression (pointer or object). Default mount paths plus sorted unique cached dentry paths; verbose namespace/cache and detailed mounts/filesystems/root inodes. | Explicit object or Logic VFS discovery, mount list and occupied dentry hash buckets/parent chains; [filesystem views](../closed/add_debug_filesystem_views.md). |
+| `arx-initramfs` | Optional exact path string. Manager/count/capacity, all archive path/size/data entries or one selected entry. | Resource InitRamFileSystemManager `Archives`/`ArchiveCount`; [filesystem views](../closed/add_debug_filesystem_views.md). |
 | `arx-proc` | Optional PID expression. Lists allocated slots with PID/address-space/task head; selected process adds allocation state, task count and first 16 task IDs. | Resource ProcessManager `Processes`, process task links; [process/resources](../closed/add_debug_process_resource_views.md). |
 | `arx-task` | Required TID expression; selected allocated slot's ID/allocation/stack/next/prev and raw architecture context. | Resource TaskManager `Tasks`; [process/resources](../closed/add_debug_process_resource_views.md), with policy/waits added by [scheduling](../feature/add_debug_scheduling_wait_views.md). |
 | `arx-rsrc` | Arguments ignored. Dispatcher/factory/caps and labeled manager addresses plus type availability. | Unconditional raw Resource slot reads; preserve useful discovery/type diagnostics in [foundation](../closed/build_debug_framework_foundation.md)/[platform](../closed/add_debug_platform_cpu_pci_views.md), not wrong slot values. |
@@ -329,3 +329,22 @@ symbol exclusion/native-header checks pass. A QEMU/GDB run verifies retained
 writeback, clone backing, inactive process selection, known mapped/unmapped VA,
 and existing protection/shared-writeback/COW fixtures. GdbCommands.md documents
 format and completeness limits. This records parity without expanding cutover.
+
+### 2026-10-20 — VFS/initramfs migration coverage verified
+
+[Filesystem views](../closed/add_debug_filesystem_views.md) preserve
+arx-initramfs parsed-entry enumeration and exact-name size/data information,
+adding raw mode/UID/GID and inferred hierarchy. VFS mounts/cache preserve mount,
+root, filesystem and dentry identities, ancestry, flags and hash occupancy.
+Visible contents additionally reconstruct uncached native cpio paths, overlay
+precedence and mount shadow/bind/move behavior; callback-only backends explicitly
+remain incomplete. Retired, unlinked and rename-forwarding records are labeled
+separately. Existing legacy commands remain until cutover.
+
+Thirteen focused host tests, x86_64 debug/release builds, release exclusion and
+native-layout/header checks passed. Final one-CPU QEMU/GDB inspection passed
+with known archive paths, rename/unlink and bind/move fixtures, verified backend
+identity and unchanged cache occupancy. An earlier four-CPU VFS run passed;
+a later four-CPU run was blocked before the VFS fixture by a task-cleanup failure,
+recorded in the owning ticket without a claimed root cause or expanded scheduler
+investigation. GdbCommands.md documents commands, bounds and native contracts.

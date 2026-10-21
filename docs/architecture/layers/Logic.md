@@ -104,6 +104,14 @@ and backend access rules. `VirtualFileSystem.hpp` defines the API and callback
 records; `VirtualFileSystem.cpp` implements them. Registered filesystem descriptors
 and backend identities must remain valid until teardown.
 
+Debug views publish namespace, mount, lazy-cache, overlay and retained-entry
+roots with operation outcomes. Visible cpio contents combine the actual backend
+archive with runtime state and mount crossings, including uncached names.
+Callback-only backends report known paths and incomplete enumeration. Private
+Resource nodes are decoded only after native capability/operation verification;
+VirtualFileSystemTypes.hpp owns their shared retained layouts. GdbCommands.md
+describes path identities, precedence, bounds and native-reader semantics.
+
 | Function | What it does |
 | --- | --- |
 | `ObserveFileLocked(file, observer)` | Add a weak final-close/readiness observer while holding `ReadinessLock`. |

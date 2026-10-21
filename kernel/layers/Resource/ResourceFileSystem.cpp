@@ -1,4 +1,5 @@
 #include "layers/Resource/ResourceFileSystem.hpp"
+#include "layers/Resource/ResourceFileSystemTypes.hpp"
 
 #include "layers/Resource/InitRamFileSystemManager.hpp"
 
@@ -7,18 +8,7 @@ extern "C"
 #include <klib/klib.h>
 }
 
-struct resource_fs_t
-{
-    InitRamFileSystemManager* initRamManager;
-};
 
-struct resource_node_t
-{
-    resource_fs_t* fs;
-    char*          path;
-    bool           isDirectory;
-    uint64_t       size;
-};
 
 constexpr int64_t RESOURCE_ERR_NOENT = -2;
 constexpr int64_t RESOURCE_ERR_INVAL = -22;
@@ -168,6 +158,11 @@ static resource_node_t* make_node(resource_fs_t* fs, const char* path, bool isDi
 
 ResourceFileSystem::ResourceFileSystem(InitRamFileSystemManager* initRamFileSystemManager) : InitRamManager(initRamFileSystemManager)
 {
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.archives = initRamFileSystemManager;
+    );
+
     Caps.context         = this;
     Caps.MountFilesystem = MountFilesystemThunk;
     Caps.GetRootNode     = GetRootNodeThunk;
@@ -279,6 +274,8 @@ int64_t ResourceFileSystem::TruncateThunk(ResourceLayerFileSystemCaps* caps, con
 
 resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* source)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mount, BooleanOrPointer, nullptr);
+
     if (type == nullptr || strcmp(type, "cpio") != 0)
     {
         return nullptr;
@@ -299,7 +296,7 @@ resource_fs_t* ResourceFileSystem::MountFilesystem(const char* type, void* sourc
     }
 
     fs->initRamManager = manager;
-    return fs;
+    return ARX_FILESYSTEM_RETURN(fs);
 }
 
 resource_node_t* ResourceFileSystem::GetRootNode(resource_fs_t* filesystem)
@@ -334,6 +331,8 @@ bool ResourceFileSystem::GetNodeInfo(resource_node_t* node, resource_node_info_t
 
 resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const char* name)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.lookup, BooleanOrPointer, nullptr);
+
     if (directory == nullptr || directory->fs == nullptr || directory->fs->initRamManager == nullptr || name == nullptr || name[0] == '\0')
     {
         return nullptr;
@@ -377,7 +376,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
         const bool isDirectory = (file->mode & 0170000) == 0040000;
         resource_node_t* node = make_node(directory->fs, fullPath, isDirectory, file->size);
         kfree(fullPath);
-        return node;
+        return ARX_FILESYSTEM_RETURN(node);
     }
 
     const size_t archiveCount   = directory->fs->initRamManager->GetArchiveCount();
@@ -410,7 +409,7 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
     {
         resource_node_t* node = make_node(directory->fs, fullPath, true, 0);
         kfree(fullPath);
-        return node;
+        return ARX_FILESYSTEM_RETURN(node);
     }
 
     kfree(fullPath);
@@ -419,14 +418,16 @@ resource_node_t* ResourceFileSystem::Lookup(resource_node_t* directory, const ch
 
 int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* cursor, resource_directory_entry_t* entry)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.enumerate, SignedStatus, nullptr);
+
     if (directory == nullptr || directory->fs == nullptr || directory->fs->initRamManager == nullptr || cursor == nullptr || entry == nullptr)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     if (!directory->isDirectory)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     const char*    basePath     = directory->path != nullptr ? directory->path : "";
@@ -520,138 +521,154 @@ int64_t ResourceFileSystem::ReadDirectory(resource_node_t* directory, uint64_t* 
 
             entry->inodeNumber = resource_hash_path(fullPath, entry->type == RESOURCE_NODE_DIRECTORY);
             *cursor += 1;
-            return 1;
+            return ARX_FILESYSTEM_RETURN(1);
         }
 
         currentIndex += 1;
     }
 
-    return 0;
+    return ARX_FILESYSTEM_RETURN(0);
 }
 
 int64_t ResourceFileSystem::Read(resource_node_t* node, uint64_t offset, void* buffer, uint64_t size)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.read, SignedStatus, &DebugStats.readBytes);
+
     if (node == nullptr || node->fs == nullptr || node->fs->initRamManager == nullptr || buffer == nullptr)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     if (node->isDirectory)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
 
     if (file == nullptr)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     if (offset >= file->size)
     {
-        return 0;
+        return ARX_FILESYSTEM_RETURN(0);
     }
 
     uint64_t remaining = file->size - offset;
     uint64_t toRead    = size < remaining ? size : remaining;
     memcpy(buffer, file->data + offset, toRead);
-    return (int64_t) toRead;
+    return ARX_FILESYSTEM_RETURN((int64_t) toRead);
 }
 
 int64_t ResourceFileSystem::Write(resource_node_t* node, uint64_t offset, const void* buffer, uint64_t size)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.write, SignedStatus, &DebugStats.writtenBytes);
+
     if (node == nullptr || node->fs == nullptr || node->fs->initRamManager == nullptr || buffer == nullptr)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     if (node->isDirectory)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     initramfs_archive_t* file = node->fs->initRamManager->find(node->path);
 
     if (file == nullptr)
     {
-        return -1;
+        return ARX_FILESYSTEM_RETURN(-1);
     }
 
     if (offset >= file->size)
     {
-        return 0;
+        return ARX_FILESYSTEM_RETURN(0);
     }
 
     uint64_t remaining = file->size - offset;
     uint64_t toWrite   = size < remaining ? size : remaining;
     memcpy(file->data + offset, buffer, toWrite);
-    return (int64_t) toWrite;
+    return ARX_FILESYSTEM_RETURN((int64_t) toWrite);
 }
 
 int64_t ResourceFileSystem::Mkdir(const char* path, uint32_t mode)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     (void) path;
     (void) mode;
-    return RESOURCE_ERR_ROFS;
+    return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
 }
 
 int64_t ResourceFileSystem::Unlink(const char* path, bool directory)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     (void) path;
     (void) directory;
-    return RESOURCE_ERR_ROFS;
+    return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
 }
 
 int64_t ResourceFileSystem::Rename(const char* oldPath, const char* newPath)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     (void) oldPath;
     (void) newPath;
-    return RESOURCE_ERR_ROFS;
+    return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
 }
 
 int64_t ResourceFileSystem::Link(const char* oldPath, const char* newPath, bool followSymlink)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     (void) oldPath;
     (void) newPath;
     (void) followSymlink;
-    return RESOURCE_ERR_ROFS;
+    return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
 }
 
 int64_t ResourceFileSystem::Mknod(const char* path, uint32_t mode, uint64_t device)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     (void) path;
     (void) mode;
     (void) device;
-    return RESOURCE_ERR_ROFS;
+    return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
 }
 
 int64_t ResourceFileSystem::Truncate(const char* path, uint64_t size)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (InitRamManager == nullptr || path == nullptr)
     {
-        return RESOURCE_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_INVAL);
     }
 
     char normalizedPath[512] = {};
 
     if (!normalize_runtime_path(path, normalizedPath, sizeof(normalizedPath)) || normalizedPath[0] == '\0')
     {
-        return RESOURCE_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_INVAL);
     }
 
     initramfs_archive_t* file = InitRamManager->find(normalizedPath);
 
     if (file == nullptr)
     {
-        return RESOURCE_ERR_NOENT;
+        return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_NOENT);
     }
 
     if (size > file->size)
     {
-        return RESOURCE_ERR_ROFS;
+        return ARX_FILESYSTEM_RETURN(RESOURCE_ERR_ROFS);
     }
 
     file->size = size;
-    return 0;
+    return ARX_FILESYSTEM_RETURN(0);
 }

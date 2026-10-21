@@ -1,4 +1,5 @@
 #pragma once
+#include <debug/kernel/stats/FileSystemDebugStats.hpp>
 
 #include <stdint.h>
 
@@ -55,6 +56,9 @@ struct ResourceLayerFileSystemCaps
 class ResourceFileSystem
 {
 public:
+    ARX_DEBUG_ONLY(mutable ResourceFileSystemDebugStats DebugStats = {};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
+    ARX_DEBUG_ONLY(static bool DebugNativeBackend(const ResourceLayerFileSystemCaps* caps);)
     explicit ResourceFileSystem(InitRamFileSystemManager* initRamFileSystemManager);
 
     ResourceLayerFileSystemCaps* GetCaps();

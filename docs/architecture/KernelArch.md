@@ -73,8 +73,7 @@ Debug builds also embed DebugManager in Dispatcher for typed, borrowed statistic
 records and bounded read-only GDB views. Providers maintain debug-only runtime
 records; release builds exclude this storage and tracking work. The debugging
 guide describes the foundation interface, platform/CPU/PCI views, PMM/NUMA/heap/DMA, process/task/shared-resource and virtual-memory/page-table
-views, and controlled
-providers. Early platform progress remains readable before Dispatcher exists.
+views, VFS/initramfs contents, and controlled providers. Early platform progress remains readable before Dispatcher exists.
 
 Each layer's factory creates its managers and publishes a capability structure:
 references to the services that other parts of the kernel can use.

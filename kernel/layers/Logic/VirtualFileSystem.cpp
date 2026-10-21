@@ -1,4 +1,5 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
+#include "layers/Logic/VirtualFileSystemTypes.hpp"
 #include "layers/DispatcherRoutes.hpp"
 
 #include "layers/Logic/EventManager.hpp"
@@ -45,12 +46,6 @@ void VirtualFileSystem::NotifyReadiness(file_t* file, uint32_t events)
     }
 }
 
-struct dentry_key_t
-{
-    const dentry_t* parent;
-    const char*     name;
-};
-
 class VfsNamespaceGuard
 {
 public:
@@ -66,18 +61,6 @@ public:
 
 private:
     spinlock_t* Lock;
-};
-
-struct vfs_resource_filesystem_private_t
-{
-    resource_fs_t*               backend;
-    ResourceLayerFileSystemCaps* caps;
-};
-
-struct vfs_resource_inode_private_t
-{
-    resource_node_t*             backendNode;
-    ResourceLayerFileSystemCaps* caps;
 };
 
 class VfsInodeGuard
@@ -160,20 +143,9 @@ static const file_operations_t g_vfs_symlink_file_ops = {
         nullptr, vfs_symlink_read, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
 
-struct vfs_symlink_private_t
-{
-    char* target;
-};
-
 struct vfs_resource_file_private_t
 {
     char direntName[256];
-};
-
-struct vfs_overlay_dentry_entry_t
-{
-    dentry_t*                   dentry;
-    vfs_overlay_dentry_entry_t* next;
 };
 
 constexpr int64_t VFS_ERR_NOENT  = -2;
@@ -861,6 +833,26 @@ static void vfs_file_io_end(file_t* file)
 
 VirtualFileSystem::VirtualFileSystem(ResourceLayerCaps* resourceLayerCaps)
 {
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.namespaceRoot = &Namespace;
+        DebugStats.mounts = &MountListHead;
+        DebugStats.cacheRoot = &DentryCache;
+        DebugStats.retired = &RetiredDentries;
+        DebugStats.overlays = &OverlayDentryHead;
+        DebugStats.resourceInodeOperations = &g_vfs_resource_inode_ops;
+        DebugStats.resourceFileOperations = &g_vfs_resource_file_ops;
+        DebugStats.symlinkFileOperations = &g_vfs_symlink_file_ops;
+        if (resourceLayerCaps != nullptr && ResourceFileSystem::DebugNativeBackend(resourceLayerCaps->fileSystemCaps))
+        {
+            DebugStats.resourceCaps = resourceLayerCaps->fileSystemCaps;
+        }
+        DebugStats.mountLock = &MountLock;
+        DebugStats.cacheLock = &DentryCacheLock;
+        DebugStats.overlayLock = &OverlayDentryLock;
+        DebugStats.mutationLock = &NamespaceMutationLock;
+    );
+
     ResourceLayerImportCaps = resourceLayerCaps;
     EventObserver           = nullptr;
     DentryCacheLock         = 0;
@@ -1017,16 +1009,18 @@ dentry_t* VirtualFileSystem::FindOverlayDentry(const dentry_t* parent, const cha
 
 bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.cache, BooleanOrPointer, nullptr);
+
     if (dentry == nullptr || dentry->name == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     vfs_overlay_dentry_entry_t* entry = (vfs_overlay_dentry_entry_t*) kmalloc(sizeof(vfs_overlay_dentry_entry_t));
 
     if (entry == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     spinlock_acquire_preempt(&OverlayDentryLock);
@@ -1044,15 +1038,16 @@ bool VirtualFileSystem::AddOverlayDentry(dentry_t* dentry)
         {
             spinlock_release_preempt(&OverlayDentryLock);
             kfree(entry);
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
     }
 
     entry->dentry     = dentry;
     entry->next       = OverlayDentryHead;
     OverlayDentryHead = entry;
+    ARX_DEBUG_ADD(DebugStats.overlayEntries, 1);
     spinlock_release_preempt(&OverlayDentryLock);
-    return true;
+    return ARX_FILESYSTEM_RETURN(true);
 }
 
 uint32_t VirtualFileSystem::HashDentryKey(const dentry_t* parent, const char* name) const
@@ -1062,30 +1057,34 @@ uint32_t VirtualFileSystem::HashDentryKey(const dentry_t* parent, const char* na
 
 bool VirtualFileSystem::SetRootMount(mount_t* rootMount)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.root, BooleanOrPointer, nullptr);
+
     if (rootMount == nullptr || rootMount->root == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     if (rootMount->parentMount != nullptr || rootMount->mountPoint != nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     if (!RegisterMount(rootMount))
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     Namespace.rootMount = rootMount;
-    return true;
+    return ARX_FILESYSTEM_RETURN(true);
 }
 
 bool VirtualFileSystem::RegisterMount(mount_t* mount)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mount, BooleanOrPointer, nullptr);
+
     if (mount == nullptr || mount->root == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     spinlock_acquire_preempt(&MountLock);
@@ -1094,60 +1093,63 @@ bool VirtualFileSystem::RegisterMount(mount_t* mount)
         if (it == mount)
         {
             spinlock_release_preempt(&MountLock);
-            return true;
+            return ARX_FILESYSTEM_RETURN(true);
         }
 
         if (it->parentMount == mount->parentMount && it->mountPoint == mount->mountPoint)
         {
             spinlock_release_preempt(&MountLock);
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
     }
 
     mount->next   = MountListHead;
     MountListHead = mount;
+    ARX_DEBUG_ADD(DebugStats.registeredMounts, 1);
     spinlock_release_preempt(&MountLock);
-    return true;
+    return ARX_FILESYSTEM_RETURN(true);
 }
 
 bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* source)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.root, BooleanOrPointer, nullptr);
+
     if (filesystemType == nullptr || ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->fileSystemCaps == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     if (Namespace.rootMount != nullptr)
     {
-        return true;
+        return ARX_FILESYSTEM_RETURN(true);
     }
 
     ResourceLayerFileSystemCaps* caps = ResourceLayerImportCaps->fileSystemCaps;
 
     if (caps->MountFilesystem == nullptr || caps->GetRootNode == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     resource_fs_t* backendFs = caps->MountFilesystem(caps, filesystemType, source);
 
     if (backendFs == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     resource_node_t* backendRoot = caps->GetRootNode(caps, backendFs);
 
     if (backendRoot == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     vfs_resource_filesystem_private_t* fsPrivate = (vfs_resource_filesystem_private_t*) kmalloc(sizeof(vfs_resource_filesystem_private_t));
 
     if (fsPrivate == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     filesystem_t* filesystem = (filesystem_t*) kmalloc(sizeof(filesystem_t));
@@ -1155,7 +1157,7 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     if (filesystem == nullptr)
     {
         kfree(fsPrivate);
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     memset(fsPrivate, 0, sizeof(vfs_resource_filesystem_private_t));
@@ -1171,7 +1173,7 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     {
         kfree(filesystem);
         kfree(fsPrivate);
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     filesystem->rootInode = rootInode;
@@ -1184,7 +1186,7 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
         kfree(rootInode);
         kfree(filesystem);
         kfree(fsPrivate);
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     memset(rootDentry, 0, sizeof(dentry_t));
@@ -1206,14 +1208,14 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
         kfree(rootInode);
         kfree(filesystem);
         kfree(fsPrivate);
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     mount_t* rootMount = (mount_t*) kmalloc(sizeof(mount_t));
 
     if (rootMount == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     memset(rootMount, 0, sizeof(mount_t));
@@ -1226,10 +1228,10 @@ bool VirtualFileSystem::MountRootFileSystem(const char* filesystemType, void* so
     if (!SetRootMount(rootMount))
     {
         kfree(rootMount);
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
-    return true;
+    return ARX_FILESYSTEM_RETURN(true);
 }
 
 bool VirtualFileSystem::RegisterFileSystemType(const filesystem_type_t* type)
@@ -1283,9 +1285,11 @@ mount_t* VirtualFileSystem::FindChildMount(mount_t* parentMount, dentry_t* mount
 
 bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.cache, BooleanOrPointer, nullptr);
+
     if (DentryCache == nullptr || dentry == nullptr || dentry->name == nullptr)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     char* duplicatedName = nullptr;
@@ -1296,7 +1300,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
 
         if (duplicatedName == nullptr)
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
     }
 
@@ -1318,7 +1322,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
             kfree(duplicatedName);
         }
 
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     if (!absent)
@@ -1332,7 +1336,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
             kfree(duplicatedName);
         }
 
-        return existing == dentry;
+        return ARX_FILESYSTEM_RETURN(existing == dentry);
     }
 
     if (dentry->ownedName == nullptr)
@@ -1350,7 +1354,7 @@ bool VirtualFileSystem::CacheDentry(dentry_t* dentry)
         kfree(duplicatedName);
     }
 
-    return true;
+    return ARX_FILESYSTEM_RETURN(true);
 }
 
 dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name) const
@@ -1399,6 +1403,8 @@ dentry_t* VirtualFileSystem::FindDentry(const dentry_t* parent, const char* name
 
 dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.lookup, BooleanOrPointer, nullptr);
+
     if (parent == nullptr || name == nullptr || parent->inode == nullptr || parent->inode->type != INODE_DIRECTORY)
     {
         return nullptr;
@@ -1409,7 +1415,7 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
 
     if (cached != nullptr)
     {
-        return cached;
+        return ARX_FILESYSTEM_RETURN(cached);
     }
 
     inode_t* directory = parent->inode;
@@ -1449,7 +1455,7 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
         }
 
         kfree(dentry);
-        return FindDentry(parent, name);
+        return ARX_FILESYSTEM_RETURN(FindDentry(parent, name));
     }
 
     if (__atomic_load_n(&parent->inode->namespaceGeneration, __ATOMIC_ACQUIRE) != generation)
@@ -1457,7 +1463,7 @@ dentry_t* VirtualFileSystem::Lookup(dentry_t* parent, const char* name)
         InvalidateDentry(parent, name);
         return nullptr;
     }
-    return dentry;
+    return ARX_FILESYSTEM_RETURN(dentry);
 }
 
 bool VirtualFileSystem::ResolvePath(const vfs_path_t& start, const char* path, vfs_path_t* result, uint64_t* accessError)
@@ -1954,9 +1960,11 @@ int64_t VirtualFileSystem::StatNoFollow(const vfs_path_t& start, const char* pat
 
 int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, const char* linkPath)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (target == nullptr || linkPath == nullptr || target[0] == '\0' || linkPath[0] == '\0')
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     char parentPath[512] = {};
@@ -1964,7 +1972,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
 
     if (!vfs_split_parent_and_leaf(linkPath, parentPath, sizeof(parentPath), leafName, sizeof(leafName)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t parentStart = start;
@@ -1978,12 +1986,12 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
 
     if (!ResolvePath(parentStart, parentPath, &parentResolved) || parentResolved.dentry == nullptr || parentResolved.dentry->inode == nullptr)
     {
-        return VFS_ERR_NOENT;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOENT);
     }
 
     if (parentResolved.dentry->inode->type != INODE_DIRECTORY)
     {
-        return VFS_ERR_NOTDIR;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOTDIR);
     }
 
     inode_t* parentInode = parentResolved.dentry->inode;
@@ -1992,13 +2000,13 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         const uint64_t permission = CheckDirectoryMutation(parentResolved);
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
         inode_creation_attributes_t attributes      = {};
         const uint64_t              attributeResult = GetCreationAttributes(parentInode, 0777, false, true, &attributes);
         if (attributeResult != 0)
         {
-            return (int64_t) attributeResult;
+            return ARX_FILESYSTEM_RETURN((int64_t) attributeResult);
         }
         const int64_t result = parentInode->inodeOps != nullptr && parentInode->inodeOps->Symlink != nullptr ? parentInode->inodeOps->Symlink(parentInode, leafName, target, &attributes) : -95;
         if (result == 0 && EventObserver != nullptr)
@@ -2006,14 +2014,14 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
             dentry_t* child = Lookup(parentResolved.dentry, leafName);
             EventObserver->NotifyVfs(child != nullptr ? child->inode : nullptr, 0x100, parentInode, leafName);
         }
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     vfs_symlink_private_t* symlinkPrivate = (vfs_symlink_private_t*) kmalloc(sizeof(vfs_symlink_private_t));
 
     if (symlinkPrivate == nullptr)
     {
-        return VFS_ERR_NOMEM;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOMEM);
     }
 
     symlinkPrivate->target = kstrdup(target);
@@ -2021,7 +2029,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     if (symlinkPrivate->target == nullptr)
     {
         kfree(symlinkPrivate);
-        return VFS_ERR_NOMEM;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOMEM);
     }
 
     inode_t* inode = (inode_t*) kmalloc(sizeof(inode_t));
@@ -2030,7 +2038,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
     {
         kfree(symlinkPrivate->target);
         kfree(symlinkPrivate);
-        return VFS_ERR_NOMEM;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOMEM);
     }
 
     memset(inode, 0, sizeof(inode_t));
@@ -2050,7 +2058,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         kfree(inode);
         kfree(symlinkPrivate->target);
         kfree(symlinkPrivate);
-        return VFS_ERR_NOMEM;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOMEM);
     }
 
     memset(newDentry, 0, sizeof(dentry_t));
@@ -2067,7 +2075,7 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         kfree(inode);
         kfree(symlinkPrivate->target);
         kfree(symlinkPrivate);
-        return VFS_ERR_NOMEM;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOMEM);
     }
 
     newDentry->name = newDentry->ownedName;
@@ -2079,14 +2087,14 @@ int64_t VirtualFileSystem::Symlink(const vfs_path_t& start, const char* target, 
         kfree(inode);
         kfree(symlinkPrivate->target);
         kfree(symlinkPrivate);
-        return VFS_ERR_EXIST;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_EXIST);
     }
 
     if (EventObserver != nullptr)
     {
         EventObserver->NotifyVfs(inode, 0x100, parentResolved.dentry->inode, leafName);
     }
-    return 0;
+    return ARX_FILESYSTEM_RETURN(0);
 }
 
 int64_t VirtualFileSystem::Readlink(const vfs_path_t& start, const char* path, char* buffer, uint64_t bufferSize)
@@ -2314,6 +2322,7 @@ void VirtualFileSystem::InvalidateDentry(dentry_t* parent, const char* name)
         khp_del(DentryCache, index);
         dentry->retiredNext = RetiredDentries;
         RetiredDentries     = dentry;
+        ARX_DEBUG_ADD(DebugStats.retiredEntries, 1);
         break;
     }
 
@@ -2340,9 +2349,11 @@ static bool vfs_readonly(const vfs_path_t& path)
 
 int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint32_t mode)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (path == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t    parent    = {};
@@ -2351,7 +2362,7 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
 
     if (resolved != 0)
     {
-        return resolved;
+        return ARX_FILESYSTEM_RETURN(resolved);
     }
 
     inode_t* node = parent.dentry->inode;
@@ -2362,7 +2373,7 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
 
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
 
         inode_creation_attributes_t attributes      = {};
@@ -2370,7 +2381,7 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
 
         if (attributeResult != 0)
         {
-            return (int64_t) attributeResult;
+            return ARX_FILESYSTEM_RETURN((int64_t) attributeResult);
         }
 
         const int64_t result = node->inodeOps != nullptr && node->inodeOps->Mkdir != nullptr ? node->inodeOps->Mkdir(parent.dentry->inode, name, &attributes) : -95;
@@ -2385,37 +2396,39 @@ int64_t VirtualFileSystem::Mkdir(const vfs_path_t& start, const char* path, uint
             }
         }
 
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Mkdir == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectivePath[512] = {};
 
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
-    return caps->Mkdir(caps, effectivePath, mode);
+    return ARX_FILESYSTEM_RETURN(caps->Mkdir(caps, effectivePath, mode));
 }
 
 int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, bool directory)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (path == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     if (strcmp(path, "/") == 0)
     {
-        return -16;
+        return ARX_FILESYSTEM_RETURN(-16);
     }
 
     vfs_path_t    parent    = {};
@@ -2424,7 +2437,7 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
 
     if (resolved != 0)
     {
-        return resolved;
+        return ARX_FILESYSTEM_RETURN(resolved);
     }
 
     inode_t* node = parent.dentry->inode;
@@ -2435,21 +2448,21 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
 
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
 
         dentry_t* target = Lookup(parent.dentry, name);
 
         if (target != nullptr && FindChildMount(parent.mount, target) != nullptr)
         {
-            return -16;
+            return ARX_FILESYSTEM_RETURN(-16);
         }
 
         const uint64_t stickyPermission = target != nullptr ? CheckDirectoryMutation(parent, target->inode) : 0;
 
         if (stickyPermission != 0)
         {
-            return (int64_t) stickyPermission;
+            return ARX_FILESYSTEM_RETURN((int64_t) stickyPermission);
         }
 
         const int64_t result = node->inodeOps != nullptr && node->inodeOps->Unlink != nullptr ? node->inodeOps->Unlink(parent.dentry->inode, name, directory) : -95;
@@ -2479,32 +2492,34 @@ int64_t VirtualFileSystem::Unlink(const vfs_path_t& start, const char* path, boo
             InvalidateDentry(parent.dentry, name);
         }
 
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Unlink == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectivePath[512] = {};
 
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
-    return caps->Unlink(caps, effectivePath, directory);
+    return ARX_FILESYSTEM_RETURN(caps->Unlink(caps, effectivePath, directory));
 }
 
 int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (oldPath == nullptr || newPath == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t oldParent    = {}, newParent = {};
@@ -2518,7 +2533,7 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
 
     if (status != 0)
     {
-        return status;
+        return ARX_FILESYSTEM_RETURN(status);
     }
 
     inode_t* oldDirectory = oldParent.dentry->inode;
@@ -2526,38 +2541,38 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
 
     if (oldParent.mount != newParent.mount || oldDirectory->filesystem != newDirectory->filesystem)
     {
-        return -18;
+        return ARX_FILESYSTEM_RETURN(-18);
     }
 
     if (oldDirectory->filesystem != nullptr && oldDirectory->filesystem->type != nullptr)
     {
         if (vfs_readonly(oldParent) || vfs_readonly(newParent))
         {
-            return -30;
+            return ARX_FILESYSTEM_RETURN(-30);
         }
 
         dentry_t* target = Lookup(oldParent.dentry, oldName);
 
         if (target == nullptr)
         {
-            return -2;
+            return ARX_FILESYSTEM_RETURN(-2);
         }
 
         dentry_t* replacement = Lookup(newParent.dentry, newName);
 
         if (FindChildMount(oldParent.mount, target) != nullptr || (replacement != nullptr && FindChildMount(newParent.mount, replacement) != nullptr))
         {
-            return -16;
+            return ARX_FILESYSTEM_RETURN(-16);
         }
 
         if (oldDirectory == newDirectory && strcmp(oldName, newName) == 0)
         {
-            return 0;
+            return ARX_FILESYSTEM_RETURN(0);
         }
 
         if (replacement != nullptr && replacement->inode == target->inode)
         {
-            return 0; // Renaming one hard link onto the same inode is a no-op.
+            return ARX_FILESYSTEM_RETURN(0); // Renaming one hard link onto the same inode is a no-op.
         }
 
         uint64_t permission = CheckDirectoryMutation(oldParent, target->inode);
@@ -2569,7 +2584,7 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
 
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
         // Allocate the forwarding identity before the backend commits. Event
         // delivery must not depend on a successful cache allocation afterward.
@@ -2577,7 +2592,7 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
 
         if (moved == nullptr)
         {
-            return -12;
+            return ARX_FILESYSTEM_RETURN(-12);
         }
 
         moved->ownedName = kstrdup(newName);
@@ -2585,7 +2600,7 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
         if (moved->ownedName == nullptr)
         {
             kfree(moved);
-            return -12;
+            return ARX_FILESYSTEM_RETURN(-12);
         }
 
         moved->name                 = moved->ownedName;
@@ -2605,6 +2620,7 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
             spinlock_acquire_preempt(&DentryCacheLock);
             moved->retiredNext = RetiredDentries;
             RetiredDentries    = moved;
+            ARX_DEBUG_ADD(DebugStats.retiredEntries, 1);
             spinlock_release_preempt(&DentryCacheLock);
 
             if (EventObserver != nullptr)
@@ -2629,39 +2645,41 @@ int64_t VirtualFileSystem::Rename(const vfs_path_t& oldStart, const char* oldPat
             kfree(moved);
         }
 
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Rename == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectiveOldPath[512] = {};
 
     if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     char effectiveNewPath[512] = {};
 
     if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
-    return caps->Rename(caps, effectiveOldPath, effectiveNewPath);
+    return ARX_FILESYSTEM_RETURN(caps->Rename(caps, effectiveOldPath, effectiveNewPath));
 }
 
 int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath, const vfs_path_t& newStart, const char* newPath, bool followSymlink)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (oldPath == nullptr || newPath == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t oldParent    = {}, newParent = {};
@@ -2675,7 +2693,7 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
 
     if (status != 0)
     {
-        return status;
+        return ARX_FILESYSTEM_RETURN(status);
     }
 
     inode_t* oldDirectory = oldParent.dentry->inode;
@@ -2683,21 +2701,21 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
 
     if (oldParent.mount != newParent.mount || oldDirectory->filesystem != newDirectory->filesystem)
     {
-        return -18;
+        return ARX_FILESYSTEM_RETURN(-18);
     }
 
     if (oldDirectory->filesystem != nullptr && oldDirectory->filesystem->type != nullptr)
     {
         if (vfs_readonly(oldParent) || vfs_readonly(newParent))
         {
-            return -30;
+            return ARX_FILESYSTEM_RETURN(-30);
         }
 
         dentry_t* target = Lookup(oldParent.dentry, oldName);
 
         if (target == nullptr)
         {
-            return -2;
+            return ARX_FILESYSTEM_RETURN(-2);
         }
 
         inode_t*   targetInode = target->inode;
@@ -2707,12 +2725,12 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
         {
             if (!ResolvePath(oldStart, oldPath, &followed) || followed.dentry == nullptr)
             {
-                return -2;
+                return ARX_FILESYSTEM_RETURN(-2);
             }
 
             if (followed.mount != newParent.mount)
             {
-                return -18;
+                return ARX_FILESYSTEM_RETURN(-18);
             }
 
             targetInode = followed.dentry->inode;
@@ -2720,14 +2738,14 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
 
         if (targetInode->type == INODE_DIRECTORY)
         {
-            return -1;
+            return ARX_FILESYSTEM_RETURN(-1);
         }
 
         const uint64_t permission = CheckDirectoryMutation(newParent);
 
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
 
         const int64_t result = newDirectory->inodeOps != nullptr && newDirectory->inodeOps->Link != nullptr ? newDirectory->inodeOps->Link(newDirectory, newName, targetInode) : -95;
@@ -2738,39 +2756,41 @@ int64_t VirtualFileSystem::Link(const vfs_path_t& oldStart, const char* oldPath,
             EventObserver->NotifyVfs(targetInode, 4, nullptr, nullptr);
         }
 
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Link == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectiveOldPath[512] = {};
 
     if (!BuildBackendPath(oldStart, oldPath, effectiveOldPath, sizeof(effectiveOldPath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     char effectiveNewPath[512] = {};
 
     if (!BuildBackendPath(newStart, newPath, effectiveNewPath, sizeof(effectiveNewPath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
-    return caps->Link(caps, effectiveOldPath, effectiveNewPath, followSymlink);
+    return ARX_FILESYSTEM_RETURN(caps->Link(caps, effectiveOldPath, effectiveNewPath, followSymlink));
 }
 
 int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint32_t mode, uint64_t device)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     VfsNamespaceGuard mutation(&NamespaceMutationLock);
     if (path == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t    parent    = {};
@@ -2779,7 +2799,7 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
 
     if (resolved != 0)
     {
-        return resolved;
+        return ARX_FILESYSTEM_RETURN(resolved);
     }
 
     inode_t* node = parent.dentry->inode;
@@ -2790,7 +2810,7 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
 
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
 
         inode_creation_attributes_t attributes      = {};
@@ -2798,7 +2818,7 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
 
         if (attributeResult != 0)
         {
-            return (int64_t) attributeResult;
+            return ARX_FILESYSTEM_RETURN((int64_t) attributeResult);
         }
 
         const int64_t result = node->inodeOps != nullptr && node->inodeOps->Mknod != nullptr ? node->inodeOps->Mknod(parent.dentry->inode, name, &attributes, device) : -95;
@@ -2813,54 +2833,56 @@ int64_t VirtualFileSystem::Mknod(const vfs_path_t& start, const char* path, uint
             }
         }
 
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Mknod == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectivePath[512] = {};
 
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
-    return caps->Mknod(caps, effectivePath, mode, device);
+    return ARX_FILESYSTEM_RETURN(caps->Mknod(caps, effectivePath, mode, device));
 }
 
 int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** inode)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (path == nullptr || inode == nullptr)
     {
-        return -22;
+        return ARX_FILESYSTEM_RETURN(-22);
     }
     *inode = nullptr;
     if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr)
     {
-        return (int64_t) LINUX_ENOSYS;
+        return ARX_FILESYSTEM_RETURN((int64_t) LINUX_ENOSYS);
     }
 
     process_t* process = ResourceLayerImportCaps->processManager->GetCurrentProcess();
     if (process == nullptr)
     {
-        return (int64_t) LINUX_ESRCH;
+        return ARX_FILESYSTEM_RETURN((int64_t) LINUX_ESRCH);
     }
 
     char                     absolute[512] = {};
     WorkingDirectorySnapshot cwd(process);
     if (!JoinPath(cwd.path, path, absolute, sizeof(absolute)))
     {
-        return (int64_t) LINUX_ENAMETOOLONG;
+        return ARX_FILESYSTEM_RETURN((int64_t) LINUX_ENAMETOOLONG);
     }
     const size_t pathLength = strlen(absolute);
     if (pathLength == 0 || absolute[pathLength - 1] == '/')
     {
-        return -20; // A socket pathname cannot name a directory.
+        return ARX_FILESYSTEM_RETURN(-20); // A socket pathname cannot name a directory.
     }
 
     VfsNamespaceGuard mutation(&NamespaceMutationLock);
@@ -2870,58 +2892,58 @@ int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** i
     uint64_t          accessError        = 0;
     if (!vfs_split_parent_and_leaf(absolute, directoryPath, sizeof(directoryPath), name, sizeof(name)) || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
     {
-        return -22;
+        return ARX_FILESYSTEM_RETURN(-22);
     }
     if (!ResolvePath({}, directoryPath, &parent, &accessError))
     {
-        return (int64_t) accessError;
+        return ARX_FILESYSTEM_RETURN((int64_t) accessError);
     }
 
     inode_t* directory = parent.dentry->inode;
     if (directory->type != INODE_DIRECTORY)
     {
-        return -20;
+        return ARX_FILESYSTEM_RETURN(-20);
     }
     int64_t result = (int64_t) CheckInodeAccess(directory, 1);
     if (result != 0)
     {
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
     if (create)
     {
         if (Lookup(parent.dentry, name) != nullptr)
         {
-            return -98; // EADDRINUSE includes stale socket nodes and other file types.
+            return ARX_FILESYSTEM_RETURN(-98); // EADDRINUSE includes stale socket nodes and other file types.
         }
 
         result = (int64_t) CheckDirectoryMutation(parent);
         if (result != 0)
         {
-            return result;
+            return ARX_FILESYSTEM_RETURN(result);
         }
 
         // Boot cpio has no mutable namespace. Do not synthesize an invisible
         // socket node when the selected filesystem cannot create one.
         if (directory->filesystem == nullptr || directory->filesystem->type == nullptr)
         {
-            return -30;
+            return ARX_FILESYSTEM_RETURN(-30);
         }
         if (directory->inodeOps == nullptr || directory->inodeOps->Mknod == nullptr)
         {
-            return -95;
+            return ARX_FILESYSTEM_RETURN(-95);
         }
 
         inode_creation_attributes_t attributes = {};
         result                                 = (int64_t) GetCreationAttributes(directory, 0140777, false, false, &attributes);
         if (result != 0)
         {
-            return result;
+            return ARX_FILESYSTEM_RETURN(result);
         }
 
         result = directory->inodeOps->Mknod(directory, name, &attributes, 0);
         if (result != 0)
         {
-            return result == -17 ? -98 : result;
+            return ARX_FILESYSTEM_RETURN(result == -17 ? -98 : result);
         }
         InvalidateDentry(parent.dentry, name);
     }
@@ -2930,14 +2952,14 @@ int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** i
 
     if (!ResolvePath({}, absolute, &resolved, &accessError) || resolved.dentry == nullptr)
     {
-        return (int64_t) accessError;
+        return ARX_FILESYSTEM_RETURN((int64_t) accessError);
     }
 
     inode_t* node = resolved.dentry->inode;
 
     if (node == nullptr || node->type != INODE_SOCKET)
     {
-        return -111;
+        return ARX_FILESYSTEM_RETURN(-111);
     }
 
     if (!create)
@@ -2946,7 +2968,7 @@ int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** i
 
         if (result != 0)
         {
-            return result;
+            return ARX_FILESYSTEM_RETURN(result);
         }
     }
     else
@@ -2961,7 +2983,7 @@ int64_t VirtualFileSystem::SocketNode(const char* path, bool create, inode_t** i
 
     // Backend inode identity remains stable through unlink, until unmount.
     *inode = node;
-    return 0;
+    return ARX_FILESYSTEM_RETURN(0);
 }
 
 void VirtualFileSystem::ReleaseSocketNode(inode_t* inode)
@@ -2974,27 +2996,29 @@ void VirtualFileSystem::ReleaseSocketNode(inode_t* inode)
 
 int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* path, uint64_t size)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (path == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     vfs_path_t pathResult = {};
     if (!ResolvePath(start, path, &pathResult) || pathResult.dentry == nullptr)
     {
-        return -2;
+        return ARX_FILESYSTEM_RETURN(-2);
     }
     inode_t* inode = pathResult.dentry->inode;
     if (inode->filesystem != nullptr && inode->filesystem->type != nullptr)
     {
         if (vfs_readonly(pathResult))
         {
-            return -30;
+            return ARX_FILESYSTEM_RETURN(-30);
         }
         const uint64_t permission = CheckInodeAccess(inode, 2);
         if (permission != 0)
         {
-            return (int64_t) permission;
+            return ARX_FILESYSTEM_RETURN((int64_t) permission);
         }
 
         VfsInodeGuard guard(inode);
@@ -3002,7 +3026,7 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
 
         if (preparation != 0)
         {
-            return preparation;
+            return ARX_FILESYSTEM_RETURN(preparation);
         }
         const int64_t result = inode->inodeOps != nullptr && inode->inodeOps->Truncate != nullptr ? inode->inodeOps->Truncate(inode, size) : -95;
         if (result == 0)
@@ -3015,21 +3039,21 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
         {
             EventObserver->NotifyVfs(inode, 2, pathResult.dentry->parent != nullptr ? pathResult.dentry->parent->inode : nullptr, pathResult.dentry->name);
         }
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Truncate == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char effectivePath[512] = {};
 
     if (!BuildBackendPath(start, path, effectivePath, sizeof(effectivePath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     VfsInodeGuard guard(inode);
@@ -3037,7 +3061,7 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
 
     if (preparation != 0)
     {
-        return preparation;
+        return ARX_FILESYSTEM_RETURN(preparation);
     }
     const int64_t result = caps->Truncate(caps, effectivePath, size);
 
@@ -3051,38 +3075,40 @@ int64_t VirtualFileSystem::TruncatePath(const vfs_path_t& start, const char* pat
         }
     }
 
-    return result;
+    return ARX_FILESYSTEM_RETURN(result);
 }
 
 int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, SignedStatus, nullptr);
+
     if (file != nullptr && ((file->path.mount != nullptr && (__atomic_load_n(&file->path.mount->flags, __ATOMIC_RELAXED) & 1)) || (file->inode != nullptr && file->inode->filesystem != nullptr && (__atomic_load_n(&file->inode->filesystem->flags, __ATOMIC_RELAXED) & 1))))
     {
-        return -30;
+        return ARX_FILESYSTEM_RETURN(-30);
     }
     if (file != nullptr && file->operations != nullptr && file->operations->Truncate != nullptr)
     {
         if (!vfs_file_io_begin(file))
         {
-            return VFS_ERR_INVAL;
+            return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
         }
 
         const int64_t preparation = file->inode->backing != nullptr && !file->inode->backing->volatile_storage ? vfs_prepare_resize(file->inode, size) : 0;
         const int64_t result      = preparation != 0 ? preparation : file->operations->Truncate(file, size);
         vfs_file_io_end(file);
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     if (file == nullptr || file->path.dentry == nullptr)
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     if (file->inode != nullptr && file->inode->filesystem != nullptr && file->inode->filesystem->type != nullptr)
     {
         if (!vfs_file_io_begin(file))
         {
-            return -22;
+            return ARX_FILESYSTEM_RETURN(-22);
         }
 
         const int64_t preparation = vfs_prepare_resize(file->inode, size);
@@ -3096,21 +3122,21 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
         {
             NotifyFile(file, 2);
         }
-        return result;
+        return ARX_FILESYSTEM_RETURN(result);
     }
 
     ResourceLayerFileSystemCaps* caps = (ResourceLayerImportCaps != nullptr) ? ResourceLayerImportCaps->fileSystemCaps : nullptr;
 
     if (caps == nullptr || caps->Truncate == nullptr)
     {
-        return VFS_ERR_NOSYS;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_NOSYS);
     }
 
     char absolutePath[512] = {};
 
     if (!BuildAbsolutePathFromDentry(file->path.dentry, absolutePath, sizeof(absolutePath)))
     {
-        return VFS_ERR_INVAL;
+        return ARX_FILESYSTEM_RETURN(VFS_ERR_INVAL);
     }
 
     VfsInodeGuard guard(file->inode);
@@ -3118,7 +3144,7 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
 
     if (preparation != 0)
     {
-        return preparation;
+        return ARX_FILESYSTEM_RETURN(preparation);
     }
     const int64_t result = caps->Truncate(caps, absolutePath, size);
 
@@ -3130,7 +3156,7 @@ int64_t VirtualFileSystem::TruncateFile(file_t* file, uint64_t size)
         }
     }
 
-    return result;
+    return ARX_FILESYSTEM_RETURN(result);
 }
 
 file_t* VirtualFileSystem::Open(const vfs_path_t& start, const char* path, uint64_t flags, int64_t* error, uint32_t mode)
@@ -3592,24 +3618,26 @@ void VirtualFileSystem::ReleaseFileHandle(void* file)
 
 uint64_t VirtualFileSystem::ChangeMetadata(inode_t* inode, bool ownership, uint32_t first, uint32_t second, mount_t* mount, dentry_t* dentry)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mutation, LinuxResult, nullptr);
+
     if (inode == nullptr)
     {
-        return LINUX_ENOENT;
+        return ARX_FILESYSTEM_RETURN(LINUX_ENOENT);
     }
 
     if ((inode->filesystem != nullptr && (__atomic_load_n(&inode->filesystem->flags, __ATOMIC_RELAXED) & 1)) || (mount != nullptr && (__atomic_load_n(&mount->flags, __ATOMIC_RELAXED) & 1)))
     {
-        return (uint64_t) -30;
+        return ARX_FILESYSTEM_RETURN((uint64_t) -30);
     }
 
     if (inode->filesystem != nullptr && inode->filesystem->type == nullptr && (inode->inodeOps == nullptr || inode->inodeOps->SetMetadata == nullptr))
     {
-        return (uint64_t) -30;
+        return ARX_FILESYSTEM_RETURN((uint64_t) -30);
     }
 
     if (ResourceLayerImportCaps == nullptr || ResourceLayerImportCaps->processManager == nullptr)
     {
-        return LINUX_ENOSYS;
+        return ARX_FILESYSTEM_RETURN(LINUX_ENOSYS);
     }
 
     ProcessManager* processes = ResourceLayerImportCaps->processManager;
@@ -3617,7 +3645,7 @@ uint64_t VirtualFileSystem::ChangeMetadata(inode_t* inode, bool ownership, uint3
 
     if (process == nullptr)
     {
-        return LINUX_ESRCH;
+        return ARX_FILESYSTEM_RETURN(LINUX_ESRCH);
     }
 
     const uint32_t caller = process->credentials.user.filesystem;
@@ -3713,11 +3741,13 @@ uint64_t VirtualFileSystem::ChangeMetadata(inode_t* inode, bool ownership, uint3
         EventObserver->NotifyVfs(inode, 4, dentry != nullptr && dentry->parent != nullptr ? dentry->parent->inode : nullptr, dentry != nullptr ? dentry->name : nullptr);
     }
 
-    return result;
+    return ARX_FILESYSTEM_RETURN(result);
 }
 
 uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const char* type, uint64_t flags, const char* options)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.mount, LinuxResult, nullptr);
+
     constexpr uint64_t BIND = 4096, MOVE = 8192, REMOUNT = 32, RECURSIVE = 16384;
 
     if ((flags & 0xffff0000ULL) == 0xc0ed0000ULL)
@@ -3727,39 +3757,39 @@ uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const 
 
     if (target == nullptr || (flags & ~0x03ffffffULL) != 0)
     {
-        return LINUX_EINVAL;
+        return ARX_FILESYSTEM_RETURN(LINUX_EINVAL);
     }
 
     vfs_path_t resolved = {};
 
     if (!ResolvePath({}, target, &resolved) || resolved.dentry == nullptr || resolved.dentry->inode == nullptr)
     {
-        return LINUX_ENOENT;
+        return ARX_FILESYSTEM_RETURN(LINUX_ENOENT);
     }
 
     if (flags & ((15ULL << 17) | RECURSIVE))
     {
-        return LINUX_EOPNOTSUPP;
+        return ARX_FILESYSTEM_RETURN(LINUX_EOPNOTSUPP);
     }
 
     if (flags & REMOUNT)
     {
         if (flags & MOVE || resolved.dentry != resolved.mount->root)
         {
-            return LINUX_EINVAL;
+            return ARX_FILESYSTEM_RETURN(LINUX_EINVAL);
         }
 
         if (flags & BIND)
         {
             __atomic_store_n(&resolved.mount->flags, flags & ~(BIND | REMOUNT), __ATOMIC_RELAXED);
-            return 0;
+            return ARX_FILESYSTEM_RETURN(0);
         }
 
         filesystem_t* fs = resolved.mount->filesystem;
 
         if (fs == nullptr || fs->type == nullptr || fs->type->Remount == nullptr)
         {
-            return LINUX_EOPNOTSUPP;
+            return ARX_FILESYSTEM_RETURN(LINUX_EOPNOTSUPP);
         }
 
         const int64_t result = fs->type->Remount(fs, flags & ~REMOUNT, options);
@@ -3770,21 +3800,21 @@ uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const 
             __atomic_store_n(&resolved.mount->flags, flags & ~REMOUNT, __ATOMIC_RELAXED);
         }
 
-        return (uint64_t) result;
+        return ARX_FILESYSTEM_RETURN((uint64_t) result);
     }
 
     if (flags & MOVE)
     {
         if (flags != MOVE || source == nullptr || source[0] == 0)
         {
-            return LINUX_EINVAL;
+            return ARX_FILESYSTEM_RETURN(LINUX_EINVAL);
         }
 
         vfs_path_t origin = {};
 
         if (!ResolvePath({}, source, &origin))
         {
-            return LINUX_ENOENT;
+            return ARX_FILESYSTEM_RETURN(LINUX_ENOENT);
         }
 
         spinlock_acquire_preempt(&MountLock);
@@ -3806,14 +3836,14 @@ uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const 
         }
 
         spinlock_release_preempt(&MountLock);
-        return invalid ? LINUX_EINVAL : 0;
+        return ARX_FILESYSTEM_RETURN(invalid ? LINUX_EINVAL : 0);
     }
 
     mount_t* mount = static_cast<mount_t*>(kzalloc(sizeof(mount_t)));
 
     if (mount == nullptr)
     {
-        return LINUX_ENOMEM;
+        return ARX_FILESYSTEM_RETURN(LINUX_ENOMEM);
     }
 
     uint64_t result = 0;
@@ -3916,7 +3946,7 @@ uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const 
 
         if (RegisterMount(mount))
         {
-            return 0;
+            return ARX_FILESYSTEM_RETURN(0);
         }
 
         result = (uint64_t) -16;
@@ -3930,7 +3960,7 @@ uint64_t VirtualFileSystem::Mount(const char* source, const char* target, const 
     }
 
     kfree(mount);
-    return result;
+    return ARX_FILESYSTEM_RETURN(result);
 }
 
 void VirtualFileSystem::SetEventManager(EventManager* events)

@@ -3,9 +3,11 @@
 Adding fields to stats never needs an adapter. Add an entry here only when a rich
 collection needs interpretation beyond generic DWARF rendering.
 """
-from . import foundation, platform, memory, process, virtual_memory
+from . import foundation, platform, memory, process, virtual_memory, filesystem
 
 ADAPTERS = {
+    (filesystem.ARCHIVE_SEMANTICS, 1): ("InitRamDebugStats", filesystem.archive_view),
+    (filesystem.VFS_SEMANTICS, 1): ("VfsDebugStats", filesystem.vfs_view),
     (virtual_memory.SEMANTICS, 1): ("arx_vmm_debug_stats_t", virtual_memory.gather),
     (process.PROCESS_SEMANTICS, 1): ("ProcessDebugStats", process.process),
     (process.TASK_SEMANTICS, 1): ("TaskDebugStats", process.task),

@@ -667,6 +667,115 @@ registry or complete backing catalogue. Release excludes added records, helpers,
 registration and argument evaluation. Legacy `arx-vmm` remains available until
 cutover; explicit CPU selectors replace its ID/slot fallback ambiguity.
 
+## VFS and initramfs contents
+
+```text
+arx-debug initramfs contents
+arx-debug initramfs contents --path /lib --depth 3
+arx-debug initramfs entry --path /test.txt
+arx-debug initramfs stats
+arx-debug resource-fs stats
+arx-debug vfs mounts
+arx-debug vfs cache --scan 4096
+arx-debug vfs contents --path / --depth 4 --limit 100
+arx-debug vfs contents --path /lib --bytes 262144
+arx-debug vfs stats
+```
+
+The views distinguish the current parsed archive, the visible namespace, and
+cached/retained paths. Archive data and sizes can change after boot through
+writes and shrinking truncation; archive output is not an immutable original
+image. Listings show metadata and data addresses without reading file payloads.
+Symlink targets stored in verified VFS overlay records are shown but never
+recursively followed. A raw CPIO symlink/device mode does not imply that the
+Resource backend exposes that kind: it currently exposes directories or regular
+files. Raw archive mode and effective backend kind are reported separately.
+
+`initramfs contents` derives a hierarchy from the bounded archive array, including
+implicit directories and paths never cached by VFS. Explicit entries take
+precedence over inferred directories; duplicate names retain first-exact-match
+semantics and warn about ambiguity. `entry --path` selects an exact stored name,
+accepting one leading slash for convenience. The loader removes leading `./`
+components then leading slashes; internal dot components, repeated separators,
+and trailing separators are not silently rewritten by inspection. Ambiguous
+names remain visible as uninterpreted archive paths with partial status. A
+stored directory named `.` is shown explicitly as an archive root marker; the
+backend rejects dot child lookup and does not use it to override root metadata.
+
+`vfs mounts` shows namespace attachment paths, mount/parent/point/root identities,
+filesystem identity, registered type when present, separate mount/filesystem
+flags, and root inode. A missing type descriptor stays unavailable. Bind mounts
+can share a filesystem while rooting at an interior dentry; move mounts change
+attachments. Path occurrences are identified by mount plus dentry/backend path,
+not inode number alone.
+
+`vfs cache` explicitly lists cached and overlay records plus retained entries,
+with parent/inode identities, bounded ancestry, unlinked state and rename
+forwarding. Its hash inventory reports occupancy separately from capacity.
+It is not a complete namespace listing. Open descriptions can keep retired or
+unlinked identities meaningful after their old path stops being visible.
+
+`vfs contents` reconstructs supported visible contents from each mount's actual
+archive manager, including uncached entries and inferred directories. It merges
+overlays before cache entries, skips unlinked/forwarding records as independent
+children, and applies mount crossings/shadowing. Cached inode metadata can differ
+from current backend size; both are labeled when they differ. Unmaterialized
+archive paths have backend identities and zero dentry/inode addresses, rather
+than invented runtime objects. Cached metadata validity and namespace generation
+are exposed where present.
+
+Only the shipped native cpio Resource backend supports complete reconstruction.
+The reader verifies published native capability and operation identities before
+interpreting private nodes; alternate archive-manager sources remain supported.
+Custom callback-only backends show known paths with explicit incomplete branches.
+Inspection never calls Lookup, ReadDirectory or any other target function and
+does not acquire locks, populate caches, or change file/directory cursors.
+`complete` applies only to the selected supported subtree after all required
+traversal finishes. Unsupported backends, ambiguity, cycles, unreadable records,
+held locks, active updates and exhausted limits produce partial status.
+
+`contents --path` requires an absolute, unambiguous path and defaults to `/`.
+The path limit is 511 UTF-8 bytes; component names are bounded by 255 bytes.
+`--scan` defaults to 4,096 work units and is capped at 1,048,576. Archive records,
+hierarchy construction, list links, hash buckets (including empty buckets) and
+namespace expansion consume scan work. It is independent of displayed-row,
+copied-byte and hierarchy-depth budgets. Increase only the limit relevant to a
+reported truncation.
+
+For a stopped, known fixture instance, `--vfs <numeric-address>` selects that
+`VirtualFileSystem` object's debug record, and `--initramfs <numeric-address>`
+selects an `InitRamFileSystemManager`. These selectors do not register fixtures
+or prove pointer lifetime. Obtain addresses from the matching stopped target;
+expressions and function calls remain forbidden. VFS selectors apply to its rich
+views; the archive selector applies to archive rich views.
+
+### Filesystem counters and native-reader contract
+
+Archive stats expose parsing attempts/outcomes, readiness, array capacity and
+current count root. Resource stats distinguish backend mount, lookup, enumeration,
+read/write and namespace/truncate calls, with successfully returned read/write
+byte totals. EOF/zero-byte transfers are successful calls. VFS stats expose root,
+mount, lookup, cache and mutation API outcomes plus actual mount/overlay/retired
+insertions. Nested APIs count separate calls, not unique namespace changes;
+completed no-change calls can succeed. Counters have owner lifetime and unsigned
+modular totals. Update groups and existing lock bytes flag interrupted state,
+without promising a coherent cross-provider snapshot.
+
+Native readers use `arx.filesystem.archive/1` and
+`arx.filesystem.namespace/1`, with matching FileSystemDebugStats.hpp,
+InitRamFileSystemManager.hpp, ResourceFileSystemTypes.hpp,
+VirtualFileSystem.hpp and VirtualFileSystemTypes.hpp. The archive descriptor has
+count zero/capacity 256; its count pointer gives the current array length. VFS
+has count/capacity zero because its published roots point at owner fields for
+null-terminated lists and the lazy hash table. Hash keys are parent/name pairs;
+occupied bitmap bits index buckets with stride `key_len + val_len`. Validate
+layout dimensions and charge empty buckets, rather than trusting occupancy as a
+scan bound. Names, parent/forwarding chains and mount crossings require bounds
+and cycle checks. Native precedence and lifetime rules live beside the root
+records. Private layouts are single-sourced in their owning layer headers;
+callbacks remain opaque. Release excludes added records, helpers, registration
+and update evaluation. Legacy `arx-vfs` and `arx-initramfs` remain until cutover.
+
 ## Controlled foundation providers
 
 These providers demonstrate the contract; they are not PMM, scheduler or other

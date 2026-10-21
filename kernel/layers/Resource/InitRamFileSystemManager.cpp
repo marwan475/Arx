@@ -49,7 +49,15 @@ InitRamFileSystemManager::InitRamFileSystemManager(uint64_t initramfsSize, uintp
         Archives[i].gid  = 0;
     }
 
-    loadArchivesFromCpio(initramfsSize, initramfsAddress);
+    ARX_DEBUG_RUN(
+        DebugStats.source = this;
+        DebugStats.records = Archives;
+        DebugStats.count = &ArchiveCount;
+        DebugStats.capacity = MAX_ARCHIVES;
+    );
+    const bool loaded = loadArchivesFromCpio(initramfsSize, initramfsAddress);
+    ARX_DEBUG_STORE(DebugStats.ready, loaded ? 1 : 0);
+    (void) loaded;
 }
 
 void InitRamFileSystemManager::reset()
@@ -131,12 +139,14 @@ bool InitRamFileSystemManager::stringEquals(const char* lhs, const char* rhs)
 
 bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uintptr_t initramfsAddress)
 {
+    ARX_FILESYSTEM_SCOPE(DebugStats.load, BooleanOrPointer, nullptr);
+
     const uint8_t* base = (const uint8_t*) initramfsAddress;
     uint64_t       offset;
 
     if (initramfsAddress == 0 || initramfsSize < CPIO_HEADER_SIZE)
     {
-        return false;
+        return ARX_FILESYSTEM_RETURN(false);
     }
 
     reset();
@@ -161,34 +171,34 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
         if (memcmp(header, CPIO_NEWC_MAGIC, CPIO_MAGIC_SIZE) != 0)
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         if (!parseHexField(header + CPIO_MODE_OFFSET, 8, &mode) || !parseHexField(header + CPIO_UID_OFFSET, 8, &uid) || !parseHexField(header + CPIO_GID_OFFSET, 8, &gid))
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         if (!parseHexField(header + CPIO_FILESIZE_OFFSET, 8, &fileSize))
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         if (!parseHexField(header + CPIO_NAMESIZE_OFFSET, 8, &nameSize))
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         if (nameSize == 0)
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         nameEndOffset = offset + CPIO_HEADER_SIZE + nameSize;
 
         if (nameEndOffset > initramfsSize)
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         namePtr = base + offset + CPIO_HEADER_SIZE;
@@ -198,19 +208,19 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
         if (dataOffset > initramfsSize || fileSize > (initramfsSize - dataOffset))
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         nextOffset = align_up(dataOffset + fileSize, 4);
 
         if (nextOffset > initramfsSize)
         {
-            return false;
+            return ARX_FILESYSTEM_RETURN(false);
         }
 
         if (nameLen == (sizeof(CPIO_TRAILER) - 1) && memcmp(namePtr, CPIO_TRAILER, sizeof(CPIO_TRAILER) - 1) == 0)
         {
-            return true;
+            return ARX_FILESYSTEM_RETURN(true);
         }
 
         normalizedStart = normalizePathStart(namePtr, nameLen);
@@ -223,7 +233,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
             if (ArchiveCount >= MAX_ARCHIVES)
             {
-                return false;
+                return ARX_FILESYSTEM_RETURN(false);
             }
 
             archive = &Archives[ArchiveCount];
@@ -232,7 +242,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
 
             if (path == nullptr)
             {
-                return false;
+                return ARX_FILESYSTEM_RETURN(false);
             }
 
             memcpy(path, namePtr + normalizedStart, normalizedLen);
@@ -250,7 +260,7 @@ bool InitRamFileSystemManager::loadArchivesFromCpio(uint64_t initramfsSize, uint
         offset = nextOffset;
     }
 
-    return false;
+    return ARX_FILESYSTEM_RETURN(false);
 }
 
 initramfs_archive_t* InitRamFileSystemManager::find(const char* path)

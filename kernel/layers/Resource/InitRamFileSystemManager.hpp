@@ -1,4 +1,5 @@
 #pragma once
+#include <debug/kernel/stats/FileSystemDebugStats.hpp>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -16,6 +17,8 @@ struct initramfs_archive_t
 class InitRamFileSystemManager
 {
 public:
+    ARX_DEBUG_ONLY(mutable InitRamDebugStats DebugStats = {};)
+    ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
     static constexpr size_t MAX_ARCHIVES = 256;
 
     InitRamFileSystemManager(uint64_t initramfsSize, uintptr_t initramfsAddress);

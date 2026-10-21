@@ -34,6 +34,7 @@ def parse(arguments):
     words = gdb.string_to_argv(arguments)
     limits = {"--limit": 100, "--bytes": 65536, "--depth": 8}
     maxima = {"--limit": 10000, "--bytes": 16 * 1024 * 1024, "--depth": 32,
+              "--vfs": (1 << 64) - 1, "--initramfs": (1 << 64) - 1,
               "--space": (1 << 64) - 1, "--va": (1 << 64) - 1, "--size": 16 * 1024 * 1024,
               "--pid": 63, "--tid": 127, "--scan": 1048576,
               "--cpu": 255, "--slot": 255, "--node": 7, "--order": 10, "--class": 131072,
@@ -50,13 +51,16 @@ def parse(arguments):
                 options[word] = True
                 index += 1
                 continue
-            if word not in maxima and word not in ("--device", "--zone"):
+            if word not in maxima and word not in ("--device", "--zone", "--path"):
                 raise ReadFailure("invalid option: " + word)
             if word in options or index + 1 >= len(words):
                 raise ReadFailure("missing or duplicate option: " + word)
             index += 1
             value = words[index]
-            if word == "--zone":
+            if word == "--path":
+                if not value or len(value.encode("utf-8")) >= 512 or "\x00" in value:
+                    raise ReadFailure("path is empty, excessive or contains NUL")
+            elif word == "--zone":
                 if value not in ("normal", "dma"):
                     raise ReadFailure("zone requires normal or dma")
             elif word == "--device":
@@ -95,7 +99,7 @@ def parse(arguments):
 def gather(arguments):
     words, budget, options = parse(arguments)
     selectors = {name: value for name, value in options.items()
-                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap", "--pid", "--tid", "--scan", "--space", "--va", "--size")}
+                 if name in ("--cpu", "--slot", "--device", "--node", "--zone", "--order", "--class", "--check-bitmap", "--pid", "--tid", "--scan", "--space", "--va", "--size", "--path", "--vfs", "--initramfs")}
     if len(words) >= 2 and not (words == ["memory", "backing"]) and tuple(words[:2]) in (("pmm", "pfn"), ("heap", "address"), ("memory", "backing")):
         if len(words) != 3 or not re.fullmatch(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)", words[2]):
             raise ReadFailure("selected PFN/address requires one numeric value; expressions forbidden")

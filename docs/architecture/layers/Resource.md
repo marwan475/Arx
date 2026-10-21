@@ -274,7 +274,9 @@ use execution accounting even though CPU clock queries are not yet supported.
 
 Indexes up to 256 CPIO entries without copying their file data out of the boot
 image. `InitRamFileSystemManager.hpp` declares the archive records;
-`InitRamFileSystemManager.cpp` parses and searches them.
+`InitRamFileSystemManager.cpp` parses and searches them. Debug builds expose the
+bounded parsed array, load outcome and current count for metadata-only archive
+hierarchies and exact-name inspection, including entries never cached by VFS.
 
 | Function | What it does |
 | --- | --- |
@@ -289,6 +291,10 @@ Adapts the archive index into the filesystem callback table consumed by VFS.
 `ResourceFileSystem.hpp` declares the class and table; `ResourceFileSystem.cpp`
 implements opaque filesystem/node handles. Every table operation forwards to
 the matching method below, passing the table as its context argument.
+ResourceFileSystemTypes.hpp single-sources retained backend layouts for matching
+native readers. Debug records track public backend outcomes and returned I/O
+bytes; thunks do not double count. Archive mode and backend kind are distinct:
+the current backend exposes directories or regular files.
 
 | Function | What it does |
 | --- | --- |

@@ -288,7 +288,7 @@ use execution accounting even though CPU clock queries are not yet supported.
 
 ### DeviceManager
 
-`Device.hpp` defines the lightweight, bus-independent `Device` snapshot. It holds
+`DeviceManager.hpp` defines the lightweight, bus-independent `Device` snapshot. It holds
 an assigned `DeviceId`, parent ID, bus, functional type, borrowed identity and
 type-specific operations pointers, state, and bound `DriverId`. Both identifier
 types are `uint64_t`; zero is invalid. `CONTROLLER_DEVICE_ID` (`UINT64_MAX`) is a

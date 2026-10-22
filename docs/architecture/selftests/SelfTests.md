@@ -99,11 +99,9 @@ events, work draining, unsafe self-drain rejection, large allocations, port boun
 and exact-width PCI reads. It also checks the bounded event FIFO and overflow.
 
 Build with `ACPI_TEST_FAIL_STAGE=4` in a separate build directory to force runtime
-failure after namespace initialization and check table-access fallback. Separate
-`ACPI_TEST_ACTION=1` and `ACPI_TEST_ACTION=2` images invoke final firmware power-off
-and reset after the test summary. Use those images only in disposable QEMU runs;
-the normal default is zero and performs no final power action. QEMU's power-button
-event should enqueue a typed event without powering off the default image.
+failure after namespace initialization and check table-access fallback. Startup
+self-tests do not invoke firmware shutdown or reset. QEMU's power-button event
+should enqueue a typed event without powering off the image.
 
 ### PhysicalMemoryManager
 

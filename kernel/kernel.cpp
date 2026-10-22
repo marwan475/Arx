@@ -106,15 +106,6 @@ static void KernelPostInit(void)
     arch_calibrate_scheduler_timer();
     SelfTestManager::Get().RunPostInitTests();
 
-    if (ARX_ACPI_TEST_ACTION != 0 && arch_cpu_id() == platform.bsp_id)
-    {
-        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
-        AcpiManager* acpi = dispatcher->GetResourceLayerCaps()->acpiManager;
-        kprintf("ACPI TEST: final firmware action=%u\n", (unsigned) ARX_ACPI_TEST_ACTION);
-        acpi_status_t status = ARX_ACPI_TEST_ACTION == 1 ? acpi->PowerOff() : acpi->Reset();
-        error_logger("ACPI TEST: final firmware action returned status=%u\n", (unsigned) status);
-    }
-
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
 

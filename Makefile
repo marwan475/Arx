@@ -37,8 +37,7 @@ DEBUG ?= 0
 UACPI_DIR ?= kernel/platform/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
 ACPI_TEST_FAIL_STAGE ?= 0
-ACPI_TEST_ACTION ?= 0
-UACPI_DEFINES := -include kernel/platform/acpi/config.h -DARX_ACPI_TEST_FAIL_STAGE=$(ACPI_TEST_FAIL_STAGE) -DARX_ACPI_TEST_ACTION=$(ACPI_TEST_ACTION)
+UACPI_DEFINES := -include kernel/platform/acpi/config.h -DARX_ACPI_TEST_FAIL_STAGE=$(ACPI_TEST_FAIL_STAGE)
 UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/platform/acpi/acpi.c kernel/platform/acpi/host.c kernel/platform/acpi/runtime.c kernel/platform/acpi/resources.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP

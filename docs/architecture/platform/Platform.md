@@ -166,6 +166,10 @@ regions, maps configuration space, and builds the platform-owned inventory.
 AArch64 reports unsupported. Bootstrap does not invoke discovery: after
 `StartKernel` returns, `kmain` calls Resource's `PciManager::EnumerateDevices`.
 Both the manager and platform API cache the first outcome without rescanning.
+Resource creates DeviceManager before PciManager. The latter registers its host
+controller and publishes discovered functions into that central registry while
+preserving these platform-owned identities. Registry publication can retry
+independently of the cached hardware outcome.
 
 The platform retains inventory storage and ECAM mappings for the kernel lifetime.
 Original record addresses remain stable for DMA and debug readers. Status is

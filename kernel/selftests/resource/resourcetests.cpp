@@ -7,6 +7,7 @@ void run_resource_selftest_group(ResourceLayerCaps* resources)
     SelfTestManager::Get().GroupBegin("resource");
     test_PhysicalMemoryManager(resources);
     test_DmaManager(resources);
+    test_DeviceManager(resources);
     test_PciManager(resources);
     test_VirtualMemoryManager(resources);
     test_ProcessManager(resources);

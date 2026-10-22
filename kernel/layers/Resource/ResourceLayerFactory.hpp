@@ -2,6 +2,7 @@
 
 #include "layers/Resource/ResourceFileSystem.hpp"
 
+class DeviceManager;
 class DmaManager;
 class PciManager;
 class PhysicalMemoryManager;
@@ -13,6 +14,7 @@ class InitRamFileSystemManager;
 
 struct ResourceLayerCaps
 {
+    DeviceManager*               deviceManager;
     DmaManager*                  dmaManager;
     PciManager*                  pciManager;
     PhysicalMemoryManager*       physicalMemoryManager;

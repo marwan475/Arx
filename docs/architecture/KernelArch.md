@@ -94,7 +94,8 @@ Resource owns kernel objects and provides the operations needed to manage them.
 | `VirtualMemoryManager.hpp` | Manages address spaces, virtual mappings, and memory backing. |
 | `DmaManager.hpp` | Allocates and tracks coherent DMA memory. |
 | `TimeManager.hpp` | Provides clocks, deadlines, and process interval timers. |
-| `PciManager.hpp` | Triggers PCI discovery and exposes the borrowed platform inventory. |
+| `DeviceManager.hpp` | Owns the bus-independent device registry, relationships, states, and driver IDs. |
+| `PciManager.hpp` | Registers the PCI host controller, triggers discovery, and registers the borrowed platform inventory. |
 | `InitRamFileSystemManager.hpp` | Reads the boot-provided cpio initramfs. |
 | `ResourceFileSystem.hpp` | Provides filesystem backend operations and node handles. |
 
@@ -146,8 +147,11 @@ the following managers.
 
 ## 8. Start normal kernel work
 
-After `StartKernel` returns, `kmain` explicitly calls PciManager to enumerate PCI
-on the bootstrap CPU, then runs the PCI inventory and production DMA checks.
+DeviceManager is created before PciManager, whose constructor registers a platform
+host controller pointing back to that PciManager. After `StartKernel` returns,
+`kmain` explicitly calls PciManager to enumerate PCI on the bootstrap CPU and
+register its functions beneath the controller, then runs the PCI inventory and
+production DMA checks.
 Discovery failures remain queryable and do not stop startup. It then mounts the
 initramfs through VirtualFileSystem and Resource's filesystem services. It creates and queues post-initialization tasks
 for each CPU, releases the waiting CPUs, and activates scheduling. Those tasks

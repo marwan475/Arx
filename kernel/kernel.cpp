@@ -37,10 +37,12 @@ extern "C" void kmain(void)
     {
         PciStatus status = resourceLayerCaps->pciManager->EnumerateDevices();
 
-        kprintf("Arx kernel: PCI enumeration status=%u devices=%llu truncated=%u\n",
+        kprintf("Arx kernel: PCI enumeration status=%u devices=%llu truncated=%u registration=%u controller=%llu\n",
                 (unsigned) status,
                 (unsigned long long) resourceLayerCaps->pciManager->CountDevices(),
-                (unsigned) resourceLayerCaps->pciManager->IsTruncated());
+                (unsigned) resourceLayerCaps->pciManager->IsTruncated(),
+                (unsigned) resourceLayerCaps->pciManager->GetRegistrationStatus(),
+                (unsigned long long) resourceLayerCaps->pciManager->GetControllerDeviceId());
 
         debug_pci_devices();
     }

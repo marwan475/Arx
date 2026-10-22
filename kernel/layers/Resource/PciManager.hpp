@@ -1,5 +1,7 @@
 #pragma once
 
+#include "layers/Resource/DeviceManager.hpp"
+
 #include <debug/kernel/stats/PciDebugStats.hpp>
 #include <pci/pci.h>
 
@@ -18,7 +20,12 @@ public:
     ARX_DEBUG_ONLY(PciDebugStats DebugStats{};)
     ARX_DEBUG_ONLY(void PublishDebug(DebugManager& manager);)
 
-    explicit PciManager(const platform_pci_ops_t* operations);
+    // Registry is borrowed and must outlive this manager. The controller identity
+    // points to this manager, which must remain alive while snapshots are usable.
+    PciManager(const platform_pci_ops_t* operations, DeviceManager* devices);
+    // Quiescent teardown only: release drivers and external children first, and
+    // stop all snapshot users. Unregisters owned records, never platform storage.
+    ~PciManager();
     PciManager(const PciManager&) = delete;
     PciManager& operator=(const PciManager&) = delete;
 
@@ -35,7 +42,21 @@ public:
     const pci_device_t* GetDevice(size_t index) const;
     const pci_device_t* FindDevice(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function) const;
 
+    DeviceId GetControllerDeviceId() const;
+    DeviceId GetDeviceId(size_t index) const;
+    // Separate from hardware discovery. NotReady until a successful inventory
+    // is registered. Explicit enumeration retries registration, never rescanning.
+    DeviceStatus GetRegistrationStatus() const;
+
 private:
+    PciStatus DiscoverDevices();
+    DeviceStatus RegisterController();
+    void RegisterDevices();
+
     platform_pci_ops_t       Operations;
     platform_pci_inventory_t Inventory;
+    DeviceManager*           Devices;
+    DeviceId                 ControllerId;
+    DeviceId                 DeviceIds[MAX_PCI_DEVICES];
+    DeviceStatus             RegistrationStatus;
 };

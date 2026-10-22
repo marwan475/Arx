@@ -11,6 +11,7 @@
 #include <klib/klib.h>
 #include <platform.h>
 #include <selftests/selftests.h>
+#include <selftests/resource/resourcetests.hpp>
 #include "smpfixtures.hpp"
 
 typedef struct smp_pid_vfs_task_context
@@ -53,6 +54,7 @@ enum smp_fail_mask_bits
     SMP_FAIL_PIDVFS_RESTORE_RUNNING    = 1ULL << 9,
     SMP_FAIL_PIDVFS_TASK_BODY          = 1ULL << 10,
     SMP_FAIL_PIDVFS_SLOT_LAYOUT        = 1ULL << 11,
+    SMP_FAIL_DEVICE_REGISTRY           = 1ULL << 12,
 
     SMP_FAIL_SCHED_MISSING_MANAGERS   = 1ULL << 16,
     SMP_FAIL_SCHED_MISSING_RUNNING    = 1ULL << 17,
@@ -296,6 +298,16 @@ extern "C" void smp_selftests(void)
     {
         resourceLayerCaps = dispatcher->GetResourceLayerCaps();
         logicLayerCaps    = dispatcher->GetLogicLayerCaps();
+
+        if (exercise_device_registry(resourceLayerCaps))
+        {
+            totals.passes++;
+        }
+        else
+        {
+            totals.fails++;
+            localFailMask |= SMP_FAIL_DEVICE_REGISTRY;
+        }
 
         if (resourceLayerCaps == nullptr || logicLayerCaps == nullptr || resourceLayerCaps->taskManager == nullptr || resourceLayerCaps->processManager == nullptr || logicLayerCaps->virtualFileSystem == nullptr)
         {
@@ -593,6 +605,11 @@ extern "C" void smp_selftests_kdebug_summary_details(void)
 
     KDEBUG("smp summary detail: fail_mask=0x%llx\n", mask);
 
+    if (mask & SMP_FAIL_DEVICE_REGISTRY)
+    {
+        KDEBUG("smp summary detail: concurrent device registry operations failed\n");
+    }
+
     if (mask & SMP_FAIL_DISPATCHER_NULL)
     {
         KDEBUG("smp summary detail: dispatcher null\n");
@@ -716,6 +733,11 @@ extern "C" void smp_selftests_record_failure_details(void)
     if (mask == 0)
     {
         return;
+    }
+
+    if (mask & SMP_FAIL_DEVICE_REGISTRY)
+    {
+        SelfTestManager::Get().RecordFailureDetail("concurrent device registry operations failed");
     }
 
     if (mask & SMP_FAIL_DISPATCHER_NULL)

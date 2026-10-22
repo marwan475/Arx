@@ -1,7 +1,7 @@
 # Resource layer
 
-The Resource layer provides the kernel's memory, process, task, time, DMA, PCI, and
-filesystem resources. Logic builds behavior and policy on these services; Request
+The Resource layer provides the kernel's memory, process, task, time, DMA, device,
+PCI, and filesystem resources. Logic builds behavior and policy on these services; Request
 can also use them directly. Platform mechanisms and architecture hooks provide
 the underlying machine operations.
 
@@ -17,9 +17,12 @@ established memory, CPU state, and boot-image information. The factory construct
 the components in the table below, then publishes `ResourceLayerCaps`.
 
 DMA receives the physical/virtual memory managers and `platform.dma_ops`.
-TimeManager initializes its clock backend. PciManager copies the platform PCI
-operation table without invoking it. After `StartKernel` returns, `kmain` calls
-`EnumerateDevices` on the bootstrap CPU before post-init tasks are queued.
+TimeManager initializes its clock backend. DeviceManager is created before
+PciManager and exported as `ResourceLayerCaps::deviceManager`. PciManager copies
+the platform PCI operation table without invoking it and registers its host
+controller in DeviceManager. After `StartKernel` returns, `kmain` calls
+`EnumerateDevices` on the bootstrap CPU to discover and register PCI functions
+before post-init tasks are queued.
 InitRamFileSystemManager indexes the boot archive using its platform address
 and size; ResourceFileSystem then wraps
 that manager and exports filesystem callbacks.
@@ -283,12 +286,69 @@ realtime epoch, availability, and resolution; `read` supplies elapsed monotonic
 nanoseconds. Live use must share Scheduler's monotonic epoch. CPU interval timers
 use execution accounting even though CPU clock queries are not yet supported.
 
+### DeviceManager
+
+`Device.hpp` defines the lightweight, bus-independent `Device` snapshot. It holds
+an assigned `DeviceId`, parent ID, bus, functional type, borrowed identity and
+type-specific operations pointers, state, and bound `DriverId`. Both identifier
+types are `uint64_t`; zero is invalid. `CONTROLLER_DEVICE_ID` (`UINT64_MAX`) is a
+parent marker for controller roots, not a registered device or assignable ID.
+Ordinary roots may use the invalid parent ID. Assigned IDs increase globally,
+are never reused, and stop before the controller marker.
+
+`DeviceType` distinguishes unknown devices, controllers, storage, network,
+display, input, audio, and serial devices independently of `DeviceBus` (PCI, USB,
+platform, or virtual). Defaults are platform/unknown, discovered, unbound, with
+null identity and operations. DeviceManager neither knows nor invokes the
+operations table's layout. Drivers can later be supplied by loadable modules;
+the registry currently tracks identifiers without loading, matching, probing,
+unloading, or retaining modules.
+
+| Function | What it does |
+| --- | --- |
+| `DeviceManager()` | Create an empty registry with a preemption-aware spinlock. |
+| `~DeviceManager()` | Free private records after callers quiesce; never release borrowed identities or operations. |
+| `RegisterDevice(device, id)` | Copy a device, validate its parent and enum values, and assign a new ID. Input IDs must be invalid and the device initially unbound. |
+| `UnregisterDevice(id)` | Remove an unbound leaf, or return `Busy` while a driver or children remain. |
+| `GetDevice(id, device)` | Copy the current record, or return `NotFound`; no registry pointer escapes. |
+| `EnumerateDevices(devices, capacity, result, filter)` | Copy a coherent snapshot, optionally filtering by bus, state, and parent. Report copied and total matching counts. |
+| `CountDevices()` | Return the registered record count under the lock. |
+| `SetDeviceState(id, state)` | Assign a valid state without enforcing a transition graph. |
+| `AssociateDriver(id, driverId)` | Bind a nonzero opaque driver ID; repeat binding is idempotent and replacement returns `Busy`. |
+| `DisassociateDriver(id)` | Clear the binding idempotently without modifying operations. |
+
+Registration rejects duplicate non-null `(bus, identity)` pairs; null identities
+can describe distinct synthetic devices. Parents must already exist unless the
+ID is invalid or the controller marker; the marker requires controller type.
+Parent, bus, type, identity, and operations are immutable after registration,
+so relationships cannot acquire cycles through reparenting. States are
+`DISCOVERED`, `INITIALIZING`, `INITIALIZED`, `FAILED`, and `REMOVING`.
+
+All public operations run in startup/task context, not interrupt context. Private
+linked records use the existing heap; allocation precedes locking, unlinking
+occurs under the lock, and freeing follows unlock. Enumeration accepts a null
+buffer with zero capacity for counting; a short buffer succeeds with the full
+matching total and no writes beyond capacity. Separate calls can observe changes.
+Failures leave outputs unchanged.
+
+Lookup and enumeration return values that remain safe after record removal.
+Their non-null identity and operations pointers remain borrowed: providers must
+keep this storage alive for the kernel lifetime, including after unregistering.
+Copying a device does not pin its provider or module. Quiescent fixture/shutdown
+teardown must stop all snapshot users before destroying a provider.
+
 ### PciManager
 
 `PciManager.hpp` defines the discovery/query interface and `PciStatus`;
 `PciManager.cpp` wraps an injected platform enumeration backend. The factory owns
 the noncopyable manager and publishes `ResourceLayerCaps::pciManager`. Platform
-owns the inventory; manager destruction does not release its records or mappings.
+owns the inventory; manager destruction does not release platform records or mappings.
+The manager borrows DeviceManager, which must outlive it. Construction registers
+a `PLATFORM`/`CONTROLLER` root whose parent is `CONTROLLER_DEVICE_ID` and whose
+identity points to the PciManager itself. Production managers live for the kernel
+lifetime. Quiescent destruction unregisters owned functions and then the controller
+before that identity expires. Bound drivers or external children must be released
+first; violating this teardown contract panics. Snapshot users must already have stopped.
 Debug builds publish manager-owned `PciDebugStats` as `pci-manager` through
 Dispatcher after construction. It records enumeration/backend/cache call counts,
 rejected backend results, and the last completed inventory/status snapshot. A
@@ -298,19 +358,45 @@ and the separate platform `pci devices` view.
 
 | Function | What it does |
 | --- | --- |
-| `PciManager(operations)` | Copy the operation table and start in `NotEnumerated`; context must outlive calls. |
-| `EnumerateDevices()` | Invoke the backend once on the BSP during startup and cache the outcome, including failures. |
+| `PciManager(operations, devices)` | Copy the operation table and register the host controller without enumerating; context must outlive calls. |
+| `~PciManager()` | Unregister owned device records during quiescent teardown, preserving platform inventory and mappings. |
+| `EnumerateDevices()` | Invoke the backend once on the BSP during startup, cache its outcome including failures, and register the captured functions. |
 | `GetStatus()` | Report `NotEnumerated`, `Success`, `Unsupported`, `NoRegions`, or `Failed`. |
 | `IsTruncated()` | Report whether discovery stopped because inventory capacity was exhausted. |
 | `CountDevices()` | Return the captured device-function count, initially zero. |
 | `GetDevice(index)` | Borrow the original const platform record, or return null for an invalid index. |
 | `FindDevice(segment, bus, device, function)` | Find an exact segment-qualified address, or return null for invalid or absent addresses. |
+| `GetControllerDeviceId()` | Return the synthetic host controller's registry ID, or invalid if registration failed. |
+| `GetDeviceId(index)` | Return a captured function's registry ID, or invalid when outside the inventory or not registered. |
+| `GetRegistrationStatus()` | Report publication success or registry errors separately from discovery; `NotReady` means successful discovery has not yet supplied an inventory for publication. |
 
 Queries do not trigger enumeration. After discovery is published to the other
 CPUs, concurrent read-only queries need no manager lock; concurrent enumeration
 and runtime rescans are unsupported. Success with zero devices differs from no
 ECAM regions, an unsupported backend, or failed enumeration. A truncated inventory
 remains usable up to its 256 recorded device functions.
+
+Each discovered function is registered as `DeviceBus::PCI`, with the controller's
+actual ID as its parent and its original `pci_device_t` address as identity.
+Topology remains flat; bridges do not introduce another discovery pass. PciManager
+classifies storage, network, display, input, bridge/serial-bus controllers, and
+recognized audio/serial subclasses using the captured PCI class fields. Other
+functions remain unknown. Function operations are currently null; PCI discovery
+does not invent type-specific callbacks.
+
+The controller starts discovered, becomes initializing during discovery and
+publication, and becomes initialized once both succeed, including an empty
+successful inventory. Unsupported/no-region/failed discovery or registration
+failure leaves an existing controller failed. PCI functions start discovered;
+enumeration does not initialize their drivers.
+
+Registry failure preserves earlier registrations and the hardware inventory.
+Another explicit `EnumerateDevices` call retries missing registrations without
+rescanning or replacing existing states, operations, or driver bindings. It can
+also repair an explicitly removed function with a fresh ID. Until repair, a
+cached function ID may be stale; validate it through DeviceManager. The synthetic
+controller and publication failures do not change discovery counts, truncation,
+statuses, or PCI debug statistics. The boot log reports registration separately.
 
 Returned records preserve the pointer identity required by platform DMA. They
 capture discovery-time configuration values, not live register state; BAR metadata
@@ -378,6 +464,7 @@ manager is destroyed.
 | `process_t` | A ProcessManager slot; lifetime claims and memory claims protect different aspects of it. |
 | `task_t` | A TaskManager slot with a stack/context; dispatch claims prevent retirement while selected for execution. |
 | `DmaAllocation` | A tracked handle containing CPU address, device address, size, and allocation ID. |
+| `Device` | A copied registry snapshot; identity and operations are borrowed for the kernel lifetime. |
 | `initramfs_archive_t` | Indexed archive metadata whose data pointer refers into the supplied boot image. |
 
 `AcquireProcess`/`ReleaseProcess` retain process lifetime.
@@ -404,6 +491,8 @@ table rather than treating CPU pointers as device addresses. TimeManager's defau
 backend calls architecture clock hooks; its alternate backend supports isolated,
 deterministic tests. PciManager explicitly triggers platform PCI discovery and
 borrows its stable records; architecture-specific scanning stays beneath Resource.
+DeviceManager owns generic records and relationships without depending on PCI or
+another bus implementation.
 
 Necessary upward work passes through Dispatcher. TaskManager stores opaque
 priority and retirement routes; Dispatcher invokes their policy providers while

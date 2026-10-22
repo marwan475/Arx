@@ -10,6 +10,8 @@ void test_TimeManager(ResourceLayerCaps* resources);
 void test_InitRamFileSystemManager(ResourceLayerCaps* resources);
 void test_ResourceFileSystem(ResourceLayerCaps* resources);
 void test_DmaManager(ResourceLayerCaps* resources);
+void test_DeviceManager(ResourceLayerCaps* resources);
+bool exercise_device_registry(ResourceLayerCaps* resources);
 void test_PciManager(ResourceLayerCaps* resources);
 void test_PciManagerPlatform(ResourceLayerCaps* resources);
 void test_DmaManagerPlatform(ResourceLayerCaps* resources);

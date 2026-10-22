@@ -108,15 +108,37 @@ later, after PCI discovery in `kmain`, using a record returned by PciManager.
 If no reserved DMA pages exist, `resource/DmaManager/reserved_memory` reports
 BLOCKED and the allocation-dependent cases are not reached.
 
+### DeviceManager
+
+`DeviceManagerTests.cpp` checks the generic registry using isolated managers and
+static borrowed identities/operations. `registration_and_snapshots` covers
+assigned IDs, duplicate handling, pointer preservation, removal, surviving copied
+records, and nonreuse. `parents_and_removal` covers controller markers, existing
+parents, child-before-parent removal, and failed registration without publication.
+`state_and_driver` checks state validation, idempotent association/disassociation,
+replacement and removal guards, immutable operations, and stale IDs.
+`enumeration_and_filters` checks count-only calls, short buffers, combined
+bus/state/parent filters, and empty results. `invalid_arguments` checks malformed
+records, filters, and output arguments.
+
+The SMP phase also calls `exercise_device_registry` from every CPU against the
+live registry. Each CPU performs 128 register/lookup/state/bind/enumerate/unbind/
+remove cycles and checks copied records after removal, contributing its result
+to the existing BSP-owned SMP case.
+
 ### PciManager
 
 `PciManagerTests.cpp` uses injected inventories during Resource tests. It checks
 that construction and queries leave discovery unstarted, original pointer identity
 and segment/BDF lookup, invalid indices/addresses, empty and failure outcomes,
 truncation, malformed backend results, and caching of both success and failure.
+It also checks the controller exists before discovery and points to PciManager,
+PCI function type classification, retained partial registrations with retry
+without rescanning, preserved state/driver IDs, and quiescent registry teardown.
 `resource/PciManager/platform_inventory` runs after live discovery in `kmain`,
 checking platform/manager agreement, stable DMA identities, and repeated calls
-without replacing the inventory.
+without replacing the inventory. It verifies that the live controller and each
+function are represented in DeviceManager with the expected identities and parents.
 Debug builds also check publication/withdrawal of borrowed manager statistics,
 call/backend/cache counters, rejected results, inventory snapshots, and balanced
 operation groups, including an active group observed inside the fake backend.
@@ -326,7 +348,7 @@ from `ElfMapper/library_backing`.
 
 | Test | What it tests |
 | --- | --- |
-| `smp/scheduler_and_filesystem` | Per-CPU process identity, disjoint shared-file writes, scheduler dispatch, worker completion, and safe reclamation. |
+| `smp/scheduler_and_filesystem` | Concurrent device registry operations, per-CPU process identity, disjoint shared-file writes, scheduler dispatch, worker completion, and safe reclamation. |
 | `memory/cross_cpu_tlb_remap` | A remote CPU observes replacement physical backing after a shared virtual address is remapped. |
 | `filesystem/mounted_io_and_lifecycle` | Mounted lookup, directory/stat/read/write/seek, content restoration, sync, close, and process-owned descriptors. |
 | `ElfMapper/library_backing` | Independent processes share executable library pages, private writes detach writable pages, and mapping preserves heap state. |

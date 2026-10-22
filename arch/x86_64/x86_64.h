@@ -319,6 +319,7 @@ extern "C"
     void     ioapic_mask_vector(uint8_t vector);
     void     ioapic_unmask_vector(uint8_t vector);
     uint32_t ioapic_register_device(uint32_t gsi);
+    uint32_t ioapic_register_device_flags(uint32_t gsi, uint16_t flags);
     bool     pci_get_mcfg_region_count(size_t* out_region_count);
     bool     pci_get_regions_from_mcfg(pci_ecam_region_t* out_entries, size_t max_entries, size_t* out_entry_count);
 

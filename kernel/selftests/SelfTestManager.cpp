@@ -10,6 +10,8 @@
 #include <klib/klib.h>
 #include <platform.h>
 
+void test_acpi_host(bool scheduled);
+
 // Trivial static storage: early C tests do not depend on global constructors.
 SelfTestManager SelfTestManager::instance;
 
@@ -460,6 +462,12 @@ void SelfTestManager::RunPostInitTests()
     Dispatcher* dispatcher   = (Dispatcher*) platform.dispacher;
     void*       resourceCaps = dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr;
     void*       logicCaps    = dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr;
+
+    if (arch_cpu_id() == platform.bsp_id)
+    {
+        test_acpi_host(true);
+    }
+
     RunPostStartTests(resourceCaps, logicCaps);
 
     if (arch_cpu_id() == platform.bsp_id)

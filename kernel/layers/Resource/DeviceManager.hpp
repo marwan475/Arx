@@ -16,7 +16,8 @@ enum class DeviceBus
     PCI,
     USB,
     PLATFORM,
-    VIRTUAL
+    VIRTUAL,
+    ACPI
 };
 
 enum class DeviceType

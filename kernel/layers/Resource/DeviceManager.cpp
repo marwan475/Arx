@@ -6,7 +6,7 @@ static DeviceId NextDeviceId = 1;
 
 static bool ValidBus(DeviceBus bus)
 {
-    return static_cast<unsigned>(bus) <= static_cast<unsigned>(DeviceBus::VIRTUAL);
+    return static_cast<unsigned>(bus) <= static_cast<unsigned>(DeviceBus::ACPI);
 }
 
 static bool ValidType(DeviceType type)

@@ -1,4 +1,5 @@
 #include "layers/Dispatcher.hpp"
+#include "layers/Request/AcpiRequestManager.hpp"
 #include "layers/DispatcherRoutes.hpp"
 #include "layers/Logic/VirtualFileSystem.hpp"
 
@@ -699,4 +700,52 @@ extern "C" int64_t dispatcher_write_backing(const dispatcher_backing_operations_
 extern "C" void dispatcher_release_backing_context(const dispatcher_backing_operations_t* route, void* context)
 {
     MemoryRequestManager::HandleBackingRelease(route, context);
+}
+
+extern "C" uint64_t dispatcher_acpi_thread_id(void)
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    return AcpiRequestManager::ThreadId(dispatcher != nullptr ? dispatcher->GetResourceLayerCaps() : nullptr);
+}
+
+extern "C" bool dispatcher_acpi_can_wait(void)
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
+    if (dispatcher == nullptr)
+    {
+        return false;
+    }
+
+    return AcpiRequestManager::CanWait(dispatcher->GetResourceLayerCaps(), dispatcher->GetLogicLayerCaps());
+}
+
+extern "C" bool dispatcher_acpi_wait(const uint64_t* sequence, uint64_t expected, uint64_t deadline)
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
+    if (dispatcher == nullptr)
+    {
+        return false;
+    }
+
+    return AcpiRequestManager::Wait(dispatcher->GetResourceLayerCaps(), dispatcher->GetLogicLayerCaps(), sequence, expected, deadline);
+}
+
+extern "C" void dispatcher_acpi_wake(const uint64_t* sequence)
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+    AcpiRequestManager::Wake(dispatcher != nullptr ? dispatcher->GetLogicLayerCaps() : nullptr, sequence);
+}
+
+extern "C" bool dispatcher_acpi_create_worker(void (*entry)(void*), void* argument)
+{
+    Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+
+    if (dispatcher == nullptr)
+    {
+        return false;
+    }
+
+    return AcpiRequestManager::CreateWorker(dispatcher->GetResourceLayerCaps(), dispatcher->GetLogicLayerCaps(), entry, argument);
 }

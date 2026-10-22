@@ -564,6 +564,29 @@ void* memset(void* dest, int value, size_t count)
     return dest;
 }
 
+void* memmove(void* dest, const void* src, size_t count)
+{
+    uint8_t* destination = dest;
+    const uint8_t* source = src;
+
+    if ((uintptr_t) destination > (uintptr_t) source)
+    {
+        for (size_t i = count; i != 0; i--)
+        {
+            destination[i - 1] = source[i - 1];
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < count; i++)
+        {
+            destination[i] = source[i];
+        }
+    }
+
+    return dest;
+}
+
 void* memcpy(void* dest, const void* src, size_t count)
 {
     uint8_t*       d = (uint8_t*) dest;

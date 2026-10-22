@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <acpi/host.h>
 #include <klib/klib.h>
 #include <layers/Request/InterruptRequestManager.hpp>
 #include <memory/vmm.h>
@@ -185,6 +186,12 @@ static void handle_interrupt(registers_t* reg)
 
     if (reg->interrupt_number >= 32)
     {
+        if (acpi_host_dispatch_interrupt(reg->interrupt_number))
+        {
+            lapic_eoi();
+            return;
+        }
+
         lapic_eoi();
     }
 

@@ -40,7 +40,7 @@ translation setup and platform memory services.
 
 This is partial paging support. It does not complete isolated userspace roots,
 strict user-memory permission checks, or integration with a running SMP scheduler.
-No successful AArch64 build or boot is claimed by this source inventory.
+A successful build does not establish a working AArch64 runtime or boot.
 
 ## 3. Defined structures
 
@@ -73,11 +73,11 @@ context switching.
 | Signals | `arch_signal.cpp` rejects action validation, preparation, and restoration with EOPNOTSUPP; user-return detection returns false. |
 | Random seed | `arch_user_random_seed` returns false. |
 | PCI discovery | `arch_pci_enumerate` returns `PCI_UNSUPPORTED`. |
-| Firmware controller setup | `arch_acpi.c` returns success without processing MADT information. |
+| Firmware controller setup | `arch_acpi.c` reports unsupported MADT setup and ACPI runtime I/O/PCI/IRQ operations. |
 | DMA | No AArch64 definitions of the DMA capability/barrier hooks are present; bootstrap initializes the platform DMA backend only on x86_64. |
 
-A successful no-op, such as the ACPI hook, must not be treated as implemented
-hardware support. AArch64 stays stubbed until these missing runtime paths are
+No-op context and cache helpers do not establish ACPI runtime support;
+`arch_task_context_supported` keeps the shared runtime unavailable on this target. AArch64 stays stubbed until these missing runtime paths are
 addressed in separate implementation work.
 
 ## 5. Inspection and tests

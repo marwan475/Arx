@@ -36,8 +36,10 @@ DEBUG ?= 0
 
 UACPI_DIR ?= kernel/platform/acpi/uACPI
 UACPI_INCLUDE_DIRS := -I$(UACPI_DIR)/include
-UACPI_DEFINES := -DUACPI_BAREBONES_MODE
-UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/platform/acpi/acpi.c
+ACPI_TEST_FAIL_STAGE ?= 0
+ACPI_TEST_ACTION ?= 0
+UACPI_DEFINES := -include kernel/platform/acpi/config.h -DARX_ACPI_TEST_FAIL_STAGE=$(ACPI_TEST_FAIL_STAGE) -DARX_ACPI_TEST_ACTION=$(ACPI_TEST_ACTION)
+UACPI_SRCS := $(wildcard $(UACPI_DIR)/source/*.c) kernel/platform/acpi/acpi.c kernel/platform/acpi/host.c kernel/platform/acpi/runtime.c kernel/platform/acpi/resources.c
 
 CFLAGS_COMMON := $(INCLUDE_DIRS) -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -MMD -MP
 CFLAGS_COMMON += -DDEBUG=$(DEBUG)
@@ -83,6 +85,8 @@ USER_TEST_ELF ?= $(INITRAMFS_DIR)/test_syscall_exit.elf
 .PHONY: all x86_64 aarch64 initramfs prepare-iso-tools clean qemu-x86_64 qemu-kvm qemu-aarch64 x86_64-debug aarch64-debug
 
 SELFTEST_SRCS := \
+    kernel/selftests/resource/AcpiManagerTests.cpp \
+    kernel/selftests/platform/acpihosttests.cpp \
     kernel/selftests/SelfTestManager.cpp \
     kernel/selftests/platform/datastructurestests.c \
     kernel/selftests/platform/klibtests.c \
@@ -138,7 +142,7 @@ SELFTEST_SRCS := \
     kernel/selftests/request/SystemRequestManagerTests.cpp \
     kernel/selftests/request/SocketRequestManagerTests.cpp
 
-KERNEL_COMMON_SRCS := $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/CredentialManager.cpp kernel/layers/Logic/EventManager.cpp kernel/layers/Logic/EventNotifications.cpp kernel/layers/Logic/SynchronizationManager.cpp kernel/layers/Logic/SignalManager.cpp kernel/layers/Logic/SocketManager.cpp kernel/layers/Logic/InterProcessCommunicationManager.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/SchedulerPolicies.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Logic/ProcessLifecycle.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/SchedulerPolicyRequests.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/DmaManager.cpp kernel/layers/Resource/DeviceManager.cpp kernel/layers/Resource/PciManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Logic/ProcessMemoryManager.cpp kernel/layers/Resource/TimeManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c $(SELFTEST_SRCS) kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/numa.c kernel/platform/dma/dma.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/pci/pci.c klib/printf/printf.c klib/klib.c
+KERNEL_COMMON_SRCS := kernel/layers/Resource/AcpiManager.cpp kernel/layers/Request/AcpiRequestManager.cpp  $(KERNEL_SRC) kernel/kernel.cpp kernel/layers/Dispatcher.cpp kernel/layers/Logic/LogicLayerFactory.cpp kernel/layers/Logic/CredentialManager.cpp kernel/layers/Logic/EventManager.cpp kernel/layers/Logic/EventNotifications.cpp kernel/layers/Logic/SynchronizationManager.cpp kernel/layers/Logic/SignalManager.cpp kernel/layers/Logic/SocketManager.cpp kernel/layers/Logic/InterProcessCommunicationManager.cpp kernel/layers/Logic/Scheduler.cpp kernel/layers/Logic/SchedulerPolicies.cpp kernel/layers/Logic/VirtualFileSystem.cpp kernel/layers/Logic/ElfMapper.cpp kernel/layers/Logic/ProcessLifecycle.cpp kernel/layers/Request/RequestLayerFactory.cpp kernel/layers/Request/ProcessRequestManager.cpp kernel/layers/Request/SchedulerRequestManager.cpp kernel/layers/Request/SchedulerPolicyRequests.cpp kernel/layers/Request/TimeRequestManager.cpp kernel/layers/Request/MemoryRequestManager.cpp kernel/layers/Request/VfsRequestManager.cpp kernel/layers/Request/EventRequestManager.cpp kernel/layers/Request/SyncRequestManager.cpp kernel/layers/Request/SignalRequestManager.cpp kernel/layers/Request/CredentialRequestManager.cpp kernel/layers/Request/SystemRequestManager.cpp kernel/layers/Request/SocketRequestManager.cpp kernel/layers/Request/InterruptRequestManager.cpp kernel/layers/Resource/ResourceLayerFactory.cpp kernel/layers/Resource/ResourceFileSystem.cpp kernel/layers/Resource/PhysicalMemoryManager.cpp kernel/layers/Resource/DmaManager.cpp kernel/layers/Resource/DeviceManager.cpp kernel/layers/Resource/PciManager.cpp kernel/layers/Resource/ProcessManager.cpp kernel/layers/Logic/ProcessMemoryManager.cpp kernel/layers/Resource/TimeManager.cpp kernel/layers/Resource/TaskManager.cpp kernel/layers/Resource/VirtualMemoryManager.cpp kernel/layers/Resource/InitRamFileSystemManager.cpp klib/cpp_alloc.cpp klib/debug.c klib/khashl/khashp.c $(SELFTEST_SRCS) kernel/platform/cpu/cpu.c kernel/platform/memory/pmm.c kernel/platform/memory/numa.c kernel/platform/dma/dma.c kernel/platform/memory/metadata.c kernel/platform/memory/vmm.c kernel/platform/memory/heap.c kernel/platform/terminal/terminal.c kernel/platform/pci/pci.c klib/printf/printf.c klib/klib.c
 ifeq ($(DEBUG),1)
 KERNEL_COMMON_SRCS += debug/kernel/DebugManager.cpp debug/kernel/Foundation.cpp debug/kernel/FoundationC.c debug/kernel/Platform.cpp debug/kernel/Process.cpp debug/kernel/VirtualMemory.cpp debug/kernel/FileSystem.cpp debug/kernel/Scheduling.cpp debug/kernel/TimePlatform.c debug/kernel/Communication.cpp debug/kernel/SignalsEvents.cpp
 endif

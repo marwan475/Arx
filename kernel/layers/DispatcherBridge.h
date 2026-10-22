@@ -13,6 +13,14 @@ typedef struct dispatcher_backing_operations dispatcher_backing_operations_t;
 extern "C"
 {
 #endif
+    // Platform ACPI requires task identity, blocking and BSP workers. Dispatcher
+    // routes these incoming kernel services through AcpiRequestManager; Platform
+    // never imports Resource/Logic manager classes. No userspace interface.
+    uint64_t dispatcher_acpi_thread_id(void);
+    bool dispatcher_acpi_can_wait(void);
+    bool dispatcher_acpi_wait(const uint64_t* sequence, uint64_t expected, uint64_t deadline);
+    void dispatcher_acpi_wake(const uint64_t* sequence);
+    bool dispatcher_acpi_create_worker(void (*entry)(void*), void* argument);
     // Providers own these immutable routes and must outlive their last user.
     void dispatcher_cleanup_task(const dispatcher_task_cleanup_t* route, struct task_t* task);
 

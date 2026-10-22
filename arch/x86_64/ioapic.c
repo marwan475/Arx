@@ -104,7 +104,7 @@ void ioapic_unmask_vector(uint8_t vector)
     ioapic_set_vector_mask(vector, 0);
 }
 
-uint32_t ioapic_register_device(uint32_t gsi)
+uint32_t ioapic_register_device_flags(uint32_t gsi, uint16_t flags)
 {
     volatile uint8_t* ioapic_base = ioapic_get_base();
 
@@ -136,10 +136,9 @@ uint32_t ioapic_register_device(uint32_t gsi)
         return 0;
     }
 
-    uint16_t flags        = ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING;
     uint8_t  bsp_lapic_id = platform.cpus[platform.bsp_id].arch_info.acpi_lapic_id;
 
-    route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 0);
+    route_irq(ioapic_base, pin, vector, flags, bsp_lapic_id, 1);
     platform.vector_base++;
     spinlock_release_preempt(&ioapic_lock);
     return vector;
@@ -244,4 +243,16 @@ void ioapic_init(void)
     spinlock_release_preempt(&ioapic_lock);
 
     kprintf("Arx kernel: IOAPIC initialized id=%u pa=0x%llx gsi_base=%u max_redir=%u\n", (unsigned) platform.arch_info.acpi_ioapic_id, (unsigned long long) platform.arch_info.acpi_ioapic_base_addr, (unsigned) platform.arch_info.acpi_ioapic_gsi_base, (unsigned) max_redir);
+}
+
+uint32_t ioapic_register_device(uint32_t gsi)
+{
+    uint32_t vector = ioapic_register_device_flags(gsi, ACPI_MADT_POLARITY_CONFORMING | ACPI_MADT_TRIGGERING_CONFORMING);
+
+    if (vector != 0)
+    {
+        ioapic_unmask_vector((uint8_t) vector);
+    }
+
+    return vector;
 }

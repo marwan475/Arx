@@ -303,8 +303,8 @@ flowchart TB
     D --> R[Create Resource, then run its tests]
     R --> L[Create Logic using Resource, then run its tests]
     L --> Q[Create Request using Resource and Logic]
-    Q --> F[Enumerate PCI; mount root; queue tasks]
-    F --> G[Release waiting CPUs and activate scheduling]
+    Q --> F[Initialize ACPI; PCI; mount root; queue tasks]
+    F --> G[Hand off ACPI workers; release CPUs; schedule]
     G --> T[Scheduled post-init and Request tests]
 ```
 

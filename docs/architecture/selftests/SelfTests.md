@@ -23,10 +23,12 @@ the services under test.
 | Request syscall tests | The BSP continues from post-start tests into `RunRequestTests`. | Live scheduler and layer capabilities; the integration phase has returned. |
 | Final report | The BSP calls `Finalize` after Request tests. | Completed preceding phases, or an explicit unsafe-abort path. |
 
-`kmain` first enumerates PCI through PciManager and runs the live inventory and
-production DMA checks. It then mounts the cpio root filesystem, publishes the result with
+`kmain` initializes AcpiManager before normal scheduling, then enumerates PCI
+through PciManager and runs the live ACPI/inventory/production DMA checks. It then mounts the cpio root filesystem, publishes the result with
 `SetRootFileSystemMounted`, and creates a post-init process/task for every CPU.
-It publishes `bsp_kmain_exited` and activates scheduling. The tests therefore run
+It hands ACPI work to BSP-affine workers, publishes `bsp_kmain_exited`, and
+activates scheduling. The BSP additionally checks scheduled ACPI host callbacks
+before entering the integration phase. The tests therefore run
 in scheduled kernel tasks rather than continuing on the original bootstrap stack.
 
 Case and group recording belongs to the BSP. APs participate in SMP and TLB
@@ -57,6 +59,7 @@ manager used by later C++ tests.
 | `platform/klib/vmalloc` | Page-aligned virtual allocation, region metadata, translation, and complete release. |
 | `platform/klib/kmalloc` | Small/odd allocations, active-pointer uniqueness, reuse, and zero/oversize rejection. |
 | `platform/klib/kzalloc` | Zero-filled allocation and invalid-size rejection. |
+| `platform/klib/memmove` | Overlap in both directions, identical pointers, zero length and destination return. |
 | `platform/klib/sort` | Empty, singleton, sorted, duplicate, and full-width unsigned sorting inputs. |
 | `platform/klib/wrapping_counter` | Counter rollover, unchanged samples, normal increments, and multiple elapsed epochs. |
 | `platform/klib/error_logger` | Diagnostic formatting, bounded reads/storage, truncation, earliest-record preservation, and unpublished slots. |
@@ -80,6 +83,27 @@ inside the kernel and use real platform memory services.
 Each manager has an additional case named `resource/<Manager>` checking that its
 initialized capability is present. The following tables describe its behavior
 cases; names are the suffix after `resource/<Manager>/`.
+
+### AcpiManager and firmware runtime
+
+`AcpiManagerTests.cpp` checks deferred initialization, stable registry publication,
+resource snapshot ownership, translated ranges, IRQ alternatives, unknown
+descriptors and malformed templates. Live cases run after ACPI initialization and
+PCI enumeration, checking namespace identity, `_STA`, root resources, PCI bridge
+routing and explicit interrupt-link configuration. Runtime-unavailable cases skip
+live AML checks while table-based boot continues.
+
+`acpihosttests.cpp` runs the host contract before and after scheduling: independent
+BSP callback identities, deferred execution, contended mutex timeout, counting
+events, work draining, unsafe self-drain rejection, large allocations, port bounds
+and exact-width PCI reads. It also checks the bounded event FIFO and overflow.
+
+Build with `ACPI_TEST_FAIL_STAGE=4` in a separate build directory to force runtime
+failure after namespace initialization and check table-access fallback. Separate
+`ACPI_TEST_ACTION=1` and `ACPI_TEST_ACTION=2` images invoke final firmware power-off
+and reset after the test summary. Use those images only in disposable QEMU runs;
+the normal default is zero and performs no final power action. QEMU's power-button
+event should enqueue a typed event without powering off the default image.
 
 ### PhysicalMemoryManager
 

@@ -39,7 +39,8 @@ Release builds exclude the registry, its initialization and all tracking work.
 
 This order makes lower-layer services available before their consumers are
 constructed. `StartKernel` then returns to `kmain`, which explicitly invokes Resource
-PciManager enumeration and runs the PCI/production DMA checks before mounting the
+AcpiManager initialization, then PciManager enumeration and live ACPI/PCI/DMA
+checks before mounting the
 root filesystem, queuing post-init work, and activating scheduling. Layer
 constructors and their unit tests therefore run before the live PCI inventory
 exists; future drivers must start after this discovery step.
@@ -137,6 +138,7 @@ boundary wiring, beyond the syscall switch.
 | `dispatcher_service_pending_reschedule` | Routes platform preemption requests through SchedulerRequestManager to Scheduler. |
 | `begin_user_memory`, `end_user_memory` | Route to MemoryRequestManager to establish and release Klib's pinned process-memory context. |
 | `dispatcher_write_backing`, `dispatcher_release_backing_context` | Route platform backing I/O and provider-context release through MemoryRequestManager. |
+| `dispatcher_acpi_*` | Route Platform firmware waits, wakeups, thread identity and BSP worker startup through AcpiRequestManager. |
 | `dispatcher_backing_can_write` | Inspect a route's write capability without exposing or invoking its provider. |
 
 Signal return receives a mutable saved frame and the syscall result. Dispatcher
@@ -153,6 +155,13 @@ operations go through Dispatcher directly to their Logic providers. Platform and
 Klib entry goes through Dispatcher into typed Request handlers. The kernel-service
 handlers are stateless and retain early Resource-test availability without
 requiring construction of the full Request factory output.
+
+ACPI runtime initialization precedes normal scheduling. Its bootstrap execution
+contexts remain in Platform/Arch. After bootstrap work drains, the ACPI bridge
+publishes BSP-affine workers with private process roots; scheduled waits route to
+Scheduler through Request. No Resource or Logic manager pointer escapes back to
+Platform. IRQ/locked-context event signaling publishes readiness for the scheduler
+heartbeat rather than reentering scheduler locks.
 
 ## 6. User-memory access and execution constraints
 

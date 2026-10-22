@@ -456,6 +456,11 @@ delivery on user return. These methods do not require factory-created Request
 instances, so Resource tests retain their early-boot access. A service needing
 Logic still checks that its published capabilities are available.
 
+AcpiRequestManager provides kernel-only ingress for Platform's firmware execution
+support. Dispatcher routes task identity, blocking sequence waits, wakeups and
+BSP-affine worker creation through it to Resource and Scheduler. These are not
+syscalls. Firmware interpretation and all hardware accesses stay in Platform/Arch.
+
 ## 6. Interrupt requests
 
 `InterruptRequestManager.hpp` defines scheduling request `1`. Architecture code

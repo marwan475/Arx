@@ -164,6 +164,16 @@ extern "C"
 
     uacpi_status arch_acpi_init(struct acpi_madt* madt);
 
+    // ACPI host operations. Unsupported architectures return false/zero.
+    bool arch_acpi_io_read(uint16_t port, uint8_t width, uint32_t* value);
+    bool arch_acpi_io_write(uint16_t port, uint8_t width, uint32_t value);
+    bool arch_acpi_pci_access(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t width, bool write, uint32_t* value);
+    uint32_t arch_acpi_route_interrupt(uint32_t irq);
+    void arch_acpi_mask_interrupt(uint32_t vector, bool masked);
+    void arch_acpi_flush_cpu_cache(void);
+    // Cooperative bootstrap contexts have no TaskManager switch lifecycle.
+    void arch_bootstrap_switch_context(struct arch_task_context* outgoing, const struct arch_task_context* incoming);
+
     bool arch_init(void);
 
 #ifdef __cplusplus

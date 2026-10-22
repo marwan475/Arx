@@ -245,6 +245,9 @@ implements credential acquisition, permission checks, and replacement.
 
 ### EventManager
 
+ACPI firmware notifications use Resource's AcpiManager typed queue. They do not
+extend this descriptor-readiness interface or introduce a userspace event ABI.
+
 Connects file readiness and notifications to Scheduler waits. `EventManager.hpp`
 defines poll/epoll records and the API; `EventManager.cpp` and
 `EventNotifications.cpp` implement events and notification descriptors.

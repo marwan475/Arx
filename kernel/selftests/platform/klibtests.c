@@ -398,6 +398,44 @@ static void error_logger_test(size_t* passes, size_t* failures)
     }
 }
 
+static void memmove_test(size_t* passes, size_t* failures)
+{
+    char bytes[] = "abcdef";
+    void* result = memmove(bytes + 1, bytes, 5);
+
+    if (result != bytes + 1 || memcmp(bytes, "aabcde", 6) != 0)
+    {
+        klib_test_log_fail("memmove preserves overlapping bytes when moving upward", failures);
+    }
+    else
+    {
+        (*passes)++;
+    }
+
+    memmove(bytes, bytes + 1, 5);
+
+    if (memcmp(bytes, "abcde", 5) != 0)
+    {
+        klib_test_log_fail("memmove preserves overlapping bytes when moving downward", failures);
+    }
+    else
+    {
+        (*passes)++;
+    }
+
+    memmove(bytes, bytes, sizeof(bytes));
+    memmove(bytes, bytes + 1, 0);
+
+    if (memcmp(bytes, "abcde", 5) != 0)
+    {
+        klib_test_log_fail("memmove identical and empty ranges leave bytes unchanged", failures);
+    }
+    else
+    {
+        (*passes)++;
+    }
+}
+
 void run_klib_selftests(void)
 {
     static const struct
@@ -409,6 +447,7 @@ void run_klib_selftests(void)
         {"platform/klib/kmalloc", kmalloc_test},
         {"platform/klib/kzalloc", kzalloc_test},
         {"platform/klib/sort", sort_u32_test},
+        {"platform/klib/memmove", memmove_test},
         {"platform/klib/wrapping_counter", counter32_test},
         {"platform/klib/error_logger", error_logger_test},
     };

@@ -1,8 +1,8 @@
 # Resource layer
 
 The Resource layer provides the kernel's memory, process, task, time, DMA, device,
-PCI, and filesystem resources. Logic builds behavior and policy on these services; Request
-can also use them directly. Platform mechanisms and architecture hooks provide
+ACPI, PCI, and filesystem resources. Logic builds behavior and policy on these
+services; Request can also use them directly. Platform mechanisms and architecture hooks provide
 the underlying machine operations.
 
 `ResourceLayerFactory.hpp` declares the exported capabilities, and
@@ -18,9 +18,11 @@ the components in the table below, then publishes `ResourceLayerCaps`.
 
 DMA receives the physical/virtual memory managers and `platform.dma_ops`.
 TimeManager initializes its clock backend. DeviceManager is created before
-PciManager and exported as `ResourceLayerCaps::deviceManager`. PciManager copies
+AcpiManager, which is created before PciManager. Their exported capabilities are
+`deviceManager`, `acpiManager`, and `pciManager`. PciManager copies
 the platform PCI operation table without invoking it and registers its host
-controller in DeviceManager. After `StartKernel` returns, `kmain` calls
+controller in DeviceManager. After `StartKernel` returns, `kmain` initializes
+AcpiManager on the BSP before PCI enumeration or scheduler activation, then calls
 `EnumerateDevices` on the bootstrap CPU to discover and register PCI functions
 before post-init tasks are queued.
 InitRamFileSystemManager indexes the boot archive using its platform address
@@ -337,6 +339,39 @@ keep this storage alive for the kernel lifetime, including after unregistering.
 Copying a device does not pin its provider or module. Quiescent fixture/shutdown
 teardown must stop all snapshot users before destroying a provider.
 
+### AcpiManager
+
+Wraps Platform's ACPI runtime and registers its stable firmware identities in
+DeviceManager with `DeviceBus::ACPI`. Construction performs no firmware work.
+`Initialize` caches the Platform initialization outcome and separately retries
+registry publication. Parent identities are registered before children; registry
+failure does not discard the Platform inventory. `GetRegistrationStatus` reports
+that publication outcome independently of runtime state.
+
+| Operation | Contract |
+| --- | --- |
+| `Initialize`, `GetState` | Initialize once during BSP startup; inspect stage, firmware error and completeness. |
+| `CountDevices`, `GetDevice`, `GetDeviceId` | Read borrowed lifetime identities and their central registry IDs. |
+| `FindPciDevice` | Match a firmware-backed PCI address without merging its ACPI and PCI registry identities. |
+| `RefreshStatus` | Reevaluate `_STA` without replacing identity or changing driver state. |
+| `GetResources`, `ReleaseResources` | Obtain/release an owned `_CRS` or `_PRS` snapshot; initialize outputs to zero and release before reuse. |
+| `ResolvePciInterrupt`, `ConfigureInterruptLink` | Resolve zero-based PCI pins and apply an allocator-selected link IRQ through Platform. |
+| `NextEvent` | Consume the typed firmware FIFO; zero deadline polls, other deadlines use monotonic nanoseconds. Overflow count is cumulative. |
+| `Reset`, `PowerOff` | Perform the final firmware operation after higher-layer system quiescence. |
+
+Platform owns the interpreter, hardware communication, SCI/GPE handling and
+execution contexts. The manager exposes no uACPI objects or arbitrary AML method
+execution. Device records retain namespace paths, hardware/compatible IDs, status,
+address information and per-device errors. Their immutable identity storage stays
+valid for the kernel lifetime, including after registry removal. Resource snapshot
+raw templates preserve flags and dependent alternatives beyond normalized fields.
+
+Firmware operations require interrupt-enabled, preemptible BSP bootstrap context
+before scheduling or normal task context afterward. IRQ handlers queue work.
+Notifications report changes; they do not automatically rescan, attach/eject
+hardware or perform shutdown. Quiescent manager destruction unregisters available
+records and frees its registry-ID bookkeeping; it never unloads Platform's runtime.
+
 ### PciManager
 
 `PciManager.hpp` defines the discovery/query interface and `PciStatus`;
@@ -464,6 +499,8 @@ manager is destroyed.
 | `process_t` | A ProcessManager slot; lifetime claims and memory claims protect different aspects of it. |
 | `task_t` | A TaskManager slot with a stack/context; dispatch claims prevent retirement while selected for execution. |
 | `DmaAllocation` | A tracked handle containing CPU address, device address, size, and allocation ID. |
+| `acpi_device_t` | Immutable identity borrowed from Platform for the kernel lifetime. |
+| `acpi_resources_t` | Owned snapshot released with AcpiManager; raw template remains valid until release. |
 | `Device` | A copied registry snapshot; identity and operations are borrowed for the kernel lifetime. |
 | `initramfs_archive_t` | Indexed archive metadata whose data pointer refers into the supplied boot image. |
 
@@ -491,6 +528,8 @@ table rather than treating CPU pointers as device addresses. TimeManager's defau
 backend calls architecture clock hooks; its alternate backend supports isolated,
 deterministic tests. PciManager explicitly triggers platform PCI discovery and
 borrows its stable records; architecture-specific scanning stays beneath Resource.
+AcpiManager wraps Platform firmware operations; identity publication and event
+access do not depend on Logic EventManager.
 DeviceManager owns generic records and relationships without depending on PCI or
 another bus implementation.
 

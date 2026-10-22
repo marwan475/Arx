@@ -1,6 +1,7 @@
 #pragma once
 
 #include <uacpi/internal/namespace.h>
+#include <uacpi/internal/types.h>
 #include <uacpi/status.h>
 #include <uacpi/types.h>
 

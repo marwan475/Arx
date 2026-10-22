@@ -128,6 +128,67 @@ arch_save_switch_and_execute_context:
 
     ret
 
+; Private cooperative bootstrap switch; no scheduler ownership transfer.
+global arch_bootstrap_switch_context
+arch_bootstrap_switch_context:
+    pushfq
+    pop rax
+    mov [rdi + CTX_RFLAGS], rax
+    cli
+    fxsave64 [rdi + CTX_FX_STATE]
+    mov [rdi + CTX_RBX], rbx
+    mov [rdi + CTX_RBP], rbp
+    mov [rdi + CTX_R12], r12
+    mov [rdi + CTX_R13], r13
+    mov [rdi + CTX_R14], r14
+    mov [rdi + CTX_R15], r15
+
+    ; All context switches run with kernel GS active. The user GS base lives
+    ; in KERNEL_GS_BASE until the return path executes swapgs.
+    mov ecx, 0xc0000100
+    rdmsr
+    shl rdx, 32
+    or rax, rdx
+    mov [rdi + CTX_FS_BASE], rax
+    mov ecx, 0xc0000102
+    rdmsr
+    shl rdx, 32
+    or rax, rdx
+    mov [rdi + CTX_USER_GS_BASE], rax
+
+    mov rax, [rsp]
+    mov [rdi + CTX_RIP], rax
+    lea rax, [rsp + 8]
+    mov [rdi + CTX_RSP], rax
+
+    mov rax, [rsi + CTX_FS_BASE]
+    mov rdx, rax
+    shr rdx, 32
+    mov ecx, 0xc0000100
+    wrmsr
+    mov rax, [rsi + CTX_USER_GS_BASE]
+    mov rdx, rax
+    shr rdx, 32
+    mov ecx, 0xc0000102
+    wrmsr
+    fxrstor64 [rsi + CTX_FX_STATE]
+
+    mov rbx, [rsi + CTX_RBX]
+    mov rbp, [rsi + CTX_RBP]
+    mov r12, [rsi + CTX_R12]
+    mov r13, [rsi + CTX_R13]
+    mov r14, [rsi + CTX_R14]
+    mov r15, [rsi + CTX_R15]
+
+    mov rax, [rsi + CTX_RIP]
+    mov rsp, [rsi + CTX_RSP]
+
+    push rax
+    push qword [rsi + CTX_RFLAGS]
+    popfq
+
+    ret
+
 ; SysV arguments: user RIP in rdi, user RSP in rsi, arg0 in rdx, arg1 in rcx.
 ; No C compiler register allocation is involved after building the return frame.
 global arch_x86_64_enter_user_mode

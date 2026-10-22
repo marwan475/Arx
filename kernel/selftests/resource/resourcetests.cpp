@@ -2,12 +2,16 @@
 
 #include <selftests/SelfTestManager.hpp>
 
+void test_acpi_host(bool scheduled);
+void test_acpi_event_queue(void);
+
 void run_resource_selftest_group(ResourceLayerCaps* resources)
 {
     SelfTestManager::Get().GroupBegin("resource");
     test_PhysicalMemoryManager(resources);
     test_DmaManager(resources);
     test_DeviceManager(resources);
+    test_AcpiManager(resources);
     test_PciManager(resources);
     test_VirtualMemoryManager(resources);
     test_ProcessManager(resources);
@@ -22,6 +26,9 @@ void run_pci_discovery_selftest_group(ResourceLayerCaps* resources)
 {
     SelfTestManager::Get().GroupBegin("pci-discovery");
     test_PciManagerPlatform(resources);
+    test_AcpiManagerPlatform(resources);
+    test_acpi_host(false);
+    test_acpi_event_queue();
     test_DmaManagerPlatform(resources);
     SelfTestManager::Get().GroupEnd("pci-discovery");
 }

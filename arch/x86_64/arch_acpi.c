@@ -1,5 +1,204 @@
-#include <acpi/acpi.h>
 #include <platform.h>
+#include <acpi/acpi.h>
+#include <uacpi/kernel_api.h>
+
+static spinlock_t acpi_pci_lock;
+
+void arch_acpi_flush_cpu_cache(void)
+{
+    __asm__ volatile("wbinvd" : : : "memory");
+}
+
+bool arch_acpi_io_read(uint16_t port, uint8_t width, uint32_t* value)
+{
+    uint8_t byte;
+    uint16_t word;
+
+    switch (width)
+    {
+        case 1:
+            __asm__ volatile("inb %1, %0" : "=a"(byte) : "Nd"(port));
+            *value = byte;
+            return true;
+        case 2:
+            __asm__ volatile("inw %1, %0" : "=a"(word) : "Nd"(port));
+            *value = word;
+            return true;
+        case 4:
+            __asm__ volatile("inl %1, %0" : "=a"(*value) : "Nd"(port));
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool arch_acpi_io_write(uint16_t port, uint8_t width, uint32_t value)
+{
+    switch (width)
+    {
+        case 1:
+            __asm__ volatile("outb %0, %1" : : "a"((uint8_t) value), "Nd"(port));
+            return true;
+        case 2:
+            __asm__ volatile("outw %0, %1" : : "a"((uint16_t) value), "Nd"(port));
+            return true;
+        case 4:
+            __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool arch_acpi_pci_access(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function, uint16_t offset, uint8_t width, bool write, uint32_t* value)
+{
+    if (device >= 32 || function >= 8 || (width != 1 && width != 2 && width != 4) || offset > 4096 - width || (offset & (width - 1)) != 0 || value == NULL)
+    {
+        return false;
+    }
+
+    // ECAM is available before PCI enumeration. Direct UC aliases are retained
+    // exactly like the PCI backend, avoiding conflicting cache attributes.
+    uacpi_table table;
+
+    if (uacpi_table_find_by_signature(ACPI_MCFG_SIGNATURE, &table) == UACPI_STATUS_OK)
+    {
+        struct acpi_mcfg* mcfg = (struct acpi_mcfg*) table.hdr;
+        size_t count = 0;
+
+        if (table.hdr->length >= sizeof(*mcfg))
+        {
+            count = (table.hdr->length - sizeof(*mcfg)) / sizeof(struct acpi_mcfg_allocation);
+        }
+
+        for (size_t i = 0; i < count; i++)
+        {
+            struct acpi_mcfg_allocation* allocation = &mcfg->entries[i];
+
+            if (allocation->segment != segment || bus < allocation->start_bus || bus > allocation->end_bus)
+            {
+                continue;
+            }
+
+            uint64_t displacement = ((uint64_t) bus << 20) | ((uint64_t) device << 15) | ((uint64_t) function << 12);
+            uint64_t physical = allocation->address + displacement;
+            uacpi_table_unref(&table);
+
+            if (physical < displacement || (physical & (PAGE_SIZE - 1)) != 0)
+            {
+                return false;
+            }
+
+            virt_addr_t mapped = vmm_map_direct_mmio_page(physical, platform.cpus[arch_cpu_id()].address_space);
+
+            if (mapped == 0)
+            {
+                return false;
+            }
+
+            volatile uint8_t* address = (volatile uint8_t*) (mapped + offset);
+
+            if (write)
+            {
+                if (width == 1)
+                {
+                    *(volatile uint8_t*) address = (uint8_t) *value;
+                }
+                else if (width == 2)
+                {
+                    *(volatile uint16_t*) address = (uint16_t) *value;
+                }
+                else
+                {
+                    *(volatile uint32_t*) address = *value;
+                }
+            }
+            else if (width == 1)
+            {
+                *value = *(volatile uint8_t*) address;
+            }
+            else if (width == 2)
+            {
+                *value = *(volatile uint16_t*) address;
+            }
+            else
+            {
+                *value = *(volatile uint32_t*) address;
+            }
+
+            return true;
+        }
+
+        uacpi_table_unref(&table);
+    }
+
+    if (segment != 0 || offset > 256 - width)
+    {
+        return false;
+    }
+
+    uint64_t interrupt_state = arch_save_and_disable_interrupts();
+    spinlock_acquire(&acpi_pci_lock);
+    uint32_t selector = 0x80000000u | ((uint32_t) bus << 16) | ((uint32_t) device << 11) | ((uint32_t) function << 8) | (offset & ~3u);
+    arch_acpi_io_write(0xcf8, 4, selector);
+    bool success;
+
+    if (write)
+    {
+        success = arch_acpi_io_write(0xcfc + (offset & 3), width, *value);
+    }
+    else
+    {
+        success = arch_acpi_io_read(0xcfc + (offset & 3), width, value);
+    }
+
+    spinlock_release(&acpi_pci_lock);
+    arch_restore_interrupts(interrupt_state);
+    return success;
+}
+
+uint32_t arch_acpi_route_interrupt(uint32_t irq)
+{
+    uint32_t gsi = irq;
+    uint16_t flags = ACPI_MADT_POLARITY_ACTIVE_LOW | ACPI_MADT_TRIGGERING_LEVEL;
+
+    if (irq < LEGACY_PIC_MAX_IRQS && platform.arch_info.acpi_iso_overrides[irq].present)
+    {
+        gsi = platform.arch_info.acpi_iso_overrides[irq].gsi;
+        flags = platform.arch_info.acpi_iso_overrides[irq].flags;
+
+        if ((flags & ACPI_MADT_POLARITY_MASK) == ACPI_MADT_POLARITY_CONFORMING)
+        {
+            flags |= ACPI_MADT_POLARITY_ACTIVE_LOW;
+        }
+
+        if ((flags & ACPI_MADT_TRIGGERING_MASK) == ACPI_MADT_TRIGGERING_CONFORMING)
+        {
+            flags |= ACPI_MADT_TRIGGERING_LEVEL;
+        }
+    }
+
+    uint64_t state = arch_save_and_disable_interrupts();
+    uint32_t vector = ioapic_register_device_flags(gsi, flags);
+    arch_restore_interrupts(state);
+    return vector;
+}
+
+void arch_acpi_mask_interrupt(uint32_t vector, bool masked)
+{
+    uint64_t state = arch_save_and_disable_interrupts();
+
+    if (masked)
+    {
+        ioapic_mask_vector((uint8_t) vector);
+    }
+    else
+    {
+        ioapic_unmask_vector((uint8_t) vector);
+    }
+
+    arch_restore_interrupts(state);
+}
 
 // Advances only across records whose generic header fits in the table.
 static uacpi_status madt_next_entry(uacpi_u8** cursor, uacpi_u8* table_end, struct acpi_entry_hdr** out_entry)

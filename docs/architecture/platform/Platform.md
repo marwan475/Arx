@@ -144,13 +144,57 @@ and release it with the matching helper.
 
 ## 7. ACPI: make firmware tables available
 
-`acpi.c` sets up uACPI's early table access using the boot RSDP address. Platform
-provides mapping and logging callbacks; uACPI supplies table lookup. This setup
-supports architecture interrupt discovery and PCI configuration information.
-It does not initialize a full ACPI runtime.
+`acpi.c` establishes early table access from the boot RSDP for MADT, MCFG,
+and DMA-remapping detection. NUMA discovery uses separate boot-time table access
+before this setup. Mapping callbacks retain the boot memory classification:
+firmware RAM uses normal cache attributes and device ranges use uncached mappings.
 
-NUMA discovery happens earlier through boot-time table access, before this uACPI
-setup. It is part of PMM initialization rather than a later topology rebuild.
+After Dispatcher constructs the layers, `kmain` initializes Resource's
+AcpiManager before PCI enumeration and normal scheduling. Platform's `runtime.c`
+owns the bundled uACPI interpreter, namespace initialization, `_PIC`, device
+inventory, `_CRS`/`_PRS` queries, PCI routing, notifications, fixed events and GPEs.
+`host.c` implements the complete host callback contract, including allocations,
+SystemIO, PCI configuration access, clocks, synchronization, interrupts and work.
+Arch supplies the machine operations; Resource never accesses ACPI hardware.
+
+Initialization runs on the BSP with SCI interrupts functional. Independent
+cooperative bootstrap contexts service deferred callbacks and waits before normal
+scheduling; work is never invoked inline by the queueing callback. Before scheduler
+activation, outstanding work drains and four BSP-affine kernel workers are
+published through Dispatcher and AcpiRequestManager. These workers have private
+process roots so their blocking waits do not pin the shared bootstrap address
+space. Bootstrap stacks are released after the execution-mode handoff.
+Scheduled waits use sequence-based scheduler waits. IRQ/locked-context signals
+publish sequence changes without taking scheduler locks; each CPU's scheduler
+heartbeat observes them. Ordinary task-context signals may wake waiters directly.
+
+The runtime initializes once and remains alive for the kernel lifetime. State
+reports the initialization stage, native firmware error, inventory count and
+incompleteness. Fatal runtime initialization failure resets interpreter state and
+restores early table access; callers cannot use the failed namespace. Per-device
+errors preserve other devices, and the 512-device inventory limit is explicit.
+AArch64 reports runtime support as unavailable.
+
+Resource queries return owned snapshots with normalized common descriptors and
+the complete original AML template. Raw flags, sources, dependent alternatives,
+and unknown descriptors remain available; unknown interpretations report
+incompleteness. Release snapshots through the Platform interface. PCI routing
+walks bridges, applies swizzling, and resolves `_PRT` link resources. An unconfigured
+link reports `ACPI_NEEDS_CONFIGURATION`; the interrupt allocator selects a GSI
+from `_PRS`, then explicit configuration validates it and executes `_SRS` without
+changing the `_CRS` descriptor layout.
+
+The 128-entry firmware event queue reports cumulative overflow. Notifications
+retain device identity, value and a bounded path; fixed power/sleep buttons become
+typed events, including control-method button notifications. Events raised during
+namespace initialization can resolve their captured paths after discovery. They
+do not initiate shutdown, sleep or device removal. There is no
+userspace descriptor interface or EventManager dependency. Reset and S5 power-off
+are final firmware operations; higher layers must first quiesce the system.
+Suspend/resume restoration, hibernation, automatic hotplug/ejection, and
+hardware-specific operation-region drivers are outside this runtime interface.
+Bundled `_OSI` defaults remain unchanged; no unimplemented PCI features are
+claimed through `_OSC`.
 
 ## 8. Architecture, PCI, and DMA
 

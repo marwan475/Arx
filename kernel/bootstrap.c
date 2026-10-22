@@ -125,7 +125,7 @@ void platform_init(struct boot_info* boot_info, uint64_t cpu_count)
     KDEBUG("<- heap_init done\n");
 
     KDEBUG("-> acpi_init(rsdp=0x%llx)\n", (unsigned long long) boot_info->rsdp_address);
-    acpi_init(boot_info->rsdp_address);
+    acpi_init(boot_info->rsdp_address, boot_info);
     KDEBUG("<- acpi_init done\n");
 
     KDEBUG("-> arch_init\n");

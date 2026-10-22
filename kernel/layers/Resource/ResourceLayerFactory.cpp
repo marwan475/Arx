@@ -1,4 +1,5 @@
 #include "layers/Resource/ResourceLayerFactory.hpp"
+#include "layers/Resource/AcpiManager.hpp"
 
 #include "layers/Resource/DmaManager.hpp"
 #include "layers/Resource/DeviceManager.hpp"
@@ -25,6 +26,7 @@ ResourceLayerFactory::~ResourceLayerFactory()
     {
         delete ResourceLayerExportCaps->dmaManager;
         delete ResourceLayerExportCaps->pciManager;
+        delete ResourceLayerExportCaps->acpiManager;
         delete ResourceLayerExportCaps->deviceManager;
         delete ResourceLayerExportCaps->timeManager;
         delete ResourceLayerExportCaps->physicalMemoryManager;
@@ -54,6 +56,7 @@ ResourceLayerCaps* ResourceLayerFactory::Create()
     ResourceLayerExportCaps->dmaManager               = new DmaManager(ResourceLayerExportCaps->physicalMemoryManager, ResourceLayerExportCaps->virtualMemoryManager, &platform.dma_ops);
     ResourceLayerExportCaps->timeManager              = new TimeManager();
     ResourceLayerExportCaps->deviceManager            = new DeviceManager();
+    ResourceLayerExportCaps->acpiManager              = new AcpiManager(ResourceLayerExportCaps->deviceManager);
     ResourceLayerExportCaps->pciManager               = new PciManager(&platform_pci_ops, ResourceLayerExportCaps->deviceManager);
     ResourceLayerExportCaps->initRamFileSystemManager = new InitRamFileSystemManager(platform.initramfs_size, platform.initramfs_address);
     ResourceFileSystemExport                          = new ResourceFileSystem(ResourceLayerExportCaps->initRamFileSystemManager);

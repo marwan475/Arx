@@ -3,6 +3,7 @@
 #include "layers/Logic/VirtualFileSystem.hpp"
 #include "layers/Resource/ProcessManager.hpp"
 #include "layers/Resource/PciManager.hpp"
+#include "layers/Resource/AcpiManager.hpp"
 #include "layers/Resource/TaskManager.hpp"
 
 #include <arch/arch.h>
@@ -32,6 +33,15 @@ extern "C" void kmain(void)
     ResourceLayerCaps* resourceLayerCaps = dispatcher->GetResourceLayerCaps();
     LogicLayerCaps*    logicLayerCaps    = dispatcher->GetLogicLayerCaps();
     bool               mounted          = false;
+
+    if (resourceLayerCaps != nullptr && resourceLayerCaps->acpiManager != nullptr)
+    {
+        acpi_runtime_state_t state = resourceLayerCaps->acpiManager->Initialize();
+        kprintf("Arx kernel: ACPI status=%u stage=%u devices=%llu registration=%u\n",
+                (unsigned) state.status, (unsigned) state.stage,
+                (unsigned long long) state.device_count,
+                (unsigned) resourceLayerCaps->acpiManager->GetRegistrationStatus());
+    }
 
     if (resourceLayerCaps != nullptr && resourceLayerCaps->pciManager != nullptr)
     {
@@ -70,6 +80,12 @@ extern "C" void kmain(void)
         SelfTestManager::Get().AbortUnsafe("post-init task creation or enqueue failed");
     }
 
+    if (platform_acpi_state().stage == ACPI_STAGE_READY && !platform_acpi_start_workers())
+    {
+        error_logger("ACPI: worker handoff failed; continuing with firmware tables only\n");
+        resourceLayerCaps->acpiManager->Initialize();
+    }
+
     ARX_DEBUG_STORE(platform.debugStats.bspHandoff, 1);
     ARX_DEBUG_STORE(platform.debugStats.stage, ARX_PLATFORM_BSP_HANDOFF);
     __atomic_store_n(&platform.bsp_kmain_exited, 1, __ATOMIC_RELEASE);
@@ -89,6 +105,15 @@ static void KernelPostInit(void)
 {
     arch_calibrate_scheduler_timer();
     SelfTestManager::Get().RunPostInitTests();
+
+    if (ARX_ACPI_TEST_ACTION != 0 && arch_cpu_id() == platform.bsp_id)
+    {
+        Dispatcher* dispatcher = static_cast<Dispatcher*>(platform.dispacher);
+        AcpiManager* acpi = dispatcher->GetResourceLayerCaps()->acpiManager;
+        kprintf("ACPI TEST: final firmware action=%u\n", (unsigned) ARX_ACPI_TEST_ACTION);
+        acpi_status_t status = ARX_ACPI_TEST_ACTION == 1 ? acpi->PowerOff() : acpi->Reset();
+        error_logger("ACPI TEST: final firmware action returned status=%u\n", (unsigned) status);
+    }
 
     kprintf("Arx kernel: cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());
     KDEBUG("cpu %u entered KernelPostInit\n", (unsigned) arch_cpu_id());

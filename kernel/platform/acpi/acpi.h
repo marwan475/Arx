@@ -12,6 +12,6 @@
 uacpi_status acpi_get_madt(struct acpi_madt** out_madt, uacpi_table* out_table);
 uacpi_status acpi_get_mcfg(struct acpi_mcfg** out_mcfg, uacpi_table* out_table);
 
-void acpi_init(phys_addr_t rsdp_address);
+void acpi_init(phys_addr_t rsdp_address, const struct boot_info* boot);
 
 #endif

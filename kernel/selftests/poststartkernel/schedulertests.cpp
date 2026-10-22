@@ -361,25 +361,9 @@ extern "C" void run_smp_scheduler_selftest(void* logicLayerCapsPtr, void* resour
 
     for (size_t i = 0; i < SCHED_TEST_PROCESS_COUNT; i++)
     {
-        if (tasks[i] != nullptr)
+        if (!smp_free_test_fixture(processManager, taskManager, processes[i], tasks[i]) && outFailMask)
         {
-            if (processes[i] != nullptr && tasks[i]->process == processes[i])
-            {
-                processManager->RemoveTask(processes[i], tasks[i]);
-            }
-
-            if (!taskManager->FreeTask(tasks[i]) && outFailMask)
-            {
-                *outFailMask |= 1ULL << 63;
-            }
-        }
-
-        if (processes[i] != nullptr)
-        {
-            if (!processManager->FreeProcess(processes[i]) && outFailMask)
-            {
-                *outFailMask |= 1ULL << 63;
-            }
+            *outFailMask |= 1ULL << 63;
         }
     }
 

@@ -453,26 +453,9 @@ extern "C" void smp_selftests(void)
                 KDEBUG("smp pid-vfs PASS cpu=%u pid=%llu\n", (unsigned) cpuId, (unsigned long long) ctx.processId);
             } while (0);
 
-            if (task != nullptr)
+            if (!smp_free_test_fixture(processManager, taskManager, process, task))
             {
-                // Unlink before the task slot can be reused on another CPU.
-                if (process != nullptr && task->process == process)
-                {
-                    processManager->RemoveTask(process, task);
-                }
-
-                if (!taskManager->FreeTask(task))
-                {
-                    __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
-                }
-            }
-
-            if (process != nullptr)
-            {
-                if (!processManager->FreeProcess(process))
-                {
-                    __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
-                }
+                __atomic_store_n(&g_smp_unsafe_cleanup, true, __ATOMIC_RELEASE);
             }
 
             if (processManager->GetRunningProcess((uint8_t) cpuId) != originalRun)

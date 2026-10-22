@@ -403,6 +403,18 @@ normal configuration; cross-CPU remap and concurrent-sibling cases require at
 least two. Bounded waits use `PollBudget` or deadlines, but cannot interrupt a CPU
 that never returns from a context switch.
 
+SMP fixture teardown unlinks each disposable task before reclaiming its slot and
+allows bounded retries while other CPUs release dispatch or process-lifetime
+claims. Interrupts remain enabled for observer progress and shared-root TLB
+shootdowns. A task that cannot be reclaimed keeps its process alive; exhausting
+the budget still aborts unsafe initialization.
+
+`python3 scripts/tests/smp_fixture_cleanup.py --kvm --smp-only` repeats four-CPU
+QEMU boots against the built image, with two instances running concurrently to
+exercise teardown contention. It retains serial logs and distinguishes the
+cleanup failure from other test failures. Omit `--smp-only` to check the full
+startup suite, or omit `--kvm` to use emulation.
+
 Some reporting cases contain several integration contracts:
 
 | Inner test | What it tests |
@@ -788,7 +800,7 @@ totals alone do not demonstrate meaningful coverage.
 | `SignalAbiFixture.hpp` | Supply independently declared signal wire-layout expectations. |
 | `RequestTestSupport.hpp` | Own request reporting contexts, real user aliases, isolated process fixtures, runnable peers, and cleanup checks. |
 | `PollBudget.hpp` | Bound cooperative control waits by five seconds when a clock exists and by 100 million polls regardless of clock availability. |
-| `smpfixtures.hpp` | Retry process creation during bounded contention on a shared root's lifetime pin. |
+| `smpfixtures.hpp` | Bound shared-root process-creation retries and wait for transient task/process claims during ordered fixture teardown. |
 
 Declare owned fixtures after their `TestCase`, so reverse destruction cleans up
 before reporting the case. Request's `ProcessFixture` replaces process identity
